@@ -13,14 +13,14 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
 from core.audit import audit_action
 from dependencies.auth import require_permission
 from dependencies.db import get_db
-from repositories.prompt_template_repository import PromptTemplateRepository
+from dependencies.services import get_prompt_template_service
 from schemas.custom_instructions import (
     CustomInstructionSchema,
     CustomInstructionsResponse,
@@ -56,7 +56,7 @@ router = APIRouter(
     response_model=PromptTemplateListResponse,
 )
 async def list_prompt_templates(
-    db: AsyncSession = Depends(get_db),
+    service: PromptTemplateService = Depends(get_prompt_template_service),
     org_id: str = Depends(require_permission("configuration:read")),
     sort_by: PromptSortBy | None = Query(
         default=None, description="Sort key (default name)."
@@ -71,8 +71,7 @@ async def list_prompt_templates(
     whether the org has customised it, and its last-updated timestamp.
     Default ``name/asc``.
     """
-    repo = PromptTemplateRepository(db)
-    templates = await repo.list_names(
+    templates = await service.list_names(
         uuid.UUID(org_id), sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir)
     )
     return PromptTemplateListResponse(
@@ -85,7 +84,7 @@ async def list_prompt_templates(
     response_model=SystemPromptGroupsResponse,
 )
 async def list_system_prompts(
-    db: AsyncSession = Depends(get_db),
+    service: PromptTemplateService = Depends(get_prompt_template_service),
     org_id: str = Depends(require_permission("configuration:read")),
 ) -> SystemPromptGroupsResponse:
     """List all system-default prompt templates grouped by base name.
@@ -94,8 +93,7 @@ async def list_system_prompts(
     can see old versions.  Each group is annotated with which template
     names the organisation has already imported.
     """
-    repo = PromptTemplateRepository(db)
-    groups = await repo.list_system_grouped(org_id=uuid.UUID(org_id))
+    groups = await service.list_system_grouped(org_id=uuid.UUID(org_id))
     return SystemPromptGroupsResponse(groups=groups)
 
 
@@ -107,7 +105,7 @@ async def list_system_prompts(
 @audit_action("prompt.import", "prompt", "Prompt imported")
 async def import_system_prompt(
     body: ImportPromptRequest,
-    db: AsyncSession = Depends(get_db),
+    service: PromptTemplateService = Depends(get_prompt_template_service),
     org_id: str = Depends(require_permission("configuration:write")),
 ) -> PromptTemplateDetail:
     """Import a system-default prompt template into the organisation.
@@ -116,9 +114,8 @@ async def import_system_prompt(
     the active system default.  Raises 409 if the template is already
     imported, or 404 if no active system default exists.
     """
-    repo = PromptTemplateRepository(db)
     try:
-        template = await repo.import_system_template(
+        template = await service.import_system_template(
             org_id=uuid.UUID(org_id),
             template_name=body.template_name,
         )
@@ -138,7 +135,7 @@ async def import_system_prompt(
 @audit_action("prompt.set_default", "prompt", "Default prompt set")
 async def set_prompt_type_default(
     name: str,
-    db: AsyncSession = Depends(get_db),
+    service: PromptTemplateService = Depends(get_prompt_template_service),
     org_id: str = Depends(require_permission("configuration:write")),
 ) -> PromptTemplateDetail:
     """Mark a prompt template as the active default for its type.
@@ -148,9 +145,8 @@ async def set_prompt_type_default(
     type and scope.  Raises 404 if the template does not exist or has
     no ``type`` assigned.
     """
-    repo = PromptTemplateRepository(db)
     try:
-        template = await repo.set_as_type_default(
+        template = await service.set_as_type_default(
             org_id=uuid.UUID(org_id), name=name,
         )
     except ValueError as err:
@@ -165,7 +161,7 @@ async def set_prompt_type_default(
 )
 async def get_prompt_template(
     name: str,
-    db: AsyncSession = Depends(get_db),
+    service: PromptTemplateService = Depends(get_prompt_template_service),
     org_id: str = Depends(require_permission("configuration:read")),
 ) -> PromptTemplateDetail:
     """Get the active template for an organization.
@@ -173,8 +169,7 @@ async def get_prompt_template(
     Returns the org-specific template if it exists.  Raises 404 if not
     found (no system default fallback — defaults come from disk manifest).
     """
-    repo = PromptTemplateRepository(db)
-    template = await repo.get_active(uuid.UUID(org_id), name)
+    template = await service.get_active(uuid.UUID(org_id), name)
     if template is None:
         raise HTTPException(
             status_code=404,
@@ -189,7 +184,7 @@ async def get_prompt_template(
 )
 async def list_prompt_template_versions(
     name: str,
-    db: AsyncSession = Depends(get_db),
+    service: PromptTemplateService = Depends(get_prompt_template_service),
     org_id: str = Depends(require_permission("configuration:read")),
 ) -> PromptTemplateVersionsResponse:
     """List all versions of a named template for this org.
@@ -197,17 +192,15 @@ async def list_prompt_template_versions(
     Returns only org-scoped versions, ordered by version descending
     (newest first).  Raises 404 if no template exists with this name.
     """
-    repo = PromptTemplateRepository(db)
-
     # Verify the template exists before listing versions.
-    active = await repo.get_active(uuid.UUID(org_id), name)
+    active = await service.get_active(uuid.UUID(org_id), name)
     if active is None:
         raise HTTPException(
             status_code=404,
             detail=f"Prompt template '{name}' not found",
         )
 
-    versions = await repo.list_versions(uuid.UUID(org_id), name)
+    versions = await service.list_versions(uuid.UUID(org_id), name)
     return PromptTemplateVersionsResponse(
         name=name,
         current_version=active.version,
@@ -224,8 +217,7 @@ async def list_prompt_template_versions(
 async def set_prompt_template(
     name: str,
     body: SetPromptTemplateRequest,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
+    service: PromptTemplateService = Depends(get_prompt_template_service),
     org_id: str = Depends(require_permission("configuration:write")),
 ) -> PromptTemplateDetail:
     """Create a new org-specific version of a prompt template.
@@ -241,8 +233,6 @@ async def set_prompt_template(
         disk default, import it first via ``POST /admin/org/prompts/import``
         and then edit the org-specific copy.
     """
-    service = PromptTemplateService(db, redis=getattr(request.app.state, "redis", None))
-
     # ── Create the org-specific override (cache dropped inside) ──────────
     template = await service.set_override(
         org_id=uuid.UUID(org_id),
@@ -263,7 +253,7 @@ async def set_prompt_template(
 async def rollback_prompt_template(
     name: str,
     version: int,
-    db: AsyncSession = Depends(get_db),
+    service: PromptTemplateService = Depends(get_prompt_template_service),
     org_id: str = Depends(require_permission("configuration:write")),
 ) -> PromptTemplateDetail:
     """Rollback to a previous version of a prompt template.
@@ -273,9 +263,8 @@ async def rollback_prompt_template(
     versions are deactivated.  Raises 404 if the target version does not
     exist in the org scope.
     """
-    repo = PromptTemplateRepository(db)
     try:
-        template = await repo.rollback(
+        template = await service.rollback(
             org_id=uuid.UUID(org_id),
             name=name,
             version=version,
@@ -294,7 +283,7 @@ async def rollback_prompt_template(
 @audit_action("prompt.delete", "prompt", "Prompt deleted")
 async def delete_prompt_template_override(
     name: str,
-    db: AsyncSession = Depends(get_db),
+    service: PromptTemplateService = Depends(get_prompt_template_service),
     org_id: str = Depends(require_permission("configuration:write")),
 ) -> Response:
     """Delete all org-specific versions of a prompt template.
@@ -304,10 +293,8 @@ async def delete_prompt_template_override(
     ``POST /admin/org/prompts/import`` if needed.  Raises 404 if no
     org-specific override currently exists.
     """
-    repo = PromptTemplateRepository(db)
-
     # Check that an org-specific override actually exists.
-    active = await repo.get_active(uuid.UUID(org_id), name)
+    active = await service.get_active(uuid.UUID(org_id), name)
     if active is None:
         raise HTTPException(
             status_code=404,
@@ -325,7 +312,7 @@ async def delete_prompt_template_override(
             ),
         )
 
-    await repo.delete_for_org(org_id=uuid.UUID(org_id), name=name)
+    await service.delete_for_org(org_id=uuid.UUID(org_id), name=name)
     return Response(status_code=204)
 
 

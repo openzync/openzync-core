@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from core.exceptions import NotFoundError
+from core.cursor import decode_page_cursor
+from core.exceptions import NotFoundError, ValidationError
 from core.sorting import SortSpec
 from repositories.session_repository import SessionRepository
 from repositories.structured_extraction_repository import (
+    EXTRACTION_SORTABLE_COLUMNS,
     StructuredExtractionRepository,
 )
 from schemas.structured_extractions import (
@@ -61,6 +63,7 @@ class StructuredExtractionService:
 
         Raises:
             NotFoundError: If the session does not exist.
+            ValidationError: If the sort key/direction or cursor is invalid.
         """
         # Verify session exists (optionally scoped to project)
         session = await self._session_repo.get_by_uuid(
@@ -69,8 +72,45 @@ class StructuredExtractionService:
         if session is None:
             raise NotFoundError(f"Session '{session_id}' not found")
 
+        # Validate sort + cursor here — the repository takes resolved
+        # values only and performs no validation of its own.
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("sequence_number", "asc")
+        if req_sort not in EXTRACTION_SORTABLE_COLUMNS:
+            raise ValidationError(f"Invalid sort_by: {req_sort!r}")
+        if req_dir not in ("asc", "desc"):
+            raise ValidationError(f"Invalid sort_dir: {req_dir!r}")
+        cursor_value: str | None = None
+        cursor_id: UUID | None = None
+        if cursor is not None:
+            c_sort, c_dir, c_val, c_id = decode_page_cursor(cursor)
+            if c_sort != req_sort or c_dir != req_dir:
+                raise ValidationError(
+                    "Cursor sort mismatch — restart pagination "
+                    f"(cursor {c_sort}:{c_dir} vs request {req_sort}:{req_dir})"
+                )
+            if req_sort == "sequence_number":
+                try:
+                    int(c_val)
+                except ValueError as exc:
+                    raise ValidationError(f"Invalid cursor: {exc}") from exc
+            elif req_sort == "created_at":
+                from datetime import datetime
+
+                try:
+                    datetime.fromisoformat(c_val)
+                except ValueError as exc:
+                    raise ValidationError(f"Invalid cursor: {exc}") from exc
+            cursor_value, cursor_id = c_val, c_id
+
         extractions, next_cursor = await self._repo.get_by_session(
-            org_id, session_id, sort=sort, limit=limit, cursor=cursor
+            org_id,
+            session_id,
+            sort_by=req_sort,
+            sort_dir=req_dir,
+            limit=limit,
+            cursor_value=cursor_value,
+            cursor_id=cursor_id,
         )
         return (
             [
@@ -124,7 +164,9 @@ class StructuredExtractionService:
         Args:
             org_id: The authenticated organization UUID.
             session_id: The session UUID.
-            project_id: Optional project UUID (reserved for future
-                defense-in-depth — not yet used by the repo layer).
+            project_id: Optional project UUID for intra-org isolation —
+                forwarded to the repository filter when set.
         """
-        return await self._repo.count_for_session(org_id, session_id)
+        return await self._repo.count_for_session(
+            org_id, session_id, project_id=project_id
+        )

@@ -12,8 +12,7 @@ from uuid import UUID
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.cursor import decode_page_cursor, encode_cursor
-from core.sorting import SortSpec, resolve_order_by
+from core.sorting import resolve_order_by
 from models.episode import Episode
 from models.structured_extraction import StructuredExtraction
 from repositories.project_repository import archived_project_ids
@@ -35,38 +34,40 @@ class StructuredExtractionRepository:
         self,
         org_id: UUID,
         session_id: UUID,
-        sort: SortSpec | None = None,
+        *,
+        sort_by: str,
+        sort_dir: str,
         limit: int = 100,
-        cursor: str | None = None,
+        cursor_value: str | None = None,
+        cursor_id: UUID | None = None,
     ) -> tuple[list[StructuredExtraction], str | None]:
         """Return a page of extractions for episodes in a session.
 
-        Joins ``structured_extractions`` with ``episodes`` to scope by
-        session and org. Default ``sequence_number ASC`` (locked);
-        ``created_at`` offered as an alt without breaking the default.
-        Cursor encodes ``sort_by:sort_dir`` and fails closed (422) on
-        mismatch — same keyset pattern as ``SessionRepository.list``.
+        Takes resolved sort/cursor values — the service layer validates
+        the ``SortSpec`` and decodes the opaque cursor before calling.
+        This repository performs no validation and raises no
+        ``ValidationError``.
+
+        # ⚠️ BREAKING: signature changed from
+        # ``(org_id, session_id, sort=None, limit, cursor=None)`` to
+        # resolved ``(sort_by, sort_dir, limit, cursor_value, cursor_id)``.
 
         Args:
             org_id: Tenant scope.
             session_id: The session UUID.
-            sort: Validated sort spec.
+            sort_by: Validated sort key (``sequence_number``/``created_at``).
+            sort_dir: Validated direction (``asc``/``desc``).
             limit: Maximum results per page (capped at 500).
-            cursor: Opaque base64 cursor from a previous page.
+            cursor_value: Resolved keyset position, or ``None`` for page one.
+            cursor_id: Resolved tiebreak row id, or ``None`` for page one.
 
         Returns:
             Tuple of ``(extractions, next_cursor)`` — ``next_cursor``
             is ``None`` when there are no more pages.
         """
-        from core.exceptions import ValidationError
+        from core.cursor import encode_cursor
 
         effective_limit = min(limit, 500) + 1  # +1 to detect has_more
-        spec = sort if sort is not None else SortSpec()
-        req_sort, req_dir = spec.effective("sequence_number", "asc")
-        if req_sort not in EXTRACTION_SORTABLE_COLUMNS:
-            raise ValidationError(f"Invalid sort_by: {req_sort!r}")
-        if req_dir not in ("asc", "desc"):
-            raise ValidationError(f"Invalid sort_dir: {req_dir!r}")
 
         query = (
             select(StructuredExtraction, Episode)
@@ -79,39 +80,27 @@ class StructuredExtractionRepository:
             )
         )
 
-        col = EXTRACTION_SORTABLE_COLUMNS[req_sort]
-        if cursor is not None:
-            c_sort, c_dir, c_val, c_ep_id = decode_page_cursor(cursor)
-            if c_sort != req_sort or c_dir != req_dir:
-                raise ValidationError(
-                    "Cursor sort mismatch — restart pagination "
-                    f"(cursor {c_sort}:{c_dir} vs request {req_sort}:{req_dir})"
-                )
-            if req_sort == "sequence_number":
-                try:
-                    c_num = int(c_val)
-                except ValueError as e:
-                    raise ValidationError(f"Invalid cursor: {e}") from e
-                cmp = col > c_num if req_dir == "asc" else col < c_num
+        col = EXTRACTION_SORTABLE_COLUMNS[sort_by]
+        if cursor_value is not None and cursor_id is not None:
+            if sort_by == "sequence_number":
+                c_num = int(cursor_value)
+                cmp = col > c_num if sort_dir == "asc" else col < c_num
                 query = query.where(
-                    or_(cmp, and_(col == c_num, Episode.id > c_ep_id))
+                    or_(cmp, and_(col == c_num, Episode.id > cursor_id))
                 )
             else:
-                try:
-                    c_at = datetime.fromisoformat(c_val)
-                except ValueError as e:
-                    raise ValidationError(f"Invalid cursor: {e}") from e
-                cmp = col > c_at if req_dir == "asc" else col < c_at
+                c_at = datetime.fromisoformat(cursor_value)
+                cmp = col > c_at if sort_dir == "asc" else col < c_at
                 query = query.where(
-                    or_(cmp, and_(col == c_at, Episode.id > c_ep_id))
+                    or_(cmp, and_(col == c_at, Episode.id > cursor_id))
                 )
 
         query = query.order_by(
             *resolve_order_by(
                 EXTRACTION_SORTABLE_COLUMNS,
                 Episode.id,
-                req_sort,
-                req_dir,
+                sort_by,
+                sort_dir,
                 default_sort_by="sequence_number",
                 default_dir="asc",
             )
@@ -126,11 +115,11 @@ class StructuredExtractionRepository:
         next_cursor: str | None = None
         if has_more and page:
             _, last_ep = page[-1]
-            if req_sort == "sequence_number":
+            if sort_by == "sequence_number":
                 val = str(last_ep.sequence_number)
             else:
                 val = last_ep.created_at.isoformat()
-            next_cursor = encode_cursor(f"{req_sort}:{req_dir}:{val}|{last_ep.id.hex}")
+            next_cursor = encode_cursor(f"{sort_by}:{sort_dir}:{val}|{last_ep.id.hex}")
 
         return [e for e, _ in page], next_cursor
 
@@ -150,24 +139,33 @@ class StructuredExtractionRepository:
         return result.scalar_one_or_none()
 
     async def count_for_session(
-        self, org_id: UUID, session_id: UUID
+        self,
+        org_id: UUID,
+        session_id: UUID,
+        project_id: UUID | None = None,
     ) -> int:
-        """Count extractions for a session.
+        """Count extractions for a session, optionally scoped to a project.
+
+        # ⚠️ BREAKING: added optional ``project_id`` — when set, only
+        # extractions whose episode belongs to that project are counted.
 
         Archived projects are excluded: the ``extract_structured`` worker
         early-returns on them, so their rows are terminal, not a running
         total. The sibling message/fact counts do not filter — they are
         inventory.
         """
+        conditions = [
+            Episode.session_id == session_id,
+            Episode.organization_id == org_id,
+            Episode.is_deleted == False,
+            StructuredExtraction.project_id.not_in(archived_project_ids()),
+        ]
+        if project_id is not None:
+            conditions.append(Episode.project_id == project_id)
         result = await self._db.execute(
             select(func.count())
             .select_from(StructuredExtraction)
             .join(Episode, Episode.id == StructuredExtraction.episode_id)
-            .where(
-                Episode.session_id == session_id,
-                Episode.organization_id == org_id,
-                Episode.is_deleted == False,
-                StructuredExtraction.project_id.not_in(archived_project_ids()),
-            )
+            .where(*conditions)
         )
         return result.scalar_one()

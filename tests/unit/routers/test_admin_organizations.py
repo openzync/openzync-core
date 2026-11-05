@@ -80,7 +80,7 @@ async def test_list_prompt_templates_success() -> None:
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch("routers.admin_organizations.PromptTemplateRepository") as repo_cls:
+    with patch("services.prompt_template_service.PromptTemplateRepository") as repo_cls:
         repo_instance = AsyncMock()
         repo_instance.list_names.return_value = [
             {
@@ -123,7 +123,7 @@ async def test_list_system_prompts_success() -> None:
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch("routers.admin_organizations.PromptTemplateRepository") as repo_cls:
+    with patch("services.prompt_template_service.PromptTemplateRepository") as repo_cls:
         repo_instance = AsyncMock()
         repo_instance.list_system_grouped.return_value = [
             SystemPromptGroup(
@@ -160,7 +160,7 @@ async def test_import_system_prompt_success() -> None:
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch("routers.admin_organizations.PromptTemplateRepository") as repo_cls:
+    with patch("services.prompt_template_service.PromptTemplateRepository") as repo_cls:
         repo_instance = AsyncMock()
         repo_instance.import_system_template.return_value = _make_detail(
             name="extract_facts_v2",
@@ -193,7 +193,7 @@ async def test_import_system_prompt_409_already_imported() -> None:
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch("routers.admin_organizations.PromptTemplateRepository") as repo_cls:
+    with patch("services.prompt_template_service.PromptTemplateRepository") as repo_cls:
         repo_instance = AsyncMock()
         repo_instance.import_system_template.side_effect = ValueError(
             "already imported: extract_facts_v2"
@@ -215,7 +215,7 @@ async def test_import_system_prompt_404_not_found() -> None:
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch("routers.admin_organizations.PromptTemplateRepository") as repo_cls:
+    with patch("services.prompt_template_service.PromptTemplateRepository") as repo_cls:
         repo_instance = AsyncMock()
         repo_instance.import_system_template.side_effect = ValueError(
             "No active system default for 'missing_name'"
@@ -237,7 +237,7 @@ async def test_set_prompt_default_success() -> None:
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch("routers.admin_organizations.PromptTemplateRepository") as repo_cls:
+    with patch("services.prompt_template_service.PromptTemplateRepository") as repo_cls:
         repo_instance = AsyncMock()
         repo_instance.set_as_type_default.return_value = _make_detail(
             name="extract_facts",
@@ -267,7 +267,7 @@ async def test_get_prompt_template_success() -> None:
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch("routers.admin_organizations.PromptTemplateRepository") as repo_cls:
+    with patch("services.prompt_template_service.PromptTemplateRepository") as repo_cls:
         repo_instance = AsyncMock()
         repo_instance.get_active.return_value = _make_detail(
             name="extract_facts",
@@ -294,7 +294,7 @@ async def test_get_prompt_template_404() -> None:
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch("routers.admin_organizations.PromptTemplateRepository") as repo_cls:
+    with patch("services.prompt_template_service.PromptTemplateRepository") as repo_cls:
         repo_instance = AsyncMock()
         repo_instance.get_active.return_value = None
         repo_cls.return_value = repo_instance
@@ -312,7 +312,7 @@ async def test_list_prompt_versions_success() -> None:
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch("routers.admin_organizations.PromptTemplateRepository") as repo_cls:
+    with patch("services.prompt_template_service.PromptTemplateRepository") as repo_cls:
         repo_instance = AsyncMock()
         active = _make_detail(
             name="extract_facts",
@@ -349,7 +349,7 @@ async def test_list_prompt_versions_404() -> None:
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch("routers.admin_organizations.PromptTemplateRepository") as repo_cls:
+    with patch("services.prompt_template_service.PromptTemplateRepository") as repo_cls:
         repo_instance = AsyncMock()
         repo_instance.get_active.return_value = None
         repo_cls.return_value = repo_instance
@@ -409,7 +409,7 @@ async def test_rollback_prompt_template_success() -> None:
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch("routers.admin_organizations.PromptTemplateRepository") as repo_cls:
+    with patch("services.prompt_template_service.PromptTemplateRepository") as repo_cls:
         repo_instance = AsyncMock()
         repo_instance.rollback.return_value = _make_detail(
             name="extract_facts",
@@ -440,7 +440,7 @@ async def test_rollback_prompt_template_404() -> None:
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch("routers.admin_organizations.PromptTemplateRepository") as repo_cls:
+    with patch("services.prompt_template_service.PromptTemplateRepository") as repo_cls:
         repo_instance = AsyncMock()
         repo_instance.rollback.side_effect = ValueError("Version 99 not found")
         repo_cls.return_value = repo_instance
@@ -459,7 +459,7 @@ async def test_delete_prompt_template_success() -> None:
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch("routers.admin_organizations.PromptTemplateRepository") as repo_cls:
+    with patch("services.prompt_template_service.PromptTemplateRepository") as repo_cls:
         repo_instance = AsyncMock()
         active = _make_detail(
             name="custom_prompt",
@@ -487,7 +487,7 @@ async def test_delete_prompt_template_404() -> None:
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch("routers.admin_organizations.PromptTemplateRepository") as repo_cls:
+    with patch("services.prompt_template_service.PromptTemplateRepository") as repo_cls:
         repo_instance = AsyncMock()
         repo_instance.get_active.return_value = None
         repo_cls.return_value = repo_instance
@@ -504,7 +504,7 @@ async def test_delete_prompt_template_409_is_default() -> None:
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch("routers.admin_organizations.PromptTemplateRepository") as repo_cls:
+    with patch("services.prompt_template_service.PromptTemplateRepository") as repo_cls:
         repo_instance = AsyncMock()
         active = _make_detail(
             name="default_prompt",

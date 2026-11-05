@@ -206,11 +206,14 @@ def with_task_metrics(func: Callable[F, T]) -> Callable[F, T]:
         The wrapped coroutine.
     """
     signature = inspect.signature(func)
+    ctx_param_name: str | None = next(iter(signature.parameters), None)
 
     @functools.wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
         params = signature.bind_partial(*args, **kwargs).arguments
-        ctx = params.get("ctx")
+        ctx: Any = params.get(ctx_param_name) if ctx_param_name else None
+        if not isinstance(ctx, dict):
+            ctx = params.get("ctx")
         started = time.perf_counter()
 
         if isinstance(ctx, dict):

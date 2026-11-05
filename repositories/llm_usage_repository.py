@@ -7,11 +7,13 @@ there is no UPDATE or DELETE at the application layer.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -80,6 +82,35 @@ class LLMUsageRepository:
             .on_conflict_do_nothing(index_elements=["idempotency_key"])
         )
         await self._db.execute(stmt)
+
+    @classmethod
+    async def create_scoped(
+        cls, session_factory: Callable[[], Any], record: UsageRecord
+    ) -> None:
+        """Insert a metering record via an isolated RLS-scoped session.
+
+        Opens a fresh session from ``session_factory``, binds it to the
+        record's org, inserts, and commits. Used by the usage sink's
+        factory path (workers) so metering never joins the caller's
+        transaction.
+
+        Args:
+            session_factory: Callable returning a new async session
+                (e.g. ``async_sessionmaker``).
+            record: Metering payload (org scope already filled).
+
+        Raises:
+            RuntimeError: If the record has no org scope.
+        """
+        if record.org_id is None:
+            raise RuntimeError("usage sink received a record without org_id")
+        async with session_factory() as session:
+            await session.execute(
+                text("SELECT set_config('app.org_id', :oid, true)"),
+                {"oid": str(record.org_id)},
+            )
+            await cls(session).create(record)
+            await session.commit()
 
     async def list_paginated(
         self,
