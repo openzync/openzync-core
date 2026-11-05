@@ -150,11 +150,14 @@ jobs:
           OZ_SMTP_FROM_ADDR: ${{ secrets.OZ_SMTP_FROM_ADDR }}
           OZ_SMTP_USE_TLS: ${{ secrets.OZ_SMTP_USE_TLS }}
           OZ_SMTP_START_TLS: ${{ secrets.OZ_SMTP_START_TLS }}
+          GF_ADMIN_PASSWORD: ${{ secrets.GF_ADMIN_PASSWORD }}
+          MINIO_ROOT_USER: ${{ secrets.MINIO_ROOT_USER }}
+          MINIO_ROOT_PASSWORD: ${{ secrets.MINIO_ROOT_PASSWORD }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: OZ_DATABASE_URL,OZ_SECRET_KEY,VPS_HOST,BAO_STATIC_SEAL_KEY,OZ_WEBHOOK_SIGNING_SECRET,OZ_SMTP_HOST,OZ_SMTP_PORT,OZ_SMTP_USERNAME,OZ_SMTP_PASSWORD,OZ_SMTP_FROM_ADDR,OZ_SMTP_USE_TLS,OZ_SMTP_START_TLS
+          envs: OZ_DATABASE_URL,OZ_SECRET_KEY,VPS_HOST,BAO_STATIC_SEAL_KEY,OZ_WEBHOOK_SIGNING_SECRET,OZ_SMTP_HOST,OZ_SMTP_PORT,OZ_SMTP_USERNAME,OZ_SMTP_PASSWORD,OZ_SMTP_FROM_ADDR,OZ_SMTP_USE_TLS,OZ_SMTP_START_TLS,GF_ADMIN_PASSWORD,MINIO_ROOT_USER,MINIO_ROOT_PASSWORD
           script: |
             set -e
             # Images are public on ghcr.io since 2026-08-31 — no docker login needed
@@ -190,6 +193,9 @@ jobs:
             OZ_SMTP_FROM_ADDR=$OZ_SMTP_FROM_ADDR
             OZ_SMTP_USE_TLS=$OZ_SMTP_USE_TLS
             OZ_SMTP_START_TLS=$OZ_SMTP_START_TLS
+            GF_ADMIN_PASSWORD=$GF_ADMIN_PASSWORD
+            MINIO_ROOT_USER=$MINIO_ROOT_USER
+            MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD
             ENVEOF
 
             # ── Deploy backend: pull → migrate → restart ───────────────────

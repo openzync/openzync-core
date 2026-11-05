@@ -1,0 +1,1 @@
+Fixed the v1.0.1 deploy failure: the CD job generated the production `.env` without `GF_ADMIN_PASSWORD`, `MINIO_ROOT_USER`, and `MINIO_ROOT_PASSWORD`, which the hardened compose file marks as required, so Grafana/MinIO refused to start. The workflow now forwards the three secrets and writes them into `.env`.
