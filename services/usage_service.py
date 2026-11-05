@@ -21,7 +21,6 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.llm import UsageRecord, UsageSink
@@ -56,13 +55,7 @@ async def _persist(target: SessionTarget, record: UsageRecord) -> None:
     if record.org_id is None:
         raise RuntimeError("usage sink received a record without org_id")
     if isinstance(target, Callable):
-        async with target() as session:
-            await session.execute(
-                text("SELECT set_config('app.org_id', :oid, true)"),
-                {"oid": str(record.org_id)},
-            )
-            await LLMUsageRepository(session).create(record)
-            await session.commit()
+        await LLMUsageRepository.create_scoped(target, record)
     else:
         async with target.begin_nested():
             await LLMUsageRepository(target).create(record)

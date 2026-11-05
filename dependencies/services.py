@@ -61,6 +61,7 @@ from services.memory_service import MemoryService
 from services.org_request_service import OrgRequestService
 from services.organization_service import OrganizationService  # noqa: TC001
 from services.otp_service import OtpService
+from services.prompt_template_service import PromptTemplateService
 from services.quick_actions_service import QuickActionsService
 from services.session_service import SessionService
 from services.user_service import UserService
@@ -515,6 +516,21 @@ async def get_auth_throttle(
 
 
 # ── Quick Actions ──────────────────────────────────────────────────────────────
+
+
+async def get_prompt_template_service(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> PromptTemplateService:
+    """Dependency that yields an initialised PromptTemplateService.
+
+    Wires the request-scoped session with the app Redis client so
+    template mutations invalidate the cache entry. Routers depend on
+    this factory — never on ``PromptTemplateRepository`` directly.
+    """
+    return PromptTemplateService(
+        db, redis=getattr(request.app.state, "redis", None)
+    )
 
 
 async def get_quick_actions_service(

@@ -570,16 +570,6 @@ class TestWithTaskMetrics:
 
         assert ctx  # the caller's dict was mutated in place
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "SOURCE BUG: with_task_metrics looks the context up by the "
-            "literal parameter name 'ctx' (params.get('ctx')) instead of "
-            "finding the first positional argument via inspect.signature, "
-            "so a task whose context parameter has another name records no "
-            "metrics at all.  Fix: resolve the first positional parameter."
-        ),
-    )
     @pytest.mark.asyncio
     async def test_finds_ctx_regardless_of_parameter_name(self) -> None:
         """The ctx is located through the signature, not by its name."""

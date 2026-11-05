@@ -59,7 +59,10 @@ class TestStructuredExtractionRepository:
         mock_db.execute.return_value = mock_result
 
         rows, next_cursor = await repo.get_by_session(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
+            org_id=self.ORG_ID,
+            session_id=self.SESSION_ID,
+            sort_by="sequence_number",
+            sort_dir="asc",
         )
 
         assert rows == extractions
@@ -74,7 +77,10 @@ class TestStructuredExtractionRepository:
         mock_db.execute.return_value = mock_result
 
         rows, next_cursor = await repo.get_by_session(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
+            org_id=self.ORG_ID,
+            session_id=self.SESSION_ID,
+            sort_by="sequence_number",
+            sort_dir="asc",
         )
 
         assert rows == []

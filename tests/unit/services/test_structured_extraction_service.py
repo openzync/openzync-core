@@ -90,7 +90,13 @@ class TestStructuredExtractionService:
             org_id=self.ORG_ID, session_id=self.SESSION_ID, project_id=None,
         )
         mock_repo.get_by_session.assert_awaited_once_with(
-            self.ORG_ID, self.SESSION_ID, sort=None, limit=100, cursor=None
+            self.ORG_ID,
+            self.SESSION_ID,
+            sort_by="sequence_number",
+            sort_dir="asc",
+            limit=100,
+            cursor_value=None,
+            cursor_id=None,
         )
 
     @pytest.mark.asyncio
@@ -104,7 +110,13 @@ class TestStructuredExtractionService:
         await service.get_session_extractions(self.ORG_ID, self.SESSION_ID, sort=spec)
 
         mock_repo.get_by_session.assert_awaited_once_with(
-            self.ORG_ID, self.SESSION_ID, sort=spec, limit=100, cursor=None
+            self.ORG_ID,
+            self.SESSION_ID,
+            sort_by="created_at",
+            sort_dir="asc",
+            limit=100,
+            cursor_value=None,
+            cursor_id=None,
         )
 
     @pytest.mark.asyncio

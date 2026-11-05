@@ -101,7 +101,7 @@ async def deliver_webhook(
                         endpoint_url,
                         status_code,
                     )
-                    raise Retry(defer=2**attempt)
+                    raise Retry(defer=2 ** (attempt - 1))
                 else:
                     error = f"HTTP {status_code} (final)"
 
@@ -109,13 +109,13 @@ async def deliver_webhook(
         error = f"Timeout: {exc}"
         logger.warning("Webhook timeout (attempt %d): %s", attempt, endpoint_url)
         if attempt < MAX_ATTEMPTS:
-            raise Retry(defer=2**attempt)
+            raise Retry(defer=2 ** (attempt - 1))
 
     except httpx.RequestError as exc:
         error = f"Network error: {exc}"
         logger.warning("Webhook network error (attempt %d): %s", attempt, exc)
         if attempt < MAX_ATTEMPTS:
-            raise Retry(defer=2**attempt)
+            raise Retry(defer=2 ** (attempt - 1))
 
     finally:
         await _log_delivery(

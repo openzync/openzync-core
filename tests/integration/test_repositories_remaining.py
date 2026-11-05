@@ -328,7 +328,10 @@ class TestStructuredExtractionRepository:
         async with AsyncSession(engine) as db:
             repo = StructuredExtractionRepository(db)
             rows, next_cursor = await repo.get_by_session(
-                ORG_ID, uuid4(),
+                ORG_ID,
+                uuid4(),
+                sort_by="sequence_number",
+                sort_dir="asc",
             )
             assert isinstance(rows, list)
             assert next_cursor is None
