@@ -415,15 +415,17 @@ WORKER_SECRET_ID=$(bao write -f -namespace=system/ -field=secret_id auth/approle
 # the sidecars (least privilege — the root token and unseal keys share
 # this volume).
 log "Writing AppRole credentials to ${BAO_INIT_DIR}/ ..."
-umask 077  # belt-and-suspenders: files start 0600 even if chmod misses one
+umask 077  # unseal keys / root token stay 0600; AppRole files opened to 0644 below
 printf '%s' "${APP_ROLE_ID}"      > "${BAO_INIT_DIR}/api-role_id"
-chmod 0600 "${BAO_INIT_DIR}/api-role_id"
+# 0644: role_ids are non-secret identifiers; secret_ids are single-use startup
+# credentials consumed by same-trust-domain containers (mirrors system.env 0644 in infra/openbao/agent/*.hcl).
+chmod 0644 "${BAO_INIT_DIR}/api-role_id"
 printf '%s' "${APP_SECRET_ID}"    > "${BAO_INIT_DIR}/api-secret_id"
-chmod 0600 "${BAO_INIT_DIR}/api-secret_id"
+chmod 0644 "${BAO_INIT_DIR}/api-secret_id"
 printf '%s' "${WORKER_ROLE_ID}"   > "${BAO_INIT_DIR}/worker-role_id"
-chmod 0600 "${BAO_INIT_DIR}/worker-role_id"
+chmod 0644 "${BAO_INIT_DIR}/worker-role_id"
 printf '%s' "${WORKER_SECRET_ID}" > "${BAO_INIT_DIR}/worker-secret_id"
-chmod 0600 "${BAO_INIT_DIR}/worker-secret_id"
+chmod 0644 "${BAO_INIT_DIR}/worker-secret_id"
 log "  ${BAO_INIT_DIR}/api-role_id"
 log "  ${BAO_INIT_DIR}/api-secret_id          (deleted by Agent after first read)"
 log "  ${BAO_INIT_DIR}/worker-role_id"
