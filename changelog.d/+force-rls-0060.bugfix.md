@@ -1,1 +1,0 @@
-Fixed tables missing FORCE ROW LEVEL SECURITY; migration 0060 enforces it on all organization_id tables and added a check_force_rls.py lint so a future table without FORCE fails migration instead of leaking rows.
