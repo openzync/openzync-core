@@ -39,8 +39,10 @@ template_config {
 }
 
 template {
+  # system.env renders 0644 (0600 blocks the non-root app user; the shared volume
+  # mounts only where the entrypoint already exports every line to the process env).
   destination          = "/openbao/agent/system.env"
-  perms                = "0600"
+  perms                = "0644"
   error_on_missing_key = true
   contents = <<EOT
 {{- with secret "config/data/system" -}}

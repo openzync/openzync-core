@@ -42,7 +42,7 @@ template_config {
 
 template {
   destination          = "/openbao/agent/system.env"
-  perms                = "0600"
+  perms                = "0644"
   error_on_missing_key = true
   contents = <<EOT
 {{- with secret "config/data/system" -}}
@@ -62,6 +62,6 @@ vault {
 }
 
 # Security model — fail-fast, deny-by-default:
-# system.env is 0600 on tmpfs; .token sink is 0600;
-# error_on_missing_key + exit_on_retry_failure fail loudly on render error;
-# tokens auto-renew; bootstrap volume is mounted read-only.
+# system.env renders 0644 on the shared volume (0600 blocks the non-root app user;
+# volume mounts only where the entrypoint already exports every line to the process env).
+# .token sink is 0600; error_on_missing_key + exit_on_retry_failure fail loudly.
