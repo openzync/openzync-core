@@ -166,36 +166,18 @@ def _resolve_action(
 ) -> tuple[str, str, str | None]:
     """Resolve audit (action, resource_type, display_name) from route metadata.
 
-    Checks ``scope["route"]`` first: FastAPI 0.139+ lazy-includes routers —
-    ``app.include_router()`` appends ``_IncludedRouter`` placeholder objects
-    to ``app.routes`` instead of flattened ``APIRoute``s, so scanning
-    ``app.routes`` never finds the ``@audit_action`` metadata and every
-    request degrades to ``http.{method}``.  During request handling FastAPI
-    sets ``scope["route"]`` to the matched ``APIRoute``, which carries the
-    real endpoint.  The ``app.routes`` scan is kept as a fallback for older
-    FastAPI/Starlette ``Route`` objects and non-FastAPI apps;
-    ``http.{method}`` remains the last-resort fallback.
+    Reads only ``scope["route"]`` — the matched ``APIRoute`` Starlette sets
+    on the request scope during routing.  Request-scoped by construction:
+    nothing is read from the process-global ``app.routes`` table, so one
+    request (or test) can never influence another's resolution.  Requests
+    with no matched route, or a route without metadata, degrade to
+    ``http.{method}``.
     """
     route = scope.get("route")
     if route is not None and hasattr(route, "endpoint"):
         meta = get_audit_metadata(route.endpoint)
         if meta is not None:
             return (meta["action"], meta["resource"], meta["display"])
-
-    app = scope.get("app")
-    if app is not None and hasattr(app, "routes"):
-        for route in app.routes:
-            if not hasattr(route, "endpoint"):
-                continue
-            if hasattr(route, "methods") and method not in route.methods:
-                continue
-            route_path: str | None = getattr(route, "path", None)
-            if route_path is not None:
-                match = route.path_regex.match(path) if hasattr(route, "path_regex") else None
-                if match is not None:
-                    meta = get_audit_metadata(route.endpoint)
-                    if meta is not None:
-                        return (meta["action"], meta["resource"], meta["display"])
 
     # Fallback — no route matched or no metadata found
     parts = path.strip("/").split("/") if path.strip("/") else ["unknown"]

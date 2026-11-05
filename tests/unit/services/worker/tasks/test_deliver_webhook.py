@@ -117,16 +117,6 @@ def _expected_defer_seconds(job_try: int) -> int:
     return 2 ** (job_try - 1)
 
 
-DEFER_EXPONENT_BUG = (
-    "SOURCE BUG: deliver_webhook computes the backoff as 2**attempt with a "
-    "now 1-based attempt (ARQ's job_try), so the first retry waits 2s "
-    "instead of 1s and every step is doubled.  The schedule must be "
-    "2**(job_try - 1) to keep the 1s/2s/4s/8s progression.  Fix: raise "
-    "Retry(defer=2**(attempt - 1))."
-)
-"""Shared ``xfail`` reason for the backoff-defer assertions."""
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # deliver_webhook
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -358,7 +348,6 @@ class TestDeliverWebhook:
 
     # ── 5xx — retried up to MAX_ATTEMPTS ──────────────────────────────────────
 
-    @pytest.mark.xfail(strict=True, reason=DEFER_EXPONENT_BUG)
     @pytest.mark.asyncio
     async def test_5xx_raises_retry_when_attempts_remain(self) -> None:
         """5xx server error raises Retry with exponential backoff."""
@@ -444,7 +433,6 @@ class TestDeliverWebhook:
                 signature=SIGNATURE,
             )
 
-    @pytest.mark.xfail(strict=True, reason=DEFER_EXPONENT_BUG)
     @pytest.mark.asyncio
     async def test_5xx_backoff_doubles_with_each_attempt(self) -> None:
         """Retry defer doubles with the attempt number: 2**(attempt-1)."""
@@ -475,7 +463,6 @@ class TestDeliverWebhook:
 
     # ── httpx.TimeoutException ─────────────────────────────────────────────────
 
-    @pytest.mark.xfail(strict=True, reason=DEFER_EXPONENT_BUG)
     @pytest.mark.asyncio
     async def test_timeout_raises_retry_when_attempts_remain(self) -> None:
         """TimeoutException raises Retry with exponential backoff."""
@@ -536,7 +523,6 @@ class TestDeliverWebhook:
 
     # ── httpx.RequestError (network errors) ───────────────────────────────────
 
-    @pytest.mark.xfail(strict=True, reason=DEFER_EXPONENT_BUG)
     @pytest.mark.asyncio
     async def test_request_error_raises_retry_when_attempts_remain(self) -> None:
         """RequestError raises Retry with exponential backoff."""
