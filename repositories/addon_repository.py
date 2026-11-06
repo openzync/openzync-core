@@ -55,13 +55,20 @@ class AddonRepository:
         """
         return await self.get_by_id(addon_id) is not None
 
-    async def create(self, addon_id: str, version: str, manifest: dict) -> AddonState:
+    async def create(
+        self,
+        addon_id: str,
+        version: str,
+        manifest: dict,
+        settings_schema: dict | None = None,
+    ) -> AddonState:
         """Insert the install row (enabled).
 
         Args:
             addon_id: The addon slug.
             version: The installed version.
             manifest: The validated manifest snapshot.
+            settings_schema: The validated settings schema snapshot, if any.
 
         Returns:
             The persisted row.
@@ -72,6 +79,7 @@ class AddonRepository:
             enabled=True,
             status="installed",
             manifest=manifest,
+            settings_schema=settings_schema,
         )
         self._db.add(row)
         await self._db.flush()
@@ -108,6 +116,30 @@ class AddonRepository:
             row.enabled = enabled
         if status is not None:
             row.status = status
+        await self._db.flush()
+        await self._db.refresh(row)
+        return row
+
+    async def set_settings_schema(
+        self, addon_id: str, settings_schema: dict | None
+    ) -> AddonState:
+        """Replace the settings schema snapshot (upgrade path).
+
+        Args:
+            addon_id: The addon slug.
+            settings_schema: The new snapshot, or ``None`` when the new
+                bundle declares no settings.
+
+        Returns:
+            The updated row.
+
+        Raises:
+            LookupError: If the addon is not installed.
+        """
+        row = await self.get_by_id(addon_id)
+        if row is None:
+            raise LookupError(f"Addon {addon_id!r} is not installed.")
+        row.settings_schema = settings_schema
         await self._db.flush()
         await self._db.refresh(row)
         return row

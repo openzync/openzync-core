@@ -23,6 +23,8 @@ class AddonState(TimestampMixin, Base):
         enabled: Whether routes/tasks serve traffic (``False`` → 403).
         status: Lifecycle marker: installed/enabled/disabled/error.
         manifest: The validated manifest snapshot at install time.
+        settings_schema: The validated ``settings.schema.json`` snapshot,
+            or ``None`` when the addon declares no settings.
     """
 
     __tablename__ = "addon_states"
@@ -32,3 +34,6 @@ class AddonState(TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="installed")
     manifest: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    settings_schema: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True, default=None
+    )

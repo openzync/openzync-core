@@ -44,6 +44,7 @@ from middleware.rate_limit import RateLimitMiddleware
 from middleware.request_id import RequestIDMiddleware
 from middleware.tracing import TracingMiddleware
 from routers import (
+    addon_org,
     admin,
     admin_addons,
     admin_invites,
@@ -386,6 +387,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_invites.router)
     app.include_router(admin_system.router)
     app.include_router(admin_addons.router)
+    app.include_router(addon_org.router)
     app.include_router(org_requests.router)
     app.include_router(audit_log.router)
     app.include_router(auth.router)

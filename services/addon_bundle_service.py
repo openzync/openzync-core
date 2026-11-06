@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from starlette.datastructures import UploadFile
 
 from core.addons import registry as _registry
-from core.addons.bundles import extract_bundle
+from core.addons.bundles import extract_bundle, read_settings_schema
 from core.addons.loader import (
     ADDONS_DIR,
     build_record,
@@ -78,9 +78,13 @@ class AddonBundleService:
             await self._verify_signature(raw_toml, manifest.signature)
             hooks = load_hooks_module(manifest.id, manifest.version, stage / "hooks.py")
             record = build_record(manifest, hooks)
+            settings_schema = read_settings_schema(stage)
             try:
                 row = await self._repo.create(
-                    manifest.id, manifest.version, self._manifest_snapshot(manifest)
+                    manifest.id,
+                    manifest.version,
+                    self._manifest_snapshot(manifest),
+                    settings_schema=settings_schema,
                 )
             except IntegrityError as exc:
                 # PK is the arbiter — the exists() check above races.
@@ -124,9 +128,11 @@ class AddonBundleService:
             await self._verify_signature(raw_toml, manifest.signature)
             hooks = load_hooks_module(manifest.id, manifest.version, stage / "hooks.py")
             record = build_record(manifest, hooks)
+            settings_schema = read_settings_schema(stage)
             row = await self._repo.update(
                 addon_id, version=manifest.version, enabled=True, status="enabled"
             )
+            await self._repo.set_settings_schema(addon_id, settings_schema)
             self._promote_stage(stage, manifest.id)
             unmount_record(self._app, addon_id)
             mount_record(self._app, record)
@@ -239,4 +245,8 @@ class AddonBundleService:
             "hooks": list(manifest.hooks),
             "permissions": list(manifest.permissions),
             "tables": list(manifest.tables),
+            "panels": [
+                {"id": p.id, "title": p.title, "path": p.path}
+                for p in manifest.panels
+            ],
         }

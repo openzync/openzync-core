@@ -805,6 +805,17 @@ class OpenBaoClient:
         """
         return f"{parent}{ORG_NAMESPACE_PREFIX}{org_id}/"
 
+    def org_namespace(self, org_id: UUID) -> str:
+        """Return the namespace path for an organisation.
+
+        Args:
+            org_id: Organisation UUID.
+
+        Returns:
+            Namespace string (e.g. ``system/org_<uuid>/``).
+        """
+        return self._org_ns(org_id, parent=self._namespace or "")
+
     async def read_org_config(self, org_id: UUID) -> dict[str, Any]:
         """Read all configuration keys for an organisation.
 

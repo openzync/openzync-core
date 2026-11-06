@@ -40,6 +40,8 @@ REQUIRED_HOOKS: frozenset[str] = frozenset(
         "embedder",
         "llm",
         "health",
+        "settings",
+        "admin_ui",
     }
 )
 """Hook names an addon may declare. Unknown hooks are rejected."""
@@ -47,8 +49,23 @@ REQUIRED_HOOKS: frozenset[str] = frozenset(
 ADDON_ID_RE: re.Pattern[str] = re.compile(r"^[a-z0-9][a-z0-9_-]{1,62}$")
 """Addon ids: lowercase slug, 2–64 chars. Used for module names and URLs."""
 
+PANEL_ID_RE: re.Pattern[str] = re.compile(r"^[a-z0-9][a-z0-9_-]{1,62}$")
+"""Panel ids: slug-like, 2–64 chars."""
+
+PANEL_PATH_PREFIX = "/ui/"
+"""Panel paths must live under the addon's ``/ui/`` mount."""
+
 TABLE_NAME_RE: re.Pattern[str] = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
 """Allowlist for addon-owned table names (purge path only)."""
+
+
+@dataclass(frozen=True, slots=True)
+class AddonPanel:
+    """One management panel descriptor from ``[[panels]]``."""
+
+    id: str
+    title: str
+    path: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +78,7 @@ class AddonManifest:
     hooks: tuple[str, ...] = ()
     permissions: tuple[str, ...] = ()
     tables: tuple[str, ...] = ()
+    panels: tuple[AddonPanel, ...] = ()
     signature: str = ""
 
 
@@ -147,6 +165,8 @@ def parse_manifest(raw: bytes) -> AddonManifest:
     if unsafe:
         raise ValidationError(f"Unsafe addon table names: {unsafe}.")
 
+    panels = _parse_panels(doc.get("panels", []), addon_id)
+
     signature = doc.get("signing", {}).get("signature", "")
     if not isinstance(signature, str):
         raise ValidationError("signing.signature must be a hex string.")
@@ -158,8 +178,60 @@ def parse_manifest(raw: bytes) -> AddonManifest:
         hooks=hooks,
         permissions=permissions,
         tables=tables,
+        panels=panels,
         signature=signature,
     )
+
+
+def _parse_panels(raw: object, addon_id: str) -> tuple[AddonPanel, ...]:
+    """Validate the optional top-level ``[[panels]]`` array.
+
+    Args:
+        raw: The raw ``panels`` value (absent → empty tuple).
+        addon_id: The addon slug (error context only).
+
+    Returns:
+        The validated panel descriptors.
+
+    Raises:
+        ValidationError: On non-list input, malformed entries, bad ids,
+            empty titles, paths outside ``/ui/``, or duplicate ids.
+    """
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ValidationError(f"Addon {addon_id!r}: panels must be an array.")
+    panels: list[AddonPanel] = []
+    seen: set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise ValidationError(f"Addon {addon_id!r}: each panel must be a table.")
+        unknown = set(entry) - {"id", "title", "path"}
+        if unknown:
+            raise ValidationError(
+                f"Addon {addon_id!r}: unknown panel keys: {sorted(unknown)}."
+            )
+        panel_id = entry.get("id", "")
+        if not isinstance(panel_id, str) or not PANEL_ID_RE.match(panel_id):
+            raise ValidationError(f"Addon {addon_id!r}: bad panel id {panel_id!r}.")
+        if panel_id in seen:
+            raise ValidationError(
+                f"Addon {addon_id!r}: duplicate panel id {panel_id!r}."
+            )
+        title = entry.get("title", "")
+        if not isinstance(title, str) or not title.strip():
+            raise ValidationError(
+                f"Addon {addon_id!r}: panel {panel_id!r} needs a title."
+            )
+        path = entry.get("path", "")
+        if not isinstance(path, str) or not path.startswith(PANEL_PATH_PREFIX):
+            raise ValidationError(
+                f"Addon {addon_id!r}: panel {panel_id!r} path must start "
+                f"with {PANEL_PATH_PREFIX!r}."
+            )
+        seen.add(panel_id)
+        panels.append(AddonPanel(id=panel_id, title=title.strip(), path=path))
+    return tuple(panels)
 
 
 def unsigned_bytes(raw: bytes) -> bytes:

@@ -57,6 +57,9 @@ ADDONS_DIR: Path = Path(
 REDIS_ENABLED_KEY_PREFIX = "addon:enabled:"
 """Redis mirror of each addon's enabled flag (cross-replica visibility)."""
 
+ORG_ENABLED_KEY_PREFIX = "addon:enabled:org:"
+"""Redis mirror of per-org flags: ``{prefix}{org_id}:{addon_id}``."""
+
 REDIS_EVENTS_CHANNEL = "openzync:addons"
 """Pub/sub channel for addon enable/disable events."""
 
@@ -325,6 +328,39 @@ async def publish_state(app: Any, addon_id: str, enabled: bool) -> None:
         )
     except Exception:
         logger.warning("addon.state_publish_failed", extra={"addon_id": addon_id})
+
+
+async def publish_org_state(
+    app: Any, org_id: object, addon_id: str, enabled: bool
+) -> None:
+    """Mirror one org's addon flag to Redis and publish the state event.
+
+    Best-effort like :func:`publish_state` — a Redis outage never fails
+    the enable/disable request; the gate falls back to Postgres.
+
+    Args:
+        app: The FastAPI application.
+        org_id: The organization UUID (or its string form).
+        addon_id: The addon id.
+        enabled: The new per-org flag value.
+    """
+    redis = getattr(app.state, "redis", None)
+    if redis is None:
+        return
+    try:
+        await redis.set(
+            f"{ORG_ENABLED_KEY_PREFIX}{org_id}:{addon_id}",
+            "1" if enabled else "0",
+        )
+        await redis.publish(
+            REDIS_EVENTS_CHANNEL,
+            f"{addon_id}:org:{org_id}:{'enabled' if enabled else 'disabled'}",
+        )
+    except Exception:
+        logger.warning(
+            "addon.org_state_publish_failed",
+            extra={"addon_id": addon_id, "org_id": str(org_id)},
+        )
 
 
 async def discover_and_load(app: Any) -> list[str]:

@@ -20,6 +20,7 @@ from zipfile import ZipInfo
 
 from starlette.datastructures import UploadFile
 
+from core.addons.settings_schema import parse_settings_schema
 from core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
@@ -159,6 +160,27 @@ def _is_zip_symlink(info: ZipInfo) -> bool:
     if callable(is_symlink):
         return bool(is_symlink())
     return stat.S_ISLNK(info.external_attr >> 16)
+
+
+def read_settings_schema(stage: Path) -> dict | None:
+    """Read and validate the staged ``settings.schema.json``, if present.
+
+    Addons without settings simply omit the file — this returns ``None``
+    and their settings endpoints 404 with a clear message.
+
+    Args:
+        stage: The staged bundle directory.
+
+    Returns:
+        The parsed schema, or ``None`` when the bundle ships no file.
+
+    Raises:
+        ValidationError: When the file exists but is invalid.
+    """
+    path = stage / "settings.schema.json"
+    if not path.is_file():
+        return None
+    return parse_settings_schema(path.read_bytes())
 
 
 def _check_member(name: str) -> None:
