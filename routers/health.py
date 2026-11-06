@@ -62,6 +62,11 @@ async def readiness(request: Request) -> JSONResponse:
     # Aux outages (FalkorDB, Ollama, Transit, seed) degrade instead of
     # blocking boot — /ready reports them here until they recover.
     degraded: dict[str, str] = dict(getattr(request.app.state, "degraded", {}))
+    # Addon load failures surface as addon:{id} (loader writes them);
+    # live-but-unhealthy addons report via their own /admin health probe.
+    for record in (getattr(request.app.state, "addons", {}) or {}).values():
+        if not record.enabled:
+            degraded.setdefault(f"addons:{record.id}", "disabled")
     all_healthy = all(checks.values()) and not degraded
 
     return JSONResponse(

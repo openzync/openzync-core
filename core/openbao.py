@@ -736,6 +736,58 @@ class OpenBaoClient:
         )
 
     # ═════════════════════════════════════════════════════════════════════════
+    # Single-secret read/write (logical paths)
+    # ═════════════════════════════════════════════════════════════════════════
+
+    async def read_secret(
+        self, path: str, namespace: str | None = None
+    ) -> dict[str, Any]:
+        """Read one KV v2 secret by logical path.
+
+        Prepends the ``config/data/`` mount prefix unless already present,
+        so callers use short paths like ``"addon/signing-pubkey"`` which
+        resolves to ``config/data/addon/signing-pubkey`` in the client's
+        namespace (``system/`` by default).
+
+        Args:
+            path: Logical secret path (e.g. ``"addon/signing-pubkey"``).
+            namespace: Optional namespace override (defaults to the
+                client's namespace).
+
+        Returns:
+            The secret data dict.
+
+        Raises:
+            OpenBaoSecretNotFoundError: If the path does not exist.
+        """
+        full_path = path.lstrip("/")
+        if not full_path.startswith(f"{KV_MOUNT}/data/"):
+            full_path = f"{KV_MOUNT}/data/{full_path}"
+        return await self._kv_read(
+            full_path, namespace=namespace or self._namespace
+        )
+
+    async def write_secret(
+        self, path: str, data: dict[str, Any], namespace: str | None = None
+    ) -> None:
+        """Write one KV v2 secret by logical path.
+
+        Same path convention as :meth:`read_secret`.
+
+        Args:
+            path: Logical secret path (e.g. ``"addon/signing-pubkey"``).
+            data: The secret data to persist.
+            namespace: Optional namespace override (defaults to the
+                client's namespace).
+        """
+        full_path = path.lstrip("/")
+        if not full_path.startswith(f"{KV_MOUNT}/data/"):
+            full_path = f"{KV_MOUNT}/data/{full_path}"
+        await self._kv_write(
+            full_path, data, namespace=namespace or self._namespace
+        )
+
+    # ═════════════════════════════════════════════════════════════════════════
     # Organisation configuration
     # ═════════════════════════════════════════════════════════════════════════
 
@@ -752,6 +804,17 @@ class OpenBaoClient:
             Namespace string (e.g. ``system/org_<uuid>/``).
         """
         return f"{parent}{ORG_NAMESPACE_PREFIX}{org_id}/"
+
+    def org_namespace(self, org_id: UUID) -> str:
+        """Return the namespace path for an organisation.
+
+        Args:
+            org_id: Organisation UUID.
+
+        Returns:
+            Namespace string (e.g. ``system/org_<uuid>/``).
+        """
+        return self._org_ns(org_id, parent=self._namespace or "")
 
     async def read_org_config(self, org_id: UUID) -> dict[str, Any]:
         """Read all configuration keys for an organisation.
