@@ -35,6 +35,23 @@ class OrgAddonListResponse(BaseModel):
     total: int
 
 
+class AddonSettingsGroup(BaseModel):
+    """One settings group: schema slice plus masked values for that group."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str = Field(description="Group id (implicit first group: 'general').")
+    title: str = Field(description="Human-readable group title.")
+    description: str = Field(default="", description="Group help text (may be empty).")
+    properties: dict[str, Any] = Field(description="Scalar field declarations.")
+    required: list[str] = Field(
+        default_factory=list, description="Required field names in this group."
+    )
+    values: dict[str, Any] = Field(
+        default_factory=dict, description="Masked values for this group's fields."
+    )
+
+
 class AddonSettingsResponse(BaseModel):
     """Settings schema plus masked values (secrets read as ``***``)."""
 
@@ -45,6 +62,10 @@ class AddonSettingsResponse(BaseModel):
         alias="schema", description="The snapshotted settings.schema.json."
     )
     values: dict[str, Any] = Field(description="Masked org values.")
+    groups: list[AddonSettingsGroup] = Field(
+        default_factory=list,
+        description="Per-group schema slices with masked values.",
+    )
 
 
 class UpdateAddonSettingsRequest(BaseModel):

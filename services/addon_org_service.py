@@ -18,6 +18,8 @@ from core.addons.loader import publish_org_state
 from core.addons.settings_schema import (
     MASKED_SECRET,
     mask_secrets,
+    merge_plain_secrets,
+    normalize_groups,
     secret_keys,
     split_secrets,
     validate_settings_values,
@@ -38,6 +40,7 @@ from repositories.addon_org_settings_repository import AddonOrgSettingsRepositor
 from repositories.addon_repository import AddonRepository
 from schemas.addon_org import (
     AddonPanelsResponse,
+    AddonSettingsGroup,
     AddonSettingsResponse,
     OrgAddonHealthResponse,
     OrgAddonResponse,
@@ -132,9 +135,15 @@ class AddonOrgService:
         schema = self._require_schema(row)
         org_row = await self._org_repo.get(addon_id, org_id)
         plain = dict(org_row.values) if org_row is not None else {}
-        merged = {**plain, **await self._read_secrets(row, org_id, schema)}
+        merged = merge_plain_secrets(
+            plain, await self._read_secrets(row, org_id, schema)
+        )
+        masked = mask_secrets(schema, merged)
         return AddonSettingsResponse(
-            id=row.id, schema=schema, values=mask_secrets(schema, merged)
+            id=row.id,
+            schema=schema,
+            values=masked,
+            groups=self._to_groups(schema, masked),
         )
 
     async def update_settings(
@@ -162,20 +171,41 @@ class AddonOrgService:
         schema = self._require_schema(row)
         skeys = secret_keys(schema)
         stored = await self._read_secrets(row, org_id, schema)
-        candidate = dict(values)
-        for key in skeys:
-            if candidate.get(key) == MASKED_SECRET:
-                if key in stored:
-                    candidate[key] = stored[key]
+        candidate = {
+            k: (dict(v) if isinstance(v, dict) else v) for k, v in values.items()
+        }
+        for ref in skeys:
+            group, sep, key = ref.partition(".")
+            if not sep:
+                if candidate.get(ref) == MASKED_SECRET:
+                    if ref in stored:
+                        candidate[ref] = stored[ref]
+                    else:
+                        candidate.pop(ref, None)
+                continue
+            sub = candidate.get(group)
+            if isinstance(sub, dict) and sub.get(key) == MASKED_SECRET:
+                sval = stored.get(group)
+                sub = dict(sub)
+                if isinstance(sval, dict) and key in sval:
+                    sub[key] = sval[key]
                 else:
-                    candidate.pop(key, None)
+                    sub.pop(key, None)
+                if sub:
+                    candidate[group] = sub
+                else:
+                    candidate.pop(group, None)
         validated = validate_settings_values(schema, candidate)
         plain, secrets = split_secrets(schema, validated)
         await self._org_repo.upsert(addon_id, org_id, values=plain)
         if skeys:
             await self._write_secrets(addon_id, org_id, secrets)
+        masked = mask_secrets(schema, validated)
         return AddonSettingsResponse(
-            id=row.id, schema=schema, values=mask_secrets(schema, validated)
+            id=row.id,
+            schema=schema,
+            values=masked,
+            groups=self._to_groups(schema, masked),
         )
 
     async def reveal_secrets(
@@ -203,7 +233,15 @@ class AddonOrgService:
         if unknown:
             raise ValidationError(f"Not secret settings: {unknown}.")
         stored = await self._read_secrets(row, org_id, schema)
-        return {k: stored.get(k) for k in keys}
+        revealed: dict[str, Any | None] = {}
+        for ref in keys:
+            group, sep, key = ref.partition(".")
+            if not sep:
+                revealed[ref] = stored.get(ref)
+                continue
+            sub = stored.get(group)
+            revealed[ref] = sub.get(key) if isinstance(sub, dict) else None
+        return revealed
 
     async def get_panels(self, addon_id: str, org_id: uuid.UUID) -> AddonPanelsResponse:
         """Return panel descriptors from the manifest snapshot.
@@ -364,6 +402,30 @@ class AddonOrgService:
             )
         except OpenBaoError as exc:
             raise ExternalServiceError(f"Addon secrets unwritable: {exc}") from exc
+
+    def _to_groups(
+        self, schema: dict[str, Any], masked: dict[str, Any]
+    ) -> list[AddonSettingsGroup]:
+        """Partition masked values into per-group slices for the UI.
+
+        Args:
+            schema: The parsed settings schema.
+            masked: Masked merged values (nested shape).
+
+        Returns:
+            One entry per group from :func:`normalize_groups`.
+        """
+        props = schema.get("properties", {})
+        out = []
+        for group in normalize_groups(schema):
+            gid = group["id"]
+            if gid in props:
+                sub = masked.get(gid)
+                gvalues = dict(sub) if isinstance(sub, dict) else {}
+            else:
+                gvalues = {k: masked[k] for k in group["properties"] if k in masked}
+            out.append(AddonSettingsGroup(**{**group, "values": gvalues}))
+        return out
 
     def _to_response(
         self,
