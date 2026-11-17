@@ -1,6 +1,7 @@
 """Dashboard authentication endpoints — HTTP adapter layer only.
 
 Endpoints:
+    POST   /v1/auth/setup   — One-time platform root bootstrap (public)
     POST   /v1/auth/signup             — Create org + admin user, send OTP
     POST   /v1/auth/verify-email       — Verify email with OTP, return JWT
     POST   /v1/auth/resend-otp         — Resend verification OTP
@@ -26,12 +27,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request
 
 from core.audit import audit_action
+from core.exceptions import AuthorizationError, ConflictError
 from core.system_config import get_system_config
 from dependencies.auth import get_dashboard_user
 from dependencies.services import (
     get_auth_service,
     get_auth_throttle,
     get_invite_service,
+    get_setup_service,
 )
 from middleware.auth_throttle import AuthThrottle
 from schemas.auth import (
@@ -49,6 +52,8 @@ from schemas.auth import (
     PendingOrgResponse,
     RefreshRequest,
     RegistrationStatusResponse,
+    SetupRequest,
+    SetupResponse,
     SignupRequest,
     SignupResponse,
     TokenResponse,
@@ -63,6 +68,7 @@ from schemas.email import (
 )
 from services.auth_service import AuthService
 from services.invite_service import InviteService
+from services.setup_service import SetupService
 
 router = APIRouter(
     prefix="/v1/auth",
@@ -110,6 +116,51 @@ async def registration_status(
     return RegistrationStatusResponse(
         org_creation_policy=config.org_creation_policy,
         approval_scope=config.approval_scope,
+    )
+
+
+@router.post(
+    "/setup",
+    response_model=SetupResponse,
+    status_code=201,
+    summary="One-time platform setup",
+    description=(
+        "Creates the platform root superadmin with the operator-chosen "
+        "password.  Usable exactly once — after the platform is set up "
+        "every call returns 403.  PUBLIC ENDPOINT — no auth required."
+    ),
+)
+@audit_action("auth.setup", "user", "Platform root created")
+async def setup_platform_root(
+    payload: SetupRequest,
+    request: Request,
+    service: SetupService = Depends(get_setup_service),  # noqa: B008
+    throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
+) -> SetupResponse:
+    """Create the platform root superadmin (one-time bootstrap).
+
+    Args:
+        payload: Operator-chosen root password.
+        request: Incoming HTTP request (for IP extraction).
+        service: Injected setup service.
+        throttle: Injected auth throttle.
+
+    Returns:
+        Confirmation message — the operator logs in with username
+        ``'root'`` afterwards.
+
+    Raises:
+        AuthorizationError: Generic 403 when the platform is already set
+            up (deliberately indistinguishable from any other setup
+            failure — the endpoint must not leak bootstrap state).
+    """
+    await throttle.check_signup_attempt(_client_ip(request))
+    try:
+        await service.create_root_once(payload.password)
+    except ConflictError as exc:
+        raise AuthorizationError("Platform setup is not available.") from exc
+    return SetupResponse(
+        message="Platform root created. Log in with username 'root'."
     )
 
 

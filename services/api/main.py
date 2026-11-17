@@ -185,27 +185,9 @@ def create_app() -> FastAPI:
         else:
             logger.info("transit.webhook_secret_key_verified")
 
-        # ── Seed the platform org + root superadmin (leader-guarded) ────
-        # Idempotent (ON CONFLICT DO NOTHING) AND leader-guarded: exactly
-        # one API replica runs the seed, the rest log and skip.  The seed
-        # is race-safe without the lock, but the lock avoids N replicas
-        # hammering Postgres + OpenBao with the same writes at every
-        # rolling restart.
-        try:
-            from services.platform_seed import ensure_platform_root
-
-            seed_lock: bool = await redis_client.set(
-                "openzync:seed:platform_root", "1", ex=300, nx=True
-            )
-            if seed_lock:
-                async with app.state.db_session_factory() as seed_session:
-                    await ensure_platform_root(seed_session, _bao)
-                logger.info("platform_seed.ensured")
-            else:
-                logger.info("platform_seed.skipped — follower replica")
-        except Exception as exc:
-            app.state.degraded["platform_seed"] = str(exc)
-            logger.exception("platform_seed.failed — degraded")
+        # ⚠️ BREAKING: boot-time platform seeding removed — the root user is
+        # created exactly once via public POST /v1/auth/setup, and /ready
+        # reports needs_setup until then.  No Redis leader lock, no seed.
 
         # ── Prewarm the frozen embedder (degraded, not fatal) ───────────
         # DB/Redis/graph backends are up; prove Ollama /api/embed is

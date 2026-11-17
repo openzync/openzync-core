@@ -100,6 +100,7 @@ PUBLIC_ENDPOINTS: set[str] = {
     "/v1/auth/login/otp/verify",
     "/v1/auth/mfa/verify",
     "/v1/auth/registration-status",
+    "/v1/auth/setup",
     "/v1/auth/invites",
 }
 """Paths that are allowed without authentication.

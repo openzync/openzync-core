@@ -10,9 +10,12 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import rls
+from core.config import PLATFORM_ORG_ID
+from core.org_codes import generate_org_code
 from core.sorting import SortSpec, resolve_order_by
 from models.organization import Organization
 
@@ -85,6 +88,48 @@ class OrganizationRepository:
             select(Organization).where(Organization.id == org_id)
         )
         return result.scalar_one_or_none()
+
+    async def get_platform_org(self) -> Organization | None:
+        """Fetch the platform (SYSTEM) organization, bypassing RLS.
+
+        The setup probe and the one-time setup flow run without a tenant
+        context, so the lookup disables the RLS policies transaction-
+        locally instead of relying on ``set_config`` at the call site.
+
+        Returns:
+            The platform Organization if seeded, or ``None``.
+        """
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(Organization).where(Organization.id == PLATFORM_ORG_ID)
+            )
+            return result.scalar_one_or_none()
+
+    async def ensure_platform_org(self) -> None:
+        """Insert the platform (SYSTEM) organization if it does not exist.
+
+        Idempotent ``ON CONFLICT DO NOTHING`` — concurrent setup calls
+        race safely, the losers no-op.  Runs under an RLS bypass so it
+        works without a tenant context.
+
+        Returns:
+            ``None`` — the row exists afterwards either way.
+        """
+        async with rls.rls_bypass(self._db):
+            await self._db.execute(
+                pg_insert(Organization)
+                .values(
+                    id=PLATFORM_ORG_ID,
+                    name="SYSTEM",
+                    plan="enterprise",
+                    status="approved",
+                    join_enabled=False,
+                    org_code=generate_org_code(),
+                    is_active=True,
+                )
+                .on_conflict_do_nothing(index_elements=["id"])
+            )
+            await self._db.flush()
 
     async def get_by_code(self, code: str) -> Organization | None:
         """Fetch a joinable organization by its join code.
