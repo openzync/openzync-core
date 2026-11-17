@@ -10,7 +10,8 @@
 #   up      ensure postgres + redis + falkordb + mailpit + openbao
 #           containers, run the full OpenBao bootstrap
 #           (scripts/init_openbao.sh — regenerates AppRole secret_ids every
-#           run), re-sync .env with fresh credentials.
+#           run), re-sync .env with fresh credentials, apply pending
+#           Alembic migrations.
 #   down    stop the dev containers (data volumes are preserved).
 #   status  one-line health check per dependency.
 #
@@ -185,6 +186,12 @@ ensure_postgres() {
             -c "CREATE DATABASE openzync OWNER openzync;" >/dev/null
         log "Role 'openzync' + database 'openzync' created."
     fi
+    # pgvector in POSTGRES_IMAGE is not a trusted extension (superuser-only) and
+    # the openzync role is not superuser, so the DB owner cannot create it —
+    # every app connection would then die in the pgvector codec with
+    # "unknown type: public.vector". Same one-liner as scripts/init_postgres.sh.
+    docker exec "$POSTGRES_CONTAINER" psql -U postgres -d openzync -v ON_ERROR_STOP=1 \
+        -c "CREATE EXTENSION IF NOT EXISTS vector;" >/dev/null
     # Re-source: first run appends OZ_DATABASE_URL to the secrets file after
     # gen_secrets already sourced it.
     # shellcheck disable=SC1090
@@ -491,6 +498,27 @@ EOF
     exit 1
 }
 
+# ── 11. Alembic migrations (schema must exist before uvicorn boots) ──────────
+# migrate.sh resolves OZ_DATABASE_URL from the OpenBao system secret and execs
+# alembic, so it needs the AppRole creds from .env — which sync_env just wrote.
+# Failure aborts the whole preflight (set -e): a schema-less database is not
+# "deps up", and the API would only log platform_seed.failed — degraded.
+apply_migrations() {
+    if ! command -v alembic >/dev/null 2>&1; then
+        log "FATAL: alembic not on PATH — activate the venv first: source .venv/bin/activate"
+        exit 1
+    fi
+    log "Applying Alembic migrations ..."
+    (
+        cd "$REPO_ROOT"
+        set -a
+        # shellcheck disable=SC1090
+        . "$ENV_FILE"
+        set +a
+        ./scripts/migrate.sh upgrade head
+    )
+}
+
 up() {
     gen_secrets
     ensure_tooling_image
@@ -502,6 +530,7 @@ up() {
     # Unconditional every run: secret_ids rotate on each bootstrap, so .env must re-sync.
     bootstrap
     sync_env
+    apply_migrations
     seed_host_ollama_embed_url
     probe_embeddings "$EFFECTIVE_EMBED_URL"
     log "Done. Dev deps up. API: uvicorn services.api.asgi:app --reload --host 0.0.0.0"

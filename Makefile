@@ -5,6 +5,7 @@
 #
 # Examples:
 #   make dev              # Start the API server
+#   make worker           # Start the ARQ worker (high + low queues)
 #   make test             # Run unit tests only
 #   make test-all         # Run all tests (unit + integration + security)
 #   make test ARGS="-k exceptions"   # Run only exception-related tests
@@ -15,24 +16,35 @@
 #   make docker-down      # Stop infrastructure containers
 # ──────────────────────────────────────────────────────────────────────────────
 
-.PHONY: dev install lint test test-all test-coverage test-coverage-ci test-coverage-report test-coverage-html migrate migrate-new docker-up docker-up-local docker-down docker-down-local docker-logs docker-logs-local docker-reset docker-reset-local docs-install docs-build docs-watch docs-clean docs-apidoc changelog-check changelog-build clean
+.PHONY: dev deps worker install lint test test-all test-coverage test-coverage-ci test-coverage-report test-coverage-html migrate migrate-new docker-up docker-up-local docker-down docker-down-local docker-logs docker-logs-local docker-reset docker-reset-local docs-install docs-build docs-watch docs-clean docs-apidoc changelog-check changelog-build clean
 
 # ── Variables ─────────────────────────────────────────────────────────────────
 
+# Recipes use bashisms (`source`, `read -p`). make defaults to /bin/sh, which on
+# Arch is bash in POSIX mode — there `source .env` searches $PATH, not the cwd.
+SHELL := /bin/bash
 PORT ?= 8000
 PYTHON ?= python3
 PIP ?= pip3
 VERSION ?= 0.0.0
 
-# ── Development server ────────────────────────────────────────────────────────
+# ── Development servers ───────────────────────────────────────────────────────
 
-# Runs the dev preflight (postgres+redis+falkordb+mailpit+openbao,
-# auto-bootstraps OpenBao + syncs .env), then starts the API server
-# with the bootstrap credentials loaded.
-dev:
+# One-time (idempotent) bring-up of postgres+redis+falkordb+mailpit+openbao,
+# OpenBao bootstrap and .env resync. Run this once; `dev` and `worker` assume
+# it already ran. It re-mints AppRole secret_ids every run, so don't chain it.
+deps:
 	@bash scripts/dev_preflight.sh
+
+dev:
 	# Bind 0.0.0.0 so the Prometheus container can scrape host.docker.internal:8000 (uvicorn defaults to 127.0.0.1).
 	@set -a && source .env && set +a && uvicorn services.api.asgi:app --reload --host 0.0.0.0 --port $(PORT)
+
+# Host-run ARQ worker. Same entrypoint the container execs (scripts/entrypoint_worker.sh
+# only adds waiting for the OpenBao Agent sidecar to render /run/secrets/system.env).
+# Holds :8081 (health) and :9095 (Prometheus) — do not run alongside the compose worker.
+worker:
+	@set -a && source .env && set +a && $(PYTHON) -m services.worker.worker
 
 # ── Installation ──────────────────────────────────────────────────────────────
 
