@@ -11,7 +11,7 @@ Usage (workers):
     from services.worker.prompt_renderer import render_prompt
 
     system_prompt, ctx = await render_prompt(
-        "fact_extraction",
+        "enrich_episode",
         org_id=org_id,
         episode_id=episode_id,
         session_id=session_id,
@@ -127,41 +127,6 @@ class DataSource(Enum):
 # ── 2. Static registry: prompt_type → set of DataSource ──────────────────────
 
 TYPE_DATA_SOURCES: dict[str, set[DataSource]] = {
-    "fact_extraction": {
-        DataSource.EPISODE_CONTENT,
-        DataSource.EPISODE_METADATA,
-        DataSource.SESSION_ENTITIES,
-        DataSource.SESSION_FACTS,
-        DataSource.SESSION_RECENT_HISTORY,
-        DataSource.SIMILAR_EPISODES,
-        DataSource.SIMILAR_FACTS,
-    },
-    "entity_extraction": {
-        DataSource.EPISODE_CONTENT,
-        DataSource.EPISODE_METADATA,
-        DataSource.SESSION_ENTITIES,
-        DataSource.ORG_ENTITY_TYPES,
-        DataSource.SIMILAR_EPISODES,
-        DataSource.SIMILAR_FACTS,
-    },
-    "classification": {
-        DataSource.EPISODE_CONTENT,
-        DataSource.EPISODE_METADATA,
-        DataSource.SESSION_RECENT_HISTORY,
-        DataSource.SIMILAR_EPISODES,
-        DataSource.SIMILAR_FACTS,
-        DataSource.ORG_CLASSIFICATION_LABELS,
-    },
-    "structured_extraction": {
-        DataSource.EPISODE_CONTENT,
-        DataSource.EPISODE_METADATA,
-        DataSource.SESSION_ENTITIES,
-        DataSource.SESSION_FACTS,
-        DataSource.SESSION_RECENT_HISTORY,
-        DataSource.SIMILAR_EPISODES,
-        DataSource.SIMILAR_FACTS,
-        DataSource.ORG_STRUCTURED_SCHEMAS,
-    },
     "enrich_episode": {
         DataSource.EPISODE_CONTENT,
         DataSource.EPISODE_METADATA,
@@ -903,7 +868,7 @@ async def render_prompt(
     ``build_enrichment_prompt()`` to assemble the full prompt.
 
     Args:
-        prompt_type: The template type (e.g. ``"fact_extraction"``).
+        prompt_type: The template type (e.g. ``"enrich_episode"``).
             Used to look up the registry of data sources to auto-inject.
         template_text: Raw template string.  If ``None``, resolved from
             the startup disk cache via ``resolve_prompt_template_by_type``.
@@ -942,7 +907,7 @@ async def render_prompt(
         .. code-block:: python
 
             prompt = await render_prompt(
-                "fact_extraction",
+                "enrich_episode",
                 org_id="...",
                 episode_id="...",
                 session_id="...",
@@ -1028,7 +993,7 @@ def resolve_prompt_template_by_type(type: str) -> str:
     (:data:`core.prompt_manifest.DEFAULT_PROMPT_TEXTS`) — no DB access.
 
     Args:
-        type: The template type (e.g. ``"fact_extraction"``).
+        type: The template type (e.g. ``"enrich_episode"``).
 
     Returns:
         The active template body.

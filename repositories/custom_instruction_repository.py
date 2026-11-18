@@ -11,6 +11,7 @@ import uuid
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import ValidationError
 from models.custom_instruction import CustomInstruction
 
 
@@ -77,7 +78,18 @@ class CustomInstructionRepository:
         Returns:
             The newly created ``CustomInstruction`` objects with server-side
             defaults populated (id, created_at, updated_at).
+
+        Raises:
+            ValidationError: If ``instructions`` contains duplicate names (422).
         """
+        names = [instr["name"] for instr in instructions]
+        if len(names) != len(set(names)):
+            dupes = sorted({n for n in names if names.count(n) > 1})
+            raise ValidationError(
+                f"Duplicate custom instruction names: {', '.join(dupes)}",
+                detail={"duplicates": dupes},
+            )
+
         # Delete all existing for this scope+target
         delete_conditions = [
             CustomInstruction.organization_id == org_id,

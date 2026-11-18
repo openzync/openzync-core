@@ -31,6 +31,7 @@ class CustomInstructionSchema(BaseModel):
     text: str = Field(
         ...,
         min_length=1,
+        max_length=4000,
         description="The instruction text content.",
         examples=[
             "This application operates in the legal domain. "
