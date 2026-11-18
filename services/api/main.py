@@ -42,6 +42,7 @@ from middleware.request_id import RequestIDMiddleware
 from middleware.tracing import TracingMiddleware
 from routers import (
     admin,
+    admin_addons,
     admin_invites,
     admin_llm_usage,
     admin_metrics,
@@ -208,6 +209,82 @@ def create_app() -> FastAPI:
         else:
             logger.info("embeddings.prewarmed")
 
+        # ── Addon runtime: RLS guard + hot-load enabled addons ──────────
+        from core.addons.guard import install_rls_guard
+
+        install_rls_guard()
+        app.state.addons = {}
+        try:
+            from core.addons.installer import ADDON_ROOT
+            from core.addons.loader import load_addon
+            from core.addons.manifest import parse_manifest
+            from core.addons.mount import mount_addon
+            from core.addons.registry import (
+                AddonRecord,
+                next_generation,
+                publish_registry,
+            )
+            from models.addon_state import AddonState
+            from sqlalchemy import select
+
+            async with app.state.db_session_factory() as _s:
+                rows = (await _s.execute(select(AddonState))).scalars().all()
+            records: dict = {}
+            paths: dict = {}
+            for _row in rows:
+                if not _row.enabled:
+                    continue
+                _slug = (
+                    _row.source_ref.replace("/", "__")
+                    if _row.source_type == "github"
+                    else _row.id
+                )
+                _src = ADDON_ROOT / _slug
+                try:
+                    _manifest = parse_manifest(_src)
+                    _module = load_addon(_manifest, _src, _row.version)
+                    from core.addons.hooks import (
+                        resolve_addon_router as _resolve_router,
+                    )
+                    from core.addons.hooks import (
+                        resolve_worker_ops as _resolve_ops,
+                    )
+
+                    _router = _resolve_router(_module)
+                    if _router is not None and getattr(_module, "router", None) is None:
+                        _module.router = _router
+                    records[_row.id] = AddonRecord(
+                        manifest=_manifest,
+                        module=_module,
+                        version=_row.version,
+                        enabled=True,
+                        generation=next_generation(),
+                        service_overrides=dict(
+                            getattr(_module, "SERVICE_OVERRIDES", {})
+                        ),
+                        router=_router,
+                        worker_ops=_resolve_ops(_module),
+                    )
+                    paths[_row.id] = _src
+                except Exception as exc:
+                    logger.error(
+                        "addon.boot_load_failed",
+                        extra={"addon": _row.id, "error": str(exc)},
+                    )
+            publish_registry(app, records)
+            for _aid, _rec in records.items():
+                try:
+                    mount_addon(app, _rec, paths[_aid])
+                except Exception as exc:
+                    logger.error(
+                        "addon.boot_mount_failed",
+                        extra={"addon": _aid, "error": str(exc)},
+                    )
+        except Exception as exc:
+            # Boot must not fail on addon errors — degrade loudly, serve core.
+            app.state.degraded["addons"] = str(exc)
+            logger.error("addons.boot_failed — degraded", exc_info=True)
+
         yield
 
         # ── Shutdown (reverse order of initialisation) ────────────────────
@@ -331,6 +408,7 @@ def create_app() -> FastAPI:
     # and /ready; the /v1 prefix made them 404 on deployed instances.
     app.include_router(health.router, tags=["Health"])
     app.include_router(admin.router)
+    app.include_router(admin_addons.router)
     app.include_router(admin_llm_usage.router)
     app.include_router(admin_metrics.router)
     app.include_router(admin_schemas.router)

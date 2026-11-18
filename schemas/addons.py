@@ -1,0 +1,59 @@
+"""Pydantic schemas for addon admin endpoints."""
+
+from __future__ import annotations
+
+from datetime import datetime  # noqa: TC003 — pydantic resolves at runtime
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class AddonInstallRequest(BaseModel):
+    """Install an addon from a local path or a github repo."""
+
+    local_path: str | None = Field(default=None, description="Local dir to copy.")
+    github_url: str | None = Field(default=None, description="owner/repo or URL.")
+    tag: str | None = Field(default=None, description="Git tag (default latest).")
+
+
+class AddonResponse(BaseModel):
+    """One addon row."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str = Field(..., description="Addon id.")
+    version: str = Field(..., description="Installed version.")
+    source_type: str = Field(..., description="local|github.")
+    source_ref: str = Field(..., description="Path or owner/repo.")
+    installed_sha: str | None = Field(default=None)
+    latest_seen: str | None = Field(default=None)
+    enabled: bool = Field(...)
+    update_available: bool = Field(...)
+    generation: int = Field(...)
+    created_at: datetime = Field(...)
+    updated_at: datetime = Field(...)
+
+
+class AddonListResponse(BaseModel):
+    """List response for ``GET /admin/system/addons``."""
+
+    data: list[AddonResponse] = Field(...)
+    total: int = Field(...)
+
+
+class AddonHealthResponse(BaseModel):
+    """Health snapshot for one addon."""
+
+    id: str = Field(...)
+    enabled: bool = Field(...)
+    loaded: bool = Field(...)
+    generation: int = Field(...)
+    version: str = Field(...)
+
+
+__all__ = [
+    "AddonHealthResponse",
+    "AddonInstallRequest",
+    "AddonListResponse",
+    "AddonResponse",
+]
