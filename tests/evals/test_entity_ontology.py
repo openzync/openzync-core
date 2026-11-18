@@ -7,6 +7,12 @@ Gates:
     G3.2a — Output entity types must be within the allowed set (F1 ≥ 80%).
     G3.2b — Expected entities must appear with correct names (recall ≥ 80%).
 
+Migrated from the deleted ``extract_entities_v1`` / ``entity_extraction``
+single-task prompt to the combined ``enrich_episode`` prompt (startup cache
++ ``build_enrichment_prompt``); assertions target the ``entities`` section of
+``CombinedLLMOutput``. Threshold unchanged (was 0.80); lower it if an eval
+run shows the combined prompt scores below the single-task baseline.
+
 This test is slow (requires an LLM call per sample) and is skipped by default.
 Run with::
 
@@ -19,9 +25,9 @@ import logging
 
 import pytest
 
-from schemas.llm_outputs import EntityExtractionOutput
-from services.worker.prompt_renderer import render_prompt
-from tests.evals.conftest import load_golden, load_prompt_text
+from schemas.llm_outputs import CombinedLLMOutput
+from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
+from tests.evals.conftest import load_golden
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +41,12 @@ async def test_entity_ontology_accuracy() -> None:
     """Measure entity extraction accuracy with ontology injection.
 
     For each golden test case:
-    1. Render the ``extract_entities_v1`` prompt with the conversation
-       and the domain-specific entity_types injected.
+    1. Render the ``enrich_episode`` prompt from the startup cache with the
+       conversation and the domain-specific entity_types injected, and
+       assemble the full prompt via ``build_enrichment_prompt``.
     2. Call the LLM backend.
     3. Parse and validate the JSON response via
-        ``EntityExtractionOutput.model_validate_json()``.
+        ``CombinedLLMOutput.model_validate_json()``.
     4. Validate every output entity type is in the allowed set.
     5. Check that expected entities appear with correct names.
 
@@ -62,20 +69,19 @@ async def test_entity_ontology_accuracy() -> None:
         extra={"samples": total, "threshold": ACCURACY_THRESHOLD},
     )
 
-    template_text = load_prompt_text("extract_entities_v1")
-
     for i, item in enumerate(dataset):
         conversation = item["conversation"]
         entity_types: list[str] = item.get("entity_types", [])
         expected_entities: list[dict[str, str]] = item.get("expected_entities", [])
 
         try:
-            prompt = await render_prompt(
-                "entity_extraction",
-                template_text=template_text,
+            system_prompt, ctx = await render_prompt(
+                "enrich_episode",
                 conversation=conversation,
                 entity_types=entity_types if entity_types else None,
+                return_context=True,
             )
+            prompt = build_enrichment_prompt(system_prompt, ctx)
 
             response = await llm.chat(
                 [
@@ -92,7 +98,7 @@ async def test_entity_ontology_accuracy() -> None:
             )
 
             try:
-                parsed = EntityExtractionOutput.model_validate_json(
+                parsed = CombinedLLMOutput.model_validate_json(
                     response.content
                 )
                 entities: list[dict] = [

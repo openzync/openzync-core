@@ -20,7 +20,10 @@ from dependencies.auth import (
     require_org_id,
 )
 from dependencies.db import get_db
-from routers.admin_organizations import router
+from routers.admin_organizations import (
+    get_custom_instruction_service,
+    router,
+)
 
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -76,23 +79,26 @@ async def test_list_custom_instructions_success() -> None:
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch(
-        "repositories.custom_instruction_repository.CustomInstructionRepository"
-    ) as repo_cls:
-        repo_instance = AsyncMock()
-        instruction = MagicMock()
-        instruction.name = "legal_domain"
-        instruction.text = "This is a legal domain instruction."
-        repo_instance.get_by_scope.return_value = [instruction]
-        repo_cls.return_value = repo_instance
+    fake_service = AsyncMock()
+    instruction = MagicMock()
+    instruction.name = "legal_domain"
+    instruction.text = "This is a legal domain instruction."
+    fake_service.list_for_scope.return_value = [instruction]
+    app.dependency_overrides[get_custom_instruction_service] = (
+        lambda: fake_service
+    )
 
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/admin/org/custom-instructions")
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/admin/org/custom-instructions")
 
     assert resp.status_code == 200
     body = resp.json()
     assert len(body["data"]) == 1
     assert body["data"][0]["name"] == "legal_domain"
+    fake_service.list_for_scope.assert_awaited_once_with(
+        org_id=ORG_ID,
+        scope="extraction",
+    )
 
 
 @pytest.mark.asyncio
@@ -101,34 +107,33 @@ async def test_set_custom_instructions_success() -> None:
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch(
-        "repositories.custom_instruction_repository.CustomInstructionRepository"
-    ) as repo_cls:
-        repo_instance = AsyncMock()
-        instruction = MagicMock()
-        instruction.name = "medical_domain"
-        instruction.text = "Medical domain instructions."
-        repo_instance.set_by_scope.return_value = [instruction]
-        repo_cls.return_value = repo_instance
+    fake_service = AsyncMock()
+    instruction = MagicMock()
+    instruction.name = "medical_domain"
+    instruction.text = "Medical domain instructions."
+    fake_service.set_for_scope.return_value = [instruction]
+    app.dependency_overrides[get_custom_instruction_service] = (
+        lambda: fake_service
+    )
 
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.put(
-                "/admin/org/custom-instructions",
-                json={
-                    "instructions": [
-                        {
-                            "name": "medical_domain",
-                            "text": "Medical domain instructions.",
-                        }
-                    ]
-                },
-            )
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(
+            "/admin/org/custom-instructions",
+            json={
+                "instructions": [
+                    {
+                        "name": "medical_domain",
+                        "text": "Medical domain instructions.",
+                    }
+                ]
+            },
+        )
 
     assert resp.status_code == 201
     body = resp.json()
     assert len(body["data"]) == 1
     assert body["data"][0]["name"] == "medical_domain"
-    repo_instance.set_by_scope.assert_awaited_once()
+    fake_service.set_for_scope.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -137,22 +142,19 @@ async def test_clear_custom_instructions_success() -> None:
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch(
-        "repositories.custom_instruction_repository.CustomInstructionRepository"
-    ) as repo_cls:
-        repo_instance = AsyncMock()
-        repo_instance.set_by_scope.return_value = []
-        repo_cls.return_value = repo_instance
+    fake_service = AsyncMock()
+    fake_service.clear_for_scope.return_value = None
+    app.dependency_overrides[get_custom_instruction_service] = (
+        lambda: fake_service
+    )
 
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.delete("/admin/org/custom-instructions")
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.delete("/admin/org/custom-instructions")
 
     assert resp.status_code == 204
-    repo_instance.set_by_scope.assert_awaited_once_with(
+    fake_service.clear_for_scope.assert_awaited_once_with(
         org_id=ORG_ID,
         scope="extraction",
-        target_id=None,
-        instructions=[],
     )
 
 

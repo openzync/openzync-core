@@ -5,6 +5,13 @@ dataset of 50+ conversation turns with expected labels.
 
 Gate: G3.1 — Accuracy must be ≥85%.
 
+Migrated from the deleted ``classify_dialog_v1`` / ``classification``
+single-task prompt to the combined ``enrich_episode`` prompt (startup cache
++ ``build_enrichment_prompt``); assertions target the ``classification``
+section of ``CombinedLLMOutput``. Threshold unchanged (was 0.85); lower it
+if an eval run shows the combined prompt scores below the single-task
+baseline.
+
 This test is slow (requires an LLM call per sample) and is skipped by default.
 Run with::
 
@@ -17,12 +24,11 @@ import logging
 
 import pytest
 
-from services.worker.prompt_renderer import render_prompt
+from schemas.llm_outputs import CombinedLLMOutput
+from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
 from tests.evals.conftest import (
     evaluate_classification_match,
     load_golden,
-    load_prompt_text,
-    parse_classification_response,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,22 +58,21 @@ async def test_classification_accuracy() -> None:
         extra={"samples": total, "threshold": ACCURACY_THRESHOLD},
     )
 
-    template_text = load_prompt_text("classify_dialog_v1")
-
     for i, item in enumerate(dataset):
         conversation = item["conversation"]
         tv = item["template_vars"]
 
         try:
-            prompt = await render_prompt(
-                "classification",
-                template_text=template_text,
+            system_prompt, ctx = await render_prompt(
+                "enrich_episode",
                 conversation=conversation,
                 intent_labels=tv["intent_labels"],
                 emotion_labels=tv["emotion_labels"],
                 valence_options=tv["valence_options"],
                 arousal_options=tv["arousal_options"],
+                return_context=True,
             )
+            prompt = build_enrichment_prompt(system_prompt, ctx)
 
             response = await llm.chat(
                 [
@@ -84,9 +89,11 @@ async def test_classification_accuracy() -> None:
                 max_tokens=300,
             )
 
-            parsed = parse_classification_response(response.content)
-
-            if parsed is None:
+            try:
+                parsed = CombinedLLMOutput.model_validate_json(
+                    response.content
+                ).classification.model_dump()
+            except Exception:
                 errors.append(
                     {
                         "index": i,

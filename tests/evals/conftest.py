@@ -17,14 +17,24 @@ PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "services" / "work
 
 
 def load_prompt_text(template_name: str) -> str:
-    """Load a prompt template from the filesystem prompts directory.
+    """Load a prompt template text for a prompt type.
+
+    Resolves from the startup-cached :data:`core.prompt_manifest.DEFAULT_PROMPT_TEXTS`
+    (single-type prompts were merged into the combined ``enrich_episode``
+    prompt; the old per-task ``.jinja2`` files no longer exist).  Falls back
+    to a direct ``.jinja2`` file read for names that are not prompt types
+    (e.g. ``summarise_user_v1``).
 
     Args:
-        template_name: The logical template name (e.g. ``"classify_dialog_v1"``).
+        template_name: The prompt type (e.g. ``"enrich_episode"``).
 
     Returns:
-        The raw Jinja2 template text.
+        The raw template text.
     """
+    from core.prompt_manifest import DEFAULT_PROMPT_TEXTS
+
+    if template_name in DEFAULT_PROMPT_TEXTS:
+        return DEFAULT_PROMPT_TEXTS[template_name]
     path = PROMPTS_DIR / f"{template_name}.jinja2"
     if not path.exists():
         raise FileNotFoundError(
