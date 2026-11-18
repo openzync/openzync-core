@@ -25,7 +25,18 @@ class InstalledSource:
     path: Path
 
 
-def _local_version(addon_dir: Path) -> str:
+def local_source_version(addon_dir: Path) -> str:
+    """Read the ``pyproject.toml`` version of a local addon source.
+
+    Args:
+        addon_dir: Directory containing ``pyproject.toml``.
+
+    Returns:
+        The ``project.version`` string.
+
+    Raises:
+        ValidationError: If the file is missing or has no version.
+    """
     pyproject = addon_dir / "pyproject.toml"
     if pyproject.is_file():
         try:
@@ -72,7 +83,7 @@ async def install_source(
         digest = hashlib.sha256(str(dest.stat().st_mtime).encode()).hexdigest()[:12]
         return InstalledSource(
             addon_id=manifest.id,
-            version=_local_version(dest),
+            version=local_source_version(dest),
             installed_sha=f"local-{digest}",
             path=dest,
         )
@@ -144,4 +155,10 @@ async def latest_github_tag(repo_url: str) -> str:
     return sorted(tags)[-1]
 
 
-__all__ = ["ADDON_ROOT", "InstalledSource", "install_source", "latest_github_tag"]
+__all__ = [
+    "ADDON_ROOT",
+    "InstalledSource",
+    "install_source",
+    "latest_github_tag",
+    "local_source_version",
+]

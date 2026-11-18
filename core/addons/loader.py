@@ -33,7 +33,9 @@ def load_addon(
 ) -> ModuleType:
     """Import an addon module under its versioned namespace.
 
-    Primary: ``source_path/entrypoint`` via ``spec_from_file_location``.
+    Primary: explicit ``manifest.entrypoint``, else the template
+    probes (``hooks.py``, ``addon.py``, ``addon/__init__.py``) —
+    first existing file wins via ``spec_from_file_location``.
     Secondary: ``openzync.addons`` entry-points group.
 
     Args:
@@ -48,8 +50,15 @@ def load_addon(
         ValidationError: If neither source yields a module.
     """
     name = module_name(manifest.id, version)
-    entry = source_path / manifest.entrypoint
-    if entry.is_file():
+    candidates = [manifest.entrypoint, "hooks.py", "addon.py", "addon/__init__.py"]
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        entry = source_path / candidate
+        if not entry.is_file():
+            continue
         spec = importlib.util.spec_from_file_location(name, entry)
         if spec is None or spec.loader is None:
             raise ValidationError(f"Cannot load addon entrypoint: {entry}.")

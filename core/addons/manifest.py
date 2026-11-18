@@ -50,7 +50,7 @@ class AddonManifest:
     permissions: frozenset[str]
     tables: tuple[str, ...] = ()
     panels: tuple[AddonPanel, ...] = ()
-    entrypoint: str = "addon.py"
+    entrypoint: str = "hooks.py"
 
 
 _LEADING_TRIPLE_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
@@ -83,9 +83,22 @@ def parse_manifest(addon_dir: Path) -> AddonManifest:
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ValidationError(f"addon.toml unreadable: {exc}") from exc
 
-    addon_id = str(raw.get("id", ""))
-    version = str(raw.get("version", ""))
-    min_core = str(raw.get("min_core_version", "0.0.0"))
+    # ``[addon]`` table shape: bundles may nest every field one level down
+    # (``name`` instead of ``id``). Flat keys stay canonical — the section
+    # is only a fallback. Unknown sections (e.g. ``[signing]``) are ignored.
+    section = raw.get("addon")
+    if not isinstance(section, dict):
+        section = {}
+
+    def _pick(key: str, section_key: str | None = None) -> object:
+        value = raw.get(key)
+        if value is None:
+            value = section.get(section_key or key)
+        return value
+
+    addon_id = str(_pick("id", "name") or "")
+    version = str(_pick("version") or "")
+    min_core = str(_pick("min_core_version") or "0.0.0")
     if not ID_RE.match(addon_id):
         raise ValidationError(f"Invalid addon id: {addon_id!r}.")
     if not SEMVER_RE.match(version):
@@ -102,22 +115,22 @@ def parse_manifest(addon_dir: Path) -> AddonManifest:
     except ValueError as exc:
         raise ValidationError(f"Unparseable version: {exc}") from exc
 
-    hooks = frozenset(str(h) for h in raw.get("hooks", []))
+    hooks = frozenset(str(h) for h in (_pick("hooks") or []))
     unknown_hooks = hooks - HOOKS_ALLOWLIST
     if unknown_hooks:
         raise ValidationError(f"Unknown hooks: {sorted(unknown_hooks)}.")
-    permissions = frozenset(str(p) for p in raw.get("permissions", []))
+    permissions = frozenset(str(p) for p in (_pick("permissions") or []))
     unknown_perms = permissions - ALL_PERMISSIONS
     if unknown_perms:
         raise ValidationError(f"Unknown permissions: {sorted(unknown_perms)}.")
 
-    tables = tuple(str(t) for t in raw.get("tables", []))
+    tables = tuple(str(t) for t in (_pick("tables") or []))
     for table in tables:
         if not TABLE_RE.match(table):
             raise ValidationError(f"Invalid table name: {table!r}.")
 
     panels: list[AddonPanel] = []
-    for panel in raw.get("panels", []):
+    for panel in (_pick("panels") or []):
         pid, title, path = str(panel["id"]), str(panel["title"]), str(panel["path"])
         if not ID_RE.match(pid):
             raise ValidationError(f"Invalid panel id: {pid!r}.")
@@ -133,7 +146,7 @@ def parse_manifest(addon_dir: Path) -> AddonManifest:
         permissions=permissions,
         tables=tables,
         panels=tuple(panels),
-        entrypoint=str(raw.get("entrypoint", "addon.py")),
+        entrypoint=str(_pick("entrypoint") or "hooks.py"),
     )
 
 

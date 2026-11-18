@@ -6,9 +6,13 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.addons.installer import ADDON_ROOT, install_source, latest_github_tag
+from core.addons.installer import (
+    ADDON_ROOT,
+    install_source,
+    latest_github_tag,
+    local_source_version,
+)
 from core.addons.hooks import resolve_addon_router, resolve_worker_ops
 from core.addons.loader import load_addon
 from core.addons.manifest import parse_manifest
@@ -25,6 +29,12 @@ from repositories.addon_repository import AddonRepository
 logger = logging.getLogger(__name__)
 
 
+def _db_url() -> str:
+    from core.config import get_settings
+
+    return str(get_settings().DATABASE_URL)
+
+
 class AddonService:
     """Orchestrates addon lifecycle against ``addon_states`` + the registry."""
 
@@ -36,8 +46,14 @@ class AddonService:
         """Return every addon row."""
         return await self._repo.get_all()
 
-    async def install(self, source_type: str, source_ref: str, tag: str | None) -> AddonState:
+    async def install(
+        self, source_type: str, source_ref: str, tag: str | None
+    ) -> AddonState:
         """Install a new addon (disabled by default).
+
+        Hooks resolve loudly before persist; a gated placeholder mounts
+        so never-enabled ids 403 instead of 404; then the bundle chain
+        migrates to head. Migration failure keeps the disabled row.
 
         Raises:
             ConflictError: If the id is already installed.
@@ -47,16 +63,32 @@ class AddonService:
         installed = await install_source(source_type, source_ref, tag)
         if await self._repo.get_by_id(installed.addon_id) is not None:
             raise ConflictError(f"Addon {installed.addon_id!r} already installed.")
+        manifest = parse_manifest(installed.path)
+        module = load_addon(manifest, installed.path, installed.version)
+        resolve_addon_router(module)
+        resolve_worker_ops(module)
         row = AddonState(
             id=installed.addon_id,
             version=installed.version,
             source_type=source_type,
             source_ref=source_ref,
             installed_sha=installed.installed_sha,
+            latest_seen=installed.version if source_type == "local" else None,
             enabled=False,
         )
         await self._repo.create(row)
-        await self._run_addon_migrations(installed.addon_id, "up")
+        from core.addons.mount import mount_placeholder
+
+        mount_placeholder(self._app, installed.addon_id)
+        try:
+            from core.addons.alembic_runner import migrate_up
+
+            await migrate_up(installed.addon_id, installed.path, manifest, _db_url())
+        except Exception:
+            logger.error(
+                "addon.migrations_failed", extra={"addon": installed.addon_id}
+            )
+            raise
         logger.info("addon.installed", extra={"addon": installed.addon_id})
         return row
 
@@ -101,14 +133,45 @@ class AddonService:
         return row
 
     async def upgrade(self, addon_id: str, tag: str | None = None) -> AddonState:
-        """Re-install from source and reload when enabled."""
+        """Re-install from source and reload when enabled.
+
+        Local sources re-copy ``source_ref`` and 422 when the
+        ``pyproject.toml`` version is unchanged. Migration failure
+        disables the row + record and raises.
+        """
         row = await self._require(addon_id)
-        if row.source_type != "github":
-            raise ValidationError("Only github addons support upgrade by tag.")
-        installed = await install_source(row.source_type, row.source_ref, tag)
-        row.version = installed.version
+        if row.source_type == "github":
+            installed = await install_source("github", row.source_ref, tag)
+            new_version = installed.version
+            new_seen: str | None = installed.installed_sha
+        elif row.source_type == "local":
+            if tag is not None:
+                raise ValidationError("tag is only valid for github sources.")
+            installed = await install_source("local", row.source_ref, None)
+            new_version = installed.version
+            if new_version == row.version:
+                raise ValidationError(
+                    f"Addon {addon_id!r} already at latest (v{row.version})."
+                )
+            new_seen = new_version
+        else:
+            raise ValidationError(f"Unknown source_type: {row.source_type!r}.")
+        manifest = parse_manifest(installed.path)
+        try:
+            from core.addons.alembic_runner import migrate_up
+
+            await migrate_up(row.id, installed.path, manifest, _db_url())
+        except Exception:
+            row.enabled = False
+            records = dict(get_registry(self._app))
+            if row.id in records:
+                records[row.id].enabled = False
+                publish_registry(self._app, records)
+            logger.error("addon.migrations_failed", extra={"addon": row.id})
+            raise
+        row.version = new_version
         row.installed_sha = installed.installed_sha
-        row.latest_seen = installed.installed_sha
+        row.latest_seen = new_seen
         row.update_available = False
         if row.enabled:
             await self._reload(row)
@@ -116,11 +179,29 @@ class AddonService:
         return row
 
     async def uninstall(self, addon_id: str, remove_data: bool) -> None:
-        """Remove the addon row; with ``remove_data`` downgrade + drop tables."""
+        """Remove the addon row; ``remove_data`` downgrades + drops tables.
+
+        With ``remove_data`` the bundle chain downgrades to base and exactly
+        the allowlisted tables drop. Without it tables stay; only the
+        record and row go.
+        """
         row = await self._require(addon_id)
         if remove_data:
-            await self._run_addon_migrations(addon_id, "down")
-            await self._drop_addon_tables(addon_id)
+            from core.addons.alembic_runner import drop_addon_tables, migrate_down
+
+            src = ADDON_ROOT / _slug(row, addon_id)
+            manifest = parse_manifest(src)
+            try:
+                await migrate_down(row.id, src, manifest, _db_url())
+                await drop_addon_tables(self._repo.session, row.id, manifest)
+            except Exception:
+                row.enabled = False
+                records = dict(get_registry(self._app))
+                if row.id in records:
+                    records[row.id].enabled = False
+                    publish_registry(self._app, records)
+                logger.error("addon.migrations_failed", extra={"addon": row.id})
+                raise
         records = dict(get_registry(self._app))
         records.pop(addon_id, None)
         publish_registry(self._app, records)
@@ -128,20 +209,31 @@ class AddonService:
         logger.info("addon.uninstalled", extra={"addon": addon_id})
 
     async def check_updates(self) -> list[AddonState]:
-        """Hourly cron: refresh ``latest_seen``/``update_available`` (banner flag)."""
+        """Hourly cron: refresh ``latest_seen``/``update_available``."""
         rows = await self._repo.get_all()
         for row in rows:
-            if row.source_type != "github":
-                continue
-            try:
-                latest = await latest_github_tag(
-                    f"https://github.com/{row.source_ref}.git"
-                )
-            except Exception as exc:  # never fail the cron loudly
-                logger.warning("addon.check_failed", extra={"addon": row.id, "e": str(exc)})
-                continue
-            row.latest_seen = latest
-            row.update_available = latest != row.installed_sha
+            if row.source_type == "github":
+                try:
+                    latest = await latest_github_tag(
+                        f"https://github.com/{row.source_ref}.git"
+                    )
+                except Exception as exc:  # never fail the cron loudly
+                    logger.warning(
+                        "addon.check_failed", extra={"addon": row.id, "e": str(exc)}
+                    )
+                    continue
+                row.latest_seen = latest
+                row.update_available = latest != row.installed_sha
+            elif row.source_type == "local":
+                try:
+                    current = local_source_version(Path(row.source_ref))
+                except Exception as exc:
+                    logger.warning(
+                        "addon.check_failed", extra={"addon": row.id, "e": str(exc)}
+                    )
+                    continue
+                row.latest_seen = current
+                row.update_available = current != row.version
         return rows
 
     async def health(self, addon_id: str) -> dict[str, object]:
@@ -181,50 +273,11 @@ class AddonService:
         )
         publish_registry(self._app, records)
         row.generation = records[row.id].generation
+        # Swap routes wholesale: the new-major module loads beside the old
+        # one, so the old revision's routes must be stripped first.
+        from core.addons.mount import mount_addon
 
-    async def _run_addon_migrations(self, addon_id: str, direction: str) -> None:
-        """Run the per-addon alembic chain (``addon_<slug>``) when present."""
-        mig_dir = ADDON_ROOT / addon_id / "migrations"
-        if not mig_dir.is_dir():
-            return
-        # note: chains live under the addon dir; alembic runs them in-process
-        # so per-addon tables stay isolated from the core ``alembic history``.
-        from alembic.config import Config
-        from alembic.script import ScriptDirectory
-        from alembic.runtime.migration import MigrationContext
-
-        cfg = Config()
-        cfg.set_main_option("script_location", str(mig_dir))
-        scripts = ScriptDirectory.from_config(cfg)
-        db: AsyncSession = self._repo.session
-        conn = await db.get_bind().connect() if hasattr(db.get_bind(), "connect") else None
-        # shortcut: no live migration runner in unit context — real upgrades
-        # run via ``alembic -x addon=<id> upgrade head`` in deploy; here we
-        # validate the chain resolves and log. Full runner upgrade needs this
-        # TODO(me): wire MigrationContext.run_migrations once addon chains ship.
-        heads = scripts.get_heads()
-        logger.info(
-            "addon.migrations_checked",
-            extra={"addon": addon_id, "dir": direction, "heads": heads},
-        )
-        if conn is not None:
-            await conn.close()
-
-    async def _drop_addon_tables(self, addon_id: str) -> None:
-        from sqlalchemy import text
-
-        prefix = f"addon_{addon_id}_"
-        db: AsyncSession = self._repo.session
-        result = await db.execute(
-            text(
-                "SELECT tablename FROM pg_tables "
-                "WHERE schemaname='public' AND tablename LIKE :p"
-            ),
-            {"p": f"{prefix}%"},
-        )
-        for (table,) in result.all():
-            # Table names come from the catalog, not user input — no injection.
-            await db.execute(text(f'DROP TABLE IF EXISTS "{table}" CASCADE'))
+        mount_addon(self._app, records[row.id], ADDON_ROOT / _slug(row, row.id))
 
 
 def _slug(row: AddonState, addon_id: str) -> str:

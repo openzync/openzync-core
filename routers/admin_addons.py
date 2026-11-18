@@ -53,6 +53,18 @@ async def list_addons(
     )
 
 
+@router.post("/check-updates", response_model=AddonListResponse)
+async def check_addon_updates(
+    _org_id: str = Depends(require_superadmin),  # noqa: B008
+    service: AddonService = Depends(_service),  # noqa: B008
+) -> AddonListResponse:
+    """Manually refresh ``latest_seen``/``update_available`` for all addons."""
+    rows = await service.check_updates()
+    return AddonListResponse(
+        data=[AddonResponse.model_validate(r) for r in rows], total=len(rows)
+    )
+
+
 @router.post("/{addon_id}/enable", response_model=AddonResponse)
 async def enable_addon(
     addon_id: str,

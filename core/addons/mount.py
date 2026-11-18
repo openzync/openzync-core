@@ -5,11 +5,12 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from core.addons.hooks import resolve_addon_router
 from core.addons.registry import AddonRecord
+from core.exceptions import NotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,47 @@ def _addon_gate(addon_id: str, generation: int):  # type: ignore[no-untyped-def]
     from dependencies.addons import require_addon_enabled
 
     return require_addon_enabled(addon_id, generation)
+
+
+def _matches(route: object, prefix: str) -> bool:
+    path = getattr(route, "path", "") or ""
+    return path == prefix or path.startswith(prefix + "/")
+
+
+def unmount_prefix(app: FastAPI, prefix: str) -> None:
+    """Remove every route/mount under ``prefix`` (placeholder swap)."""
+    routes = app.router.routes
+    for route in [r for r in routes if _matches(r, prefix)]:
+        routes.remove(route)
+
+
+def mount_placeholder(app: FastAPI, addon_id: str) -> None:
+    """Mount a gated placeholder for a never-enabled addon (no routes).
+
+    The catch-all carries the same ``require_addon_enabled`` gate, so a
+    never-enabled id 403s instead of falling through to Starlette 404.
+    ``mount_addon`` strips it wholesale on enable/upgrade.
+    """
+    from dependencies.addons import require_addon_enabled
+
+    prefix = f"/v1/ext/{addon_id}"
+    unmount_prefix(app, prefix)
+    router = APIRouter()
+    gate = require_addon_enabled(addon_id)
+
+    @router.api_route(
+        "",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    )
+    @router.api_route(
+        "/{path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    )
+    async def _ext_placeholder(path: str = "", _a: str = Depends(gate)) -> None:
+        raise NotFoundError(f"Addon {addon_id!r} has no routes.")
+
+    app.include_router(router, prefix=prefix)
+    logger.info("addon.placeholder_mounted", extra={"addon": addon_id})
 
 
 def mount_addon(app: FastAPI, record: AddonRecord, source_path: Path) -> None:
@@ -31,6 +73,9 @@ def mount_addon(app: FastAPI, record: AddonRecord, source_path: Path) -> None:
     from dependencies.addons import require_addon_enabled
 
     addon_id = record.manifest.id
+    # Strip-then-mount: replaces the install-time placeholder (or a stale
+    # revision's routes) wholesale, so enable/upgrade never double-mount.
+    unmount_prefix(app, f"/v1/ext/{addon_id}")
     router = record.router or getattr(record.module, "router", None)
     if router is None:
         try:
@@ -66,4 +111,4 @@ def mount_all(
             mount_addon(app, record, paths[addon_id])
 
 
-__all__ = ["mount_addon", "mount_all"]
+__all__ = ["mount_addon", "mount_all", "mount_placeholder", "unmount_prefix"]
