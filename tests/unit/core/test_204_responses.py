@@ -41,11 +41,6 @@ from starlette.responses import Response
             "delete_user_summary_instructions",
         ),
         (
-            "routers/admin_organizations.py",
-            "routers.admin_organizations",
-            "delete_prompt_template_override",
-        ),
-        (
             "routers/admin_webhooks.py",
             "routers.admin_webhooks",
             "delete_webhook",

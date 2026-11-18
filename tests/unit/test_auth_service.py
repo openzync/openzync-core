@@ -176,12 +176,11 @@ class TestAuthService:
         mock_repo: AsyncMock,
         mock_otp: AsyncMock,
     ) -> None:
-        """Signup creates org, seeds prompts, creates user, and sends OTP."""
+        """Signup creates org, creates user, and sends OTP."""
         mock_repo.find_user_by_email.return_value = None
         mock_repo.create_organization.return_value = MagicMock(
             id=self.ORG_ID, name="Acme Corp", plan="free"
         )
-        mock_repo.seed_prompts_for_org.return_value = 3
         mock_repo.create_dashboard_user.return_value = self._make_mock_user()
 
         payload = SignupRequest(
@@ -199,7 +198,7 @@ class TestAuthService:
         mock_repo.create_organization.assert_awaited_once_with(
             name="Acme Corp", plan="free"
         )
-        mock_repo.seed_prompts_for_org.assert_awaited_once_with(self.ORG_ID)
+        mock_repo.seed_prompts_for_org.assert_not_awaited()
         mock_repo.create_dashboard_user.assert_awaited_once_with(
             organization_id=self.ORG_ID,
             email="admin@acme.com",
@@ -273,7 +272,6 @@ class TestAuthService:
         mock_repo.create_organization.return_value = MagicMock(
             id=self.ORG_ID, name="Acme Corp", plan="free"
         )
-        mock_repo.seed_prompts_for_org.return_value = 3
         mock_repo.create_dashboard_user.return_value = self._make_mock_user()
 
         payload = SignupRequest(
@@ -429,7 +427,6 @@ class TestAuthService:
         mock_repo.create_organization.return_value = MagicMock(
             id=self.ORG_ID, name="Acme Corp", plan="free"
         )
-        mock_repo.seed_prompts_for_org.return_value = 3
         mock_repo.create_dashboard_user.return_value = self._make_mock_user()
 
         payload = SignupRequest(

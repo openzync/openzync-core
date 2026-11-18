@@ -6,7 +6,7 @@ Tests cover:
 - Auto-injection path with mocked DB session (each provider).
 - Edge cases (missing template_text, unknown type, partial identifiers).
 - return_context path.
-- resolve_prompt_template_by_type (lightweight, mocked).
+- resolve_prompt_template_by_type (sync disk-cache lookup).
 """
 
 from __future__ import annotations
@@ -590,91 +590,20 @@ class TestUserSummaryComputed:
 
 
 class TestResolveByType:
-    """Lightweight tests for resolve_prompt_template_by_type."""
+    """Sync disk-cache lookup for resolve_prompt_template_by_type."""
 
-    @pytest.mark.asyncio
-    async def test_returns_none_when_no_active_template(
-        self,
-        org_id: UUID,
-        monkeypatch: MonkeyPatch,
-    ) -> None:
-        """When the DB returns nothing, the function returns None."""
-        from repositories.prompt_template_repository import (
-            PromptTemplateRepository,
-        )
-
-        class MockRepo:
-            async def get_active_text_by_type(self, **kwargs: Any) -> None:
-                return None
-
-        monkeypatch.setattr(
-            PromptTemplateRepository,
-            "get_active_text_by_type",
-            MockRepo().get_active_text_by_type,
-        )
-
-        result = await resolve_prompt_template_by_type(
-            "fact_extraction",
-            org_id,
-            make_fake_session_factory(),
-        )
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_accepts_string_org_id(
-        self,
-        monkeypatch: MonkeyPatch,
-    ) -> None:
-        """String org_id is accepted and converted to UUID internally."""
-        from repositories.prompt_template_repository import (
-            PromptTemplateRepository,
-        )
-
-        class MockRepo:
-            async def get_active_text_by_type(self, **kwargs: Any) -> None:
-                return None
-
-        monkeypatch.setattr(
-            PromptTemplateRepository,
-            "get_active_text_by_type",
-            MockRepo().get_active_text_by_type,
-        )
-
-        result = await resolve_prompt_template_by_type(
-            "classification",
-            str(uuid4()),
-            make_fake_session_factory(),
-        )
-        assert result is None
-
-    @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_returns_template_text_when_found(
-        self,
-        org_id: UUID,
-        monkeypatch: MonkeyPatch,
-    ) -> None:
-        """Mock repo returns the template text directly (str | None)."""
-        from repositories.prompt_template_repository import (
-            PromptTemplateRepository,
-        )
+    def test_known_type_returns_non_empty_str(self) -> None:
+        """Known type resolves to template text from the disk cache."""
+        result = resolve_prompt_template_by_type("enrich_episode")
+        assert isinstance(result, str)
+        assert result != ""
 
-        class MockRepo:
-            async def get_active_text_by_type(self, **kwargs: Any) -> str:
-                return "You are a helpful assistant."
-
-        monkeypatch.setattr(
-            PromptTemplateRepository,
-            "get_active_text_by_type",
-            MockRepo().get_active_text_by_type,
-        )
-
-        result = await resolve_prompt_template_by_type(
-            "fact_extraction",
-            org_id,
-            make_fake_session_factory(),
-        )
-        assert result == "You are a helpful assistant."
+    @pytest.mark.unit
+    def test_unknown_type_raises_value_error(self) -> None:
+        """Unknown type raises ValueError."""
+        with pytest.raises(ValueError, match="No cached prompt template"):
+            resolve_prompt_template_by_type("nonexistent_type")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -768,41 +697,6 @@ class TestRlsTenantContext:
         # The release issued no statement of its own.
         assert session.operations.count("execute") == 1
         assert "commit" not in session.operations
-
-    @pytest.mark.asyncio
-    async def test_resolve_by_type_binds_and_releases_the_context(
-        self,
-        org_id: UUID,
-        monkeypatch: MonkeyPatch,
-    ) -> None:
-        """The template lookup is tenant-scoped too — bind before, release after."""
-        from repositories.prompt_template_repository import PromptTemplateRepository
-
-        class MockRepo:
-            async def get_active_text_by_type(self, **kwargs: Any) -> None:
-                return None
-
-        monkeypatch.setattr(
-            PromptTemplateRepository,
-            "get_active_text_by_type",
-            MockRepo().get_active_text_by_type,
-        )
-        factory = make_fake_session_factory()
-
-        await resolve_prompt_template_by_type("fact_extraction", org_id, factory)
-
-        session = factory.sessions[0]
-        assert session.executed[0][0] == (
-            "SELECT set_config('app.org_id', :org_id, true), "
-            "set_config('app.bypass_rls', :bypass_rls, true), "
-            "set_config('app.lookup_code', :lookup_code, true)"
-        )
-        assert session.executed[0][1] == {
-            "org_id": str(org_id),
-            "bypass_rls": "false",
-            "lookup_code": "",
-        }
-        assert session.operations[-1] == "rollback"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
