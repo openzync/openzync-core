@@ -154,3 +154,59 @@ class PromptManifest:
                 f"Prompt file referenced in manifest not found: {path}"
             )
         return path.read_text()
+
+
+def _load_default_template_texts() -> dict[str, str]:
+    """Eagerly read every type-default prompt text from disk.
+
+    Picks the ``is_default_for_type: true`` entry per type from
+    ``manifest.yaml`` and reads its ``.jinja2`` file.  Called once at
+    module import so worker prompts resolve from memory at runtime.
+
+    Returns:
+        Mapping of ``prompt type → template text``.
+
+    Raises:
+        FileNotFoundError: If the manifest or a referenced ``.jinja2``
+            file is missing.
+        ValueError: If a default entry lacks ``type``/``file``, if two
+            entries claim the default for one type, or if no defaults
+            exist at all.
+    """
+    path = PROMPTS_DIR / MANIFEST_FILENAME
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Prompt manifest not found: {path}. "
+            "Ensure services/worker/prompts/manifest.yaml exists."
+        )
+    with open(path) as f:
+        data = yaml.safe_load(f) or {}
+    texts: dict[str, str] = {}
+    for entry in data.get("templates", []):
+        if not entry.get("is_default_for_type"):
+            continue
+        type_name = entry.get("type")
+        file_name = entry.get("file")
+        if not type_name or not file_name:
+            raise ValueError(
+                f"Manifest default entry missing type/file: {entry!r}"
+            )
+        if type_name in texts:
+            raise ValueError(
+                f"Multiple defaults for prompt type {type_name!r} in {path}"
+            )
+        file_path = PROMPTS_DIR / file_name
+        if not file_path.is_file():
+            raise FileNotFoundError(
+                f"Prompt file referenced in manifest not found: {file_path}"
+            )
+        texts[type_name] = file_path.read_text()
+    if not texts:
+        raise ValueError(f"Prompt manifest defines no type defaults: {path}")
+    return texts
+
+
+#: Startup-cached prompt texts — ``type → template text``.  Loaded once at
+#: import; a missing manifest, missing ``.jinja2`` file, or type without a
+#: default fails the import loudly instead of degrading at request time.
+DEFAULT_PROMPT_TEXTS: dict[str, str] = _load_default_template_texts()

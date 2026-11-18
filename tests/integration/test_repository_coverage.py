@@ -1,8 +1,8 @@
 """Integration tests for under-covered repositories — direct DB coverage.
 
-Exercises four repositories that previously had only partial coverage:
+Exercises three repositories that previously had only partial coverage:
 ``AuditLogRepository``, ``CustomInstructionRepository``,
-``EpisodeBlobRepository``, and ``PromptTemplateRepository``.
+and ``EpisodeBlobRepository``.
 
 Every test uses the ``db_session`` fixture (truncates all tables on
 teardown) so no state leaks between tests.  Only pure-DB behaviour is
@@ -20,7 +20,6 @@ from repositories.audit_log_repository import AuditLogRepository
 from repositories.custom_instruction_repository import CustomInstructionRepository
 from repositories.episode_blob_repository import EpisodeBlobRepository
 from repositories.episode_repository import EpisodeRepository
-from repositories.prompt_template_repository import PromptTemplateRepository
 from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
 
@@ -487,157 +486,3 @@ class TestEpisodeBlobRepository:
             orphans = await repo.get_orphaned_blobs(ORG_ID)
             assert len(orphans) == 2
 
-
-class TestPromptTemplateRepository:
-    """PromptTemplateRepository — versioned org-scoped templates."""
-
-    async def test_set_for_org_creates_v1(self, engine, db_session) -> None:
-        """set_for_org creates the first active version."""
-        async with AsyncSession(engine) as db:
-            repo = PromptTemplateRepository(db)
-            template = await repo.set_for_org(
-                ORG_ID, name="memory_summary", text="Summarise {input}"
-            )
-            assert template.version == 1
-            assert template.is_active is True
-            assert template.is_default_for_type is False
-
-    async def test_set_for_org_bumps_version_and_deactivates_old(
-        self, engine, db_session
-    ) -> None:
-        """set_for_org creates v2 and deactivates v1."""
-        async with AsyncSession(engine) as db:
-            repo = PromptTemplateRepository(db)
-            await repo.set_for_org(ORG_ID, name="memory_summary", text="v1 text")
-            v2 = await repo.set_for_org(ORG_ID, name="memory_summary", text="v2 text")
-
-            assert v2.version == 2
-
-            active = await repo.get_active(ORG_ID, "memory_summary")
-            assert active is not None
-            assert active.version == 2
-            assert active.template_text == "v2 text"
-
-    async def test_get_active_not_found(self, engine, db_session) -> None:
-        """get_active returns None for an unknown template."""
-        async with AsyncSession(engine) as db:
-            repo = PromptTemplateRepository(db)
-            assert await repo.get_active(ORG_ID, "missing") is None
-
-    async def test_get_version(self, engine, db_session) -> None:
-        """get_version returns the exact version; unknown version returns None."""
-        async with AsyncSession(engine) as db:
-            repo = PromptTemplateRepository(db)
-            await repo.set_for_org(ORG_ID, name="memory_summary", text="v1 text")
-            await repo.set_for_org(ORG_ID, name="memory_summary", text="v2 text")
-
-            v1 = await repo.get_version(ORG_ID, "memory_summary", 1)
-            assert v1 is not None
-            assert v1.template_text == "v1 text"
-
-            assert await repo.get_version(ORG_ID, "memory_summary", 99) is None
-
-    async def test_set_as_type_default(self, engine, db_session) -> None:
-        """set_as_type_default promotes one template and demotes the other."""
-        async with AsyncSession(engine) as db:
-            repo = PromptTemplateRepository(db)
-            await repo.set_for_org(
-                ORG_ID, name="extract_facts", text="facts",
-                template_type="fact_extraction",
-            )
-            await repo.set_for_org(
-                ORG_ID, name="extract_facts_alt", text="facts alt",
-                template_type="fact_extraction",
-            )
-
-            # No default yet.
-            assert await repo.get_active_by_type(ORG_ID, "fact_extraction") is None
-
-            promoted = await repo.set_as_type_default(ORG_ID, "extract_facts")
-            assert promoted.is_default_for_type is True
-
-            default = await repo.get_active_by_type(ORG_ID, "fact_extraction")
-            assert default is not None
-            assert default.template_name == "extract_facts"
-
-    async def test_set_as_type_default_missing_template(
-        self, engine, db_session
-    ) -> None:
-        """set_as_type_default raises ValueError for an unknown template."""
-        async with AsyncSession(engine) as db:
-            repo = PromptTemplateRepository(db)
-            with pytest.raises(ValueError):
-                await repo.set_as_type_default(ORG_ID, "missing")
-
-    async def test_set_for_org_carries_type_default_flag(
-        self, engine, db_session
-    ) -> None:
-        """A new version inherits the type-default flag from its predecessor."""
-        async with AsyncSession(engine) as db:
-            repo = PromptTemplateRepository(db)
-            await repo.set_for_org(
-                ORG_ID, name="extract_facts", text="v1",
-                template_type="fact_extraction",
-            )
-            await repo.set_as_type_default(ORG_ID, "extract_facts")
-
-            v2 = await repo.set_for_org(
-                ORG_ID, name="extract_facts", text="v2",
-                template_type="fact_extraction",
-            )
-            assert v2.version == 2
-            assert v2.is_default_for_type is True
-            assert v2.is_active is True
-
-            default = await repo.get_active_by_type(ORG_ID, "fact_extraction")
-            assert default is not None
-            assert default.version == 2
-
-    async def test_rollback(self, engine, db_session) -> None:
-        """rollback creates a new version with the target version's text."""
-        async with AsyncSession(engine) as db:
-            repo = PromptTemplateRepository(db)
-            await repo.set_for_org(ORG_ID, name="memory_summary", text="v1 text")
-            await repo.set_for_org(ORG_ID, name="memory_summary", text="v2 text")
-
-            rolled_back = await repo.rollback(ORG_ID, "memory_summary", version=1)
-            assert rolled_back.version == 3
-            assert rolled_back.template_text == "v1 text"
-            assert rolled_back.is_active is True
-
-    async def test_rollback_missing_version(self, engine, db_session) -> None:
-        """rollback raises ValueError when the target version is missing."""
-        async with AsyncSession(engine) as db:
-            repo = PromptTemplateRepository(db)
-            await repo.set_for_org(ORG_ID, name="memory_summary", text="v1 text")
-
-            with pytest.raises(ValueError):
-                await repo.rollback(ORG_ID, "memory_summary", version=99)
-
-    async def test_list_names_and_versions(self, engine, db_session) -> None:
-        """list_names collapses versions; list_versions returns all newest-first."""
-        async with AsyncSession(engine) as db:
-            repo = PromptTemplateRepository(db)
-            await repo.set_for_org(ORG_ID, name="memory_summary", text="v1")
-            await repo.set_for_org(ORG_ID, name="memory_summary", text="v2")
-            await repo.set_for_org(ORG_ID, name="other_template", text="v1")
-
-            names = await repo.list_names(ORG_ID)
-            assert {n["name"] for n in names} == {"memory_summary", "other_template"}
-            summary = next(n for n in names if n["name"] == "memory_summary")
-            assert summary["version"] == 2
-
-            versions = await repo.list_versions(ORG_ID, "memory_summary")
-            assert [v.version for v in versions] == [2, 1]
-
-    async def test_delete_for_org(self, engine, db_session) -> None:
-        """delete_for_org removes every version of the template."""
-        async with AsyncSession(engine) as db:
-            repo = PromptTemplateRepository(db)
-            await repo.set_for_org(ORG_ID, name="memory_summary", text="v1")
-            await repo.set_for_org(ORG_ID, name="memory_summary", text="v2")
-
-            await repo.delete_for_org(ORG_ID, "memory_summary")
-
-            assert await repo.get_active(ORG_ID, "memory_summary") is None
-            assert await repo.list_versions(ORG_ID, "memory_summary") == []

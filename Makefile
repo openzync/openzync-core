@@ -38,7 +38,7 @@ deps:
 
 dev:
 	# Bind 0.0.0.0 so the Prometheus container can scrape host.docker.internal:8000 (uvicorn defaults to 127.0.0.1).
-	@set -a && source .env && set +a && uvicorn services.api.asgi:app --reload --host 0.0.0.0 --port $(PORT)
+	@set -a && source .env && set +a && uvicorn services.api.asgi:app --reload --host 0.0.0.0 --port $(PORT) --reload
 
 # Host-run ARQ worker. Same entrypoint the container execs (scripts/entrypoint_worker.sh
 # only adds waiting for the OpenBao Agent sidecar to render /run/secrets/system.env).

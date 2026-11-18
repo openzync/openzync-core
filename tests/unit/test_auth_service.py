@@ -176,12 +176,11 @@ class TestAuthService:
         mock_repo: AsyncMock,
         mock_otp: AsyncMock,
     ) -> None:
-        """Signup creates org, seeds prompts, creates user, and sends OTP."""
+        """Signup creates org, creates user, and sends OTP."""
         mock_repo.find_user_by_email.return_value = None
         mock_repo.create_organization.return_value = MagicMock(
             id=self.ORG_ID, name="Acme Corp", plan="free"
         )
-        mock_repo.seed_prompts_for_org.return_value = 3
         mock_repo.create_dashboard_user.return_value = self._make_mock_user()
 
         payload = SignupRequest(
@@ -199,7 +198,6 @@ class TestAuthService:
         mock_repo.create_organization.assert_awaited_once_with(
             name="Acme Corp", plan="free"
         )
-        mock_repo.seed_prompts_for_org.assert_awaited_once_with(self.ORG_ID)
         mock_repo.create_dashboard_user.assert_awaited_once_with(
             organization_id=self.ORG_ID,
             email="admin@acme.com",
@@ -273,7 +271,6 @@ class TestAuthService:
         mock_repo.create_organization.return_value = MagicMock(
             id=self.ORG_ID, name="Acme Corp", plan="free"
         )
-        mock_repo.seed_prompts_for_org.return_value = 3
         mock_repo.create_dashboard_user.return_value = self._make_mock_user()
 
         payload = SignupRequest(
@@ -381,7 +378,6 @@ class TestAuthService:
         # No OpenBao namespace, no OTP, no prompt seeding for pending orgs.
         mock_bao_client.create_org_namespace.assert_not_awaited()
         mock_otp.generate_and_send.assert_not_awaited()
-        mock_repo.seed_prompts_for_org.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_signup_approvals_duplicate_email_returns_generic_success(
@@ -429,7 +425,6 @@ class TestAuthService:
         mock_repo.create_organization.return_value = MagicMock(
             id=self.ORG_ID, name="Acme Corp", plan="free"
         )
-        mock_repo.seed_prompts_for_org.return_value = 3
         mock_repo.create_dashboard_user.return_value = self._make_mock_user()
 
         payload = SignupRequest(
@@ -508,7 +503,6 @@ class TestAuthService:
 
         mock_repo.create_organization.assert_not_awaited()
         mock_repo.create_dashboard_user.assert_not_awaited()
-        mock_repo.seed_prompts_for_org.assert_not_awaited()
 
     # ═══════════════════════════════════════════════════════════════════════
     # change_password()

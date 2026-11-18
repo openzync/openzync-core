@@ -1,15 +1,11 @@
 """Prompt template resolution with auto-injected context.
 
-All prompt templates live in the ``prompt_templates`` database table and are
-resolved at runtime via :func:`resolve_prompt_template_by_type`.  The resolved
-``template_text`` is returned as-is (plain text, no Jinja2) — context is
-assembled and injected by the caller via :func:`build_enrichment_prompt`.
-
-The ``.jinja2`` files under ``prompts/`` are the canonical source of truth
-for system-default prompts (Option A).  They are read at signup time by
-:meth:`PromptTemplateRepository.seed_default_prompts` and at import time by
-:meth:`~.PromptTemplateRepository.import_system_template`.  The runtime
-resolution path (``get_active_by_type``) only queries org-scoped DB rows.
+Prompt texts are disk-only: ``services/worker/prompts/manifest.yaml`` picks
+the ``is_default_for_type`` entry per type and the ``.jinja2`` files are
+read once at startup into :data:`core.prompt_manifest.DEFAULT_PROMPT_TEXTS`.
+:func:`resolve_prompt_template_by_type` is a dict lookup — no DB access.
+Context is assembled and injected by the caller via
+:func:`build_enrichment_prompt`.
 
 Usage (workers):
     from services.worker.prompt_renderer import render_prompt
@@ -36,6 +32,7 @@ import orjson
 import structlog
 
 from core import rls
+from core.prompt_manifest import DEFAULT_PROMPT_TEXTS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -61,7 +58,7 @@ logger = structlog.get_logger(__name__)
 # 3. Provider functions — one per DataSource, each returns dict[str, Any]
 # 4. Provider dispatch
 # 5. render_prompt() — async, auto-injects context from DB
-# 6. resolve_prompt_template_by_type() — kept for compat
+# 6. resolve_prompt_template_by_type() — sync disk-cache lookup
 # ────────────────────────────────────────────────────────────────────────────────
 
 
@@ -908,8 +905,8 @@ async def render_prompt(
     Args:
         prompt_type: The template type (e.g. ``"fact_extraction"``).
             Used to look up the registry of data sources to auto-inject.
-        template_text: Raw template string.  If ``None`` and ``org_id``
-            is provided, resolved from DB via ``resolve_prompt_template_by_type``.
+        template_text: Raw template string.  If ``None``, resolved from
+            the startup disk cache via ``resolve_prompt_template_by_type``.
         org_id: Organisation UUID.  Required for auto-injection.
         episode_id: Episode UUID.  Used to fetch conversation content
             and recent history.
@@ -924,7 +921,7 @@ async def render_prompt(
             ``GraphBackendUnavailableError``) — callers needing entity
             context must resolve the backend before rendering.
         db_session_factory: Session factory for DB access.  Required
-            for auto-injection (and template resolution from DB).
+            for auto-injection of context providers.
         return_context: If ``True``, returns ``(prompt, context_dict)``
             instead of just the prompt string.  Useful for callers that
             need the injected context for post-processing (e.g. entity
@@ -937,8 +934,7 @@ async def render_prompt(
         ``return_context=True``, returns ``(prompt, context_dict)``.
 
     Raises:
-        ValueError: If ``template_text`` is ``None`` and cannot be
-            resolved from the DB.
+        ValueError: If no cached default exists for ``prompt_type``.
         KeyError: If ``prompt_type`` is not in ``TYPE_DATA_SOURCES``
             (only when auto-injection is active).
 
@@ -954,19 +950,9 @@ async def render_prompt(
             )
     """
     # ── Resolve template text ──────────────────────────────────────────
-    if template_text is None and org_id is not None and db_session_factory is not None:
-        template_text = await resolve_prompt_template_by_type(
-            prompt_type,
-            org_id,
-            db_session_factory,
-        )
-
     if template_text is None:
-        raise ValueError(
-            f"No template_text available for '{prompt_type}'. "
-            f"Provide it explicitly or pass org_id + db_session_factory "
-            f"to resolve from the database."
-        )
+        # Disk cache, loaded at startup — evals pass template_text directly.
+        template_text = resolve_prompt_template_by_type(prompt_type)
 
     # ── Auto-inject context from DB ────────────────────────────────────
     context: dict[str, Any] = dict(extra_context)
@@ -1032,46 +1018,31 @@ async def render_prompt(
     return template_text
 
 
-# ── 6. resolve_prompt_template_by_type — kept for direct use ────────────────
+# ── 6. resolve_prompt_template_by_type — disk-cache lookup ─────────────────
 
 
-async def resolve_prompt_template_by_type(
-    type: str,
-    org_id: UUID | str,
-    db_session_factory: SessionFactory,
-) -> str | None:
-    """Resolve the active default prompt template for a given type.
+def resolve_prompt_template_by_type(type: str) -> str:
+    """Resolve the default prompt template text for a given type.
 
-    Looks up the org-specific default for this type (``is_default_for_type
-    = True``).  Returns ``None`` if no default exists (no system-level
-    fallback — defaults come from disk manifest).
+    Dict lookup against the startup-cached defaults
+    (:data:`core.prompt_manifest.DEFAULT_PROMPT_TEXTS`) — no DB access.
 
     Args:
         type: The template type (e.g. ``"fact_extraction"``).
-        org_id: Organisation UUID (string or ``UUID`` instance).
-        db_session_factory: An ``async_sessionmaker`` bound to the write
-            database engine.
 
     Returns:
-        The active template body, or ``None`` if no default exists.
+        The active template body.
+
+    Raises:
+        ValueError: If no cached default exists for ``type``.
     """
-    if isinstance(org_id, str):
-        org_id = UUID(org_id)
-
-    from repositories.prompt_template_repository import (  # noqa: PLC0415 — lazy import
-        PromptTemplateRepository,
-    )
-
-    async with db_session_factory() as session:
-        try:
-            await rls.set_tenant_context(session, org_id)
-            repo = PromptTemplateRepository(session)
-            # Column-only scalar — a detached str, safe past session close.
-            text = await repo.get_active_text_by_type(org_id=org_id, type=type)
-        finally:
-            await rls.release_tenant_context(session)
-
-    return text
+    try:
+        return DEFAULT_PROMPT_TEXTS[type]
+    except KeyError:
+        raise ValueError(
+            f"No cached prompt template for type '{type}'. "
+            f"Known types: {', '.join(sorted(DEFAULT_PROMPT_TEXTS))}"
+        ) from None
 
 
 # ── 7. Prompt assembly helper ─────────────────────────────────────────────────
@@ -1080,12 +1051,13 @@ async def resolve_prompt_template_by_type(
 def build_enrichment_prompt(system_prompt: str, ctx: dict[str, Any]) -> str:
     """Build a full enrichment prompt by appending context sections.
 
-    Takes the raw system instructions from the DB and automatically injects
-    all available context (metadata, entities, facts, history, semantic
-    search results) as structured sections after the instructions.
+    Takes the raw system instructions from the disk-cached default template
+    and automatically injects all available context (metadata, entities,
+    facts, history, semantic search results) as structured sections after
+    the instructions.
 
     Args:
-        system_prompt: Raw system instructions from the DB template.
+        system_prompt: Raw system instructions from the disk-cached template.
         ctx: Context dict from ``render_prompt(return_context=True)``.
 
     Returns:

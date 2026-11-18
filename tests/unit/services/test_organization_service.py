@@ -101,17 +101,10 @@ class TestOrganizationService:
             patch(
                 "services.organization_service.Project", create=True
             ) as mock_proj_cls,
-            patch(
-                "repositories.prompt_template_repository.PromptTemplateRepository",
-            ) as mock_pt_repo_cls,
         ):
             # The fake instance carries the id it was constructed with, so
             # the service's ``org.id`` read-back is the minted id.
             mock_org_cls.side_effect = _FakeOrg
-
-            mock_pt_repo = AsyncMock()
-            mock_pt_repo.seed_default_prompts.return_value = 5
-            mock_pt_repo_cls.return_value = mock_pt_repo
 
             result = await service.create_organization(payload)
 
@@ -172,31 +165,26 @@ class TestOrganizationService:
         mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_create_organization_seeds_default_prompts(self) -> None:
-        """``create_organization`` seeds default prompt templates via
-        ``PromptTemplateRepository``."""
+    async def test_create_organization_does_not_seed_prompts(self) -> None:
+        """``create_organization`` performs no prompt seeding.
+
+        The prompt-templates backend was deleted — org creation writes
+        the Organization row only and never touches a template repo.
+        """
+        import sys
+
         service, mock_repo, mock_db = self._make_service()
         payload = self._make_payload()
 
         org_mock = self._make_org_mock()
 
-        with (
-            patch("services.organization_service.Organization") as mock_org_cls,
-            patch(
-                "repositories.prompt_template_repository.PromptTemplateRepository",
-            ) as mock_pt_repo_cls,
-        ):
+        with patch("services.organization_service.Organization") as mock_org_cls:
             mock_org_cls.return_value = org_mock
-
-            mock_pt_repo = AsyncMock()
-            mock_pt_repo.seed_default_prompts.return_value = 5
-            mock_pt_repo_cls.return_value = mock_pt_repo
 
             result = await service.create_organization(payload)
 
         assert result.organization_id == self.ORG_ID
-        mock_pt_repo_cls.assert_called_once_with(mock_db)
-        mock_pt_repo.seed_default_prompts.assert_awaited_once_with(self.ORG_ID)
+        assert "repositories.prompt_template_repository" not in sys.modules
 
     @pytest.mark.asyncio
     async def test_create_organization_with_bao_client_bootstraps_namespace(
@@ -212,9 +200,6 @@ class TestOrganizationService:
 
         with (
             patch("services.organization_service.Organization") as mock_org_cls,
-            patch(
-                "repositories.prompt_template_repository.PromptTemplateRepository",
-            ) as mock_pt_repo_cls,
             patch.object(
                 service,
                 "_load_org_defaults",
@@ -222,10 +207,6 @@ class TestOrganizationService:
             ),
         ):
             mock_org_cls.return_value = org_mock
-
-            mock_pt_repo = AsyncMock()
-            mock_pt_repo.seed_default_prompts.return_value = 0
-            mock_pt_repo_cls.return_value = mock_pt_repo
 
             result = await service.create_organization(payload)
 
@@ -248,17 +229,8 @@ class TestOrganizationService:
 
         org_mock = self._make_org_mock()
 
-        with (
-            patch("services.organization_service.Organization") as mock_org_cls,
-            patch(
-                "repositories.prompt_template_repository.PromptTemplateRepository",
-            ) as mock_pt_repo_cls,
-        ):
+        with patch("services.organization_service.Organization") as mock_org_cls:
             mock_org_cls.return_value = org_mock
-
-            mock_pt_repo = AsyncMock()
-            mock_pt_repo.seed_default_prompts.return_value = 0
-            mock_pt_repo_cls.return_value = mock_pt_repo
 
             result = await service.create_organization(payload)
 

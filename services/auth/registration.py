@@ -130,12 +130,9 @@ class RegistrationMixin:
             # Bind the session to the new tenant.  The repository already
             # bound it (the INSERT's RETURNING clause is filtered by the
             # organizations SELECT policy); this is the flow's explicit
-            # guarantee that everything after the org row — the prompt
-            # seeding and the admin user insert — is org-scoped.
+            # guarantee that everything after the org row — the admin user
+            # insert — is org-scoped.
             await self._org_repo.set_tenant_context(org.id)
-
-            # Seed default prompt templates for the new org
-            await self._repo.seed_prompts_for_org(org.id)
 
             # Create dashboard admin user
             pw_hash = _facade.hash_password(payload.password)

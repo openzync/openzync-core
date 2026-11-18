@@ -11,7 +11,7 @@ Pipeline:
     3. Fetch graph entities linked to the user's sessions.
     4. Fetch aggregate dialog classifications (top intents / emotions).
     5. Fetch custom instructions for the ``user_summary`` scope.
-    6. Resolve prompt template from DB (filesystem fallback).
+    6. Resolve the prompt template from the startup disk cache.
     7. Render the Jinja2 prompt with all gathered context.
     8. Call the LLM backend (temperature 0.3).
     9. Persist the generated summary on the User model.
