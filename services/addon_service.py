@@ -25,8 +25,40 @@ from core.addons.registry import (
 from core.exceptions import ConflictError, NotFoundError, ValidationError
 from models.addon_state import AddonState
 from repositories.addon_repository import AddonRepository
+from schemas.addons import AddonPanelResponse, AddonResponse
 
 logger = logging.getLogger(__name__)
+
+
+def _panels_for(row: AddonState) -> list[AddonPanelResponse]:
+    """Read panel descriptors from the installed ``addon.toml`` on disk.
+
+    The toml is the source of truth (no registry dependence — works for
+    disabled addons and before boot-load). Unreadable toml yields ``[]``
+    with a loud log; the panels field degrades, never the endpoint.
+    """
+    try:
+        manifest = parse_manifest(ADDON_ROOT / _slug(row, row.id))
+    except Exception as exc:
+        logger.warning(
+            "addon.panels_unreadable", extra={"addon": row.id, "e": str(exc)}
+        )
+        return []
+    return [
+        AddonPanelResponse(id=p.id, title=p.title, path=p.path)
+        for p in manifest.panels
+    ]
+
+
+def to_addon_response(row: AddonState) -> AddonResponse:
+    """Build an ``AddonResponse`` with panels attached.
+
+    ``panels`` is not a model column, so ``model_validate`` alone would
+    always leave it empty — validate the row, then attach explicitly.
+    """
+    response = AddonResponse.model_validate(row)
+    response.panels = _panels_for(row)
+    return response
 
 
 def _db_url() -> str:
@@ -236,6 +268,10 @@ class AddonService:
                 row.update_available = current != row.version
         return rows
 
+    async def get_one(self, addon_id: str) -> AddonState:
+        """Return one addon row; 404 via ``_require`` when unknown."""
+        return await self._require(addon_id)
+
     async def health(self, addon_id: str) -> dict[str, object]:
         """Return the health snapshot for one addon."""
         row = await self._require(addon_id)
@@ -286,4 +322,4 @@ def _slug(row: AddonState, addon_id: str) -> str:
     return addon_id
 
 
-__all__ = ["AddonService"]
+__all__ = ["AddonService", "to_addon_response"]

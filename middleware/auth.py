@@ -26,8 +26,10 @@ RFC 7807 error bodies are returned for all 401/403 responses.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Any, cast
+from urllib.parse import parse_qsl
 from uuid import UUID
 
 import orjson
@@ -75,6 +77,16 @@ AUTH_MISS_RATE_WINDOW: int = 60
 
 SCHEMA_AUTH_HEADER: str = "Bearer"
 """Expected Authorization header scheme."""
+
+_QUERY_TOKEN_PATH_RE: re.Pattern[str] = re.compile(r"^/v1/ext/[^/]+/ui(/.*)?$")
+"""Paths eligible for ``?token=`` fallback (addon static iframe panels).
+
+Scope is deliberately narrow: ``GET`` requests under
+``/v1/ext/<addon>/ui/...`` only.
+# ⚠️ never extend past ui/ GETs — query strings leak into access logs,
+# browser history, and Referer headers. Every other path/method ignores
+# ``?token=`` entirely.
+"""
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -538,6 +550,37 @@ def _verify_jwt_and_set_state(
     return None
 
 
+def _extract_query_token(scope: Scope, path: str, method: str) -> str | None:
+    """Extract ``?token=`` as a Bearer equivalent for iframe panels.
+
+    Carve-out scope: ``GET /v1/ext/<addon>/ui/...`` only — addon static
+    panels embedded via ``<iframe>`` cannot set ``Authorization``
+    headers, so the token travels as a query parameter. Same JWT/API-key
+    verification applies downstream; only the extraction step differs.
+    # ⚠️ never extend past ui/ GETs (query values leak into logs/history).
+
+    Args:
+        scope: The ASGI connection scope (query string read from here).
+        path: The request URL path.
+        method: The HTTP method.
+
+    Returns:
+        The stripped ``token`` value, or ``None`` when out of scope,
+        absent, or empty. The value itself is never logged.
+    """
+    if method != "GET" or not _QUERY_TOKEN_PATH_RE.match(path):
+        return None
+    raw_qs = scope.get("query_string", b"")
+    if isinstance(raw_qs, bytes):
+        qs = raw_qs.decode("ascii", errors="ignore")
+    else:
+        qs = str(raw_qs)
+    for key, value in parse_qsl(qs, keep_blank_values=True):
+        if key == "token" and value.strip():
+            return value.strip()
+    return None
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Auth middleware
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -632,40 +675,48 @@ class AuthMiddleware:
             return
 
         # ── Extract Authorization header ─────────────────────────────────
+        # Carve-out: GET /v1/ext/<addon>/ui/... may pass ?token= instead
+        # of the header (iframe panels cannot set Authorization headers).
+        # Header wins when present; ?token= is ignored elsewhere.
+        # ⚠️ never extend past ui/ GETs.
         auth_header: str | None = headers.get("authorization")
-        if auth_header is None:
-            await _send_rfc7807(
-                send,
-                status=401,
-                title="Authentication Required",
-                detail="Missing Authorization header. Use: Bearer <api_key or jwt>",
-                path=path,
-            )
-            return
+        raw_key: str
+        if auth_header is not None:
+            if not auth_header.startswith(SCHEMA_AUTH_HEADER):
+                await _send_rfc7807(
+                    send,
+                    status=401,
+                    title="Invalid Authorization Scheme",
+                    detail=(
+                        f"Authorization header must start with '{SCHEMA_AUTH_HEADER}'. "
+                        f"Got: {auth_header.split()[0] if ' ' in auth_header else 'empty'}"
+                    ),
+                    path=path,
+                )
+                return
 
-        if not auth_header.startswith(SCHEMA_AUTH_HEADER):
-            await _send_rfc7807(
-                send,
-                status=401,
-                title="Invalid Authorization Scheme",
-                detail=(
-                    f"Authorization header must start with '{SCHEMA_AUTH_HEADER}'. "
-                    f"Got: {auth_header.split()[0] if ' ' in auth_header else 'empty'}"
-                ),
-                path=path,
-            )
-            return
-
-        raw_key: str = auth_header[len(SCHEMA_AUTH_HEADER) :].strip()
-        if not raw_key:
-            await _send_rfc7807(
-                send,
-                status=401,
-                title="Empty Credentials",
-                detail="Authorization header is empty after 'Bearer '.",
-                path=path,
-            )
-            return
+            raw_key = auth_header[len(SCHEMA_AUTH_HEADER) :].strip()
+            if not raw_key:
+                await _send_rfc7807(
+                    send,
+                    status=401,
+                    title="Empty Credentials",
+                    detail="Authorization header is empty after 'Bearer '.",
+                    path=path,
+                )
+                return
+        else:
+            query_token = _extract_query_token(scope, path, method)
+            if query_token is None:
+                await _send_rfc7807(
+                    send,
+                    status=401,
+                    title="Authentication Required",
+                    detail="Missing Authorization header. Use: Bearer <api_key or jwt>",
+                    path=path,
+                )
+                return
+            raw_key = query_token
 
         # ── Route to JWT or API key flow ─────────────────────────────────
         # JWT tokens have 2 dots.  API keys have a known prefix.

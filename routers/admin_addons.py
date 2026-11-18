@@ -14,7 +14,7 @@ from schemas.addons import (
     AddonListResponse,
     AddonResponse,
 )
-from services.addon_service import AddonService
+from services.addon_service import AddonService, to_addon_response
 
 router = APIRouter(prefix="/admin/system/addons", tags=["Admin - Addons"])
 
@@ -38,7 +38,7 @@ async def install_addon(
         raise ValidationError("Provide exactly one of local_path|github_url.")
     source_type = "local" if body.local_path else "github"
     row = await service.install(source_type, body.local_path or body.github_url or "", body.tag)
-    return AddonResponse.model_validate(row)
+    return to_addon_response(row)
 
 
 @router.get("", response_model=AddonListResponse)
@@ -49,7 +49,7 @@ async def list_addons(
     """List all installed addons."""
     rows = await service.list()
     return AddonListResponse(
-        data=[AddonResponse.model_validate(r) for r in rows], total=len(rows)
+        data=[to_addon_response(r) for r in rows], total=len(rows)
     )
 
 
@@ -61,8 +61,18 @@ async def check_addon_updates(
     """Manually refresh ``latest_seen``/``update_available`` for all addons."""
     rows = await service.check_updates()
     return AddonListResponse(
-        data=[AddonResponse.model_validate(r) for r in rows], total=len(rows)
+        data=[to_addon_response(r) for r in rows], total=len(rows)
     )
+
+
+@router.get("/{addon_id}", response_model=AddonResponse)
+async def get_addon(
+    addon_id: str,
+    _org_id: str = Depends(require_superadmin),  # noqa: B008
+    service: AddonService = Depends(_service),  # noqa: B008
+) -> AddonResponse:
+    """Fetch one addon with panels attached."""
+    return to_addon_response(await service.get_one(addon_id))
 
 
 @router.post("/{addon_id}/enable", response_model=AddonResponse)
@@ -72,7 +82,7 @@ async def enable_addon(
     service: AddonService = Depends(_service),  # noqa: B008
 ) -> AddonResponse:
     """Enable (hot-load + mount) an addon platform-wide."""
-    return AddonResponse.model_validate(await service.enable(addon_id))
+    return to_addon_response(await service.enable(addon_id))
 
 
 @router.post("/{addon_id}/disable", response_model=AddonResponse)
@@ -82,7 +92,7 @@ async def disable_addon(
     service: AddonService = Depends(_service),  # noqa: B008
 ) -> AddonResponse:
     """Disable an addon platform-wide (routes 403, jobs fail closed)."""
-    return AddonResponse.model_validate(await service.disable(addon_id))
+    return to_addon_response(await service.disable(addon_id))
 
 
 @router.post("/{addon_id}/upgrade", response_model=AddonResponse)
@@ -93,7 +103,7 @@ async def upgrade_addon(
     service: AddonService = Depends(_service),  # noqa: B008
 ) -> AddonResponse:
     """Manual upgrade — reinstall from source (github tag or latest)."""
-    return AddonResponse.model_validate(await service.upgrade(addon_id, tag))
+    return to_addon_response(await service.upgrade(addon_id, tag))
 
 
 @router.delete("/{addon_id}", status_code=204)
