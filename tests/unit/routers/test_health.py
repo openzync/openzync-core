@@ -187,6 +187,7 @@ async def test_readiness_exact_live_contract() -> None:
         "status": "ok",
         "checks": {"database": True, "redis": True, "embeddings": True},
         "degraded": {},
+        "needs_setup": False,
         "pending_edge_sync": None,
     }
 

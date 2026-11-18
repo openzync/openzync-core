@@ -27,8 +27,14 @@ GENERIC_FORBIDDEN = "Platform setup is not available."
 
 
 @pytest_asyncio.fixture(loop_scope="function")
-async def anon_client(isolated_app: Any) -> Any:
+async def anon_client(isolated_app: Any, engine: Any, redis_client: Any) -> Any:
     """Unauthenticated HTTP client backed by the isolated app."""
+    from core.db import get_async_session
+
+    isolated_app.state.db_engine = engine
+    isolated_app.state.db_session_factory = get_async_session(engine)
+    isolated_app.state.redis = redis_client
+    isolated_app.state.degraded = {}
     async with AsyncClient(
         transport=asgi_transport(isolated_app), base_url="http://test"
     ) as client:
