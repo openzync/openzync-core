@@ -144,7 +144,7 @@ class PromptManifest:
         """Read the actual prompt template text from disk.
 
         Args:
-            file_name: Relative filename from the manifest (e.g. ``"extract_facts_v4.jinja2"``).
+            file_name: Relative filename from the manifest (e.g. ``"enrich_episode_v1.jinja2"``).
 
         Returns:
             The full file contents as a string.

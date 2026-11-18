@@ -8,6 +8,7 @@ scope).  All tenant isolation is enforced at the repository layer.
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from uuid import UUID
 
 from redis.asyncio import Redis
@@ -15,7 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.arq import ARQPool
 from core.config import get_settings
-from core.exceptions import CacheUnavailableError, RateLimitError
+from core.exceptions import (
+    CacheUnavailableError,
+    RateLimitError,
+    ValidationError,
+)
 from core.queue_names import get_queue_name
 from repositories.custom_instruction_repository import CustomInstructionRepository
 from repositories.user_repository import UserRepository
@@ -205,7 +210,17 @@ class UserSummaryService:
         Returns:
             The newly created instruction dicts with server-side defaults
             populated.
+
+        Raises:
+            ValidationError: If ``instructions`` contains duplicate names.
         """
+        counts = Counter(instr["name"] for instr in instructions)
+        dupes = sorted(name for name, n in counts.items() if n > 1)
+        if dupes:
+            raise ValidationError(
+                f"Duplicate custom instruction names: {', '.join(dupes)}",
+                detail={"duplicates": dupes},
+            )
         raw = await self._ci_repo.set_by_scope(
             org_id=org_id,
             scope="user_summary",
