@@ -87,7 +87,7 @@ class AuthRepository:
     # ── Organization ────────────────────────────────────────────────────────
 
     async def create_organization(
-        self, name: str, plan: str = "free", status: str = "approved"
+        self, name: str, status: str = "approved"
     ) -> Organization:
         """Create a new organization.
 
@@ -101,7 +101,6 @@ class AuthRepository:
 
         Args:
             name: Organization name.
-            plan: Billing plan (default ``'free'``).
             status: Lifecycle state — ``approved`` (default) for a live
                 org, ``pending`` for an approval-queue org.
 
@@ -111,7 +110,6 @@ class AuthRepository:
         org = Organization(
             id=uuid.uuid4(),
             name=name,
-            plan=plan,
             status=status,
             org_code=generate_org_code(),
         )

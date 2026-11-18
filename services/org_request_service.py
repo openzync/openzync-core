@@ -128,7 +128,7 @@ class OrgRequestService:
             )
         try:
             org = await self._org_service.create_organization(
-                CreateOrgRequest(name=payload.organization_name, plan="free")
+                CreateOrgRequest(name=payload.organization_name)
             )
             await self._auth_service.create_live_admin_user(
                 organization_id=org.organization_id,

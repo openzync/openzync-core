@@ -70,9 +70,9 @@ def setup_module() -> None:
     with sync_engine.begin() as conn:
         conn.execute(
             text(
-                "INSERT INTO organizations (id, name, plan, org_code) "
+                "INSERT INTO organizations (id, name, org_code) "
                 "VALUES ('00000000-0000-0000-0000-000000000001', "
-                "'Test Org', 'free', 'testorg02') "
+                "'Test Org', 'testorg02') "
                 "ON CONFLICT (id) DO NOTHING"
             )
         )

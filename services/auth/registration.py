@@ -124,7 +124,6 @@ class RegistrationMixin:
         try:
             org = await self._repo.create_organization(
                 name=payload.organization_name,
-                plan="free",
             )
 
             # Bind the session to the new tenant.  The repository already
@@ -195,7 +194,6 @@ class RegistrationMixin:
 
         org = await self._repo.create_organization(
             name=organization_name,
-            plan="free",
             status="pending",
         )
         # Bind the session to the new tenant — the pending admin insert is

@@ -38,8 +38,8 @@ async def _insert_org(
     async with engine.connect() as conn:
         await conn.execute(
             text(
-                "INSERT INTO organizations (id, name, plan, org_code, join_enabled) "
-                "VALUES (:id, :name, 'free', :code, :enabled)"
+                "INSERT INTO organizations (id, name, org_code, join_enabled) "
+                "VALUES (:id, :name, :code, :enabled)"
             ),
             {
                 "id": uuid.uuid4(),

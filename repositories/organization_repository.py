@@ -121,7 +121,6 @@ class OrganizationRepository:
                 .values(
                     id=PLATFORM_ORG_ID,
                     name="SYSTEM",
-                    plan="enterprise",
                     status="approved",
                     join_enabled=False,
                     org_code=generate_org_code(),

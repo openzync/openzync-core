@@ -159,8 +159,8 @@ async def tenants(engine: AsyncEngine) -> dict[str, tuple[UUID, UUID]]:
             _CREATED_ORG_IDS.append(org_id)
             await conn.execute(
                 text(
-                    "INSERT INTO organizations (id, name, plan, org_code) "
-                    "VALUES (:id, :name, 'free', :code)"
+                    "INSERT INTO organizations (id, name, org_code) "
+                    "VALUES (:id, :name, :code)"
                 ),
                 {
                     "id": org_id,
@@ -422,8 +422,8 @@ class TestOrgAnonInsertPolicy:
             with pytest.raises(DBAPIError) as exc_info:
                 await session.execute(
                     text(
-                        "INSERT INTO organizations (id, name, plan, org_code) "
-                        "VALUES (:id, :name, 'free', :code)"
+                        "INSERT INTO organizations (id, name, org_code) "
+                        "VALUES (:id, :name, :code)"
                     ),
                     {
                         "id": foreign_org_id,
@@ -450,8 +450,8 @@ class TestOrgAnonInsertPolicy:
 
             await session.execute(
                 text(
-                    "INSERT INTO organizations (id, name, plan, org_code) "
-                    "VALUES (:id, :name, 'free', :code)"
+                    "INSERT INTO organizations (id, name, org_code) "
+                    "VALUES (:id, :name, :code)"
                 ),
                 {
                     "id": new_org_id,

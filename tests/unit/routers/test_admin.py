@@ -85,7 +85,7 @@ async def test_create_organization_success() -> None:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
                 "/admin/organizations",
-                json={"name": "Acme Corp", "plan": "free"},
+                json={"name": "Acme Corp"},
             )
 
     assert resp.status_code == 201
@@ -101,36 +101,6 @@ async def test_create_organization_success() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_organization_default_plan() -> None:
-    """POST /admin/organizations defaults plan to 'free' when omitted."""
-    created_org_id = uuid4()
-    mock_response = CreateOrgResponse(
-        organization_id=created_org_id,
-        organization_name="Acme Corp",
-    )
-
-    app, _ = _create_app(authenticated=True)
-    _mock_service(app, mock_response)
-    transport = ASGITransport(app=app)
-
-    with patch(
-        "dependencies.auth.get_org_role",
-        new=AsyncMock(return_value="superadmin"),
-    ):
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
-                "/admin/organizations",
-                json={"name": "Acme Corp"},
-            )
-
-    assert resp.status_code == 201
-    body = resp.json()
-    assert body["organization_name"] == "Acme Corp"
-    assert "organization_id" in body
-    assert "api_key" not in body
-
-
-@pytest.mark.asyncio
 async def test_create_organization_unauthenticated_401() -> None:
     """No auth → 401 (the bootstrap endpoint is no longer public)."""
     app, _ = _create_app(authenticated=False)
@@ -139,7 +109,7 @@ async def test_create_organization_unauthenticated_401() -> None:
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(
             "/admin/organizations",
-            json={"name": "Acme Corp", "plan": "free"},
+            json={"name": "Acme Corp"},
         )
 
     assert resp.status_code == 401
@@ -170,7 +140,7 @@ async def test_create_organization_non_superadmin_403() -> None:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
                 "/admin/organizations",
-                json={"name": "Acme Corp", "plan": "free"},
+                json={"name": "Acme Corp"},
             )
 
     assert resp.status_code == 403
@@ -188,27 +158,6 @@ async def test_create_organization_422_name_missing() -> None:
     ):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post("/admin/organizations", json={})
-
-    assert resp.status_code == 422
-    body = resp.json()
-    assert "detail" in body
-
-
-@pytest.mark.asyncio
-async def test_create_organization_422_invalid_plan() -> None:
-    """POST /admin/organizations returns 422 when plan is invalid."""
-    app, _ = _create_app(authenticated=True)
-    transport = ASGITransport(app=app)
-
-    with patch(
-        "dependencies.auth.get_org_role",
-        new=AsyncMock(return_value="superadmin"),
-    ):
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
-                "/admin/organizations",
-                json={"name": "Acme Corp", "plan": "invalid_plan"},
-            )
 
     assert resp.status_code == 422
     body = resp.json()

@@ -102,7 +102,7 @@ async def pipeline_auth_client(pipeline_app) -> tuple[AsyncClient, UUID, str, in
         # Bootstrap org
         resp = await cli.post(
             "/admin/organizations",
-            json={"name": "Pipeline Test Org", "plan": "free"},
+            json={"name": "Pipeline Test Org"},
         )
         assert resp.status_code == 201, f"Bootstrap failed: {resp.text}"
         data = resp.json()

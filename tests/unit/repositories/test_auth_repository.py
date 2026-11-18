@@ -146,18 +146,6 @@ class TestAuthRepository:
         mock_db.flush.assert_awaited_once()
         mock_db.refresh.assert_awaited_once()
 
-    async def test_create_organization_with_plan(
-        self, repo: AuthRepository, mock_db: AsyncMock
-    ) -> None:
-        """create_organization accepts a plan parameter."""
-        mock_db.add.return_value = None
-        mock_db.flush.return_value = None
-        mock_db.refresh.return_value = None
-
-        result = await repo.create_organization(name="Paid Org", plan="pro")
-
-        assert result is not None
-
     # ── create_dashboard_user ──────────────────────────────────────────────────
 
     async def test_create_dashboard_user(

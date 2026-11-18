@@ -15,7 +15,6 @@ class CreateOrgRequest(BaseModel):
 
     Attributes:
         name: Human-readable organization name.
-        plan: Billing plan. One of ``free``, ``pro``, ``enterprise``.
     """
 
     name: str = Field(
@@ -24,12 +23,6 @@ class CreateOrgRequest(BaseModel):
         max_length=255,
         description="Human-readable organization name.",
         examples=["Acme Corp"],
-    )
-    plan: str = Field(
-        default="free",
-        pattern=r"^(free|pro|enterprise)$",
-        description="Billing plan for the organization.",
-        examples=["free", "pro", "enterprise"],
     )
 
 
