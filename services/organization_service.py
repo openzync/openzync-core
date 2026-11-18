@@ -100,8 +100,7 @@ class OrganizationService:
 
         Performs a single atomic transaction:
         1. Creates an ``Organization`` record.
-        2. Seeds default prompt templates.
-        3. Bootstraps the OpenBao namespace + default config after commit
+        2. Bootstraps the OpenBao namespace + default config after commit
            (non-fatal on failure — reconcilable later).
 
         No default project and no API key are created; first-use
@@ -135,21 +134,10 @@ class OrganizationService:
         await self._db.flush()
         await self._db.refresh(org)
 
-        # ── 2. Seed default prompt templates for the new org ─────────────
-        from repositories.prompt_template_repository import PromptTemplateRepository
-
-        seeded = await PromptTemplateRepository(self._db).seed_default_prompts(org.id)
-        if seeded:
-            logger.info(
-                "organization.prompts_seeded",
-                org_id=str(org.id),
-                count=seeded,
-            )
-
-        # ── 3. Commit everything atomically ──────────────────────────────
+        # ── 2. Commit everything atomically ──────────────────────────────
         await self._db.commit()
 
-        # ── 4. Bootstrap OpenBao namespace + default config ──────────────
+        # ── 3. Bootstrap OpenBao namespace + default config ──────────────
         if self._bao_client is not None:
             try:
                 await self._bao_client.create_org_namespace(org.id)

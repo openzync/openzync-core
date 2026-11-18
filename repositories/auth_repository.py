@@ -121,24 +121,6 @@ class AuthRepository:
         await self._db.refresh(org)
         return org
 
-    async def seed_prompts_for_org(self, org_id: uuid.UUID) -> int:
-        """Seed prompt templates from the disk manifest into a new org.
-
-        Delegates to :class:`PromptTemplateRepository.seed_default_prompts`
-        which reads ``services/worker/prompts/manifest.yaml`` + ``.jinja2`` files.
-
-        Args:
-            org_id: UUID of the newly created organisation.
-
-        Returns:
-            Number of templates seeded.
-        """
-        from repositories.prompt_template_repository import (
-            PromptTemplateRepository,
-        )
-
-        return await PromptTemplateRepository(self._db).seed_default_prompts(org_id)
-
     # ── Dashboard user ──────────────────────────────────────────────────────
 
     async def create_dashboard_user(
