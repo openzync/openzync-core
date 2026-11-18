@@ -35,6 +35,11 @@ from core.logging import setup_logging
 from core.redis import close_redis, init_redis
 from middleware.audit import AuditMiddleware
 from middleware.auth import AuthMiddleware
+from middleware.ext_null_origin_cors import (
+    EXT_CORS_ALLOW_HEADERS,
+    EXT_CORS_ALLOW_METHODS,
+    ExtNullOriginCorsMiddleware,
+)
 from middleware.logging import LoggingMiddleware
 from middleware.metrics import MetricsMiddleware
 from middleware.rate_limit import RateLimitMiddleware
@@ -209,10 +214,10 @@ def create_app() -> FastAPI:
         else:
             logger.info("embeddings.prewarmed")
 
-        # ── Addon runtime: RLS guard + hot-load enabled addons ──────────
-        from core.addons.guard import install_rls_guard
-
-        install_rls_guard()
+        # ── Addon runtime: hot-load enabled addons ─────────────────────
+        # Bypass protection is structural now: addon contexts hold ONLY
+        # AddonSession (core/addons/sessions.py), which core.rls refuses
+        # to bypass — no monkey-patching, no frame-walking.
         app.state.addons = {}
         try:
             from core.addons.installer import ADDON_ROOT
@@ -322,7 +327,8 @@ def create_app() -> FastAPI:
     # (outermost → innermost).  Registration order is the reverse.
     #
     # Runtime order (outermost → innermost):
-    #   0. CORSMiddleware
+    #   0. ExtNullOriginCorsMiddleware (null-origin shim, /v1/ext/* only)
+    #   1. CORSMiddleware
     #   1. LoggingMiddleware
     #   2. TracingMiddleware
     #   3. AuthMiddleware       — sets org_id
@@ -391,17 +397,25 @@ def create_app() -> FastAPI:
     # Runtime 1 — Structured logging
     app.add_middleware(LoggingMiddleware)
 
-    # Runtime 0 (outermost) — CORS: intercepts OPTIONS preflight BEFORE AuthMiddleware
-    # rejects them. Methods/headers are an explicit allowlist (frontend sends
-    # Authorization + Content-Type; X-Request-ID is accepted for tracing) —
-    # never "*" with allow_credentials=True.
+    # Runtime 1/0 (outermost pair) — CORS: CORSMiddleware intercepts OPTIONS
+    # preflight BEFORE AuthMiddleware rejects them. Methods/headers are an
+    # explicit allowlist (frontend sends Authorization + Content-Type;
+    # X-Request-ID is accepted for tracing) — never "*" with
+    # allow_credentials=True. The method/header lists live in
+    # middleware.ext_null_origin_cors so the null-origin shim mirrors them.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Request-ID", "Idempotency-Key"],
+        allow_methods=EXT_CORS_ALLOW_METHODS,
+        allow_headers=EXT_CORS_ALLOW_HEADERS,
     )
+
+    # Runtime 0 (outermost) — null-origin shim for opaque-origin addon
+    # panels (sandbox="allow-scripts" iframes send `Origin: null`) on
+    # /v1/ext/* only; bearer-only auth, no cookies, so no credentials flag.
+    # Never extend beyond /v1/ext/*.
+    app.add_middleware(ExtNullOriginCorsMiddleware)
 
     # ── Routers ──────────────────────────────────────────────────────────
     # Health must live at ROOT (not /v1) — Helm/NGINX probes target /health

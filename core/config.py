@@ -486,6 +486,15 @@ class Settings(BaseModel):
         description="Maximum total blobs across all messages in one request.",
     )
 
+    # ── Addons ───────────────────────────────────────────────────────────
+    ALLOWED_ADDON_SRC: str = Field(
+        default="addons",
+        description=(
+            "Directory local addon sources must live under. "
+            "Local installs outside it are rejected (422), as are symlinks."
+        ),
+    )
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Singleton accessors

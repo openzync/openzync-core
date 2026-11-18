@@ -13,6 +13,8 @@ from schemas.addons import (
     AddonInstallRequest,
     AddonListResponse,
     AddonResponse,
+    PanelTicketRequest,
+    PanelTicketResponse,
 )
 from services.addon_service import AddonService, to_addon_response
 
@@ -63,6 +65,33 @@ async def check_addon_updates(
     return AddonListResponse(
         data=[to_addon_response(r) for r in rows], total=len(rows)
     )
+
+
+@router.post(
+    "/{addon_id}/panels/ticket", response_model=PanelTicketResponse, status_code=201
+)
+async def issue_panel_ticket(
+    addon_id: str,
+    body: PanelTicketRequest,
+    _org_id: str = Depends(require_superadmin),  # noqa: B008
+    service: AddonService = Depends(_service),  # noqa: B008
+) -> PanelTicketResponse:
+    """Issue a 5-min ``?ticket=`` for one addon panel.
+
+    The caller is the authenticated viewer (dashboard superadmin — same
+    gate as every other route here); the ticket is bound to the addon id
+    + panel path in Redis and presented by the iframe as ``?ticket=``.
+    """
+    ticket = await service.issue_panel_ticket(addon_id, body.panel_path, _org_id)
+    return PanelTicketResponse(ticket=ticket)
+
+
+# Route-order invariant: ``POST /check-updates`` is declared above and
+# matches on method+path, so ``/{addon_id}`` below can never shadow it.
+# (A ``{addon_id}`` regex excluding that literal needs a look-ahead,
+# which pydantic-core's regex engine rejects — order is the constraint.)
+# ``GET .../check-updates`` (undefined) falls into ``GET /{addon_id}``
+# and 404s via ``_require`` — correct status either way.
 
 
 @router.get("/{addon_id}", response_model=AddonResponse)

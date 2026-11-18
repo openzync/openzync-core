@@ -29,7 +29,6 @@ import logging
 import re
 from datetime import UTC, datetime
 from typing import Any, cast
-from urllib.parse import parse_qsl
 from uuid import UUID
 
 import orjson
@@ -78,14 +77,15 @@ AUTH_MISS_RATE_WINDOW: int = 60
 SCHEMA_AUTH_HEADER: str = "Bearer"
 """Expected Authorization header scheme."""
 
-_QUERY_TOKEN_PATH_RE: re.Pattern[str] = re.compile(r"^/v1/ext/[^/]+/ui(/.*)?$")
-"""Paths eligible for ``?token=`` fallback (addon static iframe panels).
+_UI_PATH_RE: re.Pattern[str] = re.compile(r"^/v1/ext/[^/]+/ui(/.*)?$")
+"""Addon static-panel paths served by the gated UI route.
 
-Scope is deliberately narrow: ``GET`` requests under
-``/v1/ext/<addon>/ui/...`` only.
-# ⚠️ never extend past ui/ GETs — query strings leak into access logs,
-# browser history, and Referer headers. Every other path/method ignores
-# ``?token=`` entirely.
+``GET`` requests here pass through this middleware WITHOUT auth state —
+the UI route enforces ``require_addon_enabled`` (disabled → 403) plus a
+Redis-backed ``?ticket=`` panel ticket (missing/invalid → 401). Query
+values are never accepted as credentials here: this middleware is
+header-only (``Authorization: Bearer``), keeping the 401 shape.
+# ⚠️ never extend past ui/ GETs — only the ticket-checked UI route lives here.
 """
 
 
@@ -550,35 +550,17 @@ def _verify_jwt_and_set_state(
     return None
 
 
-def _extract_query_token(scope: Scope, path: str, method: str) -> str | None:
-    """Extract ``?token=`` as a Bearer equivalent for iframe panels.
-
-    Carve-out scope: ``GET /v1/ext/<addon>/ui/...`` only — addon static
-    panels embedded via ``<iframe>`` cannot set ``Authorization``
-    headers, so the token travels as a query parameter. Same JWT/API-key
-    verification applies downstream; only the extraction step differs.
-    # ⚠️ never extend past ui/ GETs (query values leak into logs/history).
+def _is_public_ui_path(path: str, method: str) -> bool:
+    """Whether a request is served by the ticket-checked addon UI route.
 
     Args:
-        scope: The ASGI connection scope (query string read from here).
         path: The request URL path.
         method: The HTTP method.
 
     Returns:
-        The stripped ``token`` value, or ``None`` when out of scope,
-        absent, or empty. The value itself is never logged.
+        ``True`` for ``GET`` under ``/v1/ext/<addon>/ui/...`` only.
     """
-    if method != "GET" or not _QUERY_TOKEN_PATH_RE.match(path):
-        return None
-    raw_qs = scope.get("query_string", b"")
-    if isinstance(raw_qs, bytes):
-        qs = raw_qs.decode("ascii", errors="ignore")
-    else:
-        qs = str(raw_qs)
-    for key, value in parse_qsl(qs, keep_blank_values=True):
-        if key == "token" and value.strip():
-            return value.strip()
-    return None
+    return method == "GET" and _UI_PATH_RE.match(path) is not None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -674,11 +656,14 @@ class AuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # ── Extract Authorization header ─────────────────────────────────
-        # Carve-out: GET /v1/ext/<addon>/ui/... may pass ?token= instead
-        # of the header (iframe panels cannot set Authorization headers).
-        # Header wins when present; ?token= is ignored elsewhere.
-        # ⚠️ never extend past ui/ GETs.
+        # ── Addon UI panels pass through to the ticket-checked route ────
+        # The gated UI route enforces enablement + ``?ticket=`` itself;
+        # this middleware stays header-only and never reads query values.
+        if _is_public_ui_path(path, method):
+            await self.app(scope, receive, send)
+            return
+
+        # ── Extract Authorization header (header-only) ───────────────────
         auth_header: str | None = headers.get("authorization")
         raw_key: str
         if auth_header is not None:
@@ -706,17 +691,14 @@ class AuthMiddleware:
                 )
                 return
         else:
-            query_token = _extract_query_token(scope, path, method)
-            if query_token is None:
-                await _send_rfc7807(
-                    send,
-                    status=401,
-                    title="Authentication Required",
-                    detail="Missing Authorization header. Use: Bearer <api_key or jwt>",
-                    path=path,
-                )
-                return
-            raw_key = query_token
+            await _send_rfc7807(
+                send,
+                status=401,
+                title="Authentication Required",
+                detail="Missing Authorization header. Use: Bearer <api_key or jwt>",
+                path=path,
+            )
+            return
 
         # ── Route to JWT or API key flow ─────────────────────────────────
         # JWT tokens have 2 dots.  API keys have a known prefix.

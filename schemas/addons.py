@@ -63,10 +63,26 @@ class AddonHealthResponse(BaseModel):
     version: str = Field(...)
 
 
+class PanelTicketRequest(BaseModel):
+    """Request a short-lived ticket for one addon panel."""
+
+    panel_path: str = Field(
+        ..., description="Manifest panel path (e.g. /ui/index.html)."
+    )
+
+
+class PanelTicketResponse(BaseModel):
+    """Issued panel ticket (``?ticket=`` for the gated UI route)."""
+
+    ticket: str = Field(..., description="Opaque ticket, 5-minute TTL.")
+
+
 __all__ = [
     "AddonHealthResponse",
     "AddonInstallRequest",
     "AddonListResponse",
     "AddonPanelResponse",
     "AddonResponse",
+    "PanelTicketRequest",
+    "PanelTicketResponse",
 ]

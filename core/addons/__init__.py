@@ -1,6 +1,17 @@
-"""Addon runtime — manifest, install, load, registry, guard, mount."""
+"""Addon runtime — manifest, install, load, registry, sessions, mount."""
 
-from core.addons.guard import install_rls_guard
 from core.addons.registry import AddonRecord, get_registry, resolve_service_override
+from core.addons.sessions import (
+    AddonSession,
+    addon_session_factory,
+    resolve_addon_factory,
+)
 
-__all__ = ["AddonRecord", "get_registry", "install_rls_guard", "resolve_service_override"]
+__all__ = [
+    "AddonRecord",
+    "AddonSession",
+    "addon_session_factory",
+    "get_registry",
+    "resolve_addon_factory",
+    "resolve_service_override",
+]

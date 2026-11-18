@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import posixpath
+import secrets
 from pathlib import Path
 
+import orjson
 from fastapi import FastAPI
 
 from core.addons.installer import (
@@ -22,7 +26,13 @@ from core.addons.registry import (
     next_generation,
     publish_registry,
 )
-from core.exceptions import ConflictError, NotFoundError, ValidationError
+from core.exceptions import (
+    AuthorizationError,
+    ConflictError,
+    NotFoundError,
+    ServiceUnavailableError,
+    ValidationError,
+)
 from models.addon_state import AddonState
 from repositories.addon_repository import AddonRepository
 from schemas.addons import AddonPanelResponse, AddonResponse
@@ -85,7 +95,8 @@ class AddonService:
 
         Hooks resolve loudly before persist; a gated placeholder mounts
         so never-enabled ids 403 instead of 404; then the bundle chain
-        migrates to head. Migration failure keeps the disabled row.
+        migrates to head. Migration failure propagates and the request
+        transaction rolls back the created row (GET → 404; no orphans).
 
         Raises:
             ConflictError: If the id is already installed.
@@ -154,13 +165,24 @@ class AddonService:
         return row
 
     async def disable(self, addon_id: str) -> AddonState:
-        """Mark disabled and republish the registry (routes gate on flag)."""
+        """Disable an addon: strip routes, gate on placeholder, bump gen.
+
+        Unmounts API + UI routes wholesale and mounts the gated
+        placeholder so disabled ids 403 (never fall through to 404);
+        bumps the generation so pinned callers go stale loudly.
+        """
         row = await self._require(addon_id)
         row.enabled = False
+        row.generation = next_generation()
         records = dict(get_registry(self._app))
         if addon_id in records:
             records[addon_id].enabled = False
+            records[addon_id].generation = row.generation
             publish_registry(self._app, records)
+        from core.addons.mount import mount_placeholder, unmount_prefix
+
+        unmount_prefix(self._app, f"/v1/ext/{addon_id}")
+        mount_placeholder(self._app, addon_id)
         logger.info("addon.disabled", extra={"addon": addon_id})
         return row
 
@@ -168,8 +190,9 @@ class AddonService:
         """Re-install from source and reload when enabled.
 
         Local sources re-copy ``source_ref`` and 422 when the
-        ``pyproject.toml`` version is unchanged. Migration failure
-        disables the row + record and raises.
+        ``pyproject.toml`` version is unchanged. ``install_source``
+        stages to a temp dir and atomically renames over the live dir;
+        migration failure disables the row + record and raises.
         """
         row = await self._require(addon_id)
         if row.source_type == "github":
@@ -237,36 +260,114 @@ class AddonService:
         records = dict(get_registry(self._app))
         records.pop(addon_id, None)
         publish_registry(self._app, records)
+        from core.addons.mount import unmount_prefix
+
+        unmount_prefix(self._app, f"/v1/ext/{addon_id}")
         await self._repo.delete(row)
         logger.info("addon.uninstalled", extra={"addon": addon_id})
 
     async def check_updates(self) -> list[AddonState]:
-        """Hourly cron: refresh ``latest_seen``/``update_available``."""
+        """Hourly cron: refresh ``latest_seen``/``update_available``.
+
+        Github ``ls-remote`` calls run concurrently (semaphore-capped,
+        per-call timeout); one failure never fails the cron.
+        """
         rows = await self._repo.get_all()
-        for row in rows:
-            if row.source_type == "github":
-                try:
-                    latest = await latest_github_tag(
-                        f"https://github.com/{row.source_ref}.git"
+        semaphore = asyncio.Semaphore(5)
+
+        async def _github(row: AddonState) -> None:
+            try:
+                async with semaphore:
+                    latest = await asyncio.wait_for(
+                        latest_github_tag(f"https://github.com/{row.source_ref}.git"),
+                        timeout=15.0,
                     )
-                except Exception as exc:  # never fail the cron loudly
-                    logger.warning(
-                        "addon.check_failed", extra={"addon": row.id, "e": str(exc)}
-                    )
-                    continue
-                row.latest_seen = latest
-                row.update_available = latest != row.installed_sha
-            elif row.source_type == "local":
-                try:
-                    current = local_source_version(Path(row.source_ref))
-                except Exception as exc:
-                    logger.warning(
-                        "addon.check_failed", extra={"addon": row.id, "e": str(exc)}
-                    )
-                    continue
-                row.latest_seen = current
-                row.update_available = current != row.version
+            except Exception as exc:
+                logger.warning(
+                    "addon.check_failed", extra={"addon": row.id, "e": str(exc)}
+                )
+                return
+            row.latest_seen = latest
+            row.update_available = latest != row.installed_sha
+
+        async def _local(row: AddonState) -> None:
+            try:
+                current = local_source_version(Path(row.source_ref))
+            except Exception as exc:
+                logger.warning(
+                    "addon.check_failed", extra={"addon": row.id, "e": str(exc)}
+                )
+                return
+            row.latest_seen = current
+            row.update_available = current != row.version
+
+        await asyncio.gather(
+            *[
+                _github(row) if row.source_type == "github" else _local(row)
+                for row in rows
+                if row.source_type in ("github", "local")
+            ]
+        )
         return rows
+
+    async def issue_panel_ticket(
+        self, addon_id: str, panel_path: str, viewer: str
+    ) -> str:
+        """Issue a short-lived panel ticket for an authenticated viewer.
+
+        The ticket is Redis-backed (5-min TTL), bound to the addon id +
+        panel path, and authorizes ``GET /v1/ext/{id}/ui/...`` via
+        ``?ticket=`` (iframes cannot send ``Authorization`` headers).
+        The payload also carries the panel dir as the allowed scope: the
+        ticket opens the panel itself plus files under its directory,
+        never the whole ``ui/`` tree.
+
+        Args:
+            addon_id: Target addon id.
+            panel_path: Declared manifest panel path (e.g. ``/ui/a.html``).
+            viewer: Authenticated viewer identity (org/user, for audit).
+
+        Returns:
+            The opaque ticket string.
+
+        Raises:
+            NotFoundError: Unknown addon or undeclared panel path.
+            AuthorizationError: Addon disabled.
+            ServiceUnavailableError: Redis unreachable (fail closed).
+        """
+        from core.addons.manifest import _normalize_panel_path
+        from core.addons.mount import PANEL_TICKET_PREFIX, PANEL_TICKET_TTL_S
+
+        row = await self._require(addon_id)
+        if not row.enabled:
+            raise AuthorizationError(f"Addon {addon_id!r} is disabled.")
+        normalized = _normalize_panel_path(panel_path)
+        manifest = parse_manifest(ADDON_ROOT / _slug(row, addon_id))
+        if normalized not in {p.path for p in manifest.panels}:
+            raise NotFoundError(f"Panel {panel_path!r} not declared.")
+        redis = getattr(self._app.state, "redis", None)
+        if redis is None:
+            raise ServiceUnavailableError("Panel ticket store is unavailable.")
+        ticket = secrets.token_urlsafe(32)
+        payload = orjson.dumps(
+            {
+                "addon_id": addon_id,
+                "panel_path": normalized,
+                "allowed_dir": posixpath.dirname(normalized),
+                "viewer": viewer,
+            }
+        )
+        try:
+            await redis.set(
+                f"{PANEL_TICKET_PREFIX}{ticket}", payload, ex=PANEL_TICKET_TTL_S
+            )
+        except Exception as exc:
+            logger.error("addon.ticket_issue_failed", extra={"addon": addon_id})
+            raise ServiceUnavailableError(
+                "Panel ticket store is unavailable."
+            ) from exc
+        logger.info("addon.ticket_issued", extra={"addon": addon_id, "by": viewer})
+        return ticket
 
     async def get_one(self, addon_id: str) -> AddonState:
         """Return one addon row; 404 via ``_require`` when unknown."""

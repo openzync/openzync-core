@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
+import posixpath
 import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import structlog
+
 from core._version import __version__
 from core.exceptions import ValidationError
 from core.rbac import ALL_PERMISSIONS
 
+logger = structlog.get_logger(__name__)
+
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,62}$")
 TABLE_RE = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
-SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+([+-][0-9A-Za-z.-]+)?$")
+SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+([.+-][0-9A-Za-z.-]+)?$")
+# Suffix class includes ".": PEP 440 dev releases ("0.1.0.dev1") parse via
+# the same leading-triple logic as the core-version comparison below.
 HOOKS_ALLOWLIST = frozenset(
     {
         "router",
@@ -63,6 +70,35 @@ def _semver_tuple(v: str) -> tuple[int, int, int]:
     return int(match.group(1)), int(match.group(2)), int(match.group(3))
 
 
+def _normalize_panel_path(raw_path: str) -> str:
+    """Normalize and confine a panel path under ``/ui/``.
+
+    Args:
+        raw_path: The declared panel path.
+
+    Returns:
+        The normalized absolute path (always under ``/ui/``).
+
+    Raises:
+        ValidationError: On backslashes, ``..`` escapes, absolute
+            escapes outside ``/ui/``, or a bare ``/ui`` directory ref.
+    """
+    if "\\" in raw_path:
+        raise ValidationError(f"Panel path must not contain backslashes: {raw_path!r}.")
+    if not raw_path.startswith("/"):
+        raise ValidationError(f"Panel path must be absolute: {raw_path!r}.")
+    normalized = posixpath.normpath(raw_path)
+    if normalized == "/ui" or not normalized.startswith("/ui/"):
+        raise ValidationError(f"Panel path must stay under /ui/: {raw_path!r}.")
+    if ".." in normalized.split("/"):
+        raise ValidationError(f"Panel path must not escape /ui/: {raw_path!r}.")
+    return normalized
+
+
+_MANIFEST_CACHE: dict[tuple[str, float], AddonManifest] = {}
+"""Parsed manifests keyed by ``(resolved dir, addon.toml mtime)``."""
+
+
 def parse_manifest(addon_dir: Path) -> AddonManifest:
     """Parse and validate ``addon.toml`` in ``addon_dir``.
 
@@ -78,6 +114,14 @@ def parse_manifest(addon_dir: Path) -> AddonManifest:
     toml_path = addon_dir / "addon.toml"
     if not toml_path.is_file():
         raise ValidationError("addon.toml not found.", {"dir": str(addon_dir)})
+    try:
+        mtime = toml_path.stat().st_mtime
+    except OSError as exc:
+        raise ValidationError(f"addon.toml unreadable: {exc}") from exc
+    cache_key = (str(toml_path.resolve()), mtime)
+    cached = _MANIFEST_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
     try:
         raw = tomllib.loads(toml_path.read_text())
     except (OSError, tomllib.TOMLDecodeError) as exc:
@@ -131,14 +175,17 @@ def parse_manifest(addon_dir: Path) -> AddonManifest:
 
     panels: list[AddonPanel] = []
     for panel in (_pick("panels") or []):
-        pid, title, path = str(panel["id"]), str(panel["title"]), str(panel["path"])
+        pid, title, raw_path = (
+            str(panel["id"]),
+            str(panel["title"]),
+            str(panel["path"]),
+        )
         if not ID_RE.match(pid):
             raise ValidationError(f"Invalid panel id: {pid!r}.")
-        if not path.startswith("/ui/"):
-            raise ValidationError(f"Panel path must start with /ui/: {path!r}.")
+        path = _normalize_panel_path(raw_path)
         panels.append(AddonPanel(id=pid, title=title, path=path))
 
-    return AddonManifest(
+    manifest = AddonManifest(
         id=addon_id,
         version=version,
         min_core_version=min_core,
@@ -148,6 +195,8 @@ def parse_manifest(addon_dir: Path) -> AddonManifest:
         panels=tuple(panels),
         entrypoint=str(_pick("entrypoint") or "hooks.py"),
     )
+    _MANIFEST_CACHE[cache_key] = manifest
+    return manifest
 
 
 __all__ = ["AddonManifest", "AddonPanel", "HOOKS_ALLOWLIST", "field", "parse_manifest"]

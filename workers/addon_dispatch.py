@@ -2,14 +2,33 @@
 
 from __future__ import annotations
 
+import hashlib
+import inspect
 import time
 from typing import Any
 
+import orjson
 import structlog
 
 logger = structlog.get_logger(__name__)
 
 DEDUP_TTL_S = 24 * 3600
+
+
+def _dedup_key(addon_id: str, op: str, payload: dict[str, Any]) -> str:
+    """Build the idempotency key from canonical JSON (stable across runs).
+
+    Args:
+        addon_id: Target addon id.
+        op: Operation name.
+        payload: JSON-serialisable operation arguments.
+
+    Returns:
+        The Redis dedup key.
+    """
+    canonical = orjson.dumps(payload, option=orjson.OPT_SORT_KEYS)
+    digest = hashlib.sha256(canonical).hexdigest()[:32]
+    return f"addon:dispatch:{addon_id}:{op}:{digest}"
 
 
 async def addon_dispatch(ctx: dict[str, Any], addon_id: str, op: str, **payload: Any) -> dict[str, Any]:
@@ -31,7 +50,7 @@ async def addon_dispatch(ctx: dict[str, Any], addon_id: str, op: str, **payload:
     redis = ctx.get("redis")
     if redis is None:
         raise RuntimeError("addon_dispatch requires ctx['redis'].")
-    dedup_key = f"addon:dispatch:{addon_id}:{op}:{hash(frozenset(payload.items())) & 0xFFFFFFFF}"
+    dedup_key = _dedup_key(addon_id, op, payload)
     try:
         claimed = await redis.set(dedup_key, "1", ex=DEDUP_TTL_S, nx=True)
     except Exception as exc:
@@ -57,9 +76,33 @@ async def addon_dispatch(ctx: dict[str, Any], addon_id: str, op: str, **payload:
     handler = (ops or {}).get(op)
     if handler is None:
         raise NotFoundError(f"Addon {addon_id!r} has no op {op!r}.")
+    if not callable(handler):
+        return {"status": "ok", "result": None}
     started = time.monotonic()
     try:
-        result = await handler(**payload) if callable(handler) else None
+        # Handlers declaring a ``db``/``session`` parameter receive an
+        # addon-only session — bypass-incapable by construction. Core
+        # keeps ``RlsAsyncSession``; addon contexts use ONLY this factory.
+        params = set(inspect.signature(handler).parameters)
+        if params & {"db", "session"}:
+            from core.addons.sessions import resolve_addon_factory
+            from core.rls import init_context
+
+            factory = resolve_addon_factory(ctx)
+            async with factory() as session:
+                await init_context(session, None)
+                kwargs: dict[str, Any] = dict(payload)
+                if "db" in params:
+                    kwargs["db"] = session
+                if "session" in params:
+                    kwargs["session"] = session
+                result = await handler(**kwargs) if inspect.iscoroutinefunction(
+                    handler
+                ) else handler(**kwargs)
+        else:
+            result = await handler(**payload) if inspect.iscoroutinefunction(
+                handler
+            ) else handler(**payload)
     finally:
         logger.info(
             "addon.dispatch_done",
@@ -72,10 +115,9 @@ async def addon_dispatch(ctx: dict[str, Any], addon_id: str, op: str, **payload:
 
 async def reconcile_addon_versions(ctx: dict[str, Any]) -> None:
     """Hourly cron — refresh ``latest_seen``/``update_available`` flags."""
-    factory = ctx.get("db_session_factory")
-    if factory is None:
-        logger.warning("addon.reconcile_no_db_factory")
-        raise RuntimeError("reconcile_addon_versions requires db_session_factory.")
+    from core.addons.sessions import resolve_addon_factory
+
+    factory = resolve_addon_factory(ctx)
     from repositories.addon_repository import AddonRepository
     from services.addon_service import AddonService
 

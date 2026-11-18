@@ -245,6 +245,31 @@ async def set_tenant_context(db: AsyncSession, org_id: UUID | str) -> None:
     await _apply_context(db, replace(ctx, org_id=str(org_id)))
 
 
+def _deny_addon_bypass(db: AsyncSession) -> None:
+    """Raise when ``db`` or the current request is addon-scoped.
+
+    Two independent signals (defense in depth): the ``AddonSession``
+    marker (worker/addon-context sessions) and the request-scope flag
+    set by the ``/v1/ext/*`` route gate (addon HTTP handlers on core
+    sessions). Lazy imports — ``core.addons`` package init pulls in
+    this module, so a top-level import would cycle.
+
+    Args:
+        db: The session the bypass was requested on.
+
+    Raises:
+        AuthorizationError: When addon-scoped by either signal.
+    """
+    from core.addons.request_scope import addon_request_active
+    from core.exceptions import AuthorizationError
+
+    if getattr(db, "_oz_addon_session", False) is True or addon_request_active():
+        # ``is True``: AsyncMock auto-creates any attr (truthy Mock), while
+        # only AddonSession stores a real True — plain truthiness breaks tests.
+        logger.error("addons.rls_bypass_denied")
+        raise AuthorizationError("Addon code may not bypass RLS.")
+
+
 async def set_bypass_rls(db: AsyncSession, enabled: bool = True) -> None:
     """Enable or disable the row-level-security bypass for the transaction.
 
@@ -254,7 +279,15 @@ async def set_bypass_rls(db: AsyncSession, enabled: bool = True) -> None:
     Args:
         db: The session to bind.
         enabled: Whether the policies are disabled for the transaction.
+
+    Raises:
+        AuthorizationError: When ``db`` is an addon session, or the
+            current request is served by an addon route — addon code may
+            never escalate isolation (marker + request-scope checks,
+            no frame walk).
     """
+    if enabled:
+        _deny_addon_bypass(db)
     ctx = _remembered_context(db)
     await _apply_context(db, replace(ctx, bypass_rls=enabled))
 
@@ -333,7 +366,12 @@ async def rls_bypass(db: AsyncSession) -> AsyncIterator[None]:
 
     Yields:
         ``None`` — the enclosed block runs with the policies disabled.
+
+    Raises:
+        AuthorizationError: When ``db`` is an addon session, or the
+            current request is served by an addon route.
     """
+    _deny_addon_bypass(db)
     await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
     try:
         yield
