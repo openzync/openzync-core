@@ -7,12 +7,13 @@ needs to know about the file layout.
 
 Usage::
 
-    from core.prompt_manifest import load_manifest
+    from core.prompt_manifest import DEFAULT_PROMPT_TEXTS
 
-    manifest = load_manifest()
-    entry = manifest.get_default_for_type("fact_extraction")
-    if entry:
-        text = manifest.get_template_text(entry["file"])
+    text = DEFAULT_PROMPT_TEXTS["enrich_episode"]  # startup-cached, no I/O
+
+For manifest metadata (e.g. listing known types), use
+:func:`load_manifest`.  :meth:`PromptManifest.get_template_text` is
+tests-only — never call it from the async runtime path.
 """
 
 from __future__ import annotations
@@ -135,12 +136,15 @@ class PromptManifest:
         ]
 
     # ── File I/O ────────────────────────────────────────────────────────────
+    # Tests-only helper — reads from disk on every call.  Never call this
+    # from the async runtime path; production code must use the
+    # startup-cached DEFAULT_PROMPT_TEXTS instead.
 
     def get_template_text(self, file_name: str) -> str:
         """Read the actual prompt template text from disk.
 
         Args:
-            file_name: Relative filename from the manifest (e.g. ``"extract_facts_v4.jinja2"``).
+            file_name: Relative filename from the manifest (e.g. ``"enrich_episode_v1.jinja2"``).
 
         Returns:
             The full file contents as a string.
@@ -159,9 +163,9 @@ class PromptManifest:
 def _load_default_template_texts() -> dict[str, str]:
     """Eagerly read every type-default prompt text from disk.
 
-    Picks the ``is_default_for_type: true`` entry per type from
-    ``manifest.yaml`` and reads its ``.jinja2`` file.  Called once at
-    module import so worker prompts resolve from memory at runtime.
+    Delegates manifest parsing to :func:`load_manifest` (single YAML
+    parse) and reads each default entry's ``.jinja2`` file.  Called once
+    at module import so worker prompts resolve from memory at runtime.
 
     Returns:
         Mapping of ``prompt type → template text``.
@@ -173,16 +177,9 @@ def _load_default_template_texts() -> dict[str, str]:
             entries claim the default for one type, or if no defaults
             exist at all.
     """
-    path = PROMPTS_DIR / MANIFEST_FILENAME
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Prompt manifest not found: {path}. "
-            "Ensure services/worker/prompts/manifest.yaml exists."
-        )
-    with open(path) as f:
-        data = yaml.safe_load(f) or {}
+    manifest = load_manifest(reload=True)
     texts: dict[str, str] = {}
-    for entry in data.get("templates", []):
+    for entry in manifest.templates:
         if not entry.get("is_default_for_type"):
             continue
         type_name = entry.get("type")
@@ -193,16 +190,20 @@ def _load_default_template_texts() -> dict[str, str]:
             )
         if type_name in texts:
             raise ValueError(
-                f"Multiple defaults for prompt type {type_name!r} in {path}"
+                f"Multiple defaults for prompt type {type_name!r} "
+                f"in {PROMPTS_DIR / MANIFEST_FILENAME}"
             )
         file_path = PROMPTS_DIR / file_name
         if not file_path.is_file():
             raise FileNotFoundError(
                 f"Prompt file referenced in manifest not found: {file_path}"
             )
-        texts[type_name] = file_path.read_text()
+        texts[type_name] = manifest.get_template_text(file_name)
     if not texts:
-        raise ValueError(f"Prompt manifest defines no type defaults: {path}")
+        raise ValueError(
+            f"Prompt manifest defines no type defaults: "
+            f"{PROMPTS_DIR / MANIFEST_FILENAME}"
+        )
     return texts
 
 

@@ -33,6 +33,15 @@ router = APIRouter(
 )
 
 
+async def get_custom_instruction_service(
+    db: AsyncSession = Depends(get_db),
+):
+    """Dependency that yields an initialised CustomInstructionService."""
+    from services.custom_instruction_service import CustomInstructionService
+
+    return CustomInstructionService(db)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Custom Instructions
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -43,16 +52,11 @@ router = APIRouter(
     response_model=CustomInstructionsResponse,
 )
 async def list_custom_instructions(
-    db: AsyncSession = Depends(get_db),
+    service=Depends(get_custom_instruction_service),
     org_id: str = Depends(require_permission("configuration:read")),
 ) -> CustomInstructionsResponse:
     """List all extraction custom instructions for the organization."""
-    from repositories.custom_instruction_repository import (
-        CustomInstructionRepository,
-    )
-
-    repo = CustomInstructionRepository(db)
-    instructions = await repo.get_by_scope(
+    instructions = await service.list_for_scope(
         org_id=uuid.UUID(org_id),
         scope="extraction",
     )
@@ -69,7 +73,7 @@ async def list_custom_instructions(
 @audit_action("instruction.update", "instruction", "Instructions updated")
 async def set_custom_instructions(
     body: SetCustomInstructionsRequest,
-    db: AsyncSession = Depends(get_db),
+    service=Depends(get_custom_instruction_service),
     org_id: str = Depends(require_permission("configuration:write")),
 ) -> CustomInstructionsResponse:
     """Replace all extraction custom instructions for the organization.
@@ -77,13 +81,8 @@ async def set_custom_instructions(
     The existing instructions in the ``extraction`` scope are deleted and
     replaced atomically with the provided list.
     """
-    from repositories.custom_instruction_repository import (
-        CustomInstructionRepository,
-    )
-
     instructions_data = [i.model_dump() for i in body.instructions]
-    repo = CustomInstructionRepository(db)
-    instructions = await repo.set_by_scope(
+    instructions = await service.set_for_scope(
         org_id=uuid.UUID(org_id),
         scope="extraction",
         target_id=None,
@@ -100,7 +99,7 @@ async def set_custom_instructions(
 )
 @audit_action("instruction.delete", "instruction", "Instructions deleted")
 async def clear_custom_instructions(
-    db: AsyncSession = Depends(get_db),
+    service=Depends(get_custom_instruction_service),
     org_id: str = Depends(require_permission("configuration:write")),
 ) -> Response:
     """Clear all extraction custom instructions for the organization.
@@ -108,15 +107,8 @@ async def clear_custom_instructions(
     All instructions in the ``extraction`` scope are removed.  This is a
     no-op if no instructions exist.
     """
-    from repositories.custom_instruction_repository import (
-        CustomInstructionRepository,
-    )
-
-    repo = CustomInstructionRepository(db)
-    await repo.set_by_scope(
+    await service.clear_for_scope(
         org_id=uuid.UUID(org_id),
         scope="extraction",
-        target_id=None,
-        instructions=[],
     )
     return Response(status_code=204)

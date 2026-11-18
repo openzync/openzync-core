@@ -9,8 +9,10 @@ from __future__ import annotations
 import uuid
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import ValidationError
 from models.custom_instruction import CustomInstruction
 
 
@@ -65,7 +67,9 @@ class CustomInstructionRepository:
         """Atomically replace all instructions for a scope + target.
 
         Deletes all existing rows matching the key, then bulk-inserts the
-        provided instruction dicts.
+        provided instruction dicts.  Duplicate-name rejection lives in the
+        service layer; a concurrent write that slips past it surfaces here
+        as ``ValidationError`` via the unique index (fail-loud, no retry).
 
         Args:
             org_id: The owning organization UUID.
@@ -77,6 +81,10 @@ class CustomInstructionRepository:
         Returns:
             The newly created ``CustomInstruction`` objects with server-side
             defaults populated (id, created_at, updated_at).
+
+        Raises:
+            ValidationError: If the unique index rejects the insert because
+                a concurrent write created the same name (422).
         """
         # Delete all existing for this scope+target
         delete_conditions = [
@@ -105,10 +113,17 @@ class CustomInstructionRepository:
             self._db.add(obj)
             new_instructions.append(obj)
 
-        await self._db.flush()
+        try:
+            await self._db.flush()
+        except IntegrityError as exc:
+            raise ValidationError(
+                "Duplicate custom instruction names "
+                "(concurrent write conflict)",
+            ) from exc
 
         # Refresh so server-side defaults (id, created_at, updated_at)
-        # are populated into the Python objects.
+        # are populated into the Python objects.  Bounded by the request
+        # max_length=50, so no batch-select restructuring needed.
         for obj in new_instructions:
             await self._db.refresh(obj)
 

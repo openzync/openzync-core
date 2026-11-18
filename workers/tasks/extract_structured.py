@@ -9,7 +9,6 @@ ARQ task was retired in favour of ``enrich_episode``.
 from __future__ import annotations
 
 import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import orjson
@@ -28,26 +27,25 @@ logger = structlog.get_logger()
 PREVIEW_SCHEMA_NAME = "preview"
 """Schema entry name used when rendering a single-schema extraction prompt."""
 
-_PROMPTS_DIR = (
-    Path(__file__).resolve().parent.parent.parent / "services" / "worker" / "prompts"
-)
-"""On-disk prompt catalogue (same files seeded into the DB at signup)."""
-
 
 def _load_extraction_template(template_text: str | None) -> str:
-    """Return the extraction template text, defaulting to the on-disk file.
+    """Return the extraction template text, defaulting to the cached default.
 
     Args:
         template_text: Optional raw Jinja2 override (e.g. a per-schema
-            ``prompt_template``).  When ``None`` the canonical
-            ``extract_structured_v1.jinja2`` file is read from disk.
+            ``prompt_template``).  When ``None`` the startup-cached
+            ``enrich_episode`` default text is used.
 
     Returns:
         The raw Jinja2 template text.
     """
     if template_text:
         return template_text
-    return (_PROMPTS_DIR / "extract_structured_v1.jinja2").read_text()
+    from core.prompt_manifest import (  # noqa: PLC0415 — lazy, avoids worker import cycle
+        DEFAULT_PROMPT_TEXTS,
+    )
+
+    return DEFAULT_PROMPT_TEXTS["enrich_episode"]
 
 
 def build_extraction_prompt(
@@ -55,15 +53,16 @@ def build_extraction_prompt(
 ) -> str:
     """Render the structured-extraction prompt for one schema and one text.
 
-    Renders ``extract_structured_v1.jinja2`` with the same variables the
-    combined ``enrich_episode`` pass uses: ``schemas`` (a one-element list
-    of ``{name, json_schema}`` dicts) and ``conversation`` (the raw text).
+    Renders the startup-cached ``enrich_episode`` default template with the
+    same variables the combined ``enrich_episode`` pass uses: ``schemas``
+    (a one-element list of ``{name, json_schema}`` dicts) and
+    ``conversation`` (the raw text).
 
     Args:
         schema: JSON Schema dict describing the fields to extract.
         text: Raw conversation or sample text to extract from.
         template_text: Optional raw Jinja2 override.  Defaults to the
-            on-disk ``extract_structured_v1.jinja2``.
+            startup-cached ``enrich_episode`` default text.
 
     Returns:
         The rendered prompt string, ready for the LLM.

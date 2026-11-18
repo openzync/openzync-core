@@ -91,7 +91,8 @@ class PreviewExtractionRequest(BaseModel):
             the fields to extract.
         sample_text: Raw conversation or document text to extract from.
         prompt_template: Optional raw Jinja2 override for the extraction
-            prompt.  Defaults to ``extract_structured_v1.jinja2``.
+            prompt.  Defaults to the startup-cached ``enrich_episode``
+            default template text.
     """
 
     json_schema: dict = Field(..., examples=[{"type": "object", "properties": {}}])

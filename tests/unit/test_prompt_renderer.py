@@ -184,60 +184,28 @@ def mock_db_session_factory(org_id: UUID) -> Any:
 
 
 class TestTypeDataSourceRegistry:
-    """The static registry must cover all 5 types and known variables."""
+    """The static registry must cover the two live types and known variables."""
 
     def test_all_five_types_are_registered(self) -> None:
         assert set(TYPE_DATA_SOURCES.keys()) == {
-            "fact_extraction",
-            "entity_extraction",
-            "classification",
-            "structured_extraction",
-            "user_summary",
             "enrich_episode",
+            "user_summary",
         }
 
-    def test_fact_extraction_sources(self) -> None:
-        sources = TYPE_DATA_SOURCES["fact_extraction"]
+    def test_enrich_episode_sources(self) -> None:
+        sources = TYPE_DATA_SOURCES["enrich_episode"]
         assert DataSource.EPISODE_CONTENT in sources
+        assert DataSource.EPISODE_METADATA in sources
         assert DataSource.SESSION_ENTITIES in sources
         assert DataSource.SESSION_FACTS in sources
         assert DataSource.SESSION_RECENT_HISTORY in sources
         assert DataSource.SIMILAR_EPISODES in sources
         assert DataSource.SIMILAR_FACTS in sources
-        assert DataSource.EPISODE_METADATA in sources
-        assert len(sources) == 7
-
-    def test_entity_extraction_sources(self) -> None:
-        sources = TYPE_DATA_SOURCES["entity_extraction"]
-        assert DataSource.EPISODE_CONTENT in sources
-        assert DataSource.SESSION_ENTITIES in sources
         assert DataSource.ORG_ENTITY_TYPES in sources
-        assert DataSource.SIMILAR_EPISODES in sources
-        assert DataSource.SIMILAR_FACTS in sources
-        assert DataSource.EPISODE_METADATA in sources
-        assert len(sources) == 6
-
-    def test_classification_sources(self) -> None:
-        sources = TYPE_DATA_SOURCES["classification"]
-        assert DataSource.EPISODE_CONTENT in sources
         assert DataSource.ORG_CLASSIFICATION_LABELS in sources
-        assert DataSource.SESSION_RECENT_HISTORY in sources
-        assert DataSource.SIMILAR_EPISODES in sources
-        assert DataSource.SIMILAR_FACTS in sources
-        assert DataSource.EPISODE_METADATA in sources
-        assert len(sources) == 6
-
-    def test_structured_extraction_sources(self) -> None:
-        sources = TYPE_DATA_SOURCES["structured_extraction"]
-        assert DataSource.EPISODE_CONTENT in sources
         assert DataSource.ORG_STRUCTURED_SCHEMAS in sources
-        assert DataSource.SESSION_ENTITIES in sources
-        assert DataSource.SESSION_FACTS in sources
-        assert DataSource.SESSION_RECENT_HISTORY in sources
-        assert DataSource.SIMILAR_EPISODES in sources
-        assert DataSource.SIMILAR_FACTS in sources
-        assert DataSource.EPISODE_METADATA in sources
-        assert len(sources) == 8
+        assert DataSource.CUSTOM_INSTRUCTIONS in sources
+        assert len(sources) == 11
 
     def test_user_summary_sources(self) -> None:
         sources = TYPE_DATA_SOURCES["user_summary"]
@@ -313,7 +281,7 @@ class TestBasicRender:
     @pytest.mark.asyncio
     async def test_resolves_disk_template_without_org_id(self) -> None:
         """Neither template_text nor org_id → startup disk cache, no auto-injection."""
-        prompt, context = await render_prompt("fact_extraction", return_context=True)
+        prompt, context = await render_prompt("enrich_episode", return_context=True)
         assert isinstance(prompt, str)
         assert prompt != ""
         assert context == {}
@@ -401,9 +369,44 @@ class TestAutoInjection:
             DataSource.SESSION_RECENT_HISTORY,
             self._make_provider_side_effect("recent_history", []),
         )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.EPISODE_METADATA,
+            self._make_provider_side_effect("message_metadata", {}),
+        )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.SIMILAR_EPISODES,
+            self._make_provider_side_effect("similar_episodes", []),
+        )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.SIMILAR_FACTS,
+            self._make_provider_side_effect("related_facts", []),
+        )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.ORG_ENTITY_TYPES,
+            self._make_provider_side_effect("entity_types", []),
+        )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.ORG_CLASSIFICATION_LABELS,
+            self._make_provider_side_effect("intent_labels", ""),
+        )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.ORG_STRUCTURED_SCHEMAS,
+            self._make_provider_side_effect("schemas", []),
+        )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.CUSTOM_INSTRUCTIONS,
+            self._make_provider_side_effect("custom_instructions", ""),
+        )
 
         prompt = await render_prompt(
-            "fact_extraction",
+            "enrich_episode",
             org_id=org_id,
             episode_id=episode_id,
             session_id=session_id,
@@ -449,9 +452,44 @@ class TestAutoInjection:
             DataSource.SESSION_RECENT_HISTORY,
             self._make_provider_side_effect("recent_history", []),
         )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.EPISODE_METADATA,
+            self._make_provider_side_effect("message_metadata", {}),
+        )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.SIMILAR_EPISODES,
+            self._make_provider_side_effect("similar_episodes", []),
+        )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.SIMILAR_FACTS,
+            self._make_provider_side_effect("related_facts", []),
+        )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.ORG_ENTITY_TYPES,
+            self._make_provider_side_effect("entity_types", []),
+        )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.ORG_CLASSIFICATION_LABELS,
+            self._make_provider_side_effect("intent_labels", ""),
+        )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.ORG_STRUCTURED_SCHEMAS,
+            self._make_provider_side_effect("schemas", []),
+        )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.CUSTOM_INSTRUCTIONS,
+            self._make_provider_side_effect("custom_instructions", ""),
+        )
 
         prompt = await render_prompt(
-            "fact_extraction",
+            "enrich_episode",
             org_id=org_id,
             db_session_factory=make_fake_session_factory(),
             template_text="Data: {{ conversation }}",
@@ -496,9 +534,44 @@ class TestAutoInjection:
             DataSource.SESSION_RECENT_HISTORY,
             self._make_provider_side_effect("recent_history", []),
         )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.EPISODE_METADATA,
+            self._make_provider_side_effect("message_metadata", {}),
+        )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.SIMILAR_EPISODES,
+            self._make_provider_side_effect("similar_episodes", []),
+        )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.SIMILAR_FACTS,
+            self._make_provider_side_effect("related_facts", []),
+        )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.ORG_ENTITY_TYPES,
+            self._make_provider_side_effect("entity_types", []),
+        )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.ORG_CLASSIFICATION_LABELS,
+            self._make_provider_side_effect("intent_labels", ""),
+        )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.ORG_STRUCTURED_SCHEMAS,
+            self._make_provider_side_effect("schemas", []),
+        )
+        monkeypatch.setitem(
+            _PROVIDER_DISPATCH,
+            DataSource.CUSTOM_INSTRUCTIONS,
+            self._make_provider_side_effect("custom_instructions", ""),
+        )
 
         result = await render_prompt(
-            "fact_extraction",
+            "enrich_episode",
             org_id=org_id,
             episode_id=uuid4(),
             session_id=uuid4(),
@@ -656,7 +729,7 @@ class TestRlsTenantContext:
         seen = self._stub_providers(monkeypatch)
 
         await render_prompt(
-            "fact_extraction",
+            "enrich_episode",
             org_id=org_id,
             db_session_factory=make_fake_session_factory(),
             template_text="Extract: {{ conversation }}",
@@ -688,7 +761,7 @@ class TestRlsTenantContext:
         factory = make_fake_session_factory()
 
         await render_prompt(
-            "fact_extraction",
+            "enrich_episode",
             org_id=org_id,
             db_session_factory=factory,
             template_text="Extract: {{ conversation }}",

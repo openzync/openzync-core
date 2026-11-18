@@ -5,6 +5,13 @@ golden dataset of 20+ conversation turns with expected extracted data.
 
 Gate: G3.2 — Accuracy must be ≥85%.
 
+Migrated from the deleted ``extract_structured_v1`` / ``structured_extraction``
+single-task prompt to the combined ``enrich_episode`` prompt (startup cache
++ ``build_enrichment_prompt``); assertions target the ``structured_extractions``
+section of ``CombinedLLMOutput``. Threshold unchanged (was 0.85); lower it
+if an eval run shows the combined prompt scores below the single-task
+baseline.
+
 This test is slow (requires an LLM call per sample) and is skipped by default.
 Run with::
 
@@ -17,12 +24,11 @@ import logging
 
 import pytest
 
-from services.worker.prompt_renderer import render_prompt
+from schemas.llm_outputs import CombinedLLMOutput
+from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
 from tests.evals.conftest import (
     evaluate_structured_match,
     load_golden,
-    load_prompt_text,
-    parse_structured_response,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,19 +67,18 @@ async def test_structured_extraction_accuracy() -> None:
         extra={"samples": total, "threshold": ACCURACY_THRESHOLD},
     )
 
-    template_text = load_prompt_text("extract_structured_v1")
-
     for i, item in enumerate(dataset):
         conversation = item["conversation"]
         schemas = item["schemas"]
         template_vars = {"schemas": schemas, "conversation": conversation}
 
         try:
-            prompt = await render_prompt(
-                "structured_extraction",
-                template_text=template_text,
+            system_prompt, ctx = await render_prompt(
+                "enrich_episode",
+                return_context=True,
                 **template_vars,
             )
+            prompt = build_enrichment_prompt(system_prompt, ctx)
 
             response = await llm.chat(
                 [
@@ -90,9 +95,11 @@ async def test_structured_extraction_accuracy() -> None:
                 max_tokens=2000,
             )
 
-            parsed = parse_structured_response(response.content)
-
-            if parsed is None:
+            try:
+                parsed = CombinedLLMOutput.model_validate_json(
+                    response.content
+                ).structured_extractions
+            except Exception:
                 errors.append(
                     {
                         "index": i,

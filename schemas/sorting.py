@@ -40,7 +40,6 @@ __all__ = [
     "ClassificationSortBy",
     "AdminSchemaSortBy",
     "WebhookSortBy",
-    "PromptSortBy",
     "OrgSortBy",
     "MonitorTargetSortBy",
     "SearchSort",
@@ -65,7 +64,6 @@ ExtractionSortBy = Literal["sequence_number", "created_at"]
 ClassificationSortBy = Literal["sequence_number", "created_at"]
 AdminSchemaSortBy = Literal["name", "created_at"]
 WebhookSortBy = Literal["name", "created_at"]
-PromptSortBy = Literal["name", "created_at"]
 OrgSortBy = Literal["name", "created_at"]
 MonitorTargetSortBy = Literal["name", "created_at", "type", "status"]
 SearchSort = Literal["relevance", "recent"]
