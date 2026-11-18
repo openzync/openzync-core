@@ -158,24 +158,6 @@ class TestAuthRepository:
 
         assert result is not None
 
-    # ── seed_prompts_for_org ───────────────────────────────────────────────────
-
-    async def test_seed_prompts_for_org(
-        self, repo: AuthRepository, mock_db: AsyncMock
-    ) -> None:
-        """seed_prompts_for_org delegates to PromptTemplateRepository."""
-        mock_db.add.return_value = None
-        mock_db.flush.return_value = None
-        mock_db.refresh.return_value = None
-        # The internal PromptTemplateRepository.seed_default_prompts
-        # will be instantiated and called — we mock at db level
-        mock_db.execute.return_value = MagicMock()
-
-        # This delegates to PromptTemplateRepository, so it's tested at a higher level
-        result = await repo.seed_prompts_for_org(self.ORG_ID)
-
-        assert result >= 0
-
     # ── create_dashboard_user ──────────────────────────────────────────────────
 
     async def test_create_dashboard_user(

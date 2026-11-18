@@ -311,9 +311,12 @@ class TestBasicRender:
         assert prompt == "{% for x in items %}{{ x }},{% endfor %}"
 
     @pytest.mark.asyncio
-    async def test_raises_value_error_without_template_text_and_org_id(self) -> None:
-        with pytest.raises(ValueError, match="No template_text"):
-            await render_prompt("fact_extraction")
+    async def test_resolves_disk_template_without_org_id(self) -> None:
+        """Neither template_text nor org_id → startup disk cache, no auto-injection."""
+        prompt, context = await render_prompt("fact_extraction", return_context=True)
+        assert isinstance(prompt, str)
+        assert prompt != ""
+        assert context == {}
 
     @pytest.mark.asyncio
     async def test_extra_context_overrides_nothing_when_no_auto_inject(self) -> None:

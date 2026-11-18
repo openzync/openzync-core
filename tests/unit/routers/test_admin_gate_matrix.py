@@ -84,7 +84,6 @@ OTHER_USER_ID = UUID("00000000-0000-0000-0000-000000000003")
 ENDPOINT_ID = UUID("00000000-0000-0000-0000-000000000004")
 SCHEMA_ID = UUID("00000000-0000-0000-0000-000000000005")
 SUPERADMIN_USER_ID = UUID("00000000-0000-0000-0000-0000000000bb")
-PROMPT_NAME = "extract_facts_v2"
 
 ALL_ROUTERS = [
     audit_log.router,
@@ -125,16 +124,7 @@ ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [
     ("POST", "/v1/admin/webhooks", {}, {}),
     ("PATCH", "/v1/admin/webhooks/{endpoint_id}", {"endpoint_id": str(ENDPOINT_ID)}, {}),
     ("DELETE", "/v1/admin/webhooks/{endpoint_id}", {"endpoint_id": str(ENDPOINT_ID)}, {}),
-    # organizations — prompts + custom-instructions (all require_org_admin)
-    ("GET", "/admin/org/prompts", {}, {}),
-    ("GET", "/admin/org/prompts/system", {}, {}),
-    ("POST", "/admin/org/prompts/import", {}, {}),
-    ("POST", "/admin/org/prompts/{name}/set-default", {"name": PROMPT_NAME}, {}),
-    ("GET", "/admin/org/prompts/{name}", {"name": PROMPT_NAME}, {}),
-    ("GET", "/admin/org/prompts/{name}/versions", {"name": PROMPT_NAME}, {}),
-    ("PUT", "/admin/org/prompts/{name}", {"name": PROMPT_NAME}, {}),
-    ("POST", "/admin/org/prompts/{name}/rollback/{version}", {"name": PROMPT_NAME, "version": "1"}, {}),
-    ("DELETE", "/admin/org/prompts/{name}", {"name": PROMPT_NAME}, {}),
+    # organizations — custom-instructions (all require_org_admin)
     ("GET", "/admin/org/custom-instructions", {}, {}),
     ("PUT", "/admin/org/custom-instructions", {}, {}),
     ("DELETE", "/admin/org/custom-instructions", {}, {}),
