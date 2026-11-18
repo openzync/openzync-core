@@ -64,6 +64,7 @@ from services.otp_service import OtpService
 from services.prompt_template_service import PromptTemplateService
 from services.quick_actions_service import QuickActionsService
 from services.session_service import SessionService
+from services.setup_service import SetupService
 from services.user_service import UserService
 from services.webhook_service import WebhookService
 
@@ -170,6 +171,28 @@ async def get_auth_service(
 
 
 # ── Invite ─────────────────────────────────────────────────────────────────────
+
+
+async def get_setup_service(
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> SetupService:
+    """Dependency that yields an initialised SetupService.
+
+    Wires the request-scoped user and organization repositories for the
+    one-time ``POST /v1/auth/setup`` bootstrap.  The endpoint is public,
+    so the session carries no tenant — the repositories bypass RLS
+    internally for the two platform rows only.
+
+    Args:
+        db: Async DB session from dependency injection.
+
+    Returns:
+        An initialised ``SetupService``.
+    """
+    return SetupService(
+        user_repo=UserRepository(db),
+        org_repo=OrganizationRepository(db),
+    )
 
 
 async def get_invite_service(

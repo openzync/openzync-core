@@ -19,6 +19,7 @@ from uuid import UUID
 
 from sqlalchemy import String, func, or_, select
 from sqlalchemy import update as sa_update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from core import rls
 from core.cursor import decode_cursor, encode_cursor
@@ -201,6 +202,67 @@ class UserRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def get_platform_root(self) -> User | None:
+        """Look up the platform root user, bypassing RLS.
+
+        The setup probe and the one-time setup flow run without a tenant
+        context, so the lookup disables the RLS policies transaction-
+        locally instead of relying on ``set_config`` at the call site.
+
+        Returns:
+            The root User if seeded, or ``None``.
+        """
+        from core.config import PLATFORM_ORG_ID
+
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(User).where(
+                    User.organization_id == PLATFORM_ORG_ID,
+                    User.external_id == "root",
+                )
+            )
+            return result.scalar_one_or_none()
+
+    async def create_platform_root(self, password_hash: str) -> bool:
+        """Insert the platform root superadmin, idempotently.
+
+        ``ON CONFLICT (organization_id, external_id) DO NOTHING`` — exactly
+        one concurrent setup caller wins; the losers get ``False`` and must
+        raise instead of silently succeeding.  Runs under an RLS bypass so
+        it works without a tenant context.
+
+        Args:
+            password_hash: bcrypt hash of the operator-chosen password.
+
+        Returns:
+            ``True`` if this caller created the row, ``False`` if it
+            already existed.
+        """
+        from core.config import PLATFORM_ORG_ID
+
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                pg_insert(User)
+                .values(
+                    organization_id=PLATFORM_ORG_ID,
+                    external_id="root",
+                    email="root",
+                    name="Platform Root",
+                    role="superadmin",
+                    permissions=[],
+                    password_hash=password_hash,
+                    is_email_verified=True,
+                    must_change_password=False,
+                    is_active=True,
+                    metadata_={},
+                )
+                .on_conflict_do_nothing(
+                    index_elements=["organization_id", "external_id"]
+                )
+            )
+            await self._db.flush()
+            return (result.rowcount or 0) > 0
 
     async def get_by_uuid(self, organization_id: UUID, user_id: UUID) -> User | None:
         """Look up a user by internal UUID, scoped to an organization.

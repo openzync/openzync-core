@@ -199,6 +199,33 @@ class RegistrationStatusResponse(BaseModel):
     )
 
 
+class SetupRequest(BaseModel):
+    """Request body for ``POST /v1/auth/setup``.
+
+    One-time platform bootstrap: creates the root superadmin with the
+    operator-chosen password.  Usable only while the platform is unset
+    up — afterwards the endpoint returns 403.
+    """
+
+    password: str = Field(
+        ...,
+        min_length=8,
+        max_length=128,
+        description="Root password (min 8 chars, max 128).",
+        examples=["secure-p@ssword-123"],
+    )
+
+
+class SetupResponse(BaseModel):
+    """Response body for ``POST /v1/auth/setup``."""
+
+    message: str = Field(
+        ...,
+        description="Human-readable confirmation message.",
+        examples=["Platform root created. Log in with username 'root'."],
+    )
+
+
 class VerifyEmailRequest(BaseModel):
     """Request body for ``POST /v1/auth/verify-email``.
 

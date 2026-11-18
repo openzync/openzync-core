@@ -3,7 +3,8 @@
 - ``GET /health`` — lightweight liveness check (always returns 200).
 - ``GET /ready`` — readiness check that validates connectivity to
   PostgreSQL and Redis, plus the prewarmed embedder, aux-component
-  degradation, and the stale graph-edge backlog count.
+  degradation, the stale graph-edge backlog count, and the one-time
+  ``needs_setup`` flag (true until ``POST /v1/auth/setup`` creates root).
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from core._version import __version__
 from core.embeddings import is_model_loaded
 from schemas.health import HealthResponse
 from services.health_service import get_pending_edge_sync_count as _edge_count
+from services.health_service import is_platform_seeded as _is_seeded
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,15 @@ async def readiness(request: Request) -> JSONResponse:
     # Aux outages (FalkorDB, Ollama, Transit, seed) degrade instead of
     # blocking boot — /ready reports them here until they recover.
     degraded: dict[str, str] = dict(getattr(request.app.state, "degraded", {}))
+    # One-time setup signal (the ONLY bootstrap probe the frontend uses):
+    # a fresh install has no platform org / root user until an operator
+    # calls POST /v1/auth/setup.  Additive field — existing shape unchanged.
+    factory = getattr(request.app.state, "db_session_factory", None)
+    needs_setup = await _is_seeded(factory)
+    if needs_setup is False:
+        degraded["platform_seed"] = (
+            "Platform not initialised — POST /v1/auth/setup to create the root user."
+        )
     all_healthy = all(checks.values()) and not degraded
 
     return JSONResponse(
@@ -69,6 +80,7 @@ async def readiness(request: Request) -> JSONResponse:
             "status": "ok" if all_healthy else "degraded",
             "checks": checks,
             "degraded": degraded,
+            "needs_setup": needs_setup is False,
             "pending_edge_sync": await _pending_edge_sync_count(request),
         },
         status_code=200 if all_healthy else 503,
