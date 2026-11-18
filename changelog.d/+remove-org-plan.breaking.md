@@ -1,0 +1,1 @@
+BREAKING: The `organizations.plan` column is removed (migration `0063` drops the column and its CHECK constraint). The `plan` field is gone from `POST /admin/organizations` — stale callers that still send it get a silent-ignore `201`, and the column never gated any behavior so nothing else changes.

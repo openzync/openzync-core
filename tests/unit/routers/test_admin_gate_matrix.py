@@ -438,7 +438,7 @@ async def test_superadmin_role_passes_bootstrap_201() -> None:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
                 "/admin/organizations",
-                json={"name": "Acme Corp", "plan": "free"},
+                json={"name": "Acme Corp"},
             )
 
     assert resp.status_code == 201, resp.text

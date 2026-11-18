@@ -50,7 +50,6 @@ class TestOrganizationApprovals:
         org = MagicMock()
         org.id = ORG_ID
         org.name = "Acme Corp"
-        org.plan = "free"
         org.status = status
         org.org_code = "K7M2Q9X4"
         return org

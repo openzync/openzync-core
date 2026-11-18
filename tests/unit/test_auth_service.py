@@ -179,7 +179,7 @@ class TestAuthService:
         """Signup creates org, creates user, and sends OTP."""
         mock_repo.find_user_by_email.return_value = None
         mock_repo.create_organization.return_value = MagicMock(
-            id=self.ORG_ID, name="Acme Corp", plan="free"
+            id=self.ORG_ID, name="Acme Corp"
         )
         mock_repo.create_dashboard_user.return_value = self._make_mock_user()
 
@@ -196,7 +196,7 @@ class TestAuthService:
 
         mock_repo.find_user_by_email.assert_awaited_once_with("admin@acme.com")
         mock_repo.create_organization.assert_awaited_once_with(
-            name="Acme Corp", plan="free"
+            name="Acme Corp"
         )
         mock_repo.create_dashboard_user.assert_awaited_once_with(
             organization_id=self.ORG_ID,
@@ -269,7 +269,7 @@ class TestAuthService:
         """Signup returns an identical response for existing and new emails."""
         mock_repo.find_user_by_email.return_value = None
         mock_repo.create_organization.return_value = MagicMock(
-            id=self.ORG_ID, name="Acme Corp", plan="free"
+            id=self.ORG_ID, name="Acme Corp"
         )
         mock_repo.create_dashboard_user.return_value = self._make_mock_user()
 
@@ -367,7 +367,7 @@ class TestAuthService:
         assert result.status == "pending"
 
         mock_repo.create_organization.assert_awaited_once_with(
-            name="Acme Corp", plan="free", status="pending"
+            name="Acme Corp", status="pending"
         )
         mock_repo.create_dashboard_user.assert_awaited_once()
         # Pending admin — no password hash yet (set at invite-accept time).
@@ -410,7 +410,7 @@ class TestAuthService:
         assert "Verification code sent" in result.message
         mock_repo.rollback.assert_awaited_once()
         mock_repo.create_organization.assert_awaited_once_with(
-            name="Acme Corp", plan="free", status="pending"
+            name="Acme Corp", status="pending"
         )
 
     @pytest.mark.asyncio
@@ -423,7 +423,7 @@ class TestAuthService:
         """allow_all keeps the live path — verified admin + OTP sent."""
         mock_repo.find_user_by_email.return_value = None
         mock_repo.create_organization.return_value = MagicMock(
-            id=self.ORG_ID, name="Acme Corp", plan="free"
+            id=self.ORG_ID, name="Acme Corp"
         )
         mock_repo.create_dashboard_user.return_value = self._make_mock_user()
 
@@ -441,7 +441,7 @@ class TestAuthService:
 
         assert "Verification code sent" in result.message
         mock_repo.create_organization.assert_awaited_once_with(
-            name="Acme Corp", plan="free"
+            name="Acme Corp"
         )
         mock_otp.generate_and_send.assert_awaited_once()
 

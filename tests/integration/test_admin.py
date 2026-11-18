@@ -10,7 +10,6 @@ auto-created (first-use auth flows through ``POST /v1/auth/signup``).
 
 Tests:
     - ``test_create_organization_no_key_no_default_project`` — happy path
-    - ``test_create_org_invalid_plan`` — plan validation → 422
     - ``test_create_org_missing_name`` — required field validation → 422
 """
 
@@ -49,8 +48,8 @@ class TestAdminBootstrap:
             # Ensure the platform org exists (the superadmin must belong to it).
             await session.execute(
                 text(
-                    "INSERT INTO organizations (id, name, plan, org_code) "
-                    "VALUES (:id, 'SYSTEM', 'free', 'platform') "
+                    "INSERT INTO organizations (id, name, org_code) "
+                    "VALUES (:id, 'SYSTEM', 'platform') "
                     "ON CONFLICT (id) DO NOTHING"
                 ),
                 {"id": PLATFORM_ORG_ID},
@@ -105,7 +104,7 @@ class TestAdminBootstrap:
         """
         response = await superadmin_client.post(
             "/admin/organizations",
-            json={"name": "Test Org", "plan": "free"},
+            json={"name": "Test Org"},
         )
 
         assert response.status_code == 201, (
@@ -146,35 +145,6 @@ class TestAdminBootstrap:
     # ═════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
-    async def test_create_org_invalid_plan(
-        self, superadmin_client: AsyncClient
-    ) -> None:
-        """An invalid ``plan`` value should return 422.
-
-        Accepted values are typically ``free``, ``pro``, ``enterprise``.
-        A value like ``invalid`` should fail Pydantic validation.
-        """
-        response = await superadmin_client.post(
-            "/admin/organizations",
-            json={"name": "Test Org", "plan": "invalid"},
-        )
-
-        assert response.status_code == 422, (
-            f"Expected 422 for invalid plan, got {response.status_code}: {response.text}"
-        )
-
-        # -- Should be a Pydantic-style validation error --
-        body = response.json()
-        # FastAPI 422 from Pydantic includes "detail" with field-level errors
-        assert "detail" in body, "Expected Pydantic validation detail in response"
-
-        # Verify the error mentions the plan field
-        detail_str = str(body["detail"]).lower()
-        assert "plan" in detail_str, (
-            f"Validation error should reference 'plan' field: {detail_str}"
-        )
-
-    @pytest.mark.asyncio
     async def test_create_org_missing_name(
         self, superadmin_client: AsyncClient
     ) -> None:
@@ -185,7 +155,7 @@ class TestAdminBootstrap:
         """
         response = await superadmin_client.post(
             "/admin/organizations",
-            json={"plan": "free"},  # missing "name"
+            json={},  # missing "name"
         )
 
         assert response.status_code == 422, (

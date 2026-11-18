@@ -161,7 +161,7 @@ fi
 step "1.3 — Bootstrap organization"
 BOOTSTRAP_RESPONSE=$(curl_retry -X POST "$BASE_URL/admin/organizations" \
   -H "Content-Type: application/json" \
-  -d '{"name":"E2E Test Suite Org","plan":"pro"}')
+  -d '{"name":"E2E Test Suite Org"}')
 HTTP_CODE=$(echo "$BOOTSTRAP_RESPONSE" | python3 -c "
 import sys, json
 try:

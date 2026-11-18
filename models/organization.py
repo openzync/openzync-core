@@ -21,7 +21,6 @@ class Organization(TimestampMixin, Base):
         id: UUID primary key, generated server-side via gen_random_uuid().
         name: Human-readable organization name.  The platform org is always
             named ``SYSTEM`` (exact match — see :attr:`is_platform`).
-        plan: Subscription tier — one of ``free``, ``pro``, ``enterprise``.
         status: Lifecycle state — one of ``pending``, ``approved``,
             ``rejected``.  ``pending`` orgs await superadmin approval and
             are excluded from every tenant-facing lookup.
@@ -47,12 +46,6 @@ class Organization(TimestampMixin, Base):
         server_default=func.gen_random_uuid(),
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    plan: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False,
-        default="free",
-        server_default="free",
-    )
     # Org lifecycle — pending orgs await superadmin approval and are
     # excluded from tenant-facing lookups (get_by_code filters on it).
     status: Mapped[str] = mapped_column(
@@ -104,10 +97,6 @@ class Organization(TimestampMixin, Base):
 
     __table_args__ = (
         CheckConstraint(
-            "plan IN ('free', 'pro', 'enterprise')",
-            name="ck_organization_plan",
-        ),
-        CheckConstraint(
             "status IN ('pending', 'approved', 'rejected')",
             name="ck_organization_status",
         ),
@@ -122,5 +111,5 @@ class Organization(TimestampMixin, Base):
     def __repr__(self) -> str:
         return (
             f"<Organization id={self.id} name={self.name!r} "
-            f"plan={self.plan} status={self.status}>"
+            f"status={self.status}>"
         )

@@ -44,10 +44,10 @@ class TestOrganizationService:
     # ── Helpers ──────────────────────────────────────────────────────────────
 
     def _make_payload(
-        self, name: str = "Test Org", plan: str = "free"
+        self, name: str = "Test Org"
     ) -> CreateOrgRequest:
         """Build a ``CreateOrgRequest`` for test usage."""
-        return CreateOrgRequest(name=name, plan=plan)
+        return CreateOrgRequest(name=name)
 
     def _make_service(
         self, bao_client: AsyncMock | None = None
@@ -70,7 +70,6 @@ class TestOrganizationService:
         org = MagicMock()
         org.id = self.ORG_ID
         org.name = "Test Org"
-        org.plan = "free"
         org.org_code = "K7M2Q9X4"
         org.join_enabled = True
         return org
@@ -114,7 +113,6 @@ class TestOrganizationService:
         mock_org_cls.assert_called_once()
         kwargs = mock_org_cls.call_args.kwargs
         assert kwargs["name"] == "Test Org"
-        assert kwargs["plan"] == "free"
         # The id is minted in Python — the DB never assigns it.
         assert isinstance(kwargs["id"], UUID)
         org_id = kwargs["id"]

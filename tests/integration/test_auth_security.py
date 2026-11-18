@@ -53,7 +53,7 @@ async def _make_user(db: AsyncSession, email: str) -> object:
     from models.organization import Organization
 
     org = Organization(
-        name=f"Sec Test {uuid4()}", plan="free", org_code=generate_org_code()
+        name=f"Sec Test {uuid4()}", org_code=generate_org_code()
     )
     db.add(org)
     await db.flush()

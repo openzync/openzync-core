@@ -64,7 +64,7 @@ async def create_organization(
       rejected.
 
     Args:
-        payload: Organization name and optional plan.
+        payload: Organization name.
         _org_id: Platform org UUID (superadmin-gated).
         service: Injected organization service.
 

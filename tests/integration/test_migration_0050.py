@@ -83,8 +83,8 @@ def _seed_legacy_data(engine: Any) -> None:
         conn.execute(text("SELECT set_config('app.bypass_rls', 'true', false)"))
         conn.execute(
             text(
-                "INSERT INTO organizations (id, name, plan, org_code) VALUES "
-                "('00000000-0000-0000-0000-000000000001', 'Acme', 'free', 'acme01')"
+                "INSERT INTO organizations (id, name, org_code) VALUES "
+                "('00000000-0000-0000-0000-000000000001', 'Acme', 'acme01')"
             )
         )
         conn.execute(

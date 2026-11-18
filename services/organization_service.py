@@ -107,7 +107,7 @@ class OrganizationService:
         authentication flows through ``POST /v1/auth/signup``.
 
         Args:
-            payload: Organization name and optional plan.
+            payload: Organization name.
 
         Returns:
             A ``CreateOrgResponse`` with the org ID and name.
@@ -126,7 +126,6 @@ class OrganizationService:
         org = Organization(
             id=uuid.uuid4(),
             name=payload.name,
-            plan=payload.plan,
             org_code=generate_org_code(),
         )
         await rls.set_tenant_context(self._db, org.id)
@@ -162,7 +161,6 @@ class OrganizationService:
             "organization.created",
             org_id=str(org.id),
             org_name=org.name,
-            org_plan=payload.plan,
         )
 
         return CreateOrgResponse(
