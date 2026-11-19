@@ -16,7 +16,7 @@ The backend of the OpenZync platform: the open-source temporal knowledge graph w
 instead of overwriting, with hybrid retrieval over PostgreSQL, FalkorDB and SurrealDB, five LLM
 providers, an MCP server and a typed Python SDK. Self-hosted, no vendor lock-in.
 
-[Docs](https://docs.openzync.tech/en/latest/) · [Quickstart guide](https://docs.openzync.tech/en/latest/guides/quickstart.html) · [Live app](https://app.openzync.tech) · [Python SDK](https://pypi.org/project/openzync/) · [GitHub org](https://github.com/openzync) · [Contact](mailto:rohnsha0@gmail.com)
+[Docs](https://docs.openzync.tech/en/latest/) · [Quickstart guide](https://docs.openzync.tech/en/latest/guides/quickstart.html) · [Live app](https://app.openzync.tech) · [Python SDK](https://pypi.org/project/openzync/) · [GitHub org](https://github.com/openzync) · [Discussions](https://github.com/orgs/openzync/discussions)
 
 ## Features
 
@@ -149,5 +149,4 @@ Contributions welcome — read the [contributing guide](https://docs.openzync.te
 
 ## License
 
-AGPL-3.0 — see [LICENSE](./LICENSE). Commercial licence for SaaS deployments that cannot release
-their modifications: `rohnsha0@gmail.com`. If OpenZync is useful to you, a star helps others find it.
+AGPL-3.0-only — see [LICENSE](./LICENSE). No commercial license is offered; the AGPL applies equally to SaaS deployments (modifications offered as a service must be released). If OpenZync is useful to you, a star helps others find it.
