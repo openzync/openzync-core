@@ -95,8 +95,7 @@ async def send_invite_email(
 ) -> None:
     """Render and send the magic-link invite email.
 
-    Shared by the admin invite flow and the platform org-approval flow
-    (``OrganizationService.approve_org``) — one template, one link shape
+    Shared by the admin invite flow — one template, one link shape
     (``{FRONTEND_URL}/invite?token=...``).
 
     Args:

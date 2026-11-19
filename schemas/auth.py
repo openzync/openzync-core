@@ -19,10 +19,7 @@ from pydantic import (
     field_validator,
 )
 
-from schemas.system_config import (  # noqa: TC001 — runtime imports: pydantic resolves field types
-    ApprovalScope,
-    OrgCreationPolicy,
-)
+from schemas.instance_settings import RegistrationMode
 
 _EMAIL_ADAPTER = TypeAdapter(EmailStr)
 """TypeAdapter for EmailStr — validates a string with EmailStr semantics
@@ -33,12 +30,13 @@ validator)."""
 class SignupRequest(BaseModel):
     """Request body for ``POST /v1/auth/signup``.
 
-    Creates a new organization with an admin dashboard user.
+    Creates a dashboard user in the singleton platform org (email +
+    password only — no organization is created).
     """
 
     email: EmailStr = Field(
         ...,
-        description="Email address for the dashboard admin user.",
+        description="Email address for the dashboard user.",
         examples=["admin@acme.com"],
     )
     password: str = Field(
@@ -48,20 +46,12 @@ class SignupRequest(BaseModel):
         description="Password (min 8 chars, max 128).",
         examples=["secure-p@ssword-123"],
     )
-    organization_name: str = Field(
-        ...,
-        min_length=1,
-        max_length=255,
-        description="Human-readable organization name.",
-        examples=["Acme Corp"],
-    )
 
 
 class JoinRequest(BaseModel):
     """Request body for ``POST /v1/auth/join``.
 
-    Joins an **existing** organization via its join code.  Creates a
-    member dashboard user (never an admin).
+    Joins the singleton platform org as a member (email + password).
     """
 
     email: EmailStr = Field(
@@ -75,13 +65,6 @@ class JoinRequest(BaseModel):
         max_length=128,
         description="Password (min 8 chars, max 128).",
         examples=["secure-p@ssword-123"],
-    )
-    org_code: str = Field(
-        ...,
-        min_length=1,
-        max_length=24,
-        description="Organization join code (case-insensitive).",
-        examples=["K7M2Q9X4"],
     )
 
 
@@ -139,12 +122,11 @@ class SignupResponse(BaseModel):
 
 
 class PendingOrgResponse(BaseModel):
-    """Signup response when the org enters the approval queue.
+    """Signup response when the account enters the approval queue.
 
     Returned instead of :class:`SignupResponse` when the platform
-    ``org_creation_policy`` is ``approvals`` with ``public_signup``
-    scope: the org is created as ``pending`` and the designated admin
-    receives no OTP — no live org exists until a superadmin approves it.
+    ``registration_mode`` is ``approval``: the user is created inactive
+    and an admin activates them later — no OTP is sent.
     """
 
     status: Literal["pending"] = Field(
@@ -155,7 +137,7 @@ class PendingOrgResponse(BaseModel):
         ...,
         description="Human-readable confirmation message.",
         examples=[
-            "Your organization is pending approval. "
+            "Your account is pending approval. "
             "You will receive an email when it is approved."
         ],
     )
@@ -182,20 +164,16 @@ class ChangePasswordRequest(BaseModel):
 
 
 class RegistrationStatusResponse(BaseModel):
-    """Public registration status — drives frontend signup/request UI states.
+    """Public registration status — drives frontend signup UI states.
 
-    Returned by ``GET /v1/auth/registration-status`` (no auth).  Defaults
-    to ``allow_all`` / ``both`` when OpenBao has no system config record —
-    backward compatible with pre-feature installs.
+    Returned by ``GET /v1/auth/registration-status`` (no auth).
+    ⚠️ BREAKING: ``org_creation_policy`` / ``approval_scope`` are gone;
+    the single field is ``registration_mode``.
     """
 
-    org_creation_policy: OrgCreationPolicy = Field(
+    registration_mode: RegistrationMode = Field(
         ...,
-        description="Platform new-org creation policy.",
-    )
-    approval_scope: ApprovalScope = Field(
-        ...,
-        description="Channels gated by the approvals policy.",
+        description="Platform registration mode: open, invite_only, approval.",
     )
 
 
@@ -203,8 +181,9 @@ class SetupRequest(BaseModel):
     """Request body for ``POST /v1/auth/setup``.
 
     One-time platform bootstrap: creates the root superadmin with the
-    operator-chosen password.  Usable only while the platform is unset
-    up — afterwards the endpoint returns 403.
+    operator-chosen password and names the singleton platform org.
+    Usable only while the platform is unset up — afterwards the endpoint
+    returns 403.
     """
 
     password: str = Field(
@@ -213,6 +192,13 @@ class SetupRequest(BaseModel):
         max_length=128,
         description="Root password (min 8 chars, max 128).",
         examples=["secure-p@ssword-123"],
+    )
+    org_name: str = Field(
+        default="Platform",
+        min_length=1,
+        max_length=255,
+        description="Display name for the singleton platform org.",
+        examples=["Acme Corp"],
     )
 
 

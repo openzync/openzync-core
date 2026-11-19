@@ -11,9 +11,9 @@ Only the non-secret whitelist in :mod:`schemas.system_config` is ever
 read or written — the ``OZ_*`` secret keys sharing the same OpenBao path
 are never exposed.
 
-Defaults (backward compatible — existing installs keep working):
-``org_creation_policy=allow_all``, ``approval_scope=both`` when OpenBao
-has no record.
+⚠️ BREAKING: org-creation policy keys are gone (single platform org).
+Registration is governed by ``instance_settings.registration_mode``.
+Defaults: all fields ``None`` when OpenBao has no record.
 """
 
 from __future__ import annotations
@@ -56,9 +56,8 @@ async def get_system_config(
     """Fetch the platform system config: cache → OpenBao.
 
     Only whitelisted (non-secret) keys are returned.  When OpenBao has no
-    record — or a whitelisted key is absent — the backward-compatible
-    defaults apply: ``org_creation_policy=allow_all``,
-    ``approval_scope=both``, other fields ``None``.
+    record — or a whitelisted key is absent — the field defaults to
+    ``None`` (registration mode lives in ``instance_settings`` now).
 
     Args:
         redis: An optional async Redis client.  When ``None``, caching is

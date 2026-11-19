@@ -154,6 +154,43 @@ class AuthThrottle:
                 "Try again later."
             )
 
+    async def check_sensitive_attempt(self, scope: str, key: str, ip: str) -> None:
+        """Check and increment a generic per-key + per-IP throttle counter.
+
+        Shared by endpoints that previously had no throttle
+        (resend-otp, refresh, invites): 10 attempts per key per 15 min,
+        30 per IP per 15 min.
+
+        Args:
+            scope: Endpoint scope (e.g. ``resend_otp``, ``refresh``).
+            key: Per-actor key (email or token fingerprint).
+            ip: The client IP address.
+
+        Raises:
+            RateLimitError: If the rate limit is exceeded.
+        """
+        norm_key = self._normalize_email(key)
+        norm_ip = self._normalize_ip(ip)
+        key_counter = f"auth:throttle:{scope}:key:{norm_key}"
+        key_attempts = await self._redis.incr(key_counter)
+        if key_attempts == 1:
+            await self._redis.expire(key_counter, 900)  # 15 min window
+
+        ip_counter = f"auth:throttle:{scope}:ip:{norm_ip}"
+        ip_attempts = await self._redis.incr(ip_counter)
+        if ip_attempts == 1:
+            await self._redis.expire(ip_counter, 900)  # 15 min window
+
+        if key_attempts > 10:
+            raise RateLimitError(
+                "Too many attempts. Please try again later."
+            )
+        if ip_attempts > 30:
+            raise RateLimitError(
+                "Too many attempts from this IP address. "
+                "Try again later."
+            )
+
     async def check_verify_attempt(self, email: str, ip: str) -> None:
         """Check and increment email-verification attempt counter.
 

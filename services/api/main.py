@@ -46,7 +46,6 @@ from middleware.rate_limit import RateLimitMiddleware
 from middleware.request_id import RequestIDMiddleware
 from middleware.tracing import TracingMiddleware
 from routers import (
-    admin,
     admin_addons,
     admin_invites,
     admin_llm_usage,
@@ -68,10 +67,10 @@ from routers import (
     global_search,
     graph,
     health,
+    me,
     memory,
     metrics,
     observations,
-    org_requests,
     project_api_keys,
     projects,
     search,
@@ -421,7 +420,6 @@ def create_app() -> FastAPI:
     # Health must live at ROOT (not /v1) — Helm/NGINX probes target /health
     # and /ready; the /v1 prefix made them 404 on deployed instances.
     app.include_router(health.router, tags=["Health"])
-    app.include_router(admin.router)
     app.include_router(admin_addons.router)
     app.include_router(admin_llm_usage.router)
     app.include_router(admin_metrics.router)
@@ -434,9 +432,9 @@ def create_app() -> FastAPI:
     app.include_router(admin_org_code.router)
     app.include_router(admin_invites.router)
     app.include_router(admin_system.router)
-    app.include_router(org_requests.router)
     app.include_router(audit_log.router)
     app.include_router(auth.router)
+    app.include_router(me.router)
     app.include_router(users.router)
     app.include_router(sessions.router)
     app.include_router(classifications.router)

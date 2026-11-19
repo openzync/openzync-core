@@ -128,7 +128,7 @@ async def get_db_superadmin(
     Same contract as :func:`get_db` (session from ``app.state.db_session_factory``)
     but with ``app.bypass_rls = 'true'`` and ``app.org_id`` set to the
     platform org UUID — so the session can read and mutate rows across
-    **all** organizations (org listings, cross-org config, approvals).
+    the platform org (member listing, cross-org config).
 
     **The bypass is granted only after a DB-verified superadmin check**
     (:func:`dependencies.auth._ensure_superadmin`).  Fail-closed: if the
@@ -143,8 +143,7 @@ async def get_db_superadmin(
     commit, so the bypass survives a mid-request commit and cannot
     outlive the transaction.
 
-    Use ONLY in ``routers/admin_system.py`` and the
-    ``approve_org`` transaction.
+    Use ONLY in ``routers/admin_system.py``.
 
     Yields:
         An :class:`AsyncSession` with RLS bypassed for the platform admin.

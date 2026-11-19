@@ -134,6 +134,14 @@ class User(TimestampMixin, Base):
             "or revoke."
         ),
     )
+    config_override: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+        comment="Per-user config overrides layered over the platform org "
+        "config (user wins).  See services/user_config_service.",
+    )
 
     __table_args__ = (
         UniqueConstraint(

@@ -71,6 +71,11 @@ class UserRepository:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
+    @property
+    def session(self) -> AsyncSession:
+        """Return the database session for cross-repo service flows."""
+        return self._db
+
     # ── Create ──────────────────────────────────────────────────────────────
 
     async def create(
@@ -505,6 +510,61 @@ class UserRepository:
         )
         await self._db.flush()
         return result.rowcount or 0  # type: ignore[attr-defined]
+
+    # ── Config override (per-user layer over org config) ───────────────────
+
+    async def get_config_override(self, user_id: UUID) -> dict[str, Any]:
+        """Return the user's stored config override (``{}`` when none).
+
+        Args:
+            user_id: The internal OpenZync user UUID.
+
+        Returns:
+            The override dict, or ``{}`` if unset or the user is missing.
+        """
+        result = await self._db.execute(
+            select(User.config_override).where(User.id == user_id)
+        )
+        row = result.one_or_none()
+        if row is None or not isinstance(row[0], dict):
+            return {}
+        return dict(row[0])
+
+    async def merge_config_override(
+        self, user_id: UUID, patch: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Deep-merge ``patch`` onto the user's config override.
+
+        Keys set to ``None`` are removed.  Returns the stored override.
+
+        Args:
+            user_id: The internal OpenZync user UUID.
+            patch: Partial keys to merge (``None`` removes a key).
+
+        Returns:
+            The updated override dict.
+
+        Raises:
+            NotFoundError: If the user does not exist.
+        """
+        from core.exceptions import NotFoundError
+
+        result = await self._db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+        existing = dict(user.config_override or {})
+        for key, value in patch.items():
+            if value is None:
+                existing.pop(key, None)
+            elif isinstance(value, dict) and isinstance(existing.get(key), dict):
+                existing[key] = {**existing[key], **value}
+            else:
+                existing[key] = value
+        user.config_override = existing
+        await self._db.flush()
+        await self._db.refresh(user)
+        return dict(user.config_override or {})
 
     # ── Update ──────────────────────────────────────────────────────────────
 

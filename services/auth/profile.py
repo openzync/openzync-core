@@ -6,6 +6,8 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy.exc import IntegrityError as _IntegrityError
+
 from core.exceptions import (
     AuthenticationError,
     ConflictError,
@@ -197,10 +199,19 @@ class ProfileMixin:
                         )
 
         if has_changes:
-            user = await self._repo.update_dashboard_user(
-                user_id=user_id,
-                **update_kwargs,
-            )
+            try:
+                user = await self._repo.update_dashboard_user(
+                    user_id=user_id,
+                    **update_kwargs,
+                )
+            except _IntegrityError:
+                # Lost the unique-email race (pre-check passed, a concurrent
+                # write won the partial unique index) — same 409 as the
+                # pre-check, never a raw 500.
+                await self._repo.rollback()
+                raise ConflictError(
+                    "Email is already in use."
+                ) from None
 
         return DashboardUserResponse(
             id=user.id,

@@ -21,8 +21,6 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import rls
-from core.org_codes import generate_org_code
-from models.organization import Organization
 from models.refresh_token import RefreshToken
 from models.user import User
 
@@ -83,41 +81,6 @@ class AuthRepository:
                 )
             )
             return result.scalar_one_or_none()
-
-    # ── Organization ────────────────────────────────────────────────────────
-
-    async def create_organization(
-        self, name: str, status: str = "approved"
-    ) -> Organization:
-        """Create a new organization.
-
-        The organization id is minted here (not by the database) so the
-        session can be bound to the new tenant *before* the row is
-        written: SQLAlchemy appends a ``RETURNING`` clause to the INSERT
-        (for the ``created_at``/``updated_at`` server defaults) and that
-        clause is filtered by the table's SELECT policy — a session that is
-        not bound to the new organization cannot see the row it just
-        created, and the insert is rejected.
-
-        Args:
-            name: Organization name.
-            status: Lifecycle state — ``approved`` (default) for a live
-                org, ``pending`` for an approval-queue org.
-
-        Returns:
-            The newly created Organization.
-        """
-        org = Organization(
-            id=uuid.uuid4(),
-            name=name,
-            status=status,
-            org_code=generate_org_code(),
-        )
-        await rls.set_tenant_context(self._db, org.id)
-        self._db.add(org)
-        await self._db.flush()
-        await self._db.refresh(org)
-        return org
 
     # ── Dashboard user ──────────────────────────────────────────────────────
 

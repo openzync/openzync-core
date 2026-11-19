@@ -295,9 +295,10 @@ async def set_bypass_rls(db: AsyncSession, enabled: bool = True) -> None:
 async def set_lookup_code(db: AsyncSession, code: str) -> None:
     """Allow a single-row read of the organization owning ``code``.
 
-    Used by the public org-code join: the submitted code is the
-    credential, and the ``org_join_code_lookup`` policy matches exactly
-    that one row.
+    Legacy — org-code join is removed (single platform org).  Retained
+    because the ``org_join_code_lookup`` RLS policy still references the
+    ``app.lookup_code`` setting; removing the plumbing requires a policy
+    migration (deferred).
 
     Args:
         db: The session to bind.

@@ -58,12 +58,11 @@ from services.fact_service import FactService
 from services.graph_service import GraphService
 from services.invite_service import InviteService
 from services.memory_service import MemoryService
-from services.org_request_service import OrgRequestService
-from services.organization_service import OrganizationService  # noqa: TC001
 from services.otp_service import OtpService
 from services.quick_actions_service import QuickActionsService
 from services.session_service import SessionService
 from services.setup_service import SetupService
+from services.user_config_service import UserConfigService
 from services.user_service import UserService
 from services.webhook_service import WebhookService
 
@@ -220,53 +219,28 @@ async def get_invite_service(
     )
 
 
-# ── Org requests ────────────────────────────────────────────────────────────────
+# ── User config (GET/PATCH /v1/me/config) ──────────────────────────────────
 
 
-async def get_org_request_service(
+async def get_user_config_service(
     request: Request,
     db: AsyncSession = Depends(get_db),  # noqa: B008
-    auth_service: AuthService = Depends(get_auth_service),  # noqa: B008
-) -> OrgRequestService:
-    """Dependency that yields an initialised OrgRequestService.
-
-    Wires the shared auth service (pending-org/admin creation), the
-    organization service (instant creation + OpenBao bootstrap), and an
-    OTP service (email activation for the allow_all path).
+) -> UserConfigService:
+    """Dependency that yields an initialised UserConfigService.
 
     Args:
         request: Incoming HTTP request (for ``app.state`` access).
         db: Async DB session from dependency injection.
-        auth_service: Fully wired auth service.
 
     Returns:
-        An initialised ``OrgRequestService``.
+        An initialised ``UserConfigService``.
     """
     bao_client = getattr(request.app.state, "openbao_client", None)
-    if bao_client is None:
-        raise RuntimeError(
-            "OpenBao client not found on app.state. "
-            "Ensure the OpenBao client was initialised during the application "
-            "lifespan."
-        )
     redis = getattr(request.app.state, "redis", None)
-    if redis is None:
-        raise RuntimeError(
-            "Redis client not found on app.state. "
-            "Ensure init_redis() was called during the application lifespan."
-        )
-    email_config = EmailConfig.from_settings(get_settings())
-    email_service = EmailService(email_config)
-    return OrgRequestService(
-        db=db,
-        auth_service=auth_service,
-        org_service=OrganizationService(
-            repo=OrganizationRepository(db),
-            bao_client=bao_client,
-        ),
-        otp_service=OtpService(redis=redis, email_service=email_service),
-        redis=redis,
+    return UserConfigService(
+        user_repo=UserRepository(db),
         bao_client=bao_client,
+        redis=redis,
     )
 
 

@@ -3,20 +3,20 @@
 Every endpoint requires ``require_superadmin`` (JWT dashboard session,
 ``org_id == PLATFORM_ORG_ID``, DB-verified ``superadmin`` role) and — for
 anything touching org rows — the RLS-bypass session
-``get_db_superadmin``.  The bypass is never granted from the org_id/JWT
-alone; it is only set after the superadmin role check passes.
+``get_db_superadmin``.
+
+⚠️ BREAKING: multi-org approval endpoints are removed (single platform
+org): ``GET /admin/system/orgs``, ``POST .../approve``,
+``POST .../reject`` are gone.
 
 Endpoints:
     GET    /admin/system/config                        — platform system config
     PATCH  /admin/system/config                        — update platform system config
     GET    /admin/system/settings                      — list settings (masked)
     POST   /admin/system/settings/{key}/reveal         — reveal one setting (audited)
-    GET    /admin/system/orgs                          — list ALL orgs (incl. pending)
     GET    /admin/system/orgs/{org_id}/members         — list an org's dashboard users
     GET    /admin/system/orgs/{org_id}/config          — read any org's config
     PATCH  /admin/system/orgs/{org_id}/config          — update any org's config
-    POST   /admin/system/orgs/{org_id}/approve         — approve a pending org
-    POST   /admin/system/orgs/{org_id}/reject          — reject a pending org
     PATCH  /admin/system/orgs/{org_id}/members/{user_id}/role — promote/demote
 """
 
@@ -30,8 +30,6 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from core.audit import audit_action
-from core.config import get_settings
-from core.email import EmailConfig
 from core.exceptions import NotFoundError
 from core.system_config import get_system_config, update_system_config
 from core.system_settings import list_system_settings, reveal_system_setting
@@ -41,10 +39,7 @@ from repositories.organization_repository import OrganizationRepository
 from repositories.user_repository import UserRepository
 from schemas.admin_system import (
     MemberRoleResponse,
-    OrgApprovalResponse,
     SystemMemberListItem,
-    SystemOrgListItem,
-    SystemOrgListResponse,
     SystemOrgMembersResponse,
     SystemSettingRevealResponse,
     SystemSettingsResponse,
@@ -55,9 +50,8 @@ from schemas.organization_config import (
     OrgConfigResponse,
     UpdateOrgConfigRequest,
 )
-from schemas.sorting import OrgMemberSortBy, OrgSortBy, SortDir, SortSpec
+from schemas.sorting import OrgMemberSortBy, SortDir, SortSpec
 from schemas.system_config import SystemConfigResponse, SystemConfigUpdate
-from services.email_service import EmailService
 from services.org_config_service import OrgConfigService
 from services.organization_service import OrganizationService
 from services.user_service import UserService
@@ -95,18 +89,12 @@ def _get_org_service(
     request: Request,
     db: AsyncSession = Depends(get_db_superadmin),  # noqa: B008
 ) -> OrganizationService:
-    """Build a superadmin OrganizationService on the RLS-bypass session.
+    """Build an OrganizationService on the RLS-bypass session.
 
-    Approve/reject operate on pending orgs invisible to tenant sessions —
-    the bypass session is mandatory here.
+    Member reads span org rows invisible to tenant sessions — the bypass
+    session is mandatory here.
     """
-    bao_client, _redis = _get_openbao_and_redis(request)
-    email_config = EmailConfig.from_settings(get_settings())
-    return OrganizationService(
-        repo=OrganizationRepository(db),
-        bao_client=bao_client,
-        email_service=EmailService(email_config),
-    )
+    return OrganizationService(repo=OrganizationRepository(db))
 
 
 def _get_user_service(
@@ -264,63 +252,8 @@ async def reveal_platform_system_setting(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Org administration (cross-org, RLS bypass)
+# Org members (platform org, RLS bypass)
 # ═══════════════════════════════════════════════════════════════════════════════
-
-
-@router.get(
-    "/orgs",
-    response_model=SystemOrgListResponse,
-    summary="List all organizations",
-    description=(
-        "Returns every organization including pending and rejected ones — "
-        "the tenant-facing surfaces exclude those.  Requires the platform "
-        "super-admin role."
-    ),
-)
-async def list_all_orgs(
-    page: int = 1,
-    limit: int = 50,
-    status: str | None = None,
-    sort_by: OrgSortBy | None = None,
-    sort_dir: SortDir = "desc",
-    _org_id: str = Depends(require_superadmin),  # noqa: B008
-    service: OrganizationService = Depends(_get_org_service),  # noqa: B008
-) -> SystemOrgListResponse:
-    """List all orgs for the platform admin.
-
-    Args:
-        page: 1-based page number.
-        limit: Page size (clamped to 1..200).
-        status: Optional lifecycle filter (pending/approved/rejected).
-        sort_by: Whitelisted key (``name``, ``created_at``).
-        sort_dir: ``"asc"`` or ``"desc"``.
-        service: Superadmin OrganizationService (bypass session).
-        _org_id: Platform org UUID (superadmin-gated).
-
-    Returns:
-        A paginated :class:`SystemOrgListResponse`.
-    """
-    orgs, total = await service.list_all_orgs(
-        status=status,
-        page=page,
-        limit=limit,
-        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
-    )
-    return SystemOrgListResponse(
-        data=[
-            SystemOrgListItem(
-                id=org.id,
-                name=org.name,
-                status=org.status,
-                created_at=org.created_at,
-            )
-            for org in orgs
-        ],
-        total=total,
-        page=max(page, 1),
-        limit=min(max(limit, 1), 200),
-    )
 
 
 @router.get(
@@ -447,86 +380,6 @@ async def update_org_config(
         The freshly stored config.
     """
     return await service.update_config(org_id, body)
-
-
-@router.post(
-    "/orgs/{org_id}/approve",
-    response_model=OrgApprovalResponse,
-    summary="Approve a pending organization",
-    description=(
-        "Makes a pending org live: flips status to approved, bootstraps "
-        "its OpenBao namespace, and emails the pending admin a magic-link "
-        "invite to set their password.  Requires the platform super-admin "
-        "role."
-    ),
-)
-@audit_action("org.approved", "organization", "Organization approved")
-async def approve_org(
-    org_id: UUID,
-    request: Request,
-    _org_id: str = Depends(require_superadmin),  # noqa: B008
-    service: OrganizationService = Depends(_get_org_service),  # noqa: B008
-) -> OrgApprovalResponse:
-    """Approve a pending org and invite its admin.
-
-    Args:
-        org_id: The pending organization UUID.
-        request: Incoming HTTP request (superadmin identity).
-        service: Superadmin OrganizationService (bypass session).
-        _org_id: Platform org UUID (superadmin-gated).
-
-    Returns:
-        The approved org's id/name/status.
-
-    Raises:
-        ConflictError: 409 if the org is not pending.
-    """
-    actor_id = UUID(request.state.user_id)
-    org = await service.approve_org(org_id, actor_id)
-    return OrgApprovalResponse(
-        id=org.id,
-        name=org.name,
-        status=org.status,
-    )
-
-
-@router.post(
-    "/orgs/{org_id}/reject",
-    response_model=OrgApprovalResponse,
-    summary="Reject a pending organization",
-    description=(
-        "Flips a pending org to rejected.  No email is sent.  Requires "
-        "the platform super-admin role."
-    ),
-)
-@audit_action("org.rejected", "organization", "Organization rejected")
-async def reject_org(
-    org_id: UUID,
-    request: Request,
-    _org_id: str = Depends(require_superadmin),  # noqa: B008
-    service: OrganizationService = Depends(_get_org_service),  # noqa: B008
-) -> OrgApprovalResponse:
-    """Reject a pending org.
-
-    Args:
-        org_id: The pending organization UUID.
-        request: Incoming HTTP request (superadmin identity).
-        service: Superadmin OrganizationService (bypass session).
-        _org_id: Platform org UUID (superadmin-gated).
-
-    Returns:
-        The rejected org's id/name/status.
-
-    Raises:
-        ConflictError: 409 if the org is not pending.
-    """
-    actor_id = UUID(request.state.user_id)
-    org = await service.reject_org(org_id, actor_id)
-    return OrgApprovalResponse(
-        id=org.id,
-        name=org.name,
-        status=org.status,
-    )
 
 
 @router.patch(

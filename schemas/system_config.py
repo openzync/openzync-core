@@ -1,52 +1,28 @@
 """Pydantic schemas for platform system configuration.
 
 The platform operator (superadmin) manages a small whitelist of
-system-level defaults through ``core.system_config``, which persists them
-in the OpenBao system secret alongside the ``OZ_*`` settings.
+non-secret system-level defaults through ``core.system_config``, which
+persists them in the OpenBao system secret alongside the ``OZ_*`` settings.
 
 **Secrets are never part of these schemas — by construction.**  The
-whitelist contains only non-secret tunables (policies + non-secret org
-config defaults).  ``*_api_key``, ``*_password``, ``*_secret``,
-``DATABASE_URL`` and ``SMTP_*`` fields do not exist on either model, so a
-request carrying them fails validation (``extra="forbid"``) and a
-response can never leak them.
+whitelist contains only non-secret tunables.  ``*_api_key``,
+``*_password``, ``*_secret``, ``DATABASE_URL`` and ``SMTP_*`` fields
+do not exist on either model, so a request carrying them fails
+validation (``extra="forbid"``) and a response can never leak them.
+
+⚠️ BREAKING: ``org_creation_policy`` / ``approval_scope`` are removed.
+Single platform org — registration is governed by
+``instance_settings.registration_mode`` (``open`` / ``invite_only`` /
+``approval``), not by OpenBao policy keys.
 """
 
 from __future__ import annotations
-
-from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
 
 from schemas.organization_config import (  # noqa: TC001 — runtime import: pydantic resolves field types
     LlmBackend,
 )
-
-
-class OrgCreationPolicy(StrEnum):
-    """Platform policy controlling how new organizations are created."""
-
-    allow_all = "allow_all"
-    """Signup and in-app org requests create orgs instantly (pre-feature behaviour)."""
-
-    reject_all = "reject_all"
-    """No new orgs may be created through any channel."""
-
-    approvals = "approvals"
-    """New orgs enter a pending state and require superadmin approval."""
-
-
-class ApprovalScope(StrEnum):
-    """Which channels the ``approvals`` policy applies to."""
-
-    in_app = "in_app"
-    """Only the in-app request channel (``POST /v1/org-requests``)."""
-
-    public_signup = "public_signup"
-    """Only the public signup channel (``POST /v1/auth/signup``)."""
-
-    both = "both"
-    """Both channels."""
 
 
 class SystemConfigUpdate(BaseModel):
@@ -58,16 +34,6 @@ class SystemConfigUpdate(BaseModel):
     """
 
     model_config = {"extra": "forbid"}
-
-    # ── Platform policies ─────────────────────────────────────────────────
-    org_creation_policy: OrgCreationPolicy | None = Field(
-        default=None,
-        description="Policy for new-organization creation across all channels.",
-    )
-    approval_scope: ApprovalScope | None = Field(
-        default=None,
-        description="Channels gated by the approvals policy.",
-    )
 
     # ── Non-secret system-level defaults (mirror OrgConfigBase keys) ──────
     llm_backend: LlmBackend | None = None
@@ -104,19 +70,7 @@ class SystemConfigResponse(BaseModel):
     """System config as exposed to the platform UI.
 
     Mirrors :class:`SystemConfigUpdate` — the same whitelist, no secrets.
-    ``org_creation_policy`` and ``approval_scope`` default to
-    ``allow_all`` / ``both`` when OpenBao has no record (backward
-    compatible — existing installs keep working).
     """
-
-    org_creation_policy: OrgCreationPolicy = Field(
-        default=OrgCreationPolicy.allow_all,
-        description="Current new-org creation policy.",
-    )
-    approval_scope: ApprovalScope = Field(
-        default=ApprovalScope.both,
-        description="Channels gated by the approvals policy.",
-    )
 
     llm_backend: LlmBackend | None = None
     llm_model: str | None = None

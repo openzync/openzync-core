@@ -46,8 +46,8 @@ class Organization(TimestampMixin, Base):
         server_default=func.gen_random_uuid(),
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    # Org lifecycle — pending orgs await superadmin approval and are
-    # excluded from tenant-facing lookups (get_by_code filters on it).
+    # Org lifecycle — retained for history.  Single platform org: only
+    # ``approved`` rows exist; status is kept for the quarantine audit trail.
     status: Mapped[str] = mapped_column(
         String(20),
         nullable=False,

@@ -1,10 +1,8 @@
-"""Admin endpoints for organization join-code management.
+"""Admin endpoints for self-registration toggle display.
 
-The org code is the join token a new member presents at
-``POST /v1/auth/join`` to join an existing organization.  Stored plaintext
-by explicit product decision — treat it as sensitive, and regenerate
-(rotate) it whenever it leaks.  ``join_enabled`` is the admin toggle that
-pauses org-code self-registration without rotating the code.
+``join_enabled`` is the admin toggle that pauses self-registration for
+the platform org.  The legacy ``org_code`` column is retained in the
+schema but join codes are no longer issued or rotated.
 
 All endpoints require the org ``admin`` role (JWT only).  The router is a
 thin adapter: it extracts the org ID from the admin dependency, delegates
@@ -45,7 +43,7 @@ def _get_org_service(
     response_model=OrgCodeResponse,
     summary="Get the organization's join code and registration state",
     description=(
-        "Returns the current join code and whether org-code self-registration "
+        "Returns the current join code and whether self-registration "
         "is enabled for the authenticated organization.  Requires the org "
         "admin role (JWT)."
     ),
@@ -61,7 +59,7 @@ async def get_org_code(
         service: Organization service (injected).
 
     Returns:
-        The current org code and ``join_enabled`` flag.
+        The current registration toggle and ``join_enabled`` flag.
 
     Raises:
         NotFoundError: If the organization no longer exists (→ 404 via the
@@ -77,11 +75,11 @@ async def get_org_code(
 @router.patch(
     "",
     response_model=OrgCodeResponse,
-    summary="Toggle org-code self-registration",
+    summary="Toggle self-registration",
     description=(
-        "Enables or disables joining via ``POST /v1/auth/join`` for the "
+        "Enables or disables joining the platform org for the "
         "authenticated organization.  When disabled, join attempts with a "
-        "valid org code return 403.  Requires the org admin role (JWT)."
+        "valid registration toggle return 403.  Requires the org admin role (JWT)."
     ),
 )
 @audit_action(
@@ -94,7 +92,7 @@ async def set_join_enabled(
     org_id: str = Depends(require_permission("configuration:write")),  # noqa: B008
     service: OrganizationService = Depends(_get_org_service),  # noqa: B008
 ) -> OrgCodeResponse:
-    """Toggle whether the organization accepts new members via org-code join.
+    """Toggle whether the organization accepts new members via self-registration.
 
     Args:
         payload: The new ``join_enabled`` value.
@@ -102,7 +100,7 @@ async def set_join_enabled(
         service: Organization service (injected).
 
     Returns:
-        The fresh org code and ``join_enabled`` flag.
+        The fresh registration toggle and ``join_enabled`` flag.
 
     Raises:
         NotFoundError: If the organization no longer exists (→ 404 via the
@@ -115,40 +113,4 @@ async def set_join_enabled(
     )
 
 
-@router.post(
-    "/regenerate",
-    response_model=OrgCodeResponse,
-    summary="Rotate the organization's join code",
-    description=(
-        "Generates a new join code and persists it, immediately "
-        "invalidating any previously distributed code.  Requires the org "
-        "admin role (JWT)."
-    ),
-)
-@audit_action(
-    "org.code.regenerate",
-    "organization",
-    "Organization join code regenerated",
-)
-async def regenerate_org_code(
-    org_id: str = Depends(require_permission("configuration:write")),  # noqa: B008
-    service: OrganizationService = Depends(_get_org_service),  # noqa: B008
-) -> OrgCodeResponse:
-    """Generate and persist a new join code (rotating the old one).
 
-    Args:
-        org_id: Authenticated organization ID (admin-gated).
-        service: Organization service (injected).
-
-    Returns:
-        The new org code and the current ``join_enabled`` flag.
-
-    Raises:
-        NotFoundError: If the organization no longer exists (→ 404 via the
-            global exception handler).
-    """
-    info = await service.regenerate_org_code(UUID(org_id))
-    return OrgCodeResponse(
-        org_code=info.org_code,
-        join_enabled=info.join_enabled,
-    )

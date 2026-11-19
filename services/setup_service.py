@@ -33,25 +33,32 @@ class SetupService:
         self._user_repo = user_repo
         self._org_repo = org_repo
 
-    async def create_root_once(self, password: str) -> None:
+    async def create_root_once(self, password: str, org_name: str = "Platform") -> None:
         """Create the platform root superadmin if the platform is unset up.
 
-        The platform org row is ensured first (idempotent), then the root
-        row is inserted with ``ON CONFLICT DO NOTHING`` — the affected-row
-        check is the single linearization point, so two racing calls cannot
-        both succeed.
+        The platform org row is ensured first (idempotent, named
+        ``org_name`` on first creation only), then the root row is
+        inserted with ``ON CONFLICT DO NOTHING`` — the affected-row check
+        is the single linearization point, so two racing calls cannot both
+        succeed.
 
         Args:
             password: The operator-chosen root password (plaintext).
+            org_name: Display name for the singleton platform org
+                (applies only when the org row is first created).
 
         Raises:
             ConflictError: If the platform is already set up.  The message
                 is generic — it reveals nothing about which row exists.
-            ValidationError: If the password does not meet strength rules.
+            ValidationError: If the password does not meet strength rules
+                or the org name is blank.
         """
-        from core.exceptions import ConflictError
+        from core.exceptions import ConflictError, ValidationError
         from services import auth_service as _facade  # via facade (patchable)
         from services.auth_service import AuthService
+
+        if not org_name.strip():
+            raise ValidationError("Organization name must not be blank.")
 
         if await self._org_repo.get_platform_org() is not None:
             if await self._user_repo.get_platform_root() is not None:
@@ -59,7 +66,7 @@ class SetupService:
 
         AuthService._validate_password(password)
 
-        await self._org_repo.ensure_platform_org()
+        await self._org_repo.ensure_platform_org(name=org_name.strip())
         inserted = await self._user_repo.create_platform_root(
             _facade.hash_password(password)
         )

@@ -1,4 +1,4 @@
-"""Auth org join — org-code join, email verify, resend."""
+"""Auth org join — singleton-org join, email verify, resend."""
 
 from __future__ import annotations
 
@@ -10,9 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from core.exceptions import (
     AuthenticationError,
     AuthorizationError,
-    ValidationError,
 )
-from core.org_codes import normalize_org_code
 from core.rbac import (
     MEMBER_DEFAULT_PERMISSIONS,
 )
@@ -38,64 +36,42 @@ class OrgJoinMixin:
     # ── Org-code join ────────────────────────────────────────────────────────
 
     async def join_organization(self, payload: JoinRequest) -> SignupResponse:
-        """Join an existing organization via its join code.
+        """Join the singleton platform organization as a member.
 
-        Flow:
-        1. Normalize the org code and look up the active organization.
-        2. If the email is already registered, return the generic response
-           (no user created, no OTP sent — anti-enumeration, mirrors signup).
-        3. Hash the password and create a **member** dashboard user in the
-           target organization.
-        4. Send a signup OTP to the user's email.
+        Single platform org: the join code is gone — every join lands in
+        the platform org.  Registration is governed by
+        ``instance_settings.registration_mode``: ``open`` creates a live
+        member, ``approval`` creates an inactive member pending admin
+        activation, ``invite_only`` rejects with 403.
 
         The response is identical whether or not the email already exists.
-        An invalid org code is the one case that fails loudly — the code is
-        the credential being presented, and there is no enumeration risk in
-        rejecting it.
 
         Args:
-            payload: Email, password, and org code.
+            payload: Email and password.
 
         Returns:
             A ``SignupResponse`` with a confirmation message.
 
         Raises:
-            ValidationError: If the org code is unknown or the org is inactive.
-            AuthorizationError: If the org has disabled org-code
-                self-registration (``join_enabled`` False → 403), or the
-                platform policy is ``reject_all`` (403).
+            AuthorizationError: If registration is ``invite_only`` or the
+                platform org is missing.
         """
-        # ── Platform policy gate — sits on top of the per-org join_enabled
-        #    check; reject_all blocks every channel. ────────────────────────
-        from services import auth_service as _facade  # via facade (patchable)
-        system_config = await _facade.get_system_config(
-            self._redis, self._bao_client
+        # ── Platform policy gate ──────────────────────────────────────────
+        from repositories.instance_settings_repository import (
+            InstanceSettingsRepository,
         )
-        if system_config.org_creation_policy == "reject_all":
+        from services import auth_service as _facade  # via facade (patchable)
+
+        row = await InstanceSettingsRepository(self._org_repo.session).get()
+        mode = row.registration_mode or "invite_only"
+        if mode == "invite_only":
+            raise AuthorizationError("Registration is invite-only")
+        if mode not in ("open", "approval"):
             raise AuthorizationError("Registration is disabled")
 
-        code = normalize_org_code(payload.org_code)
-        # Bind the join code to the session: it is the credential presented
-        # by an anonymous joiner, and the ``org_join_code_lookup`` policy
-        # exposes exactly the organization row that owns it.
-        await self._org_repo.set_lookup_code(code)
-        org = await self._org_repo.get_by_code(code)
+        org = await self._org_repo.get_platform_org()
         if org is None:
-            raise ValidationError("Invalid organization code")
-        if not org.join_enabled:
-            # Admin-disabled self-registration: the code is valid but the
-            # org is not accepting new members — distinct from an unknown
-            # code (422 above), so admins can see join attempts in the logs.
-            logger.warning(
-                "auth.join_disabled",
-                extra={"org_id": str(org.id)},
-            )
-            raise AuthorizationError(
-                "This organization is not accepting new members"
-            )
-
-        # Bind the session to the resolved tenant — the member insert below
-        # is org-scoped and the request has no org context of its own.
+            raise AuthorizationError("Registration is disabled")
         await self._org_repo.set_tenant_context(org.id)
 
         existing = await self._repo.find_user_by_email(payload.email)
@@ -108,7 +84,7 @@ class OrgJoinMixin:
 
         pw_hash = _facade.hash_password(payload.password)
         try:
-            await self._repo.create_dashboard_user(
+            user = await self._repo.create_dashboard_user(
                 organization_id=org.id,
                 email=payload.email,
                 password_hash=pw_hash,
@@ -116,10 +92,14 @@ class OrgJoinMixin:
                 role="member",
                 permissions=list(MEMBER_DEFAULT_PERMISSIONS),
             )
-            await self._otp_service.generate_and_send(
-                email=payload.email,
-                purpose="signup",
-            )
+            if mode == "approval":
+                user.is_active = False
+                await self._repo.flush()
+            else:
+                await self._otp_service.generate_and_send(
+                    email=payload.email,
+                    purpose="signup",
+                )
         except IntegrityError:
             # Concurrent duplicate join — the unique email index won.  Same
             # generic response as a fresh join; roll back the aborted
@@ -184,17 +164,11 @@ class OrgJoinMixin:
         if not user.is_email_verified:
             await self._repo.mark_email_verified(user.id)
 
-        # Bootstrap OpenBao namespace for the org (idempotent — skips if exists)
+        # Bootstrap OpenBao namespace for the org (idempotent — skips if exists).
+        # Failures propagate — a silently unbootstrapped org breaks every
+        # subsequent config write, so the error must be loud, not logged.
         if self._bao_client is not None:
-            try:
-                await self._bao_client.create_org_namespace(
-                    user.organization_id
-                )
-            except Exception:
-                logger.exception(
-                    "auth_service.openbao_ns_bootstrap_failed org_id=%s",
-                    str(user.organization_id),
-                )
+            await self._bao_client.create_org_namespace(user.organization_id)
 
         # Issue tokens now that email is verified
         return await self.issue_tokens(

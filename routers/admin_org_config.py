@@ -17,12 +17,14 @@ from uuid import UUID
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 — runtime import
 
 from core.audit import audit_action
 from core.config import get_settings
 from core.exceptions import RateLimitError
 from core.openbao_exceptions import OpenBaoError
 from dependencies.auth import require_permission
+from dependencies.db import get_db
 from schemas.organization_config import (
     SYSTEM_MANAGED_FALKORDB_FIELDS,
     SYSTEM_MANAGED_SURREALDB_FIELDS,
@@ -290,22 +292,35 @@ async def test_org_config(
     service: OrgConfigConnectionService = Depends(  # noqa: B008
         _get_connection_service
     ),
+    as_user: UUID | None = None,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> TestOrgConfigResponse:
     """Probe live connectivity for a candidate config without saving it.
 
     Overlays ``body.config`` on the stored config in-memory and probes
-    the requested domain.  Probe failures return 200 with ``ok: false``
-    entries — only malformed payloads (422) or a down secrets backend
-    (503) change the status code.
+    the requested domain.  With ``as_user``, that user's config override
+    is layered under the candidate first (``candidate ⊕ user ⊕ stored``).
+    Probe failures return 200 with ``ok: false`` entries — only malformed
+    payloads (422) or a down secrets backend (503) change the status code.
 
     Requires ``configuration:write``.  Throttled to ~10 requests/min
     per org.  The candidate and probe details carry no secrets beyond
     action metadata in the audit log.
     """
+    from repositories.user_repository import UserRepository
+
     redis = getattr(request.app.state, "redis", None)
     await _check_config_test_throttle(redis, _org_id)
+    candidate = body.config
+    if as_user is not None:
+        override = await UserRepository(db).get_config_override(as_user)
+        if override:
+            from schemas.organization_config import UpdateOrgConfigRequest
+
+            merged = {**override, **candidate.model_dump(exclude_unset=True)}
+            candidate = UpdateOrgConfigRequest(**merged)
     try:
-        return await service.test_connections(UUID(_org_id), body.domain, body.config)
+        return await service.test_connections(UUID(_org_id), body.domain, candidate)
     except OpenBaoError as exc:
         raise HTTPException(
             status_code=503,

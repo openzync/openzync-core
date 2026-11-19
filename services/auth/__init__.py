@@ -2,8 +2,8 @@
 
 Sub-package layout (one responsibility per module)::
 
-    registration.py  signup + pending-org/admin creation
-    org_join.py      org-code join + email verification
+    registration.py  singleton-org signup (no org creation)
+    org_join.py      singleton-org join + email verification
     password.py      change / forgot / reset + strength check
     passwordless.py  email-OTP login
     session.py       login + MFA verify/enable/disable

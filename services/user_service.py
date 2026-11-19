@@ -29,6 +29,8 @@ from repositories.user_repository import UserRepository
 from schemas.users import UserListResponse, UserResponse, UserResponseWithStats
 from services.webhook_service import WebhookService
 
+from sqlalchemy.exc import IntegrityError
+
 if TYPE_CHECKING:
     from redis.asyncio import Redis as AsyncRedis
 
@@ -391,11 +393,18 @@ class UserService:
                     requested & set(actor_permissions)
                 )
 
-        user = await self._repo.update(
-            organization_id=organization_id,
-            user_id=user_id,
-            update_fields=update_fields,
-        )
+        try:
+            user = await self._repo.update(
+                organization_id=organization_id,
+                user_id=user_id,
+                update_fields=update_fields,
+            )
+        except IntegrityError:
+            # Lost the partial-unique-email race — same 409 as the router
+            # pre-checks, never a raw 500.
+            from core.exceptions import ConflictError
+
+            raise ConflictError("Email is already in use.") from None
         if user is None:
             raise NotFoundError(f"User {user_id} not found in organization {organization_id}")
 

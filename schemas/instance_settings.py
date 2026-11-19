@@ -11,11 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-RegistrationMode = Literal[
-    "disabled",
-    "enabled_with_org_code",
-    "enabled_self_serve_org_creation",
-]
+RegistrationMode = Literal["open", "invite_only", "approval"]
 """Allowed registration modes for the platform."""
 
 GraphBackendName = Literal["falkordb", "surrealdb", "none"]

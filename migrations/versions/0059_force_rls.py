@@ -341,10 +341,22 @@ def downgrade() -> None:
         admit_null_org=True,
     )
 
+    # 0061 drops ``prompt_templates`` (its downgrade is a deliberate no-op),
+    # so a full ``downgrade base`` from ≥0061 must skip tables that no longer
+    # exist. Downgrade-only guard — the upgrade path is untouched.
+    existing = {
+        row[0]
+        for row in op.get_bind().exec_driver_sql(
+            "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+        )
+    }
+
     for table in _all_policy_tables():
-        op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
+        if table in existing:
+            op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
 
     # Restore "no RLS at all" for the five tables this revision added.
     for table in _ADDED_ORG_SCOPED_TABLES:
-        op.execute(f"DROP POLICY IF EXISTS org_isolation_{table} ON {table}")
-        op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+        if table in existing:
+            op.execute(f"DROP POLICY IF EXISTS org_isolation_{table} ON {table}")
+            op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")

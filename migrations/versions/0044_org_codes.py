@@ -21,15 +21,32 @@ Create Date: 2026-08-08
 
 from __future__ import annotations
 
+import secrets
+
 import sqlalchemy as sa
 from alembic import op
-
-from core.org_codes import generate_org_code
 
 revision: str = "0044"
 down_revision: str | None = "0043"
 branch_labels: str | None = None
 depends_on: str | None = None
+
+ORG_CODE_ALPHABET: str = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+"""Confusion-free alphabet — excludes I, O, L, 0, 1 (was ``core.org_codes``)."""
+
+ORG_CODE_LENGTH: int = 8
+"""Length of generated org codes (in characters)."""
+
+
+def generate_org_code() -> str:
+    """Generate a fresh 8-char join code.
+
+    Inlined copy of the deleted ``core.org_codes.generate_org_code`` —
+    migrations must be self-contained and never import app code, which
+    evolves while history must not. Behavior identical: ``secrets.choice``
+    over the confusion-free alphabet.
+    """
+    return "".join(secrets.choice(ORG_CODE_ALPHABET) for _ in range(ORG_CODE_LENGTH))
 
 
 def upgrade() -> None:
