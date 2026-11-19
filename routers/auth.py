@@ -22,21 +22,19 @@ Endpoints:
 
 from __future__ import annotations
 
+import hashlib
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 — runtime import
 
 from core.audit import audit_action
 from core.exceptions import AuthorizationError, ConflictError
 from dependencies.auth import get_dashboard_user
-from dependencies.db import get_db
 from dependencies.services import (
     get_auth_service,
     get_auth_throttle,
     get_invite_service,
     get_setup_service,
-    get_user_config_service,
 )
 from middleware.auth_throttle import AuthThrottle
 from schemas.auth import (
@@ -62,7 +60,6 @@ from schemas.auth import (
     UpdateProfileRequest,
     VerifyEmailRequest,
 )
-from schemas.user_config import UserConfigResponse, UserConfigUpdate
 from schemas.email import (
     OtpResponse,
     ResetPasswordRequest,
@@ -72,7 +69,6 @@ from schemas.email import (
 from services.auth_service import AuthService
 from services.invite_service import InviteService
 from services.setup_service import SetupService
-from services.user_config_service import UserConfigService
 
 router = APIRouter(
     prefix="/v1/auth",
@@ -92,6 +88,19 @@ def _client_ip(request: Request) -> str:
     return "unknown"
 
 
+def _token_fingerprint(raw: str) -> str:
+    """Hash a bearer token for throttle keys (never log/slice raw tokens).
+
+    Args:
+        raw: The raw refresh or magic-link token.
+
+    Returns:
+        First 16 hex chars of the SHA-256 digest — stable per token,
+        useless to an attacker who reads the throttle store.
+    """
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
 @router.get(
     "/registration-status",
     response_model=RegistrationStatusResponse,
@@ -103,23 +112,18 @@ def _client_ip(request: Request) -> str:
     ),
 )
 async def registration_status(
-    db: AsyncSession = Depends(get_db),  # noqa: B008
+    service: SetupService = Depends(get_setup_service),  # noqa: B008
 ) -> RegistrationStatusResponse:
     """Return the platform registration mode for the signup UI.
 
     Args:
-        db: Request-scoped async DB session (singleton settings row).
+        service: Injected setup service (owns the settings-row read).
 
     Returns:
         The current ``registration_mode`` (defaults to ``invite_only``).
     """
-    from repositories.instance_settings_repository import (
-        InstanceSettingsRepository,
-    )
-
-    row = await InstanceSettingsRepository(db).get()
     return RegistrationStatusResponse(
-        registration_mode=row.registration_mode or "invite_only"
+        registration_mode=await service.get_registration_mode()
     )
 
 
@@ -171,7 +175,7 @@ async def setup_platform_root(
 
 @router.post(
     "/signup",
-    response_model=SignupResponse | PendingOrgResponse,
+    response_model=SignupResponse | PendingOrgResponse | TokenResponse,
     status_code=201,
     summary="Create dashboard user in the platform org",
     description=(
@@ -190,20 +194,31 @@ async def signup(
     request: Request,
     service: AuthService = Depends(get_auth_service),  # noqa: B008
     throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
-) -> SignupResponse | PendingOrgResponse:
+    invites: InviteService = Depends(get_invite_service),  # noqa: B008
+) -> SignupResponse | PendingOrgResponse | TokenResponse:
     """Sign up a dashboard user in the platform org.
 
     Args:
-        payload: Email and password.
+        payload: Email + password, plus an optional ``invite_token``.
         request: Incoming HTTP request (for IP extraction).
         service: Injected auth service.
         throttle: Injected auth throttle.
+        invites: Injected invite service (invite-token path only).
 
     Returns:
-        Confirmation message (tokens via verify-email), or a
-        pending-approval response under the ``approval`` mode.
+        Confirmation message (tokens via verify-email), a
+        pending-approval response under the ``approval`` mode — or a JWT
+        pair immediately when ``invite_token`` claims an admin invite.
     """
     await throttle.check_signup_attempt(_client_ip(request))
+    if payload.invite_token:
+        # Invite path: claim the magic-link invite (same semantics as
+        # POST /v1/auth/invites/accept) — the token is the credential, so
+        # no OTP round-trip is needed.
+        return await invites.accept_invite(
+            token=payload.invite_token,
+            password=payload.password,
+        )
     return await service.signup(payload)
 
 
@@ -614,7 +629,7 @@ async def refresh(
         New access and refresh tokens.
     """
     await throttle.check_sensitive_attempt(
-        "refresh", payload.refresh_token[-12:], _client_ip(request)
+        "refresh", _token_fingerprint(payload.refresh_token), _client_ip(request)
     )
     return await service.refresh(payload.refresh_token)
 
@@ -747,7 +762,7 @@ async def invite_info(
         NotFoundError: Generic 404 for unknown/expired/used tokens.
     """
     await throttle.check_sensitive_attempt(
-        "invite_info", payload.token[-12:], _client_ip(request)
+        "invite_info", _token_fingerprint(payload.token), _client_ip(request)
     )
     return await service.get_invite_info(payload.token)
 
@@ -789,75 +804,10 @@ async def accept_invite(
         ValidationError: If the password is too weak (→ 422).
     """
     await throttle.check_sensitive_attempt(
-        "invite_accept", payload.token[-12:], _client_ip(request)
+        "invite_accept", _token_fingerprint(payload.token), _client_ip(request)
     )
     return await service.accept_invite(
         token=payload.token,
         password=payload.password,
     )
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# GET/PATCH /v1/auth/me/config — DEPRECATED backward alias of /v1/me/config
-# (routers/me.py). Kept so existing clients keep working; new code must use
-# the canonical /v1/me/config paths.
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-@router.get(
-    "/me/config",
-    response_model=UserConfigResponse,
-    summary="Get own effective config",
-    description=(
-        "DEPRECATED alias of ``GET /v1/me/config`` — same handler, kept for "
-        "backward compatibility.  Requires JWT."
-    ),
-    deprecated=True,
-)
-async def get_my_config(
-    service: UserConfigService = Depends(get_user_config_service),  # noqa: B008
-    user_id: str = Depends(get_dashboard_user),
-) -> UserConfigResponse:
-    """Get the caller's own config override and effective config.
-
-    Args:
-        service: Injected user-config service.
-        user_id: Authenticated user UUID from JWT claims.
-
-    Returns:
-        The stored override and the merged effective config.
-    """
-    override = await service.get_override(UUID(user_id))
-    effective = await service.get_effective_config(UUID(user_id))
-    return UserConfigResponse(override=override, effective=effective)
-
-
-@router.patch(
-    "/me/config",
-    response_model=UserConfigResponse,
-    summary="Update own config override",
-    description=(
-        "DEPRECATED alias of ``PATCH /v1/me/config`` — same handler, kept "
-        "for backward compatibility.  Requires JWT."
-    ),
-    deprecated=True,
-)
-@audit_action("auth.config.update", "user", "Own config override updated")
-async def update_my_config(
-    payload: UserConfigUpdate,
-    service: UserConfigService = Depends(get_user_config_service),  # noqa: B008
-    user_id: str = Depends(get_dashboard_user),
-) -> UserConfigResponse:
-    """Update the caller's own config override.
-
-    Args:
-        payload: Partial keys to merge (``None`` removes a key).
-        service: Injected user-config service.
-        user_id: Authenticated user UUID from JWT claims.
-
-    Returns:
-        The updated override and the merged effective config.
-    """
-    override = await service.update_override(UUID(user_id), payload.config)
-    effective = await service.get_effective_config(UUID(user_id))
-    return UserConfigResponse(override=override, effective=effective)

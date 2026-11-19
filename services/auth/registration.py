@@ -12,20 +12,19 @@ platform org — no org is ever created here.  Registration is governed by
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 
-from core.exceptions import (
-    AuthorizationError,
-)
 from repositories.instance_settings_repository import InstanceSettingsRepository
 from schemas.auth import (
     PendingOrgResponse,
     SignupRequest,
     SignupResponse,
 )
+from utils.pii import mask_email
 
 logger = logging.getLogger(__name__)
 
@@ -39,18 +38,25 @@ class RegistrationMixin:
     _org_repo: Any
     _email_service: Any
     _bao_client: Any
+    _settings_repo: Any
+
+    def _settings(self) -> InstanceSettingsRepository:
+        """Return the injected settings repo (fallback constructs one)."""
+        if self._settings_repo is not None:
+            return self._settings_repo
+        return InstanceSettingsRepository(self._org_repo.session)
 
     async def _registration_mode(self) -> str:
         """Return the platform registration mode (defaults ``invite_only``).
 
-        Args:
-            None — reads the singleton ``instance_settings`` row.
+        Single implementation — delegates to
+        :meth:`InstanceSettingsRepository.get_registration_mode` so the
+        router, setup, signup, and join all read one code path.
 
         Returns:
             One of ``open``, ``invite_only``, ``approval``.
         """
-        row = await InstanceSettingsRepository(self._org_repo.session).get()
-        return row.registration_mode or "invite_only"
+        return await self._settings().get_registration_mode()
 
     # ── Signup ──────────────────────────────────────────────────────────────
 
@@ -76,6 +82,8 @@ class RegistrationMixin:
                 platform org is missing (misconfigured bootstrap).
             ValidationError: If the password does not meet requirements.
         """
+        from core.exceptions import AuthorizationError
+
         from services import auth_service as _facade  # via facade (patchable)
 
         mode = await self._registration_mode()
@@ -92,7 +100,7 @@ class RegistrationMixin:
         if existing is not None:
             logger.warning(
                 "security.signup_existing_email",
-                extra={"email": payload.email},
+                extra={"email": mask_email(payload.email)},
             )
             return self._signup_success_response(payload.email)
 
@@ -102,7 +110,10 @@ class RegistrationMixin:
         await self._org_repo.set_tenant_context(org.id)
 
         try:
-            pw_hash = _facade.hash_password(payload.password)
+            # bcrypt blocks the event loop — offload to a worker thread.
+            pw_hash = await asyncio.to_thread(
+                _facade.hash_password, payload.password
+            )
             await self._repo.create_dashboard_user(
                 organization_id=org.id,
                 email=payload.email,
@@ -110,6 +121,9 @@ class RegistrationMixin:
                 name=payload.email.split("@")[0],
                 role="admin" if mode == "open" else "member",
                 permissions=[],
+                # Approval gate is atomic: inactive at creation, never a
+                # live-then-deactivate window where the user could log in.
+                is_active=mode != "approval",
             )
         except IntegrityError:
             # Concurrent duplicate signup — the unique email index won.
@@ -117,13 +131,12 @@ class RegistrationMixin:
             # transaction so the session stays usable.
             logger.warning(
                 "security.signup_existing_email",
-                extra={"email": payload.email},
+                extra={"email": mask_email(payload.email)},
             )
             await self._repo.rollback()
             return self._signup_success_response(payload.email)
 
         if mode == "approval":
-            await self._deactivate_pending(payload.email)
             return PendingOrgResponse(
                 message=(
                     "Your account is pending approval. "
@@ -136,14 +149,3 @@ class RegistrationMixin:
             purpose="signup",
         )
         return self._signup_success_response(payload.email)
-
-    async def _deactivate_pending(self, email: str) -> None:
-        """Deactivate a just-created approval-mode user.
-
-        Args:
-            email: The user's email address.
-        """
-        user = await self._repo.find_user_by_email(email)
-        if user is not None:
-            user.is_active = False
-            await self._repo.flush()

@@ -24,6 +24,12 @@ Single platform org (``00000000-0000-0000-0000-0000000000aa``):
   row carrying a removed value, replace the CHECK constraint.
 - Add ``users.config_override`` JSONB (per-user layer over org config).
 
+BACKUP NOTE: take a ``pg_dump`` before running this migration on any
+dataset with more than one org.  Steps 1-3 rewrite every org-scoped row
+in one transaction and the remap/quarantine are intentionally
+irreversible (pre-merge org attribution is not recoverable).  Step 2 is
+batched (10k rows per statement) with per-table row-count notices.
+
 Revision ID: 0065
 Revises: 0064
 """
@@ -163,27 +169,57 @@ def upgrade() -> None:
     )
 
     # ── 2. Remap every org-scoped FK to the survivor ────────────────────
+    # Batched (10k rows per UPDATE) with per-table row-count notices:
+    # one giant UPDATE would hold every row lock to commit and bloat the
+    # single transaction on large tenants tables (episodes, facts).
     for table in ORG_SCOPED_TABLES:
         op.execute(
-            f"UPDATE {table} SET organization_id = "
-            f"'{PLATFORM_ORG_ID}' WHERE organization_id <> '{PLATFORM_ORG_ID}'"
+            f"""
+            DO $$
+            DECLARE
+                moved INT;
+                total INT := 0;
+            BEGIN
+                LOOP
+                    UPDATE {table} SET organization_id = '{PLATFORM_ORG_ID}'
+                    WHERE ctid IN (
+                        SELECT ctid FROM {table}
+                        WHERE organization_id <> '{PLATFORM_ORG_ID}'
+                        LIMIT 10000
+                    );
+                    GET DIAGNOSTICS moved = ROW_COUNT;
+                    total := total + moved;
+                    EXIT WHEN moved = 0;
+                END LOOP;
+                RAISE NOTICE '0065 remap %: % rows moved to survivor', '{table}', total;
+            END $$;
+            """
         )
 
     # ── 3. Quarantine non-survivor orgs (audit trail, invisible) ───────
     op.execute(
         f"""
-        UPDATE organizations
-        SET is_active = FALSE,
-            status = 'rejected',
-            name = '[QUARANTINED] ' || name
-        WHERE id <> '{PLATFORM_ORG_ID}' AND name NOT LIKE '[QUARANTINED] %'
+        DO $$
+        DECLARE
+            quarantined INT;
+        BEGIN
+            UPDATE organizations
+            SET is_active = FALSE,
+                status = 'rejected',
+                name = '[QUARANTINED] ' || name
+            WHERE id <> '{PLATFORM_ORG_ID}' AND name NOT LIKE '[QUARANTINED] %';
+            GET DIAGNOSTICS quarantined = ROW_COUNT;
+            RAISE NOTICE '0065 quarantine: % non-survivor orgs quarantined', quarantined;
+        END $$;
         """
     )
 
     # ── 4. Backfill registration_mode + replace the CHECK ───────────────
-    # ``instance_settings`` was never created by any migration — guard so the
-    # step is a no-op where the table is absent; legacy rows are backfilled
-    # wherever it does exist.
+    # ``instance_settings`` is created by 0066 (this migration predates the
+    # table) — the ``to_regclass`` guard is intentionally a no-op on fresh
+    # installs, where 0066 seeds the row with the new CHECK directly.
+    # Legacy rows (pre-0066 databases carrying removed values) are
+    # backfilled here wherever the table exists.
     op.execute(
         """
         DO $$

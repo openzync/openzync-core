@@ -93,6 +93,7 @@ class AuthRepository:
         role: str = "admin",
         must_change_password: bool = False,
         permissions: list[str] | None = None,
+        is_active: bool = True,
     ) -> User:
         """Create a dashboard user (admin/member).
 
@@ -112,6 +113,8 @@ class AuthRepository:
             permissions: Explicit permission strings.  ``None`` falls back
                 to the model default (empty array — wildcard via role).
                 The service layer seeds role-appropriate defaults.
+            is_active: ``False`` creates the row inactive atomically
+                (approval flow — no live-then-deactivate window).
 
         Returns:
             The newly created User.
@@ -125,6 +128,7 @@ class AuthRepository:
             role=role,
             must_change_password=must_change_password,
             permissions=permissions,
+            is_active=is_active,
             metadata_={},
         )
         self._db.add(user)

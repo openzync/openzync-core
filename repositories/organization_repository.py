@@ -56,12 +56,20 @@ class OrganizationRepository:
     async def get_by_id(self, org_id: UUID) -> Organization | None:
         """Fetch an organization by UUID.
 
+        Tenant-scoped read: binds the session to ``org_id`` first so the
+        RLS ``FOR ALL`` policy admits the row (mirrors the write-path
+        convention in ``create_dashboard_user`` callers).  Public,
+        tenant-less callers (invite info/accept) must use
+        :meth:`get_platform_org`-style bypasses instead — this method
+        intentionally sees only the caller's own org.
+
         Args:
             org_id: The organization UUID.
 
         Returns:
             The Organization if found, or ``None``.
         """
+        await self.set_tenant_context(org_id)
         result = await self._db.execute(
             select(Organization).where(Organization.id == org_id)
         )
@@ -84,6 +92,8 @@ class OrganizationRepository:
             name=name,
             # Legacy NOT NULL column — join codes are removed (single org);
             # a random placeholder keeps the constraint satisfied.
+            # shortcut: drop the column + backfill once 0044-era deploys are
+            # gone; blocked on a NOT NULL migration, not worth it yet.
             org_code=secrets.token_hex(4).upper(),
         )
         await self.set_tenant_context(org.id)
@@ -129,6 +139,8 @@ class OrganizationRepository:
                     join_enabled=False,
                     # Legacy NOT NULL column — join codes are removed;
                     # a random placeholder keeps the constraint satisfied.
+                    # shortcut: drop the column when a NOT NULL migration
+                    # is scheduled; the random mint is dead weight until then.
                     org_code=secrets.token_hex(4).upper(),
                     is_active=True,
                 )
@@ -138,6 +150,10 @@ class OrganizationRepository:
 
     async def set_join_enabled(self, org_id: UUID, enabled: bool) -> Organization:
         """Toggle whether the platform org accepts self-registration.
+
+        Tenant-scoped write: binds the session to ``org_id`` first so RLS
+        admits the row (admin callers are already tenant-bound; the bind
+        is idempotent, not a privilege change).
 
         Args:
             org_id: The organization UUID.
@@ -151,6 +167,7 @@ class OrganizationRepository:
         """
         from core.exceptions import NotFoundError
 
+        await self.set_tenant_context(org_id)
         result = await self._db.execute(
             select(Organization).where(Organization.id == org_id)
         )
@@ -167,6 +184,9 @@ class OrganizationRepository:
     async def get_config(self, org_id: UUID) -> dict[str, Any]:
         """Read the full ``config`` JSONB column for an organization.
 
+        Tenant-scoped read: binds the session to ``org_id`` first (see
+        :meth:`get_by_id`).
+
         Args:
             org_id: The organization UUID.
 
@@ -174,6 +194,7 @@ class OrganizationRepository:
             The config dict, or ``{}`` if not configured or the org does
             not exist.
         """
+        await self.set_tenant_context(org_id)
         result = await self._db.execute(
             text("SELECT config FROM organizations WHERE id = :org_id"),
             {"org_id": org_id},
@@ -187,7 +208,7 @@ class OrganizationRepository:
         """Fetch the PII configuration for an organization.
 
         The PII config lives at ``organizations.quotas -> 'pii'`` as a JSONB
-        sub-document.
+        sub-document.  Tenant-scoped read (binds ``org_id`` first).
 
         Args:
             org_id: The organization UUID.
@@ -196,6 +217,7 @@ class OrganizationRepository:
             The PII config dict, or ``{}`` if not configured or the
             organization does not exist.
         """
+        await self.set_tenant_context(org_id)
         result = await self._db.execute(
             text(
                 "SELECT quotas->'pii' AS pii_config "
@@ -225,6 +247,7 @@ class OrganizationRepository:
         Returns:
             The LLM config dict, or ``{}`` if not configured.
         """
+        await self.set_tenant_context(org_id)
         # Primary: read from new config JSONB
         result = await self._db.execute(
             text(
@@ -249,7 +272,7 @@ class OrganizationRepository:
         """Get a specific quota value for an organization.
 
         Quotas are stored as a JSONB column (``organizations.quotas``)
-        keyed by quota name.
+        keyed by quota name.  Tenant-scoped read (binds ``org_id`` first).
 
         Args:
             org_id: The organization UUID.
@@ -259,6 +282,7 @@ class OrganizationRepository:
             The quota value as an ``int``, or ``None`` if the quota key is
             not set or the organization does not exist.
         """
+        await self.set_tenant_context(org_id)
         result = await self._db.execute(
             text(
                 "SELECT quotas->>:quota_name AS quota "

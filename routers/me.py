@@ -1,13 +1,9 @@
 """Personal config endpoints — HTTP adapter layer only.
 
-Canonical paths (match the frontend ``api-client.ts``)::
+Canonical (and only) paths (match the frontend ``api-client.ts``)::
 
     GET   /v1/me/config
     PATCH /v1/me/config
-
-The same handlers remain mounted at ``/v1/auth/me/config`` in
-``routers/auth.py`` as a deprecated backward alias — do not add new
-routes there.
 """
 
 from __future__ import annotations

@@ -20,6 +20,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from repositories.auth_repository import AuthRepository
+from repositories.instance_settings_repository import InstanceSettingsRepository
 from repositories.organization_repository import OrganizationRepository
 from services.auth.org_join import OrgJoinMixin
 from services.auth.password import PasswordMixin
@@ -59,6 +60,8 @@ class AuthService(
             (e.g. password-change confirmation).  ``None`` skips notifications.
         bao_client: Optional OpenBao client for bootstrapping org namespaces
             during email verification.
+        settings_repo: Singleton settings row (registration mode).
+            Injected via ``dependencies.services.get_auth_service``.
     """
 
     def __init__(
@@ -69,6 +72,7 @@ class AuthService(
         org_repo: OrganizationRepository,
         email_service: EmailService | None = None,
         bao_client: OpenBaoClient | None = None,
+        settings_repo: InstanceSettingsRepository | None = None,
     ) -> None:
         self._repo = repo
         self._otp_service = otp_service
@@ -76,6 +80,7 @@ class AuthService(
         self._org_repo = org_repo
         self._email_service = email_service
         self._bao_client = bao_client
+        self._settings_repo = settings_repo
 
 
 __all__ = ["AuthService"]

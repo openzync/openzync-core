@@ -9,6 +9,11 @@ Backfill: every existing organization receives a fresh random code, then
 the column is set NOT NULL with a unique index.  Codes are 8 chars from a
 confusion-free alphabet (``core/org_codes``).
 
+NOTE (single platform org): join codes are dead — ``POST /v1/auth/join``
+and signup are governed by ``instance_settings.registration_mode`` and
+``repositories`` mint a random placeholder for the legacy NOT NULL
+column.  The column stays for the constraint only; see 0067.
+
 RLS: the ``organizations`` table carries row-level security policies keyed
 on ``app.bypass_rls``/``app.org_id`` (migrations/0001).  The migration sets
 ``app.bypass_rls = 'true'`` session-locally so the backfill UPDATE is not

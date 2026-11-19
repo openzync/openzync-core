@@ -144,7 +144,7 @@ class AuthThrottle:
         Raises:
             RateLimitError: If the rate limit is exceeded.
         """
-        key = f"auth:throttle:signup:ip:{ip}"
+        key = f"auth:throttle:signup:ip:{self._normalize_ip(ip)}"
         attempts = await self._redis.incr(key)
         if attempts == 1:
             await self._redis.expire(key, self._signup_window_sec)
@@ -204,12 +204,12 @@ class AuthThrottle:
         Raises:
             RateLimitError: If the rate limit is exceeded.
         """
-        email_key = f"auth:throttle:verify:email:{email}"
+        email_key = f"auth:throttle:verify:email:{self._normalize_email(email)}"
         email_attempts = await self._redis.incr(email_key)
         if email_attempts == 1:
             await self._redis.expire(email_key, 900)  # 15 min window
 
-        ip_key = f"auth:throttle:verify:ip:{ip}"
+        ip_key = f"auth:throttle:verify:ip:{self._normalize_ip(ip)}"
         ip_attempts = await self._redis.incr(ip_key)
         if ip_attempts == 1:
             await self._redis.expire(ip_key, 900)  # 15 min window
@@ -237,12 +237,12 @@ class AuthThrottle:
         Raises:
             RateLimitError: If the rate limit is exceeded.
         """
-        email_key = f"auth:throttle:forgot:email:{email}"
+        email_key = f"auth:throttle:forgot:email:{self._normalize_email(email)}"
         email_attempts = await self._redis.incr(email_key)
         if email_attempts == 1:
             await self._redis.expire(email_key, 3600)  # 1 hour window
 
-        ip_key = f"auth:throttle:forgot:ip:{ip}"
+        ip_key = f"auth:throttle:forgot:ip:{self._normalize_ip(ip)}"
         ip_attempts = await self._redis.incr(ip_key)
         if ip_attempts == 1:
             await self._redis.expire(ip_key, 900)  # 15 min window
@@ -324,12 +324,14 @@ class AuthThrottle:
         Raises:
             RateLimitError: If the rate limit is exceeded.
         """
-        email_key = f"auth:throttle:passwordless:send:email:{email}"
+        email_key = (
+            f"auth:throttle:passwordless:send:email:{self._normalize_email(email)}"
+        )
         email_attempts = await self._redis.incr(email_key)
         if email_attempts == 1:
             await self._redis.expire(email_key, 3600)  # 1 hour window
 
-        ip_key = f"auth:throttle:passwordless:send:ip:{ip}"
+        ip_key = f"auth:throttle:passwordless:send:ip:{self._normalize_ip(ip)}"
         ip_attempts = await self._redis.incr(ip_key)
         if ip_attempts == 1:
             await self._redis.expire(ip_key, 900)  # 15 min window
@@ -357,12 +359,14 @@ class AuthThrottle:
         Raises:
             RateLimitError: If the rate limit is exceeded.
         """
-        email_key = f"auth:throttle:passwordless:verify:email:{email}"
+        email_key = (
+            f"auth:throttle:passwordless:verify:email:{self._normalize_email(email)}"
+        )
         email_attempts = await self._redis.incr(email_key)
         if email_attempts == 1:
             await self._redis.expire(email_key, 900)  # 15 min window
 
-        ip_key = f"auth:throttle:passwordless:verify:ip:{ip}"
+        ip_key = f"auth:throttle:passwordless:verify:ip:{self._normalize_ip(ip)}"
         ip_attempts = await self._redis.incr(ip_key)
         if ip_attempts == 1:
             await self._redis.expire(ip_key, 900)  # 15 min window
@@ -390,12 +394,12 @@ class AuthThrottle:
         Raises:
             RateLimitError: If the rate limit is exceeded.
         """
-        email_key = f"auth:throttle:mfa:send:email:{email}"
+        email_key = f"auth:throttle:mfa:send:email:{self._normalize_email(email)}"
         email_attempts = await self._redis.incr(email_key)
         if email_attempts == 1:
             await self._redis.expire(email_key, 3600)  # 1 hour window
 
-        ip_key = f"auth:throttle:mfa:send:ip:{ip}"
+        ip_key = f"auth:throttle:mfa:send:ip:{self._normalize_ip(ip)}"
         ip_attempts = await self._redis.incr(ip_key)
         if ip_attempts == 1:
             await self._redis.expire(ip_key, 900)  # 15 min window
@@ -423,12 +427,12 @@ class AuthThrottle:
         Raises:
             RateLimitError: If the rate limit is exceeded.
         """
-        email_key = f"auth:throttle:mfa:verify:email:{email}"
+        email_key = f"auth:throttle:mfa:verify:email:{self._normalize_email(email)}"
         email_attempts = await self._redis.incr(email_key)
         if email_attempts == 1:
             await self._redis.expire(email_key, 900)  # 15 min window
 
-        ip_key = f"auth:throttle:mfa:verify:ip:{ip}"
+        ip_key = f"auth:throttle:mfa:verify:ip:{self._normalize_ip(ip)}"
         ip_attempts = await self._redis.incr(ip_key)
         if ip_attempts == 1:
             await self._redis.expire(ip_key, 900)  # 15 min window

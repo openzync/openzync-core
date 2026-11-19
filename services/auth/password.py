@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import Any
@@ -16,6 +17,7 @@ from schemas.auth import (
     TokenResponse,
 )
 from schemas.email import OtpResponse, ResetPasswordRequest
+from utils.pii import mask_email
 
 logger = logging.getLogger(__name__)
 
@@ -64,12 +66,16 @@ class PasswordMixin:
                 "This account does not have a password set."
             )
         from services import auth_service as _facade  # via facade (patchable)
-        if not _facade.verify_password(payload.old_password, user.password_hash):
+        # bcrypt blocks the event loop — offload to a worker thread.
+        if not await asyncio.to_thread(
+            _facade.verify_password, payload.old_password, user.password_hash
+        ):
             raise AuthenticationError("Current password is incorrect.")
 
-        from services import auth_service as _facade  # via facade (patchable)
         self._validate_password(payload.new_password)
-        new_hash = _facade.hash_password(payload.new_password)
+        new_hash = await asyncio.to_thread(
+            _facade.hash_password, payload.new_password
+        )
 
         await self._repo.update_dashboard_user(
             user_id=user_id,
@@ -111,7 +117,7 @@ class PasswordMixin:
         if user is None or user.password_hash is None:
             logger.warning(
                 "security.forgot_password_unknown_email",
-                extra={"email": email},
+                extra={"email": mask_email(email)},
             )
             return OtpResponse(
                 message="If an account exists with this email, "
@@ -176,7 +182,10 @@ class PasswordMixin:
         # Validate and hash new password
         from services import auth_service as _facade  # via facade (patchable)
         self._validate_password(payload.new_password)
-        new_hash = _facade.hash_password(payload.new_password)
+        # bcrypt blocks the event loop — offload to a worker thread.
+        new_hash = await asyncio.to_thread(
+            _facade.hash_password, payload.new_password
+        )
 
         # Update password hash
         await self._repo.update_dashboard_user(

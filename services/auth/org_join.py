@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -11,15 +12,18 @@ from core.exceptions import (
     AuthenticationError,
     AuthorizationError,
 )
+from core.openbao_exceptions import OpenBaoConnectionError
 from core.rbac import (
     MEMBER_DEFAULT_PERMISSIONS,
 )
+from repositories.instance_settings_repository import InstanceSettingsRepository
 from schemas.auth import (
     JoinRequest,
     SignupResponse,
     TokenResponse,
     VerifyEmailRequest,
 )
+from utils.pii import mask_email
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +36,13 @@ class OrgJoinMixin:
     _org_repo: Any
     _email_service: Any
     _bao_client: Any
+    _settings_repo: Any
+
+    def _settings(self) -> InstanceSettingsRepository:
+        """Return the injected settings repo (fallback constructs one)."""
+        if self._settings_repo is not None:
+            return self._settings_repo
+        return InstanceSettingsRepository(self._org_repo.session)
 
     # ── Org-code join ────────────────────────────────────────────────────────
 
@@ -57,13 +68,9 @@ class OrgJoinMixin:
                 platform org is missing.
         """
         # ── Platform policy gate ──────────────────────────────────────────
-        from repositories.instance_settings_repository import (
-            InstanceSettingsRepository,
-        )
         from services import auth_service as _facade  # via facade (patchable)
 
-        row = await InstanceSettingsRepository(self._org_repo.session).get()
-        mode = row.registration_mode or "invite_only"
+        mode = await self._settings().get_registration_mode()
         if mode == "invite_only":
             raise AuthorizationError("Registration is invite-only")
         if mode not in ("open", "approval"):
@@ -78,11 +85,12 @@ class OrgJoinMixin:
         if existing is not None:
             logger.warning(
                 "security.join_existing_email",
-                extra={"email": payload.email},
+                extra={"email": mask_email(payload.email)},
             )
             return self._signup_success_response(payload.email)
 
-        pw_hash = _facade.hash_password(payload.password)
+        # bcrypt blocks the event loop — offload to a worker thread.
+        pw_hash = await asyncio.to_thread(_facade.hash_password, payload.password)
         try:
             user = await self._repo.create_dashboard_user(
                 organization_id=org.id,
@@ -106,7 +114,7 @@ class OrgJoinMixin:
             # transaction so the session is usable.
             logger.warning(
                 "security.join_existing_email",
-                extra={"email": payload.email},
+                extra={"email": mask_email(payload.email)},
             )
             await self._repo.rollback()
             return self._signup_success_response(payload.email)
@@ -165,10 +173,13 @@ class OrgJoinMixin:
             await self._repo.mark_email_verified(user.id)
 
         # Bootstrap OpenBao namespace for the org (idempotent — skips if exists).
-        # Failures propagate — a silently unbootstrapped org breaks every
-        # subsequent config write, so the error must be loud, not logged.
-        if self._bao_client is not None:
-            await self._bao_client.create_org_namespace(user.organization_id)
+        # Fail loud, never silent: a missing client means every subsequent
+        # config write breaks, so raise instead of skipping.
+        if self._bao_client is None:
+            raise OpenBaoConnectionError(
+                "OpenBao client required to bootstrap the org namespace"
+            )
+        await self._bao_client.create_org_namespace(user.organization_id)
 
         # Issue tokens now that email is verified
         return await self.issue_tokens(
@@ -202,7 +213,7 @@ class OrgJoinMixin:
         if user is None:
             logger.warning(
                 "security.resend_otp_unknown_email",
-                extra={"email": email},
+                extra={"email": mask_email(email)},
             )
             return generic
 

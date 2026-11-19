@@ -47,7 +47,10 @@ class User(TimestampMixin, Base):
         server_default=func.gen_random_uuid(),
     )
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="CASCADE"),
+        # ⚠️ RESTRICT (not CASCADE): the singleton platform org must never
+        # be wiped by an org delete — a cascading FK would delete every
+        # user row.  Deleting the platform org is refused while users exist.
+        ForeignKey("organizations.id", ondelete="RESTRICT"),
         nullable=False,
         # index defined explicitly in __table_args__ below
     )

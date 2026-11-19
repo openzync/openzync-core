@@ -65,6 +65,12 @@ flows that cannot know their tenant up front:
     after the tenant context is known and is therefore org-scoped like
     every other write.)
 
+NOTE (single platform org): signup no longer creates orgs and join no
+longer presents codes, so ``org_anon_insert`` and the
+``org_join_code_lookup`` SELECT policy below are dead policies kept for
+backward-compat (RLS unit tests assert their shape).  Do not build new
+flows on them; removal waits on the test contracts.
+
 The ``audit_logs`` policy is tightened as well: it no longer admits the
 organization-less rows (the platform-level audit trail of unauthenticated
 requests) to a tenant-bound session, and the application layer filters the

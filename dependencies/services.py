@@ -47,6 +47,9 @@ from repositories.auth_repository import AuthRepository
 from repositories.episode_blob_repository import EpisodeBlobRepository
 from repositories.episode_repository import EpisodeRepository
 from repositories.fact_repository import FactRepository
+from repositories.instance_settings_repository import (
+    InstanceSettingsRepository,
+)
 from repositories.organization_repository import OrganizationRepository
 from repositories.project_repository import ProjectRepository
 from repositories.session_repository import SessionRepository
@@ -165,7 +168,29 @@ async def get_auth_service(
         org_repo=OrganizationRepository(db),
         email_service=email_service,
         bao_client=bao_client,
+        settings_repo=InstanceSettingsRepository(db),
     )
+
+
+# ── Instance settings ────────────────────────────────────────────────────────
+
+
+def get_instance_settings_repository(
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> InstanceSettingsRepository:
+    """Dependency that yields the singleton settings-row repository.
+
+    Shared by ``SetupService`` (registration mode) and ``AuthService``
+    (signup/join gates) — one construction site instead of per-call
+    ``InstanceSettingsRepository(...)`` in routers and mixins.
+
+    Args:
+        db: Async DB session from dependency injection.
+
+    Returns:
+        An initialised ``InstanceSettingsRepository``.
+    """
+    return InstanceSettingsRepository(db)
 
 
 # ── Invite ─────────────────────────────────────────────────────────────────────
@@ -190,6 +215,7 @@ async def get_setup_service(
     return SetupService(
         user_repo=UserRepository(db),
         org_repo=OrganizationRepository(db),
+        settings_repo=InstanceSettingsRepository(db),
     )
 
 

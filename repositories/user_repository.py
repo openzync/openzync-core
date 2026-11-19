@@ -23,6 +23,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from core import rls
 from core.cursor import decode_cursor, encode_cursor
+from core.dict_merge import deep_merge
 from core.exceptions import ValidationError
 from core.sorting import SortSpec, resolve_order_by
 from models.episode import Episode
@@ -290,10 +291,11 @@ class UserRepository:
     async def find_user_by_email(self, email: str) -> User | None:
         """Find a user by email across all organizations (global lookup).
 
-        Mirrors ``AuthRepository.find_user_by_email`` — email is globally
-        unique (partial unique index) — so the invite flow's duplicate
-        check sees accounts created via signup/join too, not just rows this
-        repository created.
+        Single implementation lives in
+        :meth:`AuthRepository.find_user_by_email` (email is globally
+        unique via the partial unique index) — this delegates so the
+        invite flow's duplicate check sees accounts created via
+        signup/join too, without a second copy of the query.
 
         Args:
             email: The user's email address.
@@ -301,14 +303,9 @@ class UserRepository:
         Returns:
             The User if found, or ``None``.
         """
-        async with rls.rls_bypass(self._db):
-            result = await self._db.execute(
-                select(User).where(
-                    User.email == email,
-                    User.is_deleted.is_(False),
-                )
-            )
-            return result.scalar_one_or_none()
+        from repositories.auth_repository import AuthRepository
+
+        return await AuthRepository(self._db).find_user_by_email(email)
 
     # ── Invite flow ─────────────────────────────────────────────────────────
 
@@ -554,14 +551,14 @@ class UserRepository:
         if user is None:
             raise NotFoundError("Dashboard user not found.")
         existing = dict(user.config_override or {})
-        for key, value in patch.items():
-            if value is None:
-                existing.pop(key, None)
-            elif isinstance(value, dict) and isinstance(existing.get(key), dict):
-                existing[key] = {**existing[key], **value}
-            else:
-                existing[key] = value
-        user.config_override = existing
+        overlay = {k: v for k, v in patch.items() if v is not None}
+        removed = {k for k, v in patch.items() if v is None}
+        # Shared recursive helper (core.dict_merge) — same semantics as the
+        # service-level effective-config merge, never a one-level copy.
+        merged = deep_merge(existing, overlay)
+        for key in removed:
+            merged.pop(key, None)
+        user.config_override = merged
         await self._db.flush()
         await self._db.refresh(user)
         return dict(user.config_override or {})

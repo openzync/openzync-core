@@ -46,6 +46,15 @@ class SignupRequest(BaseModel):
         description="Password (min 8 chars, max 128).",
         examples=["secure-p@ssword-123"],
     )
+    invite_token: str | None = Field(
+        default=None,
+        description=(
+            "Optional admin-invite magic-link token.  When present the "
+            "signup is routed to ``POST /v1/auth/invites/accept`` "
+            "semantics (claim + immediate JWT pair) instead of the "
+            "OTP verify-email flow."
+        ),
+    )
 
 
 class JoinRequest(BaseModel):

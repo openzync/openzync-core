@@ -8,30 +8,19 @@ System and org layers come from OpenBao; the user layer is the
 
 from __future__ import annotations
 
-from typing import Any
+import logging
 from typing import Any
 from uuid import UUID
 
+from core.dict_merge import deep_merge
+from core.exceptions import NotFoundError
+from core.openbao_exceptions import OpenBaoConnectionError
+from core.org_config import get_org_config
+from core.system_config import get_system_config
+from repositories.auth_repository import AuthRepository
 from repositories.user_repository import UserRepository
 
-
-def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
-    """Return ``base`` overlaid with ``overlay`` (nested dicts merge).
-
-    Args:
-        base: Lower-precedence mapping.
-        overlay: Higher-precedence mapping (wins on conflict).
-
-    Returns:
-        A new merged dict — neither input is mutated.
-    """
-    merged = dict(base)
-    for key, value in overlay.items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _deep_merge(merged[key], value)
-        else:
-            merged[key] = value
-    return merged
+logger = logging.getLogger(__name__)
 
 
 class UserConfigService:
@@ -40,6 +29,7 @@ class UserConfigService:
     Args:
         user_repo: Repository for ``users.config_override`` access.
         bao_client: Authenticated OpenBao client (org/system layers).
+            Required — without it the org/system layers cannot resolve.
         redis: Optional async Redis client (org/system cache).
     """
 
@@ -52,6 +42,14 @@ class UserConfigService:
         self._user_repo = user_repo
         self._bao_client = bao_client
         self._redis = redis
+
+    def _bao(self) -> Any:
+        """Return the OpenBao client or fail loud (no silent degraded config)."""
+        if self._bao_client is None:
+            raise OpenBaoConnectionError(
+                "OpenBao client required for user effective-config reads"
+            )
+        return self._bao_client
 
     async def get_override(self, user_id: UUID) -> dict[str, Any]:
         """Return the user's stored override (``{}`` when none).
@@ -81,6 +79,10 @@ class UserConfigService:
     async def get_effective_config(self, user_id: UUID) -> dict[str, Any]:
         """Resolve ``user ⊕ org ⊕ system`` for a dashboard user.
 
+        Every layer failure propagates — a silently dropped org layer
+        would apply the wrong config, so the error is loud, not logged
+        and swallowed.
+
         Args:
             user_id: The internal OpenZync user UUID.
 
@@ -89,36 +91,31 @@ class UserConfigService:
 
         Raises:
             NotFoundError: If the user does not exist.
+            OpenBaoConnectionError: If no OpenBao client is wired.
         """
-        from core.exceptions import NotFoundError
-
-        from repositories.auth_repository import AuthRepository
-
         user = await AuthRepository(self._user_repo.session).get_user_by_id(user_id)
         if user is None:
             raise NotFoundError("Dashboard user not found.")
 
-        effective: dict[str, Any] = {}
-        if self._bao_client is not None:
-            from core.org_config import get_org_config
-            from core.system_config import get_system_config
-
-            system = await get_system_config(self._redis, self._bao_client)
-            effective = _deep_merge(
-                effective,
-                system.model_dump(exclude_none=True),
+        bao = self._bao()
+        system = await get_system_config(self._redis, bao)
+        effective: dict[str, Any] = deep_merge(
+            {}, system.model_dump(exclude_none=True)
+        )
+        try:
+            org = await get_org_config(
+                user.organization_id,
+                redis=self._redis,
+                bao_client=bao,
             )
-            try:
-                org = await get_org_config(
-                    user.organization_id,
-                    redis=self._redis,
-                    bao_client=self._bao_client,
-                )
-                effective = _deep_merge(
-                    effective, org.model_dump(exclude_none=True)
-                )
-            except Exception:
-                pass  # org layer optional — user still gets system + override
+        except Exception:
+            logger.error(
+                "user_config.org_layer_failed",
+                extra={"user_id": str(user_id)},
+                exc_info=True,
+            )
+            raise
+        effective = deep_merge(effective, org.model_dump(exclude_none=True))
 
         override = await self._user_repo.get_config_override(user_id)
-        return _deep_merge(effective, override)
+        return deep_merge(effective, override)

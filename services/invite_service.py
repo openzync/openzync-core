@@ -22,6 +22,7 @@ Key invariants (mirror the repo's zero-fallback discipline):
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import secrets
@@ -43,6 +44,7 @@ from schemas.auth import (
     TokenResponse,
 )
 from utils.password import hash_password
+from utils.pii import mask_email
 
 if TYPE_CHECKING:
     from services.auth_service import AuthService
@@ -207,7 +209,10 @@ class InviteService:
         if existing is not None:
             logger.warning(
                 "invite.duplicate_email",
-                extra={"email": payload.email, "org_id": str(org_id)},
+                extra={
+                    "email": mask_email(payload.email),
+                    "org_id": str(org_id),
+                },
             )
             raise ConflictError("An account with this email already exists.")
 
@@ -366,7 +371,8 @@ class InviteService:
         """
         self._validate_password(password)
         token_hash = _hash_invite_token(token)
-        pw_hash = hash_password(password)
+        # bcrypt blocks the event loop — offload to a worker thread.
+        pw_hash = await asyncio.to_thread(hash_password, password)
 
         # Naive UTC (auth_service storage convention) — the single source
         # of the expiry window is INVITE_EXPIRY_HOURS above.

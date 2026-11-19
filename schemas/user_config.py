@@ -1,7 +1,8 @@
 """Pydantic schemas for per-user config overrides.
 
 Canonical paths: ``GET`` / ``PATCH /v1/me/config`` (routers/me.py).
-``/v1/auth/me/config`` remains as a deprecated backward alias.
+The former ``/v1/auth/me/config`` alias was removed (BREAKING) — no
+compat shims are kept.
 
 A user override is a partial config dict layered over the platform org
 config — user keys win.  Only keys present in the override apply; the

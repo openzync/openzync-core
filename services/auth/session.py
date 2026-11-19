@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -62,7 +63,10 @@ class SessionMixin:
                 "This user does not have password authentication enabled."
             )
 
-        if not _facade.verify_password(payload.password, user.password_hash):
+        # bcrypt blocks the event loop — offload to a worker thread.
+        if not await asyncio.to_thread(
+            _facade.verify_password, payload.password, user.password_hash
+        ):
             raise AuthenticationError("Invalid email or password.")
 
         if not user.is_active or user.is_deleted:
@@ -207,8 +211,9 @@ class SessionMixin:
         if user is None:
             raise NotFoundError("Dashboard user not found.")
         from services import auth_service as _facade  # via facade (patchable)
-        if user.password_hash is None or not _facade.verify_password(
-            payload.password, user.password_hash,
+        # bcrypt blocks the event loop — offload to a worker thread.
+        if user.password_hash is None or not await asyncio.to_thread(
+            _facade.verify_password, payload.password, user.password_hash,
         ):
             raise AuthenticationError("Current password is incorrect.")
 
@@ -246,8 +251,9 @@ class SessionMixin:
         if user is None:
             raise NotFoundError("Dashboard user not found.")
         from services import auth_service as _facade  # via facade (patchable)
-        if user.password_hash is None or not _facade.verify_password(
-            payload.password, user.password_hash,
+        # bcrypt blocks the event loop — offload to a worker thread.
+        if user.password_hash is None or not await asyncio.to_thread(
+            _facade.verify_password, payload.password, user.password_hash,
         ):
             raise AuthenticationError("Current password is incorrect.")
 

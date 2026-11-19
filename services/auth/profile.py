@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -137,8 +138,11 @@ class ProfileMixin:
                         "This account does not have a password set."
                     )
                 from services import auth_service as _facade  # via facade (patchable)
-                if not _facade.verify_password(
-                    payload.current_password, user.password_hash
+                # bcrypt blocks the event loop — offload to a worker thread.
+                if not await asyncio.to_thread(
+                    _facade.verify_password,
+                    payload.current_password,
+                    user.password_hash,
                 ):
                     raise AuthenticationError("Current password is incorrect.")
             update_kwargs["email"] = payload.email
@@ -162,12 +166,17 @@ class ProfileMixin:
                     "This account does not have a password set."
                 )
             from services import auth_service as _facade  # via facade
-            if not _facade.verify_password(
-                payload.current_password, user.password_hash
+            # bcrypt blocks the event loop — offload to a worker thread.
+            if not await asyncio.to_thread(
+                _facade.verify_password,
+                payload.current_password,
+                user.password_hash,
             ):
                 raise AuthenticationError("Current password is incorrect.")
             self._validate_password(payload.new_password)
-            update_kwargs["password_hash"] = _facade.hash_password(payload.new_password)
+            update_kwargs["password_hash"] = await asyncio.to_thread(
+                _facade.hash_password, payload.new_password
+            )
             has_changes = True
 
             # Send password-change notification email

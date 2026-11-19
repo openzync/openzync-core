@@ -12,6 +12,7 @@ from schemas.auth import (
     TokenResponse,
 )
 from schemas.email import OtpResponse, VerifyOtpRequest
+from utils.pii import mask_email
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class PasswordlessMixin:
         if user is None or not user.is_active or user.is_deleted:
             logger.warning(
                 "security.login_otp_send_unknown_email",
-                extra={"email": email},
+                extra={"email": mask_email(email)},
             )
             return OtpResponse(
                 message="If an account exists with this email, "

@@ -24,6 +24,7 @@ from typing import Any
 from uuid import UUID
 
 import redis.asyncio
+import structlog
 from pydantic import ValidationError as PydanticValidationError
 
 from core.exceptions import ValidationError as OrgConfigValidationError
@@ -35,6 +36,11 @@ from schemas.organization_config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _request_id() -> str:
+    """Return the current request correlation ID (``""`` outside requests)."""
+    return structlog.contextvars.get_contextvars().get("request_id", "")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -124,13 +130,16 @@ async def get_org_config(
                     except Exception:
                         logger.error(
                             "org_config.cache_invalidation_failed",
-                            extra={"org_id": str(org_id)},
+                            extra={
+                                "org_id": str(org_id),
+                                "request_id": _request_id(),
+                            },
                             exc_info=True,
                         )
         except Exception:
             logger.error(
                 "org_config.cache_read_failed",
-                extra={"org_id": str(org_id)},
+                extra={"org_id": str(org_id), "request_id": _request_id()},
                 exc_info=True,
             )
 
@@ -184,7 +193,7 @@ async def get_org_config(
         except Exception:
             logger.error(
                 "org_config.cache_write_failed",
-                extra={"org_id": str(org_id)},
+                extra={"org_id": str(org_id), "request_id": _request_id()},
                 exc_info=True,
             )
 
@@ -242,7 +251,7 @@ async def update_org_config(
         except Exception:
             logger.error(
                 "org_config.cache_invalidation_failed",
-                extra={"org_id": str(org_id)},
+                extra={"org_id": str(org_id), "request_id": _request_id()},
                 exc_info=True,
             )
 

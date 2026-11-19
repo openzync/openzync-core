@@ -11,6 +11,7 @@ from sqlalchemy import Boolean, CheckConstraint, String, Text, UniqueConstraint,
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from core.config import PLATFORM_ORG_ID
 from models.base import Base, TimestampMixin
 
 
@@ -105,8 +106,13 @@ class Organization(TimestampMixin, Base):
 
     @property
     def is_platform(self) -> bool:
-        """Derived platform marker — the platform org is always named SYSTEM."""
-        return self.name == "SYSTEM"
+        """Derived platform marker — the platform org is the fixed-ID row.
+
+        Compares ``id`` against ``PLATFORM_ORG_ID`` (renames do not
+        affect identity — the old ``name == "SYSTEM"`` check went stale
+        the moment bootstrap naming became operator-chosen).
+        """
+        return self.id == PLATFORM_ORG_ID
 
     def __repr__(self) -> str:
         return (

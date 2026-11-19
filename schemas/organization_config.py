@@ -441,9 +441,10 @@ class UpdateOrgConfigRequest(BaseModel):
     def _reject_postgres(cls, v: str | None) -> str | None:
         """Hard-reject `postgres` — removed in v1.1.0, returns 410 Gone."""
         if v == "postgres":
-            from core.exceptions import GoneError
-
-            raise GoneError(
+            # Plain ValueError (never GoneError): pydantic wraps it as a
+            # field error and the RequestValidationError handler in
+            # core/exceptions.py maps this message to a 410 problem JSON.
+            raise ValueError(
                 "PostgreSQL graph backend deprecated — gone, removed in v1.1.0. "
                 "Migrate to `falkordb` (410)."
             )
