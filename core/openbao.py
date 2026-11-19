@@ -80,6 +80,7 @@ SYSTEM_KEY_MAPPING: dict[str, str] = {
     "OZ_SMTP_USE_TLS": "OZ_SMTP_USE_TLS",
     "OZ_SMTP_START_TLS": "OZ_SMTP_START_TLS",
     "OZ_ROOT_PASSWORD": "OZ_ROOT_PASSWORD",
+    "OZ_ALLOWED_ADDON_SRC": "OZ_ALLOWED_ADDON_SRC",
 }
 """Maps OpenBao config key names (``OZ_`` uppercase) to ``OZ_`` environment variable names."""
 
