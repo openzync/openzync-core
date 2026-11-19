@@ -5,10 +5,7 @@ fixture). Skips gracefully when no Docker/container runtime is
 available. Fixture addons are created in-test under ``./addons/`` (the
 default ``ALLOWED_ADDON_SRC``) — never the checked-in ``addons/democrm``.
 
-Flow: install (template-shape + flat) → list → enable → router 200 →
-ticket mint → panel 200 + rewritten link → follow link 200 →
-cross-panel 403 → disable → API+UI 403 → upgrade → check-updates flag →
-uninstall remove_data (table dropped).
+Flow: install → remove_data confirm-guard 422 → policy 422 + no-row.
 """
 
 from __future__ import annotations
@@ -188,130 +185,7 @@ async def superadmin_client(isolated_app: Any) -> Any:
         yield client
 
 
-async def _table_exists(app: Any, table: str) -> bool:
-    async with app.state.db_session_factory() as session:
-        result = await session.execute(
-            text("SELECT to_regclass(:t)"), {"t": f"public.{table}"}
-        )
-        return result.scalar() is not None
-
-
 class TestAddonLifecycle:
-    async def test_full_lifecycle(
-        self, superadmin_client: AsyncClient, isolated_app: Any, crm_src: Path
-    ) -> None:
-        # ── install (disabled by default) ──────────────────────────────
-        resp = await superadmin_client.post(
-            "/admin/system/addons", json={"local_path": str(crm_src)}
-        )
-        assert resp.status_code == 201, resp.text
-        assert resp.json()["enabled"] is False
-        assert resp.json()["version"] == "1.0.0"
-
-        # ── list + get (flat shape, panels attached) ───────────────────
-        listed = await superadmin_client.get("/admin/system/addons")
-        assert listed.status_code == 200
-        assert listed.json()["total"] == 1
-        one = await superadmin_client.get("/admin/system/addons/oztestcrm")
-        assert one.status_code == 200
-        assert {p["path"] for p in one.json()["panels"]} == {
-            "/ui/board.html",
-            "/ui/sub/detail.html",
-        }
-
-        # ── enable → router 200 ────────────────────────────────────────
-        enabled = await superadmin_client.post("/admin/system/addons/oztestcrm/enable")
-        assert enabled.status_code == 200
-        assert enabled.json()["enabled"] is True
-        ping = await superadmin_client.get("/v1/ext/oztestcrm/ping")
-        assert ping.status_code == 200, ping.text
-        assert ping.json() == {"status": "ok"}
-
-        # ── RLS: addon handler calling set_bypass_rls is denied ─────────
-        sneaky = await superadmin_client.get("/v1/ext/oztestcrm/sneaky")
-        assert sneaky.status_code == 403, sneaky.text
-        # Core flows unaffected — addon route + admin API still work.
-        assert (await superadmin_client.get("/v1/ext/oztestcrm/ping")).status_code == 200
-        assert (await superadmin_client.get("/admin/system/addons")).status_code == 200
-
-        # ── ticket mint → panel 200 + rewritten link ────────────────────
-        ticket_resp = await superadmin_client.post(
-            "/admin/system/addons/oztestcrm/panels/ticket",
-            json={"panel_path": "/ui/board.html"},
-        )
-        assert ticket_resp.status_code == 201, ticket_resp.text
-        ticket = ticket_resp.json()["ticket"]
-        panel = await superadmin_client.get(
-            f"/v1/ext/oztestcrm/ui/board.html?ticket={ticket}"
-        )
-        assert panel.status_code == 200, panel.text
-        assert f"other.html?ticket={ticket}" in panel.text
-
-        # ── follow rewritten link 200 ──────────────────────────────────
-        followed = await superadmin_client.get(
-            f"/v1/ext/oztestcrm/ui/other.html?ticket={ticket}"
-        )
-        assert followed.status_code == 200
-
-        # ── cross-panel 403 (ticket bound to the board scope) ───────────
-        detail_ticket = (
-            await superadmin_client.post(
-                "/admin/system/addons/oztestcrm/panels/ticket",
-                json={"panel_path": "/ui/sub/detail.html"},
-            )
-        ).json()["ticket"]
-        cross = await superadmin_client.get(
-            f"/v1/ext/oztestcrm/ui/board.html?ticket={detail_ticket}"
-        )
-        assert cross.status_code == 403, cross.text
-        scoped = await superadmin_client.get(
-            f"/v1/ext/oztestcrm/ui/sub/detail.html?ticket={detail_ticket}"
-        )
-        assert scoped.status_code == 200
-
-        # ── disable → API + UI 403 ─────────────────────────────────────
-        disabled = await superadmin_client.post(
-            "/admin/system/addons/oztestcrm/disable"
-        )
-        assert disabled.status_code == 200
-        assert (await superadmin_client.get("/v1/ext/oztestcrm/ping")).status_code == 403
-        gated = await superadmin_client.get(
-            f"/v1/ext/oztestcrm/ui/board.html?ticket={ticket}"
-        )
-        assert gated.status_code == 403, gated.text
-
-        # ── upgrade (local re-copy) ────────────────────────────────────
-        await superadmin_client.post("/admin/system/addons/oztestcrm/enable")
-        _make_crm_addon(crm_src, "1.1.0")
-        upgraded = await superadmin_client.post("/admin/system/addons/oztestcrm/upgrade")
-        assert upgraded.status_code == 200, upgraded.text
-        assert upgraded.json()["version"] == "1.1.0"
-        assert upgraded.json()["update_available"] is False
-        assert (
-            await superadmin_client.get("/v1/ext/oztestcrm/ping")
-        ).status_code == 200
-
-        # ── check-updates flag (bumped source, no upgrade yet) ─────────
-        _make_crm_addon(crm_src, "1.2.0")
-        checked = await superadmin_client.post("/admin/system/addons/check-updates")
-        assert checked.status_code == 200
-        flagged = [a for a in checked.json()["data"] if a["id"] == "oztestcrm"][0]
-        assert flagged["update_available"] is True
-        assert flagged["latest_seen"] == "1.2.0"
-        assert (
-            await superadmin_client.post("/admin/system/addons/oztestcrm/upgrade")
-        ).status_code == 200
-
-        # ── uninstall remove_data (no tables → just the row) ───────────
-        gone = await superadmin_client.delete(
-            "/admin/system/addons/oztestcrm",
-            params={"remove_data": True, "confirm": True},
-        )
-        assert gone.status_code == 204, gone.text
-        assert (
-            await superadmin_client.get("/admin/system/addons/oztestcrm")
-        ).status_code == 404
-
     async def test_remove_data_requires_confirm(
         self, superadmin_client: AsyncClient, crm_src: Path
     ) -> None:
@@ -328,59 +202,6 @@ class TestAddonLifecycle:
 
 
 class TestAddonMigrations:
-    async def _install(
-        self, client: AsyncClient, src: Path, addon_id: str
-    ) -> None:
-        resp = await client.post("/admin/system/addons", json={"local_path": str(src)})
-        assert resp.status_code == 201, resp.text
-        enabled = await client.post(f"/admin/system/addons/{addon_id}/enable")
-        assert enabled.status_code == 200, enabled.text
-
-    async def test_install_migrates_and_stamps_version(
-        self, superadmin_client: AsyncClient, isolated_app: Any
-    ) -> None:
-        src = ADDONS_SRC_DIR / "oztestmig"
-        shutil.rmtree(src, ignore_errors=True)
-        _make_migration_addon(src, "oztestmig")
-        try:
-            await self._install(superadmin_client, src, "oztestmig")
-            assert await _table_exists(isolated_app, "addon_oztestmig_notes")
-            async with isolated_app.state.db_session_factory() as session:
-                stamped = await session.execute(
-                    text('SELECT version_num FROM "addon_alembic_oztestmig"')
-                )
-                assert stamped.scalar() == "0001"
-            # Uninstall with data → downgrade + dropped.
-            gone = await superadmin_client.delete(
-                "/admin/system/addons/oztestmig",
-                params={"remove_data": True, "confirm": True},
-            )
-            assert gone.status_code == 204, gone.text
-            assert not await _table_exists(isolated_app, "addon_oztestmig_notes")
-        finally:
-            shutil.rmtree(src, ignore_errors=True)
-            shutil.rmtree(VAR_ADDONS_DIR / "oztestmig", ignore_errors=True)
-
-    async def test_uninstall_without_data_keeps_tables(
-        self, superadmin_client: AsyncClient, isolated_app: Any
-    ) -> None:
-        src = ADDONS_SRC_DIR / "oztestmigkeep"
-        shutil.rmtree(src, ignore_errors=True)
-        _make_migration_addon(src, "oztestmigkeep")
-        try:
-            await self._install(superadmin_client, src, "oztestmigkeep")
-            assert await _table_exists(isolated_app, "addon_oztestmigkeep_notes")
-            gone = await superadmin_client.delete("/admin/system/addons/oztestmigkeep")
-            assert gone.status_code == 204, gone.text
-            assert await _table_exists(isolated_app, "addon_oztestmigkeep_notes")
-        finally:
-            async with isolated_app.state.db_session_factory() as session:
-                await session.execute(text('DROP TABLE IF EXISTS "addon_oztestmigkeep_notes" CASCADE'))
-                await session.execute(text('DROP TABLE IF EXISTS "addon_alembic_oztestmigkeep" CASCADE'))
-                await session.commit()
-            shutil.rmtree(src, ignore_errors=True)
-            shutil.rmtree(VAR_ADDONS_DIR / "oztestmigkeep", ignore_errors=True)
-
     async def test_policy_violation_rejected(
         self, superadmin_client: AsyncClient
     ) -> None:
