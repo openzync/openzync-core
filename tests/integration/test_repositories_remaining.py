@@ -205,8 +205,11 @@ class TestAuthRepository:
     async def test_create_refresh_token(self, engine) -> None:
         async with AsyncSession(engine) as db:
             repo = AuthRepository(db)
+            user = await repo.create_dashboard_user(
+                email="rt_creator@openzync.tech", password_hash="hash",
+            )
             token = await repo.create_refresh_token(
-                user_id=uuid4(),
+                user_id=user.id,
                 token_hash="tok_hash", expires_at=datetime.now(),
             )
             assert token.id is not None

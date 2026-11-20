@@ -350,6 +350,19 @@ class TestObservationServicePipeline:
           - X → Y ``works_with`` (valid)
           - X → Z ``mentions`` (valid)
         """
+        # All rows share ORG_ID (the scan's user_id) so backend/service
+        # queries filtered by that user see them under user_isolation RLS.
+        _USER_ID = ORG_ID
+        _SESSION_ID = uuid4()
+        await db.execute(
+            sa_text(
+                "INSERT INTO users (id, external_id, name, "
+                "role, is_active) VALUES (:uid, :eid, :name, "
+                "'member', true) ON CONFLICT (id) DO NOTHING"
+            ),
+            {"uid": _USER_ID,
+             "eid": f"test-user-{_USER_ID}", "name": "Pipeline Test User"},
+        )
         # ── Entities ───────────────────────────────────────────────────────
         for eid, name, etype in [
             (self._ENTITY_X, "UserX", "user"),
@@ -363,22 +376,11 @@ class TestObservationServicePipeline:
                     "VALUES (:id, :user_id, :proj_id, :name, :etype) "
                     "ON CONFLICT (id) DO NOTHING"
                 ),
-                {"id": eid, "user_id": ORG_ID, "proj_id": PROJECT_ID,
+                {"id": eid, "user_id": _USER_ID, "proj_id": PROJECT_ID,
                  "name": name, "etype": etype},
             )
 
-        # ── Seed a user + session for episode FK references ────────────────
-        _USER_ID = uuid4()
-        _SESSION_ID = uuid4()
-        await db.execute(
-            sa_text(
-                "INSERT INTO users (id, external_id, name, "
-                "role, is_active) VALUES (:uid, :eid, :name, "
-                "'member', true) ON CONFLICT (id) DO NOTHING"
-            ),
-            {"uid": _USER_ID,
-             "eid": f"test-user-{_USER_ID}", "name": "Pipeline Test User"},
-        )
+        # ── Seed the session for episode FK references ───────────────────
         await db.execute(
             sa_text(
                 "INSERT INTO sessions (id, user_id, project_id, "

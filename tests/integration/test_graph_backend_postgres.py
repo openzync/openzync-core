@@ -183,29 +183,27 @@ async def _create_test_episode(
     )
     await db.execute(
         sa_text(
-            "INSERT INTO sessions (id, user_id, user_id, project_id, external_id) "
-            "VALUES (:id, :uid, :user_id, :proj_id, :ext) "
+            "INSERT INTO sessions (id, user_id, project_id, external_id) "
+            "VALUES (:id, :uid, :proj_id, :ext) "
             "ON CONFLICT (id) DO NOTHING"
         ),
         {
             "id": str(sid),
             "uid": str(uid),
-            "user_id": str(ORG_ID),
             "proj_id": str(PROJ_ID),
             "ext": f"ep-session-{sid}",
         },
     )
     await db.execute(
         sa_text(
-            "INSERT INTO episodes (id, session_id, user_id, role, content, user_id, project_id) "
-            "VALUES (:id, :sid, :uid, 'user', 'test', :user_id, :proj_id) "
+            "INSERT INTO episodes (id, session_id, user_id, role, content, project_id) "
+            "VALUES (:id, :sid, :uid, 'user', 'test', :proj_id) "
             "ON CONFLICT (id) DO NOTHING"
         ),
         {
             "id": str(eid),
             "sid": str(sid),
             "uid": str(uid),
-            "user_id": str(ORG_ID),
             "proj_id": str(PROJ_ID),
         },
     )

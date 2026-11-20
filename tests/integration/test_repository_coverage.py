@@ -11,7 +11,7 @@ tested — nothing that requires external services (S3 uploads, LLM calls).
 
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -314,11 +314,11 @@ class TestEpisodeBlobRepository:
         async with AsyncSession(engine) as db:
             repo = EpisodeBlobRepository(db)
             result = await repo.batch_create(
-                user_id=chain["user_id"],
+                user_id=uuid4(),
                 project_id=PROJECT_ID,
-                session_id=UUID("00000000-0000-0000-0000-000000000099"),
-                episode_id=UUID("00000000-0000-0000-0000-000000000099"),
-                created_by=UUID("00000000-0000-0000-0000-000000000099"),
+                session_id=uuid4(),
+                episode_id=uuid4(),
+                created_by=uuid4(),
                 blobs=[],
             )
             assert result == []
@@ -380,7 +380,7 @@ class TestEpisodeBlobRepository:
                 blobs=self._blob_dicts(chain["episode_id"]),
             )
 
-            matches = await repo.get_by_content_hash(ORG_ID, "abc123")
+            matches = await repo.get_by_content_hash(chain["user_id"], "abc123")
             assert len(matches) == 1
             assert matches[0].file_name == "doc.pdf"
 

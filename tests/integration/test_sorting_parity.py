@@ -348,7 +348,6 @@ class TestMessagesParity:
         sid = UUID(resp.json()["id"])
         await _seed_episodes(
             isolated_app,
-            isolated_org_and_key["user_id"],
             pid,
             sid,
             isolated_org_and_key["user_id"],
@@ -618,7 +617,6 @@ class TestProjectFactsParity:
         now = datetime.now(UTC)
         await _seed_facts(
             isolated_app,
-            isolated_org_and_key["user_id"],
             pid,
             isolated_org_and_key["user_id"],
             [
@@ -737,7 +735,6 @@ class TestFactHistoryParity:
         assert resp.status_code == 201, resp.text
         facts = await _seed_facts(
             isolated_app,
-            isolated_org_and_key["user_id"],
             isolated_project_id,
             isolated_org_and_key["user_id"],
             [{"content": "parity hist fact", "subject": "hsubj"}],
@@ -802,7 +799,6 @@ class TestSearchParity:
         sid = UUID(resp.json()["id"])
         await _seed_episodes(
             isolated_app,
-            isolated_org_and_key["user_id"],
             pid,
             sid,
             isolated_org_and_key["user_id"],
