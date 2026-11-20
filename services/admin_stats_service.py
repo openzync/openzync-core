@@ -29,17 +29,17 @@ class AdminStatsService:
         self._db = db
         self._repo = AdminStatsRepository(db)
 
-    async def get_org_stats(
+    async def get_platform_stats(
         self,
         user_id: UUID,
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
     ) -> OrgStatsResponse:
-        """Return windowed aggregate counts for the organization.
+        """Return windowed aggregate counts for the platform.
 
         Args:
-            user_id: Authenticated organization ID.
+            user_id: Authenticated user ID.
             start: Window start (inclusive).
             end_exclusive: Window end (exclusive), or ``None`` for open-ended.
             project_id: Optional project scope.
@@ -48,6 +48,7 @@ class AdminStatsService:
             OrgStatsResponse with windowed aggregate counts.
         """
         return OrgStatsResponse(
+            user_id=user_id,
 
             total_episodes=await self._repo.count_episodes(
                 user_id, start, end_exclusive, project_id
