@@ -1,19 +1,19 @@
 """Unit tests for ``core.config.Settings``.
 
-These tests validate that the pydantic model loads correctly, enforces
-constraints like ``SECRET_KEY min_length``, and that the singleton accessors
-(``set_settings`` / ``get_settings``) work as expected.
+These tests validate that the pydantic-settings model loads from ``OZ_*``
+env vars, enforces constraints like ``SECRET_KEY min_length``, and that
+the singleton accessors (``set_settings`` / ``get_settings``) work as
+expected.
 
 .. note::
 
-    ``Settings`` is now a :class:`pydantic.BaseModel` (not
-    ``pydantic_settings.BaseSettings``).  It has **no** env-var fallback —
-    all values come from OpenBao.  Required fields (``DATABASE_URL``,
-    ``REDIS_URL``, ``SECRET_KEY``, ``WEBHOOK_SIGNING_SECRET``) have no
-    defaults and must be passed explicitly.
+    ``Settings`` is a :class:`pydantic_settings.BaseSettings`: every field
+    binds to its ``OZ_*`` env var via ``validation_alias``.  Required
+    fields (``DATABASE_URL``, ``REDIS_URL``, ``SECRET_KEY``) have no
+    defaults — the process fails fast at startup when they are missing.
 
     LLM / Embedding / Graph / Behaviour settings were removed from this
-    class in favour of per-org DB config.  See
+    class in favour of per-user DB config.  See
     ``schemas/organization_config.OrgConfigBase``.
 """
 
@@ -29,7 +29,6 @@ _DEFAULT_REQUIRED: dict[str, str] = {
     "DATABASE_URL": "postgresql+asyncpg://u:p@localhost:5432/openzync_test",
     "REDIS_URL": "redis://localhost:6379/1",
     "SECRET_KEY": "a" * 32,
-    "WEBHOOK_SIGNING_SECRET": "b" * 32,
 }
 
 
@@ -72,11 +71,6 @@ class TestSettings:
         with pytest.raises(Exception, match="at least 32 characters"):
             _settings(SECRET_KEY="too-short")
 
-    def test_webhook_signing_secret_min_length_enforced(self) -> None:
-        """WEBHOOK_SIGNING_SECRET shorter than 32 characters should raise."""
-        with pytest.raises(Exception, match="at least 32 characters"):
-            _settings(WEBHOOK_SIGNING_SECRET="short")
-
     def test_rate_limit_defaults(self) -> None:
         """Rate-limit configuration should have sensible defaults."""
         s = _settings()
@@ -100,14 +94,28 @@ class TestSettings:
         s.ENVIRONMENT = "production"  # should not raise
         assert s.ENVIRONMENT == "production"
 
-    def test_required_fields_missing(self) -> None:
-        """Creating Settings without required fields should raise."""
+    def test_required_fields_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Creating Settings without required fields (or env) should raise."""
+        # BaseSettings falls back to ``OZ_*`` env vars AND the ``.env``
+        # file — defeat both so the "missing" case is actually exercised.
+        monkeypatch.setitem(Settings.model_config, "env_file", "/dev/null")
+        for var in ("OZ_DATABASE_URL", "OZ_REDIS_URL", "OZ_SECRET_KEY"):
+            monkeypatch.delenv(var, raising=False)
         with pytest.raises(Exception, match="DATABASE_URL"):
             Settings(
                 REDIS_URL="redis://localhost:6379/1",
                 SECRET_KEY="a" * 32,
-                WEBHOOK_SIGNING_SECRET="b" * 32,
             )
+
+    def test_env_binding(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``OZ_*`` env vars populate the matching fields."""
+        monkeypatch.setenv("OZ_ENVIRONMENT", "staging")
+        monkeypatch.setenv("OZ_LOG_LEVEL", "DEBUG")
+        s = _settings()
+        assert s.ENVIRONMENT == "staging"
+        assert s.LOG_LEVEL == "DEBUG"
 
 
 class TestSettingsSingleton:
@@ -130,9 +138,27 @@ class TestSettingsSingleton:
         yield
         cfg._settings = None  # noqa: SLF001  — restore for session
 
-    def test_get_settings_raises_before_init(self) -> None:
-        """``get_settings()`` must raise ``RuntimeError`` before initialisation."""
-        with pytest.raises(RuntimeError, match="not initialised"):
+    def test_get_settings_lazy_creates_from_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``get_settings()`` builds the singleton from env on first call."""
+        monkeypatch.setenv(
+            "OZ_DATABASE_URL", "postgresql+asyncpg://u:p@localhost:5432/test"
+        )
+        monkeypatch.setenv("OZ_REDIS_URL", "redis://localhost:6379/1")
+        monkeypatch.setenv("OZ_SECRET_KEY", "a" * 32)
+        s = get_settings()
+        assert isinstance(s, Settings)
+        assert get_settings() is s
+
+    def test_get_settings_raises_without_required_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No singleton and no env → fail-fast ``ValidationError``."""
+        monkeypatch.setitem(Settings.model_config, "env_file", "/dev/null")
+        for var in ("OZ_DATABASE_URL", "OZ_REDIS_URL", "OZ_SECRET_KEY"):
+            monkeypatch.delenv(var, raising=False)
+        with pytest.raises(Exception, match="DATABASE_URL"):
             get_settings()
 
     def test_set_settings_roundtrip(self) -> None:
@@ -154,8 +180,9 @@ class TestSettingsSingleton:
 
         assert _DEFAULT_REQUIRED["DATABASE_URL"] == settings.DATABASE_URL
 
-    def test_backward_compatible_import_raises_before_init(self) -> None:
-        """Importing ``settings`` before ``init_settings`` raises ``RuntimeError``."""
-        with pytest.raises(RuntimeError, match="not initialised"):
-            from core.config import settings  # noqa: F811  — intentional lazy import
-            _ = settings  # noqa:  — trigger the lazy access
+    def test_unknown_attribute_raises_attribute_error(self) -> None:
+        """Anything but ``settings`` raises ``AttributeError``."""
+        import core.config as cfg
+
+        with pytest.raises(AttributeError, match="no attribute"):
+            cfg.nonexistent_attribute  # noqa: B018  — intentional lookup

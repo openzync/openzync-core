@@ -39,7 +39,6 @@ def _prod_settings() -> cfg.Settings:
         DATABASE_URL="postgresql+asyncpg://u:p@localhost:5432/test",
         REDIS_URL="redis://localhost:6379/1",
         SECRET_KEY="a" * 32,
-        WEBHOOK_SIGNING_SECRET="b" * 32,
         ENVIRONMENT="production",
         RATE_LIMIT_IP_MAX=1,
         RATE_LIMIT_WINDOW_SEC=60,
@@ -107,7 +106,6 @@ class TestH5EnumerationClosed:
             otp_service=AsyncMock(),
             redis=AsyncMock(),
             email_service=AsyncMock(),
-            bao_client=AsyncMock(),
             settings_repo=settings_repo,
         )
 

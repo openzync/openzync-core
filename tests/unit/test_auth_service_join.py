@@ -70,7 +70,6 @@ class TestJoinOrganization:
             otp_service=mock_otp,
             redis=AsyncMock(),
             email_service=None,
-            bao_client=None,
             settings_repo=mock_settings_repo,
         )
 

@@ -1,24 +1,29 @@
-"""Unit tests for per-org configuration resolution (``core.org_config``).
+"""Unit tests for per-user configuration resolution (``core.org_config``).
 
 Covers:
-- ``get_org_config`` — cache → OpenBao → cache write
-- Redis cache hit → no OpenBao call
-- Redis unavailable → fallback to OpenBao
+- ``get_org_config`` — cache → DB (``users.config_override``) → cache write
+- Redis cache hit → no DB read
+- Redis unavailable → fallback to DB
 - Skip-cache flag bypasses Redis
-- Org not found → all-None config returned
-- Config TTL respected
-- ``update_org_config`` — deep merge, None removal, cache invalidation
+- Empty override → all-None config (graph_backend defaults to falkordb)
+- No DB on a cache miss → RuntimeError
+- Poisoned stored config → ValidationError (field names only, never values)
+- ``update_org_config`` — shallow merge, None removal, cache invalidation
 - ``build_cache_key`` helper
+
+The DB layer (``UserRepository``) is faked in-memory — these are unit
+tests (no I/O).  Redis is an ``AsyncMock``.
 """
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
 
-from core.openbao_exceptions import OpenBaoConnectionError
+from core.exceptions import ValidationError as OrgConfigValidationError
 from core.org_config import (
     CACHE_KEY_PREFIX,
     ORG_CONFIG_CACHE_TTL,
@@ -28,8 +33,44 @@ from core.org_config import (
 )
 from schemas.organization_config import OrgConfigBase, UpdateOrgConfigRequest
 
-ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
-CACHE_KEY = f"{CACHE_KEY_PREFIX}:{ORG_ID}"
+USER_ID = UUID("00000000-0000-0000-0000-000000000001")
+CACHE_KEY = f"{CACHE_KEY_PREFIX}:{USER_ID}"
+
+_STORE: dict[UUID, dict[str, Any]] = {}
+"""In-memory ``users.config_override`` keyed by user id."""
+
+
+@pytest.fixture(autouse=True)
+def _clean_store():
+    """Reset the fake DB store before each test."""
+    _STORE.clear()
+    yield
+    _STORE.clear()
+
+
+def _patch_repo(monkeypatch: pytest.MonkeyPatch, store: dict | None = None) -> None:
+    """Patch ``UserRepository`` (as imported in ``core.org_config``) with a fake.
+
+    Uses the module-level ``_STORE`` unless an explicit *store* is given.
+    """
+    backing = _STORE if store is None else store
+
+    class _FakeRepo:
+        def __init__(self, db: Any) -> None:
+            self._db = db
+
+        async def get_config_override(self, user_id: UUID) -> dict[str, Any]:
+            return dict(backing.get(user_id, {}))
+
+        async def set_config_override(
+            self, user_id: UUID, config: dict[str, Any]
+        ) -> dict[str, Any]:
+            backing[user_id] = dict(config)
+            return dict(config)
+
+    monkeypatch.setattr(
+        "repositories.user_repository.UserRepository", _FakeRepo
+    )
 
 
 @pytest.fixture
@@ -43,81 +84,80 @@ def mock_redis() -> AsyncMock:
 
 
 @pytest.fixture
-def mock_bao() -> AsyncMock:
-    """Return a mock OpenBao client with default responses."""
-    b = AsyncMock()
-    b.read_org_config = AsyncMock(return_value={})
-    b.write_org_config = AsyncMock(return_value=None)
-    return b
+def mock_db() -> AsyncMock:
+    """Return a placeholder DB session (never touched — repo is faked)."""
+    return AsyncMock()
 
 
 @pytest.mark.unit
 class TestGetOrgConfig:
-    """Reading org config — cache-first, OpenBao-authoritative."""
+    """Reading org config — cache-first, DB-authoritative."""
 
     @pytest.mark.asyncio
-    async def test_fetches_from_openbao_and_caches(
+    async def test_fetches_from_db_and_caches(
         self,
         mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """First call fetches from OpenBao and writes to Redis cache."""
-        mock_bao.read_org_config.return_value = {
-            "llm_backend": "openai",
-            "llm_model": "gpt-4",
-        }
+        """First call fetches from the DB and writes to Redis cache."""
+        _STORE[USER_ID] = {"llm_backend": "openai", "llm_model": "gpt-4"}
+        _patch_repo(monkeypatch)
 
-        config = await get_org_config(ORG_ID, redis=mock_redis, bao_client=mock_bao)
+        config = await get_org_config(USER_ID, redis=mock_redis, db=mock_db)
 
         assert config.llm_backend == "openai"
         assert config.llm_model == "gpt-4"
-        mock_bao.read_org_config.assert_awaited_once_with(ORG_ID)
         mock_redis.setex.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_cache_hit_skips_openbao(
+    async def test_cache_hit_skips_db(
         self,
         mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Config is returned from cache when available — no OpenBao call."""
+        """Config is returned from cache when available — no DB read."""
         cached_config = OrgConfigBase(llm_backend="anthropic", llm_model="claude-opus-4")
         mock_redis.get.return_value = cached_config.model_dump_json()
+        _patch_repo(monkeypatch)
 
-        config = await get_org_config(ORG_ID, redis=mock_redis, bao_client=mock_bao)
+        # db=None proves the DB is never touched on a cache hit.
+        config = await get_org_config(USER_ID, redis=mock_redis, db=None)
 
         assert config.llm_backend == "anthropic"
         assert config.llm_model == "claude-opus-4"
-        mock_bao.read_org_config.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_cache_miss_fetches_from_openbao(
+    async def test_cache_miss_fetches_from_db(
         self,
         mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """When cache is empty, config is fetched from OpenBao."""
+        """When cache is empty, config is fetched from the DB."""
         mock_redis.get.return_value = None
-        mock_bao.read_org_config.return_value = {"llm_backend": "ollama"}
+        _STORE[USER_ID] = {"llm_backend": "ollama"}
+        _patch_repo(monkeypatch)
 
-        config = await get_org_config(ORG_ID, redis=mock_redis, bao_client=mock_bao)
+        config = await get_org_config(USER_ID, redis=mock_redis, db=mock_db)
 
         assert config.llm_backend == "ollama"
-        mock_bao.read_org_config.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_skip_cache_bypasses_redis(
         self,
         mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``skip_cache=True`` skips both cache read and write."""
-        mock_bao.read_org_config.return_value = {"llm_backend": "azure"}
+        _STORE[USER_ID] = {"llm_backend": "azure"}
+        _patch_repo(monkeypatch)
 
         config = await get_org_config(
-            ORG_ID,
+            USER_ID,
             redis=mock_redis,
-            bao_client=mock_bao,
+            db=mock_db,
             skip_cache=True,
         )
 
@@ -128,43 +168,47 @@ class TestGetOrgConfig:
     @pytest.mark.asyncio
     async def test_no_redis_skips_cache(
         self,
-        mock_bao: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When ``redis`` is ``None``, caching is skipped entirely."""
-        mock_bao.read_org_config.return_value = {"llm_backend": "openai"}
+        _STORE[USER_ID] = {"llm_backend": "openai"}
+        _patch_repo(monkeypatch)
 
-        config = await get_org_config(ORG_ID, redis=None, bao_client=mock_bao)
+        config = await get_org_config(USER_ID, redis=None, db=mock_db)
 
         assert config.llm_backend == "openai"
-        mock_bao.read_org_config.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_redis_unavailable_falls_back_to_openbao(
+    async def test_redis_unavailable_falls_back_to_db(
         self,
         mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """When cache read fails, fall back to OpenBao (no crash)."""
+        """When cache read fails, fall back to the DB (no crash)."""
         mock_redis.get.side_effect = ConnectionError("Redis down")
-        mock_bao.read_org_config.return_value = {"llm_backend": "openai"}
+        _STORE[USER_ID] = {"llm_backend": "openai"}
+        _patch_repo(monkeypatch)
 
-        config = await get_org_config(ORG_ID, redis=mock_redis, bao_client=mock_bao)
+        config = await get_org_config(USER_ID, redis=mock_redis, db=mock_db)
 
         assert config.llm_backend == "openai"
-        mock_bao.read_org_config.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_org_not_found_returns_all_none(
+    async def test_empty_override_returns_all_none(
         self,
         mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """When no org config exists, every field is ``None`` except graph_backend→falkordb."""
-        mock_bao.read_org_config.return_value = {}
+        """When no config is stored, every field is ``None`` except graph_backend→falkordb."""
+        _patch_repo(monkeypatch)
 
-        config = await get_org_config(ORG_ID, redis=mock_redis, bao_client=mock_bao)
+        config = await get_org_config(USER_ID, redis=mock_redis, db=mock_db)
 
-        # All fields except graph_backend should be None — new org defaults to falkordb
+        # All fields except graph_backend should be None — empty override
+        # defaults graph_backend to falkordb.
         for field_name in OrgConfigBase.model_fields:
             if field_name == "graph_backend":
                 assert getattr(config, field_name) == "falkordb", f"{field_name} should be falkordb"
@@ -172,37 +216,56 @@ class TestGetOrgConfig:
                 assert getattr(config, field_name) is None, f"{field_name} should be None"
 
     @pytest.mark.asyncio
-    async def test_no_bao_client_raises(
+    async def test_no_db_on_cache_miss_raises(
         self,
+        mock_redis: AsyncMock,
     ) -> None:
-        """Passing ``None`` as ``bao_client`` raises ``OpenBaoConnectionError``."""
-        with pytest.raises(OpenBaoConnectionError, match="OpenBao client required"):
-            await get_org_config(ORG_ID, bao_client=None)
+        """A cache miss with ``db=None`` raises ``RuntimeError``."""
+        mock_redis.get.return_value = None
+        with pytest.raises(RuntimeError, match="requires a DB session"):
+            await get_org_config(USER_ID, redis=mock_redis, db=None)
+
+    @pytest.mark.asyncio
+    async def test_poisoned_stored_config_raises(
+        self,
+        mock_redis: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Stored values failing schema validation raise, naming fields only."""
+        _STORE[USER_ID] = {"llm_backend": "not-a-backend"}
+        _patch_repo(monkeypatch)
+
+        with pytest.raises(OrgConfigValidationError, match="llm_backend"):
+            await get_org_config(USER_ID, redis=mock_redis, db=mock_db)
 
     @pytest.mark.asyncio
     async def test_cache_write_failure_logged(
         self,
         mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A cache write failure is logged but does not fail the request."""
-
-        mock_bao.read_org_config.return_value = {"llm_backend": "openai"}
+        _STORE[USER_ID] = {"llm_backend": "openai"}
+        _patch_repo(monkeypatch)
         mock_redis.setex.side_effect = ConnectionError("Redis write failed")
 
         # Should not raise
-        config = await get_org_config(ORG_ID, redis=mock_redis, bao_client=mock_bao)
+        config = await get_org_config(USER_ID, redis=mock_redis, db=mock_db)
         assert config.llm_backend == "openai"
 
     @pytest.mark.asyncio
     async def test_cache_ttl_applied(
         self,
         mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """The cache TTL is passed to ``redis.setex``."""
-        mock_bao.read_org_config.return_value = {"llm_backend": "openai"}
-        config = await get_org_config(ORG_ID, redis=mock_redis, bao_client=mock_bao)
+        _STORE[USER_ID] = {"llm_backend": "openai"}
+        _patch_repo(monkeypatch)
+        config = await get_org_config(USER_ID, redis=mock_redis, db=mock_db)
 
         mock_redis.setex.assert_awaited_once_with(
             CACHE_KEY,
@@ -214,60 +277,63 @@ class TestGetOrgConfig:
     async def test_corrupted_cache_ignored(
         self,
         mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Corrupted cache data is ignored and OpenBao is used instead."""
+        """Corrupted cache data is ignored and the DB is used instead."""
         mock_redis.get.return_value = "invalid json {{{"
-        mock_bao.read_org_config.return_value = {"llm_backend": "openai"}
+        _STORE[USER_ID] = {"llm_backend": "openai"}
+        _patch_repo(monkeypatch)
 
-        config = await get_org_config(ORG_ID, redis=mock_redis, bao_client=mock_bao)
+        config = await get_org_config(USER_ID, redis=mock_redis, db=mock_db)
 
         assert config.llm_backend == "openai"
-        mock_bao.read_org_config.assert_awaited_once()
 
 
 @pytest.mark.unit
 class TestUpdateOrgConfig:
-    """Updating org config — write to OpenBao, invalidate cache, re-read."""
+    """Updating org config — write to DB, invalidate cache, re-read."""
 
     @pytest.mark.asyncio
     async def test_updates_single_field(
         self,
         mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Updating a single field writes to OpenBao and invalidates cache."""
-        mock_bao.read_org_config.return_value = {"llm_backend": "openai"}
+        """Updating a single field persists it and invalidates cache."""
+        _STORE[USER_ID] = {"llm_backend": "openai"}
+        _patch_repo(monkeypatch)
         update = UpdateOrgConfigRequest(llm_backend="anthropic")
 
         config = await update_org_config(
-            ORG_ID,
+            USER_ID,
             update,
-            bao_client=mock_bao,
             redis=mock_redis,
+            db=mock_db,
         )
 
         assert config.llm_backend == "anthropic"
-        # read_org_config called for merge (read) + final re-read
-        assert mock_bao.read_org_config.await_count == 2
-        mock_bao.write_org_config.assert_awaited_once()
+        assert _STORE[USER_ID]["llm_backend"] == "anthropic"
         mock_redis.delete.assert_awaited_once_with(CACHE_KEY)
 
     @pytest.mark.asyncio
     async def test_updates_multiple_fields(
         self,
         mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Multiple fields can be updated in one call."""
-        mock_bao.read_org_config.return_value = {"llm_backend": "openai", "llm_model": "gpt-4"}
+        _STORE[USER_ID] = {"llm_backend": "openai", "llm_model": "gpt-4"}
+        _patch_repo(monkeypatch)
         update = UpdateOrgConfigRequest(llm_backend="anthropic", llm_model="claude-3-5-sonnet")
 
         config = await update_org_config(
-            ORG_ID,
+            USER_ID,
             update,
-            bao_client=mock_bao,
             redis=mock_redis,
+            db=mock_db,
         )
 
         assert config.llm_backend == "anthropic"
@@ -277,64 +343,67 @@ class TestUpdateOrgConfig:
     async def test_none_value_removes_field(
         self,
         mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Setting a field to ``None`` removes it from the stored config."""
-        # First read (for merge): returns both fields
-        # Second read (for re-read after update): returns only the remaining field
-        mock_bao.read_org_config.side_effect = [
-            {"llm_backend": "openai", "llm_model": "gpt-4"},  # merge read
-            {"llm_model": "gpt-4"},  # re-read after write (llm_backend removed)
-        ]
+        _STORE[USER_ID] = {"llm_backend": "openai", "llm_model": "gpt-4"}
+        _patch_repo(monkeypatch)
         update = UpdateOrgConfigRequest(llm_backend=None)
 
         config = await update_org_config(
-            ORG_ID,
+            USER_ID,
             update,
-            bao_client=mock_bao,
             redis=mock_redis,
+            db=mock_db,
         )
 
         assert config.llm_backend is None  # removed
         assert config.llm_model == "gpt-4"  # preserved
+        assert "llm_backend" not in _STORE[USER_ID]
 
     @pytest.mark.asyncio
-    async def test_deep_merge_preserves_existing_fields(
+    async def test_shallow_merge_preserves_existing_fields(
         self,
         mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Updating one field preserves others that weren't touched."""
-        mock_bao.read_org_config.return_value = {
+        _STORE[USER_ID] = {
             "llm_backend": "openai",
             "llm_model": "gpt-4",
             "llm_temperature": 0.7,
         }
+        _patch_repo(monkeypatch)
         update = UpdateOrgConfigRequest(llm_temperature=0.9)
 
         config = await update_org_config(
-            ORG_ID,
+            USER_ID,
             update,
-            bao_client=mock_bao,
             redis=mock_redis,
+            db=mock_db,
         )
 
         assert config.llm_temperature == 0.9
+        assert _STORE[USER_ID]["llm_backend"] == "openai"
 
     @pytest.mark.asyncio
     async def test_accepts_dict_instead_of_schema(
         self,
         mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``update_org_config`` accepts a plain dict."""
-        mock_bao.read_org_config.return_value = {"llm_backend": "openai"}
+        _STORE[USER_ID] = {"llm_backend": "openai"}
+        _patch_repo(monkeypatch)
 
         config = await update_org_config(
-            ORG_ID,
+            USER_ID,
             {"llm_backend": "azure"},
-            bao_client=mock_bao,
             redis=mock_redis,
+            db=mock_db,
         )
 
         assert config.llm_backend == "azure"
@@ -343,17 +412,19 @@ class TestUpdateOrgConfig:
     async def test_cache_invalidation_failure_logged(
         self,
         mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A cache invalidation failure is logged but does not fail the update."""
-        mock_bao.read_org_config.return_value = {"llm_backend": "openai"}
+        _STORE[USER_ID] = {"llm_backend": "openai"}
+        _patch_repo(monkeypatch)
         mock_redis.delete.side_effect = ConnectionError("Redis delete failed")
 
         config = await update_org_config(
-            ORG_ID,
+            USER_ID,
             UpdateOrgConfigRequest(llm_backend="anthropic"),
-            bao_client=mock_bao,
             redis=mock_redis,
+            db=mock_db,
         )
 
         assert config.llm_backend == "anthropic"
@@ -361,143 +432,66 @@ class TestUpdateOrgConfig:
     @pytest.mark.asyncio
     async def test_no_redis_skips_cache_invalidation(
         self,
-        mock_bao: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When ``redis`` is ``None``, cache invalidation is skipped."""
-        mock_bao.read_org_config.return_value = {"llm_backend": "openai"}
+        _STORE[USER_ID] = {"llm_backend": "openai"}
+        _patch_repo(monkeypatch)
 
         config = await update_org_config(
-            ORG_ID,
+            USER_ID,
             UpdateOrgConfigRequest(llm_backend="anthropic"),
-            bao_client=mock_bao,
             redis=None,
+            db=mock_db,
         )
 
         assert config.llm_backend == "anthropic"
 
     @pytest.mark.asyncio
-    async def test_re_read_after_update_skips_cache(
+    async def test_no_db_raises(
         self,
         mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
     ) -> None:
-        """The re-read after update uses ``skip_cache=True``."""
-        mock_bao.read_org_config.return_value = {"llm_backend": "openai"}
-
-        await update_org_config(
-            ORG_ID,
-            {"llm_backend": "ollama"},
-            bao_client=mock_bao,
-            redis=mock_redis,
-        )
-
-        # The final re-read should skip cache
-        # mock_bao.read_org_config is called twice: once for merge, once for re-read
-        # The cache skip is handled inside get_org_config, which we test separately
-
-    @pytest.mark.asyncio
-    async def test_write_org_config_called_with_merged_data(
-        self,
-        mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
-    ) -> None:
-        """The merged config is written to OpenBao."""
-        mock_bao.read_org_config.return_value = {"llm_backend": "openai", "llm_temperature": 0.7}
-
-        await update_org_config(
-            ORG_ID,
-            {"llm_backend": "anthropic", "llm_model": "claude-3"},
-            bao_client=mock_bao,
-            redis=mock_redis,
-        )
-
-        mock_bao.write_org_config.assert_awaited_once_with(
-            ORG_ID,
-            {"llm_backend": "anthropic", "llm_temperature": 0.7, "llm_model": "claude-3"},
-        )
-
-    @pytest.mark.asyncio
-    async def test_null_update_marks_key_for_deletion(
-        self,
-        mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
-    ) -> None:
-        """A null update hands the key to ``write_org_config`` as ``None``.
-
-        The client's delete branch (pinned by
-        ``test_openbao.py::test_write_org_config_deletes_none_values``) then
-        removes the stale KV secret.  Popping the key from the payload
-        instead would skip that branch and leave the old value in OpenBao.
-        """
-        mock_bao.read_org_config.return_value = {
-            "llm_backend": "openai",
-            "llm_model": "gpt-4",
-        }
-
-        await update_org_config(
-            ORG_ID,
-            UpdateOrgConfigRequest(llm_backend=None),
-            bao_client=mock_bao,
-            redis=mock_redis,
-        )
-
-        mock_bao.write_org_config.assert_awaited_once_with(
-            ORG_ID,
-            {"llm_backend": None, "llm_model": "gpt-4"},
-        )
-
-    @pytest.mark.asyncio
-    async def test_null_update_leaves_other_keys_untouched(
-        self,
-        mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
-    ) -> None:
-        """Deleting one key does not alter unrelated stored keys."""
-        mock_bao.read_org_config.return_value = {
-            "llm_backend": "openai",
-            "llm_model": "gpt-4",
-            "llm_temperature": 0.7,
-        }
-
-        await update_org_config(
-            ORG_ID,
-            UpdateOrgConfigRequest(llm_backend=None),
-            bao_client=mock_bao,
-            redis=mock_redis,
-        )
-
-        mock_bao.write_org_config.assert_awaited_once_with(
-            ORG_ID,
-            {"llm_backend": None, "llm_model": "gpt-4", "llm_temperature": 0.7},
-        )
+        """Updating without a DB session raises ``RuntimeError``."""
+        with pytest.raises(RuntimeError, match="requires a DB session"):
+            await update_org_config(
+                USER_ID,
+                {"llm_backend": "ollama"},
+                redis=mock_redis,
+                db=None,
+            )
 
     @pytest.mark.asyncio
     async def test_absent_keys_preserved_not_deleted(
         self,
         mock_redis: AsyncMock,
-        mock_bao: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Keys omitted from the payload keep their stored values.
 
-        Omitting a key is not deletion: absent keys never enter the payload
-        as ``None``, so ``write_org_config`` can never delete them.
+        Omitting a key is not deletion: absent keys never enter the
+        stored payload, so unrelated keys survive the update.
         """
-        mock_bao.read_org_config.return_value = {
+        _STORE[USER_ID] = {
             "llm_backend": "openai",
             "llm_model": "gpt-4",
         }
+        _patch_repo(monkeypatch)
 
         await update_org_config(
-            ORG_ID,
+            USER_ID,
             UpdateOrgConfigRequest(llm_temperature=0.9),
-            bao_client=mock_bao,
             redis=mock_redis,
+            db=mock_db,
         )
 
-        mock_bao.write_org_config.assert_awaited_once_with(
-            ORG_ID,
-            {"llm_backend": "openai", "llm_model": "gpt-4", "llm_temperature": 0.9},
-        )
+        assert _STORE[USER_ID] == {
+            "llm_backend": "openai",
+            "llm_model": "gpt-4",
+            "llm_temperature": 0.9,
+        }
 
 
 @pytest.mark.unit
@@ -506,21 +500,21 @@ class TestCacheKey:
 
     def test_builds_correct_key(self) -> None:
         """The cache key follows the pattern ``org_config:<uuid>``."""
-        key = build_cache_key(ORG_ID)
+        key = build_cache_key(USER_ID)
         assert key == CACHE_KEY
 
     def test_consistent_across_calls(self) -> None:
-        """Same org ID always produces the same key."""
-        assert build_cache_key(ORG_ID) == build_cache_key(ORG_ID)
+        """Same user ID always produces the same key."""
+        assert build_cache_key(USER_ID) == build_cache_key(USER_ID)
 
-    def test_different_orgs_different_keys(self) -> None:
-        """Different org IDs produce different keys."""
+    def test_different_users_different_keys(self) -> None:
+        """Different user IDs produce different keys."""
         other_id = UUID("00000000-0000-0000-0000-000000000002")
-        assert build_cache_key(ORG_ID) != build_cache_key(other_id)
+        assert build_cache_key(USER_ID) != build_cache_key(other_id)
 
     def test_cache_key_matches_module_constant(self) -> None:
         """The key starts with the module-level prefix."""
-        key = build_cache_key(ORG_ID)
+        key = build_cache_key(USER_ID)
         assert key.startswith(CACHE_KEY_PREFIX)
 
 
