@@ -27,6 +27,34 @@ def upgrade() -> None:
     op.execute("DROP POLICY IF EXISTS org_join_code_lookup ON organizations")
     op.execute("DROP POLICY IF EXISTS org_anon_insert ON organizations")
 
+    # ── Restore the entity dedup constraint on the new owner column ─────────
+    # 0069 dropped ``uq_graph_entities_org_name`` with the ``organization_id``
+    # column but added no replacement: ``create_entity`` upserts
+    # ``ON CONFLICT (user_id, name)`` and has no arbiter without it.
+    # Deduplicate first (keep the most recent row per pair), then constrain.
+    op.execute(
+        """
+        DELETE FROM graph_entities ge
+        WHERE ge.id NOT IN (
+            SELECT DISTINCT ON (g.user_id, g.name) g.id
+            FROM graph_entities g
+            ORDER BY g.user_id, g.name, g.created_at DESC
+        )
+        """
+    )
+    op.execute(
+        "ALTER TABLE graph_entities DROP CONSTRAINT IF EXISTS "
+        "uq_graph_entities_user_name"
+    )
+    op.execute(
+        "ALTER TABLE graph_entities ADD CONSTRAINT uq_graph_entities_user_name "
+        "UNIQUE (user_id, name)"
+    )
+
 
 def downgrade() -> None:
     """No-op: the dropped policies are dead and must not be resurrected."""
+    op.execute(
+        "ALTER TABLE graph_entities DROP CONSTRAINT IF EXISTS "
+        "uq_graph_entities_user_name"
+    )

@@ -25,7 +25,7 @@ ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 def _record(key: str) -> UsageRecord:
     return UsageRecord(
-        org_id=ORG_ID,
+        user_id=ORG_ID,
         provider="openai",
         model="gpt-4o-mini",
         worker="enrich_episode",

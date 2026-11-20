@@ -197,7 +197,7 @@ class PromptContextRepository:
                 SELECT role, content FROM episodes
                 WHERE session_id IN (
                     SELECT id FROM sessions
-                    WHERE user_id = :user_id AND user_id = :user_id
+                    WHERE user_id = :user_id
                 )
                 AND is_deleted = false
                 ORDER BY created_at DESC
@@ -232,7 +232,7 @@ class PromptContextRepository:
                 SELECT f.subject, f.predicate, f.object FROM facts f
                 JOIN episodes e ON f.source_episode_id = e.id
                 JOIN sessions s ON e.session_id = s.id
-                WHERE s.user_id = :user_id AND s.user_id = :user_id
+                WHERE s.user_id = :user_id
                   AND (f.invalid_at IS NULL OR f.invalid_at > :effective_at)
                   AND (f.valid_from IS NULL OR f.valid_from <= :effective_at)
                   AND (f.valid_to IS NULL OR f.valid_to > :effective_at)
@@ -273,7 +273,7 @@ class PromptContextRepository:
                 "SELECT e.id, e.project_id "  # noqa: S608
                 "FROM episodes e "  # noqa: S608
                 "JOIN sessions s ON e.session_id = s.id "  # noqa: S608
-                "WHERE s.user_id = :user_id AND s.user_id = :user_id "  # noqa: S608
+                "WHERE s.user_id = :user_id "  # noqa: S608
                 "AND e.is_deleted = false AND s.is_deleted = false "  # noqa: S608
                 f"{project_filter} "  # noqa: S608
                 "ORDER BY e.created_at DESC "  # noqa: S608
@@ -307,7 +307,7 @@ class PromptContextRepository:
                 JOIN episodes e ON dc.episode_id = e.id
                 JOIN sessions s ON e.session_id = s.id
                 JOIN projects p ON s.project_id = p.id
-                WHERE s.user_id = :user_id AND s.user_id = :user_id
+                WHERE s.user_id = :user_id
                   AND p.is_archived = false
                 GROUP BY intent, emotion
                 ORDER BY cnt DESC

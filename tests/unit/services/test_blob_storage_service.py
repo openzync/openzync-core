@@ -90,7 +90,7 @@ class TestBlobStorageService:
             mock_storage_cls.return_value = mock_storage
 
             result = await service.upload_blobs(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 episode_id=self.EPISODE_ID,
                 session_id=self.SESSION_ID,
@@ -123,7 +123,7 @@ class TestBlobStorageService:
 
         with pytest.raises(ValidationError, match="Too many blobs"):
             await service.upload_blobs(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 episode_id=self.EPISODE_ID,
                 session_id=self.SESSION_ID,
@@ -142,7 +142,7 @@ class TestBlobStorageService:
 
         with pytest.raises(ValidationError, match="blob_id.*out of range"):
             await service.upload_blobs(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 episode_id=self.EPISODE_ID,
                 session_id=self.SESSION_ID,
@@ -177,7 +177,7 @@ class TestBlobStorageService:
 
             with pytest.raises(PayloadTooLargeError, match="exceeds limit"):
                 await service.upload_blobs(
-                    org_id=self.ORG_ID,
+                    user_id=self.ORG_ID,
                     project_id=self.PROJECT_ID,
                     episode_id=self.EPISODE_ID,
                     session_id=self.SESSION_ID,
@@ -214,7 +214,7 @@ class TestBlobStorageService:
 
             with pytest.raises(PayloadTooLargeError, match="exceeds limit"):
                 await service.upload_blobs(
-                    org_id=self.ORG_ID,
+                    user_id=self.ORG_ID,
                     project_id=self.PROJECT_ID,
                     episode_id=self.EPISODE_ID,
                     session_id=self.SESSION_ID,
@@ -241,7 +241,7 @@ class TestBlobStorageService:
             match="Unsupported MIME type 'application/x-msdownload'",
         ):
             await service.upload_blobs(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 episode_id=self.EPISODE_ID,
                 session_id=self.SESSION_ID,
@@ -275,7 +275,7 @@ class TestBlobStorageService:
             mock_storage_cls.return_value = mock_storage
 
             await service.upload_blobs(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 episode_id=self.EPISODE_ID,
                 session_id=self.SESSION_ID,
@@ -304,7 +304,7 @@ class TestBlobStorageService:
 
         with patch("services.blob_storage_service.BlobStorage"):
             result = await service.upload_blobs(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 episode_id=self.EPISODE_ID,
                 session_id=self.SESSION_ID,
@@ -333,7 +333,7 @@ class TestBlobStorageService:
             mock_storage_cls.return_value = mock_storage
 
             result = await service.upload_blobs(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 episode_id=self.EPISODE_ID,
                 session_id=self.SESSION_ID,

@@ -26,7 +26,7 @@ from core.exceptions import (
     register_exception_handlers,
 )
 from dependencies.auth import _check_permission as real_check_permission
-from dependencies.auth import get_dashboard_user, require_org_id
+from dependencies.auth import get_dashboard_user, require_user_id
 from dependencies.services import get_invite_service
 from routers.admin_invites import router
 from schemas.auth import InviteResponse
@@ -44,7 +44,7 @@ def _stub_permission_gate() -> None:
     closure created at router import time that cannot be keyed in
     ``dependency_overrides``.  Patching ``dependencies.auth._check_permission``
     (the shared decision function) stubs the gate while keeping the
-    ``require_org_id`` chain intact.  The real gate matrix is covered by
+    ``require_user_id`` chain intact.  The real gate matrix is covered by
     ``test_admin_gate_matrix.py``.
     """
     with patch("dependencies.auth._check_permission", new=AsyncMock()):
@@ -59,7 +59,7 @@ def _make_app() -> tuple[FastAPI, AsyncMock]:
     from dependencies.db import get_db
 
     app.dependency_overrides[get_db] = lambda: AsyncMock()
-    app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+    app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
     app.dependency_overrides[get_dashboard_user] = lambda: str(USER_ID)
     app.dependency_overrides[get_invite_service] = lambda: service_mock
     app.include_router(router)
@@ -78,7 +78,7 @@ def _make_member_app() -> FastAPI:
 
     @app.middleware("http")
     async def _mock_auth(request, call_next):
-        request.state.org_id = str(ORG_ID)
+        request.state.user_id = str(ORG_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "jwt"
         response = await call_next(request)
@@ -119,7 +119,6 @@ async def test_invite_admin_201() -> None:
     service_mock.invite_user.assert_awaited_once()
     call_kwargs = service_mock.invite_user.call_args.kwargs
     assert call_kwargs["admin_user_id"] == USER_ID
-    assert call_kwargs["org_id"] == ORG_ID
 
 
 @pytest.mark.asyncio
@@ -132,7 +131,7 @@ async def test_invite_member_403() -> None:
             "dependencies.auth._check_permission", new=real_check_permission,
         ),
         patch(
-            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+            "dependencies.auth.get_user_role", new=AsyncMock(return_value="member"),
         ),
         patch(
             "dependencies.auth.get_effective_permissions",
@@ -242,8 +241,7 @@ async def test_revoke_admin_204() -> None:
     assert content == b""
     assert "application/json" not in resp.headers.get("content-type", "")
     service_mock.revoke_invite.assert_awaited_once_with(
-        org_id=ORG_ID,
-        user_id=INVITEE_ID,
+        pending_user_id=INVITEE_ID,
     )
 
 
@@ -257,7 +255,7 @@ async def test_revoke_member_403() -> None:
             "dependencies.auth._check_permission", new=real_check_permission,
         ),
         patch(
-            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+            "dependencies.auth.get_user_role", new=AsyncMock(return_value="member"),
         ),
         patch(
             "dependencies.auth.get_effective_permissions",

@@ -70,7 +70,6 @@ def _jwt_client(isolated_app: Any, jwt: str) -> AsyncClient:
 
 async def _seed_episodes(
     isolated_app: Any,
-    org_id: UUID,
     project_id: UUID,
     session_id: UUID,
     user_id: UUID,
@@ -82,7 +81,6 @@ async def _seed_episodes(
     async with isolated_app.state.db_session_factory() as db:
         repo = EpisodeRepository(db)
         episodes = await repo.batch_create(
-            organization_id=org_id,
             project_id=project_id,
             session_id=session_id,
             user_id=user_id,
@@ -94,7 +92,6 @@ async def _seed_episodes(
 
 async def _seed_facts(
     isolated_app: Any,
-    org_id: UUID,
     project_id: UUID,
     user_id: UUID,
     specs: list[dict[str, Any]],
@@ -114,7 +111,6 @@ async def _seed_facts(
             facts.append(
                 await repo.create(
                     user_id=user_id,
-                    organization_id=org_id,
                     project_id=project_id,
                     content=s["content"],
                     subject=s["subject"],
@@ -352,7 +348,7 @@ class TestMessagesParity:
         sid = UUID(resp.json()["id"])
         await _seed_episodes(
             isolated_app,
-            isolated_org_and_key["org_id"],
+            isolated_org_and_key["user_id"],
             pid,
             sid,
             isolated_org_and_key["user_id"],
@@ -507,10 +503,8 @@ class TestSessionFactsParity:
         )
         assert resp.status_code == 201, resp.text
         sid = UUID(resp.json()["id"])
-        org_id = isolated_org_and_key["org_id"]
         episodes = await _seed_episodes(
             isolated_app,
-            org_id,
             pid,
             sid,
             isolated_org_and_key["user_id"],
@@ -518,7 +512,6 @@ class TestSessionFactsParity:
         )
         await _seed_facts(
             isolated_app,
-            org_id,
             pid,
             isolated_org_and_key["user_id"],
             [
@@ -625,7 +618,7 @@ class TestProjectFactsParity:
         now = datetime.now(UTC)
         await _seed_facts(
             isolated_app,
-            isolated_org_and_key["org_id"],
+            isolated_org_and_key["user_id"],
             pid,
             isolated_org_and_key["user_id"],
             [
@@ -744,7 +737,7 @@ class TestFactHistoryParity:
         assert resp.status_code == 201, resp.text
         facts = await _seed_facts(
             isolated_app,
-            isolated_org_and_key["org_id"],
+            isolated_org_and_key["user_id"],
             isolated_project_id,
             isolated_org_and_key["user_id"],
             [{"content": "parity hist fact", "subject": "hsubj"}],
@@ -809,7 +802,7 @@ class TestSearchParity:
         sid = UUID(resp.json()["id"])
         await _seed_episodes(
             isolated_app,
-            isolated_org_and_key["org_id"],
+            isolated_org_and_key["user_id"],
             pid,
             sid,
             isolated_org_and_key["user_id"],
@@ -967,12 +960,12 @@ class TestAuditLogsParity:
         """
         from repositories.audit_log_repository import AuditLogRepository
 
-        org_id = isolated_org_and_key["org_id"]
+        user_id = isolated_org_and_key["user_id"]
         async with isolated_app.state.db_session_factory() as db:
             repo = AuditLogRepository(db)
             for action in ("parity.audit.b", "parity.audit.a", "parity.audit.c"):
                 await repo.create(
-                    organization_id=org_id,
+                    user_id=user_id,
                     actor_id="parity-auditor",
                     actor_type="api_key",
                     action=action,
@@ -1097,22 +1090,22 @@ class TestObservationsPGParity:
         """Default asc exact; name flip; live cursor; mismatch/stale → 422."""
         from packages.graph_backend.postgres import PostgresGraphBackend
 
-        org_id = isolated_org_and_key["org_id"]
+        user_id = isolated_org_and_key["user_id"]
         async with isolated_app.state.db_session_factory() as db:
             backend = PostgresGraphBackend(db=db)
             subject = UUID("11111111-1111-1111-1111-111111111111")
             await db.execute(
                 sa_text(
                     "INSERT INTO graph_entities "
-                    "(id, organization_id, project_id, name, entity_type) "
-                    "VALUES (:id, :org, :proj, 'parity-obs-subject', 'test') "
+                    "(id, user_id, project_id, name, entity_type) "
+                    "VALUES (:id, :uid, :proj, 'parity-obs-subject', 'test') "
                     "ON CONFLICT (id) DO NOTHING"
                 ),
-                {"id": subject, "org": org_id, "proj": isolated_project_id},
+                {"id": subject, "uid": user_id, "proj": isolated_project_id},
             )
             rows = [
                 await backend.upsert_observation(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=isolated_project_id,
                     subject_entity_id=subject,
                     observation_type=f"parity_obs_{sfx}",
@@ -1126,7 +1119,7 @@ class TestObservationsPGParity:
             await db.commit()
 
             default = await backend.get_observations(
-                org_id=org_id, project_id=isolated_project_id, limit=50
+                user_id=user_id, project_id=isolated_project_id, limit=50
             )
             assert [i["content"] for i in default["items"]] == [
                 "obs-content-bravo",
@@ -1135,13 +1128,13 @@ class TestObservationsPGParity:
             ]
 
             asc = await backend.get_observations(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=isolated_project_id,
                 limit=50,
                 sort=SortSpec(sort_by="name", sort_dir="asc"),
             )
             desc = await backend.get_observations(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=isolated_project_id,
                 limit=50,
                 sort=SortSpec(sort_by="name", sort_dir="desc"),
@@ -1158,7 +1151,7 @@ class TestObservationsPGParity:
             ]
 
             page1 = await backend.get_observations(
-                org_id=org_id, project_id=isolated_project_id, limit=1
+                user_id=user_id, project_id=isolated_project_id, limit=1
             )
             assert page1["next_cursor"] is not None
             # ⚠️ Known src gap for @build: every PG graph keyset query
@@ -1170,7 +1163,7 @@ class TestObservationsPGParity:
 
             with pytest.raises(ValidationError):
                 await backend.get_observations(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=isolated_project_id,
                     limit=1,
                     cursor=page1["next_cursor"],
@@ -1178,14 +1171,14 @@ class TestObservationsPGParity:
                 )
             with pytest.raises(ValidationError):
                 await backend.get_observations(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=isolated_project_id,
                     limit=1,
                     cursor=STALE_CURSOR,
                 )
             with pytest.raises(ValidationError):
                 await backend.get_observations(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=isolated_project_id,
                     limit=50,
                     sort=SortSpec(sort_by="bogus", sort_dir="asc"),
@@ -1210,12 +1203,12 @@ class TestGraphNodesPGParity:
         """Default asc exact; name flip; live cursor; mismatch/stale → 422."""
         from packages.graph_backend.postgres import PostgresGraphBackend
 
-        org_id = isolated_org_and_key["org_id"]
+        user_id = isolated_org_and_key["user_id"]
         async with isolated_app.state.db_session_factory() as db:
             backend = PostgresGraphBackend(db=db)
             created = [
                 await backend.create_entity(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=isolated_project_id,
                     name=n,
                     entity_type="Person",
@@ -1231,7 +1224,7 @@ class TestGraphNodesPGParity:
             await db.commit()
 
             default = await backend.list_entities(
-                org_id=org_id, project_id=isolated_project_id, limit=50
+                user_id=user_id, project_id=isolated_project_id, limit=50
             )
             assert [i["name"] for i in default["items"]] == [
                 "parity-ent-bravo",
@@ -1240,13 +1233,13 @@ class TestGraphNodesPGParity:
             ]
 
             asc = await backend.list_entities(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=isolated_project_id,
                 limit=50,
                 sort=SortSpec(sort_by="name", sort_dir="asc"),
             )
             desc = await backend.list_entities(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=isolated_project_id,
                 limit=50,
                 sort=SortSpec(sort_by="name", sort_dir="desc"),
@@ -1263,7 +1256,7 @@ class TestGraphNodesPGParity:
             ]
 
             page1 = await backend.list_entities(
-                org_id=org_id, project_id=isolated_project_id, limit=1
+                user_id=user_id, project_id=isolated_project_id, limit=1
             )
             assert page1["next_cursor"] is not None
             # ⚠️ Same src gap as observations: following a PG keyset
@@ -1272,7 +1265,7 @@ class TestGraphNodesPGParity:
 
             with pytest.raises(ValidationError):
                 await backend.list_entities(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=isolated_project_id,
                     limit=1,
                     cursor=page1["next_cursor"],
@@ -1280,14 +1273,14 @@ class TestGraphNodesPGParity:
                 )
             with pytest.raises(ValidationError):
                 await backend.list_entities(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=isolated_project_id,
                     limit=1,
                     cursor=STALE_CURSOR,
                 )
             with pytest.raises(ValidationError):
                 await backend.list_entities(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=isolated_project_id,
                     limit=50,
                     sort=SortSpec(sort_by="bogus", sort_dir="asc"),
@@ -1307,17 +1300,17 @@ class TestGraphEdgesPGParity:
         """Default desc exact; predicate flip; live cursor; mismatch/stale → 422."""
         from packages.graph_backend.postgres import PostgresGraphBackend
 
-        org_id = isolated_org_and_key["org_id"]
+        user_id = isolated_org_and_key["user_id"]
         async with isolated_app.state.db_session_factory() as db:
             backend = PostgresGraphBackend(db=db)
             src = await backend.create_entity(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=isolated_project_id,
                 name="parity-edge-src",
                 entity_type="Person",
             )
             dst = await backend.create_entity(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=isolated_project_id,
                 name="parity-edge-dst",
                 entity_type="Person",
@@ -1325,7 +1318,7 @@ class TestGraphEdgesPGParity:
             src_id, dst_id = UUID(src["id"]), UUID(dst["id"])
             rels = [
                 await backend.create_relationship(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=isolated_project_id,
                     source_id=src_id,
                     target_id=dst_id,
@@ -1342,7 +1335,7 @@ class TestGraphEdgesPGParity:
             await db.commit()
 
             default = await backend.list_entity_edges(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=isolated_project_id,
                 entity_id=src_id,
                 limit=50,
@@ -1354,14 +1347,14 @@ class TestGraphEdgesPGParity:
             ]
 
             asc = await backend.list_entity_edges(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=isolated_project_id,
                 entity_id=src_id,
                 limit=50,
                 sort=SortSpec(sort_by="predicate", sort_dir="asc"),
             )
             desc = await backend.list_entity_edges(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=isolated_project_id,
                 entity_id=src_id,
                 limit=50,
@@ -1371,7 +1364,7 @@ class TestGraphEdgesPGParity:
             assert [i["type"] for i in desc["items"]] == ["zz_rel", "mm_rel", "aa_rel"]
 
             page1 = await backend.list_entity_edges(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=isolated_project_id,
                 entity_id=src_id,
                 limit=1,
@@ -1383,7 +1376,7 @@ class TestGraphEdgesPGParity:
 
             with pytest.raises(ValidationError):
                 await backend.list_entity_edges(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=isolated_project_id,
                     entity_id=src_id,
                     limit=1,
@@ -1392,7 +1385,7 @@ class TestGraphEdgesPGParity:
                 )
             with pytest.raises(ValidationError):
                 await backend.list_entity_edges(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=isolated_project_id,
                     entity_id=src_id,
                     limit=1,
@@ -1400,7 +1393,7 @@ class TestGraphEdgesPGParity:
                 )
             with pytest.raises(ValidationError):
                 await backend.list_entity_edges(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=isolated_project_id,
                     entity_id=src_id,
                     limit=50,

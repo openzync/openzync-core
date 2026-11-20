@@ -35,7 +35,7 @@ def _make_endpoint(**overrides: Any) -> MagicMock:
     """Build a WebhookEndpoint-shaped mock."""
     ep = MagicMock()
     ep.id = overrides.get("id", uuid4())
-    ep.organization_id = overrides.get("organization_id", ORG_ID)
+    ep.user_id = overrides.get("user_id", ORG_ID)
     ep.name = overrides.get("name", "hook")
     ep.url = overrides.get("url", "https://example.com/hook")
     ep.signing_secret = overrides.get("signing_secret")
@@ -71,7 +71,7 @@ class TestCreateTransitFailure:
 
         with pytest.raises(ExternalServiceError) as exc_info:
             await service.create_endpoint(
-                organization_id=ORG_ID, name="h", url="https://x.example/h", events=[]
+                user_id=ORG_ID, name="h", url="https://x.example/h", events=[]
             )
 
         assert exc_info.value.status_code == 502
@@ -88,7 +88,7 @@ class TestCreateTransitFailure:
 
         with pytest.raises(ExternalServiceError) as exc_info:
             await service.create_endpoint(
-                organization_id=ORG_ID, name="h", url="https://x.example/h", events=[]
+                user_id=ORG_ID, name="h", url="https://x.example/h", events=[]
             )
 
         assert exc_info.value.status_code == 502

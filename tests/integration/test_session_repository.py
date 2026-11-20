@@ -25,7 +25,6 @@ class TestSessionRepository:
 
     async def _seed_user(self, repo: UserRepository) -> UUID:
         user = await repo.create(
-            organization_id=self.ORG_ID,
             external_id="session_test_user",
             name="Session Tester",
         )
@@ -37,7 +36,7 @@ class TestSessionRepository:
         """Create a user and a project, return (user_id, project_id)."""
         user_id = await self._seed_user(user_repo)
         project = await project_repo.create(
-            organization_id=self.ORG_ID,
+            user_id=user_id,
             name="Session Test Project",
             created_by=user_id,
         )
@@ -55,7 +54,7 @@ class TestSessionRepository:
             user_id, project_id = await self._seed_project(user_repo, project_repo)
 
             session = await session_repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 project_id=project_id,
                 created_by=user_id,
                 external_id="test_session",
@@ -80,7 +79,7 @@ class TestSessionRepository:
 
             # No session exists yet → lookup returns None (no auto-create)
             found = await session_repo.get_by_external_id(
-                self.ORG_ID, project_id, "__default__"
+                user_id, project_id, "__default__"
             )
             assert found is None, (
                 "No __default__ session may exist until explicitly created"
@@ -88,7 +87,7 @@ class TestSessionRepository:
 
             # Explicit creation with the reserved name is still allowed
             created = await session_repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 project_id=project_id,
                 created_by=user_id,
                 external_id="__default__",
@@ -105,13 +104,13 @@ class TestSessionRepository:
             user_id, project_id = await self._seed_project(user_repo, project_repo)
 
             created = await session_repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 project_id=project_id,
                 created_by=user_id,
                 external_id="find_me",
             )
             found = await session_repo.get_by_external_id(
-                self.ORG_ID, project_id, "find_me"
+                user_id, project_id, "find_me"
             )
             assert found is not None
             assert found.id == created.id
@@ -125,7 +124,7 @@ class TestSessionRepository:
             user_id, project_id = await self._seed_project(user_repo, project_repo)
 
             found = await session_repo.get_by_external_id(
-                self.ORG_ID, project_id, "nonexistent"
+                user_id, project_id, "nonexistent"
             )
             assert found is None
 
@@ -138,20 +137,20 @@ class TestSessionRepository:
             user_id, project_id = await self._seed_project(user_repo, project_repo)
 
             await session_repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 project_id=project_id,
                 created_by=user_id,
                 external_id="session_1",
             )
             await session_repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 project_id=project_id,
                 created_by=user_id,
                 external_id="session_2",
             )
 
             sessions, cursor = await session_repo.list(
-                self.ORG_ID, project_id, limit=10
+                user_id, project_id, limit=10
             )
             assert len(sessions) == 2
             assert cursor is None  # no more pages
@@ -165,12 +164,12 @@ class TestSessionRepository:
             user_id, project_id = await self._seed_project(user_repo, project_repo)
 
             session = await session_repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 project_id=project_id,
                 created_by=user_id,
                 external_id="close_me",
             )
-            closed = await session_repo.close(self.ORG_ID, session.id)
+            closed = await session_repo.close(user_id, session.id)
             assert closed is not None
             assert closed.closed_at is not None
 
@@ -183,12 +182,12 @@ class TestSessionRepository:
             user_id, project_id = await self._seed_project(user_repo, project_repo)
 
             session = await session_repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 project_id=project_id,
                 created_by=user_id,
                 external_id="delete_me",
             )
-            deleted = await session_repo.soft_delete(self.ORG_ID, session.id)
+            deleted = await session_repo.soft_delete(user_id, session.id)
             assert deleted is not None
             assert deleted.is_deleted is True
 
@@ -201,14 +200,14 @@ class TestSessionRepository:
             user_id, project_id = await self._seed_project(user_repo, project_repo)
 
             session = await session_repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 project_id=project_id,
                 created_by=user_id,
                 external_id="meta_test",
                 metadata={"key1": "value1"},
             )
             updated = await session_repo.update_metadata(
-                self.ORG_ID, session.id, {"key2": "value2"}
+                user_id, session.id, {"key2": "value2"}
             )
             assert updated is not None
             meta = updated.metadata_ or {}
@@ -224,7 +223,7 @@ class TestSessionRepository:
             user_id, project_id = await self._seed_project(user_repo, project_repo)
 
             session = await session_repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 project_id=project_id,
                 created_by=user_id,
                 external_id="count_test",

@@ -317,7 +317,7 @@ class TestAuditMiddleware:
                 "query_string": b"foo=bar",
                 "client": ["10.0.0.1", 54321],
                 "state": {
-                    "org_id": "org-001",
+                    "user_id": "org-001",
                     "user_id": "user-001",
                     "auth_type": "jwt",
                     "request_id": "req-001",
@@ -331,7 +331,7 @@ class TestAuditMiddleware:
             )
 
             call_kwargs = mock_pool.enqueue.call_args.kwargs
-            assert "organization_id" in call_kwargs
+            assert "user_id" in call_kwargs
             assert "actor_id" in call_kwargs
             assert "action" in call_kwargs
             assert "resource_type" in call_kwargs
@@ -359,7 +359,7 @@ class TestAuditMiddleware:
             "headers": [(b"host", b"example.com")],
             "query_string": b"",
             "client": ["10.0.0.1", 54321],
-            "state": {"org_id": "org-001", "auth_type": "api_key"},
+            "state": {"user_id": "org-001", "auth_type": "api_key"},
         }
         app.state.arq_pool = mock_pool
         scope["app"] = app
@@ -383,7 +383,7 @@ class TestAuditMiddleware:
         """The invite-accept JWT pair is never audit body-captured.
 
         POST /v1/auth/invites/accept returns a live access + refresh pair.
-        The flow is unauthenticated, so ``org_id`` is None on the public
+        The flow is unauthenticated, so ``user_id`` is None on the public
         path and the audit middleware cannot gate on org config alone —
         the route must be excluded by constant.  Defense-in-depth: a bearer
         credential persisted to audit_logs is a standing leak.  The audit
@@ -402,8 +402,8 @@ class TestAuditMiddleware:
             "headers": [(b"host", b"example.com")],
             "query_string": b"",
             "client": ["10.0.0.1", 54321],
-            # Public path — auth middleware leaves org_id/user_id as None.
-            "state": {"org_id": None, "auth_type": None},
+            # Public path — auth middleware leaves user_id/user_id as None.
+            "state": {"user_id": None, "auth_type": None},
         }
         app.state.arq_pool = mock_pool
         scope["app"] = app
@@ -450,7 +450,7 @@ class TestAuditMiddleware:
             "headers": [(b"host", b"example.com")],
             "query_string": b"",
             "client": ["10.0.0.1", 54321],
-            "state": {"org_id": "org-001", "auth_type": "jwt"},
+            "state": {"user_id": "org-001", "auth_type": "jwt"},
         }
         app.state.arq_pool = mock_pool
         scope["app"] = app
@@ -491,7 +491,7 @@ class TestAuditMiddleware:
             "headers": [(b"host", b"example.com")],
             "query_string": b"",
             "client": ["10.0.0.1", 54321],
-            "state": {"org_id": "org-001", "auth_type": "api_key"},
+            "state": {"user_id": "org-001", "auth_type": "api_key"},
         }
         app.state.arq_pool = mock_pool
         scope["app"] = app

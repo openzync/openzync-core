@@ -63,7 +63,7 @@ class TestGlobalSearchService:
         """Create a GlobalSearchService with mocked DB session."""
         mock_db = AsyncMock()
         service = GlobalSearchService(
-            db=mock_db, org_id=self.ORG_ID, user_id=self.USER_ID
+            db=mock_db, user_id=self.USER_ID
         )
         return service, mock_db
 
@@ -198,7 +198,7 @@ class TestGlobalSearchService:
         """
         fake = ConcurrencyDetectingFakeSession()
         service = GlobalSearchService(
-            db=cast("AsyncSession", fake), org_id=self.ORG_ID, user_id=self.USER_ID
+            db=cast("AsyncSession", fake), user_id=self.USER_ID
         )
 
         results = await service.search("test", limit=9)

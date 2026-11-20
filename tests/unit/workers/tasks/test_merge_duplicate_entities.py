@@ -16,7 +16,7 @@ class TestMergeDuplicateEntities:
     """merge_duplicate_entities task tests."""
 
     def _make_db(
-        self, org_ids: list | None = None, project_ids: list | None = None
+        self, user_ids: list | None = None, project_ids: list | None = None
     ) -> AsyncMock:
         """Fake session whose ``execute`` answers the queries the task makes.
 
@@ -29,10 +29,10 @@ class TestMergeDuplicateEntities:
         db = AsyncMock()
         db.__aenter__.return_value = db
         db.__aexit__.return_value = None
-        org_id_tuples = [(oid,) for oid in (org_ids or [uuid4()])]
+        user_id_tuples = [(oid,) for oid in (user_ids or [uuid4()])]
         proj_id_tuples = [(pid,) for pid in (project_ids or [uuid4()])]
         org_result = MagicMock()
-        org_result.all.return_value = org_id_tuples
+        org_result.all.return_value = user_id_tuples
         project_result = MagicMock()
         project_result.all.return_value = proj_id_tuples
 
@@ -178,7 +178,7 @@ class TestMergeDuplicateEntities:
             db = self._make_db()
             from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
 
-            result = await merge_duplicate_entities(ctx=self._ctx(db), org_id=_ORG_ID)
+            result = await merge_duplicate_entities(ctx=self._ctx(db), user_id=_ORG_ID)
 
             assert result["status"] == "completed"
             assert result["clusters_merged"] == 0
@@ -199,7 +199,7 @@ class TestMergeDuplicateEntities:
             db = self._make_db()
             from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
 
-            result = await merge_duplicate_entities(ctx=self._ctx(db), org_id=_ORG_ID)
+            result = await merge_duplicate_entities(ctx=self._ctx(db), user_id=_ORG_ID)
 
             assert result["status"] == "completed"
             assert result["clusters_merged"] == 0
@@ -300,19 +300,19 @@ class TestMergeDuplicateEntities:
             ),
             patch("asyncio.sleep", AsyncMock()),
         ):
-            db = self._make_db(org_ids=[org_1, org_2])
+            db = self._make_db(user_ids=[org_1, org_2])
             from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
 
             result = await merge_duplicate_entities(ctx=self._ctx(db))
 
         assert result["status"] == "completed"
-        # The ``set_config('app.org_id', …)`` bindings, in order.  The
-        # release statement also mentions ``app.org_id`` but carries no
+        # The ``set_config('app.user_id', …)`` bindings, in order.  The
+        # release statement also mentions ``app.user_id`` but carries no
         # params, so it is excluded by the parameter check.
         binds = [
-            call.args[1]["org_id"]
+            call.args[1]["user_id"]
             for call in db.execute.call_args_list
-            if len(call.args) > 1 and "app.org_id" in str(call.args[0])
+            if len(call.args) > 1 and "app.user_id" in str(call.args[0])
         ]
         assert binds == [str(org_1), str(org_2)]
 
@@ -345,7 +345,7 @@ class TestMergeDuplicateEntities:
             ),
             patch("asyncio.sleep", AsyncMock()),
         ):
-            db = self._make_db(org_ids=[org_1])
+            db = self._make_db(user_ids=[org_1])
             from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
 
             await merge_duplicate_entities(ctx=self._ctx(db))
@@ -371,15 +371,13 @@ class TestMergeDuplicateEntities:
         # …it runs under the tenant context instead — bound through
         # ``core.rls`` so the binding is remembered on the session.
         assert statements[reset_index + 1] == (
-            "SELECT set_config('app.org_id', :org_id, true), "
-            "set_config('app.bypass_rls', :bypass_rls, true), "
-            "set_config('app.lookup_code', :lookup_code, true)"
+            "SELECT set_config('app.user_id', :user_id, true), "
+            "set_config('app.bypass_rls', :bypass_rls, true)"
         )
         tenant_params = db.execute.call_args_list[reset_index + 1].args[1]
         assert tenant_params == {
-            "org_id": str(org_1),
+            "user_id": str(org_1),
             "bypass_rls": "false",
-            "lookup_code": "",
         }
         # The release at the end of the task drops the remembered context.
         assert db.rls_context.is_empty

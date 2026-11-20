@@ -12,61 +12,61 @@ pytestmark = pytest.mark.unit
 
 
 class TestGetOrgId:
-    """get_org_id: optional org_id extraction from request.state."""
+    """get_user_id: optional user_id extraction from request.state."""
 
     ORG_ID_STR = "00000000-0000-0000-0000-000000000001"
 
     @pytest.mark.asyncio
-    async def test_returns_org_id_when_present(self) -> None:
-        """org_id present in request.state → returns it."""
-        from dependencies.auth import get_org_id
+    async def test_returns_user_id_when_present(self) -> None:
+        """user_id present in request.state → returns it."""
+        from dependencies.auth import get_user_id
 
         request = MagicMock(spec=Request)
-        request.state.org_id = self.ORG_ID_STR
-        result = await get_org_id(request)
+        request.state.user_id = self.ORG_ID_STR
+        result = await get_user_id(request)
         assert result == self.ORG_ID_STR
 
     @pytest.mark.asyncio
     async def test_returns_none_when_missing(self) -> None:
-        """org_id absent from request.state → returns None."""
-        from dependencies.auth import get_org_id
+        """user_id absent from request.state → returns None."""
+        from dependencies.auth import get_user_id
 
         request = MagicMock(spec=Request)
-        request.state.org_id = None
-        result = await get_org_id(request)
+        request.state.user_id = None
+        result = await get_user_id(request)
         assert result is None
 
     @pytest.mark.asyncio
     async def test_returns_none_when_state_attr_missing(self) -> None:
-        """request.state has no org_id attribute → returns None."""
-        from dependencies.auth import get_org_id
+        """request.state has no user_id attribute → returns None."""
+        from dependencies.auth import get_user_id
 
         request = MagicMock(spec=Request)
-        del request.state.org_id
-        result = await get_org_id(request)
+        del request.state.user_id
+        result = await get_user_id(request)
         assert result is None
 
 
 class TestRequireOrgId:
-    """require_org_id: mandatory org_id — raises 401 on missing."""
+    """require_user_id: mandatory user_id — raises 401 on missing."""
 
     ORG_ID_STR = "00000000-0000-0000-0000-000000000001"
 
     @pytest.mark.asyncio
-    async def test_returns_org_id_when_authenticated(self) -> None:
-        """Valid org_id → returns it unchanged."""
-        from dependencies.auth import require_org_id
+    async def test_returns_user_id_when_authenticated(self) -> None:
+        """Valid user_id → returns it unchanged."""
+        from dependencies.auth import require_user_id
 
-        result = await require_org_id(self.ORG_ID_STR)
+        result = await require_user_id(self.ORG_ID_STR)
         assert result == self.ORG_ID_STR
 
     @pytest.mark.asyncio
     async def test_raises_401_when_none(self) -> None:
-        """None org_id → raises HTTPException 401."""
-        from dependencies.auth import require_org_id
+        """None user_id → raises HTTPException 401."""
+        from dependencies.auth import require_user_id
 
         with pytest.raises(HTTPException) as exc:
-            await require_org_id(None)
+            await require_user_id(None)
         assert exc.value.status_code == 401
 
 
@@ -103,7 +103,7 @@ class TestRequirePermission:
 
         with (
             patch(
-                "dependencies.auth.get_org_role",
+                "dependencies.auth.get_user_role",
                 new=AsyncMock(return_value="admin"),
             ),
             patch(
@@ -123,7 +123,7 @@ class TestRequirePermission:
         request = self._jwt_request()
 
         with patch(
-            "dependencies.auth.get_org_role",
+            "dependencies.auth.get_user_role",
             new=AsyncMock(return_value="superadmin"),
         ):
             result = await checker(request, self.ORG_ID_STR, db=MagicMock())
@@ -139,7 +139,7 @@ class TestRequirePermission:
 
         with (
             patch(
-                "dependencies.auth.get_org_role",
+                "dependencies.auth.get_user_role",
                 new=AsyncMock(return_value="member"),
             ),
             patch(
@@ -160,7 +160,7 @@ class TestRequirePermission:
 
         with (
             patch(
-                "dependencies.auth.get_org_role",
+                "dependencies.auth.get_user_role",
                 new=AsyncMock(return_value="member"),
             ),
             patch(
@@ -266,7 +266,7 @@ class TestRequirePermission:
 
         with (
             patch(
-                "dependencies.auth.get_org_role",
+                "dependencies.auth.get_user_role",
                 new=AsyncMock(return_value="member"),
             ),
             patch(
@@ -332,7 +332,7 @@ class TestRequirePermissionOrSelf:
 
         with (
             patch(
-                "dependencies.auth.get_org_role",
+                "dependencies.auth.get_user_role",
                 new=AsyncMock(return_value="member"),
             ),
             patch(
@@ -358,7 +358,7 @@ class TestRequirePermissionOrSelf:
 
         with (
             patch(
-                "dependencies.auth.get_org_role",
+                "dependencies.auth.get_user_role",
                 new=AsyncMock(return_value="member"),
             ),
             patch(
@@ -538,7 +538,7 @@ class TestRequireSuperadmin:
     SUPERADMIN_USER_ID_STR = "00000000-0000-0000-0000-0000000000bb"
     TENANT_ORG_ID_STR = "00000000-0000-0000-0000-000000000001"
 
-    def _superadmin_request(self, org_id: str) -> MagicMock:
+    def _superadmin_request(self, user_id: str) -> MagicMock:
         """JWT request in the given org, with Redis configured."""
         request = MagicMock(spec=Request)
         request.state.auth_type = "jwt"
@@ -551,7 +551,7 @@ class TestRequireSuperadmin:
 
     @pytest.mark.asyncio
     async def test_platform_org_superadmin_role_passes(self) -> None:
-        """Platform org + DB-verified superadmin → returns org_id."""
+        """Platform org + DB-verified superadmin → returns user_id."""
         from dependencies.auth import require_superadmin
 
         request = self._superadmin_request(self.PLATFORM_ORG_ID_STR)
@@ -561,17 +561,16 @@ class TestRequireSuperadmin:
                 new=AsyncMock(return_value=False),
             ),
             patch(
-                "dependencies.auth.get_org_role",
+                "dependencies.auth.get_user_role",
                 new=AsyncMock(return_value="superadmin"),
             ),
         ):
             result = await require_superadmin(
                 request,
-                self.PLATFORM_ORG_ID_STR,
                 self.SUPERADMIN_USER_ID_STR,
                 AsyncMock(),
             )
-        assert result == self.PLATFORM_ORG_ID_STR
+        assert result == self.SUPERADMIN_USER_ID_STR
 
     @pytest.mark.asyncio
     async def test_tenant_org_denied_403(self) -> None:
@@ -581,14 +580,13 @@ class TestRequireSuperadmin:
         request = self._superadmin_request(self.TENANT_ORG_ID_STR)
         with (
             patch(
-                "dependencies.auth.get_org_role",
+                "dependencies.auth.get_user_role",
                 new=AsyncMock(return_value="admin"),
             ),
             pytest.raises(HTTPException) as exc,
         ):
             await require_superadmin(
                 request,
-                self.TENANT_ORG_ID_STR,
                 self.SUPERADMIN_USER_ID_STR,
                 AsyncMock(),
             )
@@ -602,14 +600,13 @@ class TestRequireSuperadmin:
         request = self._superadmin_request(self.PLATFORM_ORG_ID_STR)
         with (
             patch(
-                "dependencies.auth.get_org_role",
+                "dependencies.auth.get_user_role",
                 new=AsyncMock(return_value="member"),
             ),
             pytest.raises(HTTPException) as exc,
         ):
             await require_superadmin(
                 request,
-                self.PLATFORM_ORG_ID_STR,
                 self.SUPERADMIN_USER_ID_STR,
                 AsyncMock(),
             )

@@ -38,7 +38,7 @@ async def test_wipe_commit_fail_zero_rows(engine, redis_client) -> None:
         db.commit = AsyncMock(side_effect=RuntimeError("commit down"))  # type: ignore[method-assign]
         with pytest.raises(RuntimeError, match="commit down"):
             await svc.delete_project_memory(
-                org_id=UUID("00000000-0000-0000-0000-000000000001"),
+                user_id=UUID("00000000-0000-0000-0000-000000000001"),
                 project_id=UUID("00000000-0000-0000-0000-000000000003"),
                 confirm="00000000-0000-0000-0000-000000000003",
                 actor_id=UUID("00000000-0000-0000-0000-000000000002"),

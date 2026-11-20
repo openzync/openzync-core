@@ -338,7 +338,7 @@ class TestFalkorGraphBackendEntityCrud:
         mock_graph.query.return_value = MockQueryResult([result_row])
 
         result = await backend.create_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             name="Test",
             entity_type="Person",
@@ -371,7 +371,7 @@ class TestFalkorGraphBackendEntityCrud:
         mock_graph.query.return_value = MockQueryResult([result_row])
 
         await backend.create_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             name="  MixedCase  ",
             entity_type="Custom",
@@ -392,7 +392,7 @@ class TestFalkorGraphBackendEntityCrud:
             ExternalServiceError, match="FalkorDB schema bootstrap failed"
         ):
             await backend.create_entity(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 name="Test",
                 entity_type="Person",
@@ -404,7 +404,7 @@ class TestFalkorGraphBackendEntityCrud:
         bk = FalkorGraphBackend(client=None)
         with pytest.raises(ExternalServiceError, match="FalkorDB not connected"):
             await bk.create_entity(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 name="Test",
                 entity_type="Person",
@@ -508,7 +508,7 @@ class TestFalkorGraphBackendEntityCrud:
         mock_graph.query.return_value = MockQueryResult([result_row])
 
         result = await backend.update_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             entity_id=ENTITY_ID,
             name="Updated-Name",
@@ -538,7 +538,7 @@ class TestFalkorGraphBackendEntityCrud:
         mock_graph.query.return_value = MockQueryResult([result_row])
 
         await backend.update_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             entity_id=ENTITY_ID,
             name="New-Name",
@@ -565,7 +565,7 @@ class TestFalkorGraphBackendEntityCrud:
 
         with pytest.raises(NotFoundError, match="not found for update"):
             await backend.update_entity(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 entity_id=ENTITY_ID,
                 name="Anything",
@@ -580,7 +580,7 @@ class TestFalkorGraphBackendEntityCrud:
         mock_graph.query.return_value = MockQueryResult([make_entity_row()])
 
         result = await backend.update_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             entity_id=ENTITY_ID,
         )
@@ -598,7 +598,7 @@ class TestFalkorGraphBackendEntityCrud:
         bk = FalkorGraphBackend(client=None)
         with pytest.raises(ExternalServiceError, match="FalkorDB not connected"):
             await bk.update_entity(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 entity_id=ENTITY_ID,
                 name="Anything",
@@ -613,7 +613,7 @@ class TestFalkorGraphBackendEntityCrud:
         mock_graph.query.side_effect = RuntimeError("update failed")
         with pytest.raises(ExternalServiceError, match="update failed"):
             await backend.update_entity(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 entity_id=ENTITY_ID,
                 name="Anything",
@@ -638,7 +638,7 @@ class TestFalkorGraphBackendRelationships:
         mock_graph.query.return_value = MockQueryResult([result_row])
 
         result = await backend.create_relationship(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             source_id=ENTITY_ID,
             target_id=TARGET_ID,
@@ -665,7 +665,7 @@ class TestFalkorGraphBackendRelationships:
         """Invalid edge type name raises ``ValueError``."""
         with pytest.raises(ValueError, match="Unsafe edge type"):
             await backend.create_relationship(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 source_id=ENTITY_ID,
                 target_id=TARGET_ID,
@@ -678,7 +678,7 @@ class TestFalkorGraphBackendRelationships:
         bk = FalkorGraphBackend(client=None)
         with pytest.raises(ExternalServiceError, match="FalkorDB not connected"):
             await bk.create_relationship(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 source_id=ENTITY_ID,
                 target_id=TARGET_ID,
@@ -694,7 +694,7 @@ class TestFalkorGraphBackendRelationships:
         mock_graph.query.side_effect = RuntimeError("falkordb timeout")
         with pytest.raises(ExternalServiceError, match="falkordb timeout"):
             await backend.create_relationship(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 source_id=ENTITY_ID,
                 target_id=TARGET_ID,
@@ -720,7 +720,7 @@ class TestFalkorGraphBackendRelationships:
         mock_graph.query.return_value = MockQueryResult(result_rows)
 
         result = await backend.get_relationships(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             entity_id=ENTITY_ID,
         )
@@ -739,7 +739,7 @@ class TestFalkorGraphBackendRelationships:
         mock_graph.query.return_value = MockQueryResult([])
 
         await backend.get_relationships(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             entity_id=ENTITY_ID,
             relationship_type="knows",
@@ -786,7 +786,7 @@ class TestFalkorGraphBackendRelationships:
         mock_graph.query.return_value = query_return
 
         result = await backend.expire_relationship(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             relationship_id=REL_ID,
         )
@@ -1042,7 +1042,7 @@ class TestFalkorGraphBackendSearchAndListing:
         mock_graph.query.return_value = MockQueryResult([result_row])
 
         result = await backend.search_entities(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             query="findable",
         )
@@ -1062,7 +1062,7 @@ class TestFalkorGraphBackendSearchAndListing:
         mock_graph.query.return_value = MockQueryResult([])
 
         result = await backend.search_entities(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             query="nothing",
         )
@@ -1078,7 +1078,7 @@ class TestFalkorGraphBackendSearchAndListing:
         mock_graph.query.return_value = MockQueryResult([result_row])
 
         result = await backend.search_entities(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             query="findable",
             types=["Person"],
@@ -1121,7 +1121,7 @@ class TestFalkorGraphBackendSearchAndListing:
         )  # 2 items, limit=3 → no overflow
 
         result = await backend.list_entities(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             limit=3,
         )
@@ -1148,7 +1148,7 @@ class TestFalkorGraphBackendSearchAndListing:
         )  # 6 items, limit=5 → overflow
 
         result = await backend.list_entities(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             limit=5,
         )
@@ -1166,7 +1166,7 @@ class TestFalkorGraphBackendSearchAndListing:
         mock_graph.query.return_value = MockQueryResult([])
 
         await backend.list_entities(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             entity_type="Person",
             limit=10,
@@ -1211,7 +1211,7 @@ class TestFalkorGraphBackendSearchAndListing:
         mock_graph.query.return_value = MockQueryResult(rows)
 
         result = await backend.list_entity_edges(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             entity_id=ENTITY_ID,
         )
@@ -1229,7 +1229,7 @@ class TestFalkorGraphBackendSearchAndListing:
         mock_graph.query.return_value = MockQueryResult([])
 
         await backend.list_entity_edges(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             entity_id=ENTITY_ID,
             predicate="knows",
@@ -1245,7 +1245,7 @@ class TestFalkorGraphBackendSearchAndListing:
         """Invalid predicate type raises ``ValidationError``."""
         with pytest.raises(ValidationError, match="Invalid predicate"):
             await backend.list_entity_edges(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 entity_id=ENTITY_ID,
                 predicate="bad pred",
@@ -1334,7 +1334,7 @@ class TestFalkorGraphBackendRetrieveGraph:
         ]
 
         result = await backend.retrieve_graph(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             query="find",
             match_limit=5,
@@ -1356,7 +1356,7 @@ class TestFalkorGraphBackendRetrieveGraph:
         mock_graph.query.return_value = MockQueryResult([])
 
         result = await backend.retrieve_graph(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             query="nothing",
         )

@@ -78,26 +78,25 @@ def setup_module() -> None:
         )
         conn.execute(
             text(
-                "INSERT INTO projects (id, organization_id, name) "
+                "INSERT INTO projects (id, user_id, name) "
                 "VALUES ('00000000-0000-0000-0000-000000000002', "
-                "'00000000-0000-0000-0000-000000000001', 'Test Project') "
+                "'00000000-0000-0000-0000-000000000005', 'Test Project') "
                 "ON CONFLICT (id) DO NOTHING"
             )
         )
         conn.execute(
             text(
-                "INSERT INTO users (id, organization_id, external_id, name, email, is_active) "
+                "INSERT INTO users (id, external_id, name, email, is_active) "
                 "VALUES ('00000000-0000-0000-0000-000000000005', "
-                "'00000000-0000-0000-0000-000000000001', 'enrich-user', 'Enrich User', "
+                "'enrich-user', 'Enrich User', "
                 "'enrich@test.local', TRUE) ON CONFLICT (id) DO NOTHING"
             )
         )
         conn.execute(
             text(
-                "INSERT INTO sessions (id, user_id, organization_id, project_id, external_id) "
+                "INSERT INTO sessions (id, user_id, project_id, external_id) "
                 "VALUES ('00000000-0000-0000-0000-000000000010', "
                 "'00000000-0000-0000-0000-000000000005', "
-                "'00000000-0000-0000-0000-000000000001', "
                 "'00000000-0000-0000-0000-000000000002', 'enrich-session') "
                 "ON CONFLICT (id) DO NOTHING"
             )
@@ -105,12 +104,11 @@ def setup_module() -> None:
         conn.execute(
             text(
                 "INSERT INTO episodes (id, session_id, user_id, role, content, "
-                "organization_id, project_id) "
+                "project_id) "
                 "VALUES ('00000000-0000-0000-0000-000000000020', "
                 "'00000000-0000-0000-0000-000000000010', "
                 "'00000000-0000-0000-0000-000000000005', "
                 "'user', 'test episode', "
-                "'00000000-0000-0000-0000-000000000001', "
                 "'00000000-0000-0000-0000-000000000002') "
                 "ON CONFLICT (id) DO NOTHING"
             )
@@ -206,21 +204,21 @@ class TestGraphBackendEnrichmentPipeline:
         """
         # ── Step 1: Entity Creation ────────────────────────────────────────
         company = await backend.create_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             name="Acme Corp",
             entity_type="Organization",
             summary="A fictional company",
         )
         person = await backend.create_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             name="John Doe",
             entity_type="Person",
             summary="CEO of Acme Corp",
         )
         topic = await backend.create_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             name="Artificial Intelligence",
             entity_type="Topic",
@@ -234,7 +232,7 @@ class TestGraphBackendEnrichmentPipeline:
 
         # ── Step 2: Relationship Creation ─────────────────────────────────
         works_at = await backend.create_relationship(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             source_id=person_id,
             target_id=company_id,
@@ -242,7 +240,7 @@ class TestGraphBackendEnrichmentPipeline:
             confidence=0.95,
         )
         expert_in = await backend.create_relationship(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             source_id=person_id,
             target_id=topic_id,
@@ -259,13 +257,13 @@ class TestGraphBackendEnrichmentPipeline:
         # The graph backend's link_entity_to_episode inserts into
         # graph_episode_entities directly.
         await backend.link_entity_to_episode(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             episode_id=EPISODE_ID,
             entity_id=person_id,
         )
         await backend.link_entity_to_episode(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             episode_id=EPISODE_ID,
             entity_id=company_id,
@@ -315,7 +313,7 @@ class TestGraphBackendEnrichmentPipeline:
         # ── Step 7: Merge Duplicate Entities ─────────────────────────────
         # Create a duplicate entity and merge it into the canonical one
         duplicate = await backend.create_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             name="Acme Corporation",
             entity_type="Organization",
@@ -328,14 +326,14 @@ class TestGraphBackendEnrichmentPipeline:
 
         alt_episode = await _create_test_episode(db, uuid4())
         await backend.link_entity_to_episode(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             episode_id=alt_episode,
             entity_id=duplicate_id,
         )
 
         merge_result = await backend.merge_entities(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             canonical_id=company_id,
             merged_ids=[duplicate_id],
@@ -355,7 +353,7 @@ class TestGraphBackendEnrichmentPipeline:
         # ── Step 8: Observations ──────────────────────────────────────────
         # Persist an observation about the person
         obs = await backend.upsert_observation(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             subject_entity_id=person_id,
             observation_type="leadership",
@@ -421,7 +419,7 @@ class TestGraphBackendEnrichmentPipeline:
         # We can't delete the canonical since merge may have side effects,
         # but we can delete an entity with no links to verify basic delete
         tmp_entity = await backend.create_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             name="Temp Entity",
             entity_type="Temp",
@@ -489,25 +487,25 @@ class TestGraphBackendEnrichmentPipeline:
         """Merge entities correctly rewires relationships."""
         # Create canonical + two duplicates
         canonical = await backend.create_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             name="Canonical",
             entity_type="Organization",
         )
         dup_a = await backend.create_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             name="Dup A",
             entity_type="Organization",
         )
         dup_b = await backend.create_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             name="Dup B",
             entity_type="Organization",
         )
         unrelated = await backend.create_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             name="Unrelated",
             entity_type="Person",
@@ -520,7 +518,7 @@ class TestGraphBackendEnrichmentPipeline:
 
         # Create relationships from duplicates to unrelated
         await backend.create_relationship(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             source_id=dup_a_id,
             target_id=unrelated_id,
@@ -529,7 +527,7 @@ class TestGraphBackendEnrichmentPipeline:
 
         # Merge both duplicates into canonical
         merge_result = await backend.merge_entities(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             canonical_id=canonical_id,
             merged_ids=[dup_a_id, dup_b_id],
@@ -548,7 +546,7 @@ class TestGraphBackendEnrichmentPipeline:
     async def test_observations_with_all_filters(self, backend: Any) -> None:
         """Observation retrieval with various filter combinations."""
         entity = await backend.create_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             name="ObsTest",
             entity_type="Test",
@@ -558,7 +556,7 @@ class TestGraphBackendEnrichmentPipeline:
         # Create observations of different types
         for i, obs_type in enumerate(["type_a", "type_b", "type_c"]):
             await backend.upsert_observation(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 subject_entity_id=eid,
                 observation_type=obs_type,

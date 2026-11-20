@@ -24,7 +24,6 @@ from schemas.auth import (
     TokenResponse,
     VerifyEmailRequest,
 )
-from utils.password import hash_password
 from utils.pii import mask_email
 
 logger = logging.getLogger(__name__)
@@ -87,7 +86,9 @@ class OrgJoinMixin:
             return self._signup_success_response(payload.email)
 
         # bcrypt blocks the event loop — offload to a worker thread.
-        pw_hash = await asyncio.to_thread(hash_password, payload.password)
+        from services import auth_service as _facade  # via facade (patchable)
+
+        pw_hash = await asyncio.to_thread(_facade.hash_password, payload.password)
         try:
             user = await self._repo.create_dashboard_user(
                 email=payload.email,

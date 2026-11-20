@@ -47,11 +47,6 @@ from services.worker.prompt_renderer import (
 
 
 @pytest.fixture
-def org_id() -> UUID:
-    return uuid4()
-
-
-@pytest.fixture
 def session_id() -> UUID:
     return uuid4()
 
@@ -169,7 +164,7 @@ def make_fake_session_factory(
 
 
 @pytest.fixture
-def mock_db_session_factory(org_id: UUID) -> Any:
+def mock_db_session_factory(user_id: UUID) -> Any:
     """Return a factory that behaves like ``async_sessionmaker``.
 
     Tests that need custom DB responses should instead monkeypatch
@@ -279,8 +274,8 @@ class TestBasicRender:
         assert prompt == "{% for x in items %}{{ x }},{% endfor %}"
 
     @pytest.mark.asyncio
-    async def test_resolves_disk_template_without_org_id(self) -> None:
-        """Neither template_text nor org_id → startup disk cache, no auto-injection."""
+    async def test_resolves_disk_template_without_user_id(self) -> None:
+        """Neither template_text nor user_id → startup disk cache, no auto-injection."""
         prompt, context = await render_prompt("enrich_episode", return_context=True)
         assert isinstance(prompt, str)
         assert prompt != ""
@@ -288,7 +283,7 @@ class TestBasicRender:
 
     @pytest.mark.asyncio
     async def test_extra_context_overrides_nothing_when_no_auto_inject(self) -> None:
-        """When org_id is None, extra_context is the only context."""
+        """When user_id is None, extra_context is the only context."""
         prompt = await render_prompt(
             "test_type",
             template_text="{{ key }}",
@@ -304,18 +299,18 @@ class TestBasicRender:
 
 
 class TestAutoInjection:
-    """render_prompt with org_id + db_session_factory — uses providers."""
+    """render_prompt with user_id + db_session_factory — uses providers."""
 
     @pytest.mark.asyncio
     async def test_unknown_prompt_type_raises_key_error(
         self,
-        org_id: UUID,
+        user_id: UUID,
         mock_db_session_factory: Any,
     ) -> None:
         with pytest.raises(KeyError, match="Unknown prompt type"):
             await render_prompt(
                 "nonexistent_type",
-                org_id=org_id,
+                user_id=user_id,
                 db_session_factory=mock_db_session_factory,
                 template_text="ignored",
             )
@@ -335,7 +330,7 @@ class TestAutoInjection:
     @pytest.mark.asyncio
     async def test_fact_extraction_injects_conversation(
         self,
-        org_id: UUID,
+        user_id: UUID,
         episode_id: UUID,
         session_id: UUID,
         monkeypatch: MonkeyPatch,
@@ -407,7 +402,7 @@ class TestAutoInjection:
 
         prompt = await render_prompt(
             "enrich_episode",
-            org_id=org_id,
+            user_id=user_id,
             episode_id=episode_id,
             session_id=session_id,
             db_session_factory=make_fake_session_factory(),
@@ -420,7 +415,7 @@ class TestAutoInjection:
     @pytest.mark.asyncio
     async def test_extra_context_overrides_auto_injected(
         self,
-        org_id: UUID,
+        user_id: UUID,
         monkeypatch: MonkeyPatch,
     ) -> None:
         """Caller-provided extra_context takes precedence over injected values."""
@@ -490,7 +485,7 @@ class TestAutoInjection:
 
         prompt = await render_prompt(
             "enrich_episode",
-            org_id=org_id,
+            user_id=user_id,
             db_session_factory=make_fake_session_factory(),
             template_text="Data: {{ conversation }}",
             conversation="from_caller",
@@ -502,7 +497,7 @@ class TestAutoInjection:
     @pytest.mark.asyncio
     async def test_return_context_returns_tuple(
         self,
-        org_id: UUID,
+        user_id: UUID,
         monkeypatch: MonkeyPatch,
     ) -> None:
         """When return_context=True, prompt string and context dict are returned."""
@@ -572,7 +567,7 @@ class TestAutoInjection:
 
         result = await render_prompt(
             "enrich_episode",
-            org_id=org_id,
+            user_id=user_id,
             episode_id=uuid4(),
             session_id=uuid4(),
             db_session_factory=make_fake_session_factory(),
@@ -589,10 +584,10 @@ class TestAutoInjection:
         assert context["existing_facts"] == [{"f1": 1}]
 
     @pytest.mark.asyncio
-    async def test_injects_missing_org_id_no_auto_injection(
+    async def test_injects_missing_user_id_no_auto_injection(
         self,
     ) -> None:
-        """Without org_id, no providers are called — no context injection."""
+        """Without user_id, no providers are called — no context injection."""
         prompt = await render_prompt(
             "fact_extraction",
             template_text="{{ conversation }}",
@@ -613,7 +608,7 @@ class TestUserSummaryComputed:
     @pytest.mark.asyncio
     async def test_episode_count_is_computed(
         self,
-        org_id: UUID,
+        
         user_id: UUID,
         monkeypatch: MonkeyPatch,
     ) -> None:
@@ -649,7 +644,7 @@ class TestUserSummaryComputed:
 
         prompt, ctx = await render_prompt(
             "user_summary",
-            org_id=org_id,
+            
             user_id=user_id,
             db_session_factory=make_fake_session_factory(),
             template_text="Count: {{ episode_count }}",
@@ -691,7 +686,7 @@ class TestResolveByType:
 class TestRlsTenantContext:
     """The renderer binds the tenant before it queries and releases it after.
 
-    Under enforced row-level security a session with no ``app.org_id`` sees
+    Under enforced row-level security a session with no ``app.user_id`` sees
     zero rows, so the binding is not optional — it has to happen *before*
     the first provider query.  The release has to happen *before* the
     session closes: it drops the remembered context and rolls back.  It
@@ -722,7 +717,7 @@ class TestRlsTenantContext:
     @pytest.mark.asyncio
     async def test_context_is_bound_before_the_first_provider_query(
         self,
-        org_id: UUID,
+        user_id: UUID,
         monkeypatch: MonkeyPatch,
     ) -> None:
         """Every provider sees the tenant already bound."""
@@ -730,24 +725,23 @@ class TestRlsTenantContext:
 
         await render_prompt(
             "enrich_episode",
-            org_id=org_id,
+            user_id=user_id,
             db_session_factory=make_fake_session_factory(),
             template_text="Extract: {{ conversation }}",
         )
 
         assert seen, "the providers must have run"
         for executed in seen:
-            assert "app.org_id" in executed[0][0]
+            assert "app.user_id" in executed[0][0]
             assert executed[0][1] == {
-                "org_id": str(org_id),
+                "user_id": str(user_id),
                 "bypass_rls": "false",
-                "lookup_code": "",
             }
 
     @pytest.mark.asyncio
     async def test_context_is_released_before_the_session_closes(
         self,
-        org_id: UUID,
+        user_id: UUID,
         monkeypatch: MonkeyPatch,
     ) -> None:
         """The release rolls back — it does not issue a reset statement.
@@ -762,7 +756,7 @@ class TestRlsTenantContext:
 
         await render_prompt(
             "enrich_episode",
-            org_id=org_id,
+            user_id=user_id,
             db_session_factory=factory,
             template_text="Extract: {{ conversation }}",
         )
@@ -785,33 +779,33 @@ class TestProviderFetchEpisodeContent:
     """Tests for _fetch_episode_content."""
 
     @pytest.mark.asyncio
-    async def test_with_episode_id(self, org_id: UUID, episode_id: UUID) -> None:
+    async def test_with_episode_id(self, user_id: UUID, episode_id: UUID) -> None:
         """Returns conversation content when episode is found."""
         session = FakeAsyncSession(["Hello world"])
         result = await _fetch_episode_content(
             db=session,
-            org_id=org_id,
+            user_id=user_id,
             episode_id=episode_id,
         )
         assert result == {"conversation": "Hello world"}
 
     @pytest.mark.asyncio
-    async def test_without_episode_id(self, org_id: UUID) -> None:
+    async def test_without_episode_id(self, user_id: UUID) -> None:
         """Returns empty conversation when episode_id is None."""
         result = await _fetch_episode_content(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            user_id=user_id,
             episode_id=None,
         )
         assert result == {"conversation": ""}
 
     @pytest.mark.asyncio
-    async def test_episode_not_found(self, org_id: UUID, episode_id: UUID) -> None:
+    async def test_episode_not_found(self, user_id: UUID, episode_id: UUID) -> None:
         """Returns empty conversation when episode row is None."""
         session = FakeAsyncSession([])
         result = await _fetch_episode_content(
             db=session,
-            org_id=org_id,
+            user_id=user_id,
             episode_id=episode_id,
         )
         assert result == {"conversation": ""}
@@ -824,13 +818,13 @@ class TestProviderFetchSessionEntities:
     @pytest.mark.asyncio
     async def test_no_session_id(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
     ) -> None:
         """session_id is None → empty entities."""
         result = await _fetch_session_entities(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            user_id=user_id,
             session_id=None,
             graph_backend=None,
             project_id=project_id,
@@ -840,13 +834,13 @@ class TestProviderFetchSessionEntities:
     @pytest.mark.asyncio
     async def test_no_project_id(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
     ) -> None:
         """project_id is None → empty entities."""
         result = await _fetch_session_entities(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            user_id=user_id,
             session_id=session_id,
             graph_backend=None,
             project_id=None,
@@ -856,14 +850,14 @@ class TestProviderFetchSessionEntities:
     @pytest.mark.asyncio
     async def test_no_graph_backend(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         project_id: UUID,
     ) -> None:
         """graph_backend is None → empty entities."""
         result = await _fetch_session_entities(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            user_id=user_id,
             session_id=session_id,
             graph_backend=None,
             project_id=project_id,
@@ -873,7 +867,7 @@ class TestProviderFetchSessionEntities:
     @pytest.mark.asyncio
     async def test_with_postgres_graph_backend(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         project_id: UUID,
         monkeypatch: MonkeyPatch,
@@ -901,7 +895,7 @@ class TestProviderFetchSessionEntities:
         pg_backend = FakePostgresBackend()
         result = await _fetch_session_entities(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            user_id=user_id,
             session_id=session_id,
             graph_backend=pg_backend,
             project_id=project_id,
@@ -914,7 +908,7 @@ class TestProviderFetchSessionEntities:
     @pytest.mark.asyncio
     async def test_with_non_postgres_backend(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         project_id: UUID,
     ) -> None:
@@ -930,7 +924,7 @@ class TestProviderFetchSessionEntities:
         backend = NonPostgresBackend()
         result = await _fetch_session_entities(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            user_id=user_id,
             session_id=session_id,
             graph_backend=backend,
             project_id=project_id,
@@ -943,11 +937,11 @@ class TestProviderFetchSessionFacts:
     """Tests for _fetch_session_facts."""
 
     @pytest.mark.asyncio
-    async def test_no_session_id(self, org_id: UUID) -> None:
+    async def test_no_session_id(self, user_id: UUID) -> None:
         """Returns existing_facts as empty list."""
         result = await _fetch_session_facts(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            user_id=user_id,
             session_id=None,
         )
         assert result == {"existing_facts": []}
@@ -955,7 +949,7 @@ class TestProviderFetchSessionFacts:
     @pytest.mark.asyncio
     async def test_with_session_id(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         monkeypatch: MonkeyPatch,
     ) -> None:
@@ -964,7 +958,7 @@ class TestProviderFetchSessionFacts:
 
         async def mock_list_by_session(
             self: Any,
-            organization_id: UUID,
+            user_id: UUID,
             session_id: UUID,
             limit: int,
         ) -> tuple[list[dict[str, str]], Any]:
@@ -974,7 +968,7 @@ class TestProviderFetchSessionFacts:
 
         result = await _fetch_session_facts(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            user_id=user_id,
             session_id=session_id,
         )
         assert result == {
@@ -987,11 +981,11 @@ class TestProviderFetchSessionRecentHistory:
     """Tests for _fetch_session_recent_history."""
 
     @pytest.mark.asyncio
-    async def test_no_session_id(self, org_id: UUID) -> None:
+    async def test_no_session_id(self, user_id: UUID) -> None:
         """Returns recent_history as empty list."""
         result = await _fetch_session_recent_history(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            user_id=user_id,
             session_id=None,
             episode_id=None,
         )
@@ -1000,7 +994,7 @@ class TestProviderFetchSessionRecentHistory:
     @pytest.mark.asyncio
     async def test_with_episode_id_filter(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         episode_id: UUID,
     ) -> None:
@@ -1014,7 +1008,7 @@ class TestProviderFetchSessionRecentHistory:
 
         result = await _fetch_session_recent_history(
             db=session,
-            org_id=org_id,
+            user_id=user_id,
             session_id=session_id,
             episode_id=episode_id,
         )
@@ -1028,7 +1022,7 @@ class TestProviderFetchSessionRecentHistory:
     @pytest.mark.asyncio
     async def test_without_episode_id(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
     ) -> None:
         """Returns all recent history without episode filter."""
@@ -1038,7 +1032,7 @@ class TestProviderFetchSessionRecentHistory:
 
         result = await _fetch_session_recent_history(
             db=session,
-            org_id=org_id,
+            user_id=user_id,
             session_id=session_id,
             episode_id=None,
         )
@@ -1052,22 +1046,22 @@ class TestProviderFetchEpisodeMetadata:
     """Tests for _fetch_episode_metadata."""
 
     @pytest.mark.asyncio
-    async def test_with_episode_id(self, org_id: UUID, episode_id: UUID) -> None:
+    async def test_with_episode_id(self, user_id: UUID, episode_id: UUID) -> None:
         """Returns metadata dict."""
         session = FakeAsyncSession([{"key": "value", "source": "test"}])
         result = await _fetch_episode_metadata(
             db=session,
-            org_id=org_id,
+            user_id=user_id,
             episode_id=episode_id,
         )
         assert result == {"message_metadata": {"key": "value", "source": "test"}}
 
     @pytest.mark.asyncio
-    async def test_without_episode_id(self, org_id: UUID) -> None:
+    async def test_without_episode_id(self, user_id: UUID) -> None:
         """Returns empty metadata dict."""
         result = await _fetch_episode_metadata(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            user_id=user_id,
             episode_id=None,
         )
         assert result == {"message_metadata": {}}
@@ -1078,22 +1072,22 @@ class TestProviderFetchSimilarEpisodes:
     """Tests for _fetch_similar_episodes."""
 
     @pytest.mark.asyncio
-    async def test_no_episode_id(self, org_id: UUID, user_id: UUID) -> None:
+    async def test_no_episode_id(self,  user_id: UUID) -> None:
         """Returns empty list when no episode_id."""
         result = await _fetch_similar_episodes(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            
             episode_id=None,
             user_id=user_id,
         )
         assert result == {"similar_episodes": []}
 
     @pytest.mark.asyncio
-    async def test_no_user_id(self, org_id: UUID, episode_id: UUID) -> None:
+    async def test_no_user_id(self, user_id: UUID, episode_id: UUID) -> None:
         """Returns empty list when no user_id."""
         result = await _fetch_similar_episodes(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            
             episode_id=episode_id,
             user_id=None,
         )
@@ -1102,7 +1096,7 @@ class TestProviderFetchSimilarEpisodes:
     @pytest.mark.asyncio
     async def test_with_valid_ids(
         self,
-        org_id: UUID,
+        
         episode_id: UUID,
         user_id: UUID,
         project_id: UUID,
@@ -1115,7 +1109,7 @@ class TestProviderFetchSimilarEpisodes:
             self: Any,
             query: str,
             project_id: UUID,
-            org_id: UUID,
+            user_id: UUID,
             limit: int,
         ) -> list[dict[str, Any]]:
             return [
@@ -1140,7 +1134,7 @@ class TestProviderFetchSimilarEpisodes:
         session = FakeAsyncSession([("query content", project_id)])
         result = await _fetch_similar_episodes(
             db=session,
-            org_id=org_id,
+            
             episode_id=episode_id,
             user_id=user_id,
         )
@@ -1155,22 +1149,22 @@ class TestProviderFetchSimilarFacts:
     """Tests for _fetch_similar_facts."""
 
     @pytest.mark.asyncio
-    async def test_no_episode_id(self, org_id: UUID, user_id: UUID) -> None:
+    async def test_no_episode_id(self,  user_id: UUID) -> None:
         """Returns empty list when no episode_id."""
         result = await _fetch_similar_facts(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            
             episode_id=None,
             user_id=user_id,
         )
         assert result == {"related_facts": []}
 
     @pytest.mark.asyncio
-    async def test_no_user_id(self, org_id: UUID, episode_id: UUID) -> None:
+    async def test_no_user_id(self, user_id: UUID, episode_id: UUID) -> None:
         """Returns empty list when no user_id."""
         result = await _fetch_similar_facts(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            
             episode_id=episode_id,
             user_id=None,
         )
@@ -1179,7 +1173,7 @@ class TestProviderFetchSimilarFacts:
     @pytest.mark.asyncio
     async def test_with_valid_ids(
         self,
-        org_id: UUID,
+        
         episode_id: UUID,
         user_id: UUID,
         project_id: UUID,
@@ -1192,7 +1186,7 @@ class TestProviderFetchSimilarFacts:
             self: Any,
             query: str,
             project_id: UUID,
-            org_id: UUID,
+            user_id: UUID,
             limit: int,
         ) -> list[dict[str, Any]]:
             return [
@@ -1204,7 +1198,7 @@ class TestProviderFetchSimilarFacts:
         session = FakeAsyncSession([("query content", project_id)])
         result = await _fetch_similar_facts(
             db=session,
-            org_id=org_id,
+            
             episode_id=episode_id,
             user_id=user_id,
         )
@@ -1220,12 +1214,12 @@ class TestProviderFetchOrgEntityTypes:
     """Tests for _fetch_org_entity_types."""
 
     @pytest.mark.asyncio
-    async def test_no_schemas(self, org_id: UUID) -> None:
+    async def test_no_schemas(self, user_id: UUID) -> None:
         """Returns default entity types when no schemas."""
         session = FakeAsyncSession([])
         result = await _fetch_org_entity_types(
             db=session,
-            org_id=org_id,
+            user_id=user_id,
         )
         assert result == {
             "entity_types": [
@@ -1239,26 +1233,26 @@ class TestProviderFetchOrgEntityTypes:
         }
 
     @pytest.mark.asyncio
-    async def test_with_schemas(self, org_id: UUID) -> None:
+    async def test_with_schemas(self, user_id: UUID) -> None:
         """Returns types from schemas."""
         rows = [({"types": ["Person", "Organization", "Product"]},)]
         session = FakeAsyncSession(rows)
         result = await _fetch_org_entity_types(
             db=session,
-            org_id=org_id,
+            user_id=user_id,
         )
         assert result == {
             "entity_types": ["Person", "Organization", "Product"],
         }
 
     @pytest.mark.asyncio
-    async def test_with_schemas_missing_types_key(self, org_id: UUID) -> None:
+    async def test_with_schemas_missing_types_key(self, user_id: UUID) -> None:
         """Schema dict without 'types' key → defaults."""
         rows = [({"name": "custom_schema", "description": "no types"},)]
         session = FakeAsyncSession(rows)
         result = await _fetch_org_entity_types(
             db=session,
-            org_id=org_id,
+            user_id=user_id,
         )
         assert result == {
             "entity_types": [
@@ -1277,12 +1271,12 @@ class TestProviderFetchClassificationLabels:
     """Tests for _fetch_classification_labels."""
 
     @pytest.mark.asyncio
-    async def test_no_schemas(self, org_id: UUID) -> None:
+    async def test_no_schemas(self, user_id: UUID) -> None:
         """Returns default labels."""
         session = FakeAsyncSession([])
         result = await _fetch_classification_labels(
             db=session,
-            org_id=org_id,
+            user_id=user_id,
         )
         assert result == {
             "intent_labels": (
@@ -1297,7 +1291,7 @@ class TestProviderFetchClassificationLabels:
         }
 
     @pytest.mark.asyncio
-    async def test_with_schemas(self, org_id: UUID) -> None:
+    async def test_with_schemas(self, user_id: UUID) -> None:
         """Returns merged labels from schemas."""
         rows = [
             (
@@ -1312,7 +1306,7 @@ class TestProviderFetchClassificationLabels:
         session = FakeAsyncSession(rows)
         result = await _fetch_classification_labels(
             db=session,
-            org_id=org_id,
+            user_id=user_id,
         )
         assert result["intent_labels"] == "ask, tell"
         assert result["emotion_labels"] == "happy, sad"
@@ -1320,13 +1314,13 @@ class TestProviderFetchClassificationLabels:
         assert result["arousal_options"] == "high, low"
 
     @pytest.mark.asyncio
-    async def test_with_partial_schema(self, org_id: UUID) -> None:
+    async def test_with_partial_schema(self, user_id: UUID) -> None:
         """Schema with only some fields → only those are customized."""
         rows = [({"intent": ["question"]},)]
         session = FakeAsyncSession(rows)
         result = await _fetch_classification_labels(
             db=session,
-            org_id=org_id,
+            user_id=user_id,
         )
         assert result["intent_labels"] == "question"
         # Other fields fall back to defaults
@@ -1340,7 +1334,7 @@ class TestProviderFetchStructuredSchemas:
     """Tests for _fetch_structured_schemas."""
 
     @pytest.mark.asyncio
-    async def test_returns_schemas(self, org_id: UUID) -> None:
+    async def test_returns_schemas(self, user_id: UUID) -> None:
         """Returns list of schemas from DB."""
         rows = [
             (uuid4(), "schema1", {"type": "object"}, "template1"),
@@ -1349,7 +1343,7 @@ class TestProviderFetchStructuredSchemas:
         session = FakeAsyncSession(rows)
         result = await _fetch_structured_schemas(
             db=session,
-            org_id=org_id,
+            user_id=user_id,
         )
         assert len(result["schemas"]) == 2
         assert result["schemas"][0]["name"] == "schema1"
@@ -1363,11 +1357,11 @@ class TestProviderFetchUserEpisodes:
     """Tests for _fetch_user_episodes."""
 
     @pytest.mark.asyncio
-    async def test_no_user_id(self, org_id: UUID) -> None:
+    async def test_no_user_id(self, user_id: UUID) -> None:
         """Returns empty list."""
         result = await _fetch_user_episodes(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            
             user_id=None,
         )
         assert result == {"episodes": []}
@@ -1375,7 +1369,7 @@ class TestProviderFetchUserEpisodes:
     @pytest.mark.asyncio
     async def test_with_user_id(
         self,
-        org_id: UUID,
+        
         user_id: UUID,
     ) -> None:
         """Returns episodes from DB."""
@@ -1384,7 +1378,7 @@ class TestProviderFetchUserEpisodes:
         session = FakeAsyncSession(rows)
         result = await _fetch_user_episodes(
             db=session,
-            org_id=org_id,
+            
             user_id=user_id,
         )
         assert result == {
@@ -1400,11 +1394,11 @@ class TestProviderFetchUserFacts:
     """Tests for _fetch_user_facts."""
 
     @pytest.mark.asyncio
-    async def test_no_user_id(self, org_id: UUID) -> None:
+    async def test_no_user_id(self, user_id: UUID) -> None:
         """Returns empty list."""
         result = await _fetch_user_facts(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            
             user_id=None,
         )
         assert result == {"facts": []}
@@ -1412,7 +1406,7 @@ class TestProviderFetchUserFacts:
     @pytest.mark.asyncio
     async def test_with_user_id(
         self,
-        org_id: UUID,
+        
         user_id: UUID,
     ) -> None:
         """Returns facts from DB."""
@@ -1423,7 +1417,7 @@ class TestProviderFetchUserFacts:
         session = FakeAsyncSession(rows)
         result = await _fetch_user_facts(
             db=session,
-            org_id=org_id,
+            
             user_id=user_id,
         )
         assert result == {
@@ -1436,7 +1430,7 @@ class TestProviderFetchUserFacts:
     @pytest.mark.asyncio
     async def test_query_applies_effective_at_predicate(
         self,
-        org_id: UUID,
+        
         user_id: UUID,
     ) -> None:
         """The facts query applies the effective-at predicate so superseded
@@ -1453,7 +1447,7 @@ class TestProviderFetchUserFacts:
         session = _RecordingSession(
             [("Subject1", "Predicate1", "Object1")],
         )
-        await _fetch_user_facts(db=session, org_id=org_id, user_id=user_id)
+        await _fetch_user_facts(db=session,  user_id=user_id)
 
         assert (
             "(f.invalid_at IS NULL OR f.invalid_at > :effective_at)"
@@ -1473,13 +1467,13 @@ class TestProviderFetchUserEntities:
     """Tests for _fetch_user_entities."""
 
     @pytest.mark.asyncio
-    async def test_no_user_id(self, org_id: UUID) -> None:
+    async def test_no_user_id(self, user_id: UUID) -> None:
         """Returns empty list without reaching for the graph backend."""
         graph_backend = AsyncMock()
 
         result = await _fetch_user_entities(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            
             user_id=None,
             graph_backend=graph_backend,
             project_id=None,
@@ -1496,11 +1490,11 @@ class TestProviderFetchUserClassifications:
     """Tests for _fetch_user_classifications."""
 
     @pytest.mark.asyncio
-    async def test_no_user_id(self, org_id: UUID) -> None:
+    async def test_no_user_id(self, user_id: UUID) -> None:
         """Returns empty classifications."""
         result = await _fetch_user_classifications(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            
             user_id=None,
         )
         assert result == {
@@ -1515,7 +1509,7 @@ class TestProviderFetchCustomInstructions:
     @pytest.mark.asyncio
     async def test_no_instructions(
         self,
-        org_id: UUID,
+        user_id: UUID,
         monkeypatch: MonkeyPatch,
     ) -> None:
         """Returns empty custom_instructions."""
@@ -1537,14 +1531,14 @@ class TestProviderFetchCustomInstructions:
 
         result = await _fetch_custom_instructions(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            user_id=user_id,
         )
         assert result == {"custom_instructions": ""}
 
     @pytest.mark.asyncio
     async def test_with_instructions(
         self,
-        org_id: UUID,
+        
         user_id: UUID,
         monkeypatch: MonkeyPatch,
     ) -> None:
@@ -1585,7 +1579,7 @@ class TestProviderFetchCustomInstructions:
 
         result = await _fetch_custom_instructions(
             db=FakeAsyncSession(),
-            org_id=org_id,
+            
             user_id=user_id,
         )
         assert result == {"custom_instructions": "Be concise."}

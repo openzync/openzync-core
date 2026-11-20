@@ -51,7 +51,7 @@ class TestMetricsMiddleware:
         """http_requests_total counter is incremented after a request."""
         before = METRICS_REGISTRY.get_sample_value(
             "openzync_http_requests_total",
-            {"method": "GET", "path": "/test", "status": "2xx", "org_id": "anonymous"},
+            {"method": "GET", "path": "/test", "status": "2xx", "user_id": "anonymous"},
         )
         app = self._create_app()
         transport = ASGITransport(app=app)
@@ -61,7 +61,7 @@ class TestMetricsMiddleware:
 
         after = METRICS_REGISTRY.get_sample_value(
             "openzync_http_requests_total",
-            {"method": "GET", "path": "/test", "status": "2xx", "org_id": "anonymous"},
+            {"method": "GET", "path": "/test", "status": "2xx", "user_id": "anonymous"},
         )
         before_val = before or 0.0
         after_val = after or 0.0
@@ -72,7 +72,7 @@ class TestMetricsMiddleware:
         """http_errors_total counter is incremented on server errors."""
         before = METRICS_REGISTRY.get_sample_value(
             "openzync_http_errors_total",
-            {"method": "GET", "path": "/error", "org_id": "anonymous"},
+            {"method": "GET", "path": "/error", "user_id": "anonymous"},
         )
         app = self._create_app()
         transport = ASGITransport(app=app)
@@ -82,7 +82,7 @@ class TestMetricsMiddleware:
 
         after = METRICS_REGISTRY.get_sample_value(
             "openzync_http_errors_total",
-            {"method": "GET", "path": "/error", "org_id": "anonymous"},
+            {"method": "GET", "path": "/error", "user_id": "anonymous"},
         )
         before_val = before or 0.0
         after_val = after or 0.0
@@ -100,7 +100,7 @@ class TestMetricsMiddleware:
         # Duration histogram should have at least 1 observation
         count = METRICS_REGISTRY.get_sample_value(
             "openzync_http_request_duration_seconds_count",
-            {"method": "GET", "path": "/test", "org_id": "anonymous"},
+            {"method": "GET", "path": "/test", "user_id": "anonymous"},
         )
         assert count is not None
         assert count >= 1.0
@@ -137,7 +137,7 @@ class TestMetricsMiddleware:
         """POST requests are also tracked."""
         before = METRICS_REGISTRY.get_sample_value(
             "openzync_http_requests_total",
-            {"method": "POST", "path": "/test", "status": "2xx", "org_id": "anonymous"},
+            {"method": "POST", "path": "/test", "status": "2xx", "user_id": "anonymous"},
         )
         app = FastAPI()
 
@@ -153,7 +153,7 @@ class TestMetricsMiddleware:
 
         after = METRICS_REGISTRY.get_sample_value(
             "openzync_http_requests_total",
-            {"method": "POST", "path": "/test", "status": "2xx", "org_id": "anonymous"},
+            {"method": "POST", "path": "/test", "status": "2xx", "user_id": "anonymous"},
         )
         assert (after or 0.0) == (before or 0.0) + 1.0
 
@@ -179,7 +179,7 @@ class TestMetricsMiddleware:
 
         count = METRICS_REGISTRY.get_sample_value(
             "openzync_http_requests_total",
-            {"method": "GET", "path": "/ok", "status": "2xx", "org_id": "anonymous"},
+            {"method": "GET", "path": "/ok", "status": "2xx", "user_id": "anonymous"},
         )
         assert count is not None and count > 0
 

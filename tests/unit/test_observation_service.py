@@ -294,7 +294,7 @@ class TestDetectTemporalGaps:
         ]
 
         async def _timestamps_side_effect(
-            org_id: UUID,
+            user_id: UUID,
             project_id: UUID,
             entity_id: UUID,
         ) -> list[datetime]:
@@ -329,7 +329,7 @@ class TestDetectBehavioralPatterns:
     ) -> None:
         """No facts for the project → empty list."""
         mock_db.execute.return_value.mappings.return_value.all.return_value = []
-        patterns = await service.detect_behavioral_patterns(PROJECT_ID, organization_id=ORG_ID)
+        patterns = await service.detect_behavioral_patterns(PROJECT_ID, user_id=ORG_ID)
         assert patterns == []
 
     async def test_single_entity_with_frequent_predicate(
@@ -349,7 +349,7 @@ class TestDetectBehavioralPatterns:
                 "total_facts": 8,
             },
         ]
-        patterns = await service.detect_behavioral_patterns(PROJECT_ID, organization_id=ORG_ID)
+        patterns = await service.detect_behavioral_patterns(PROJECT_ID, user_id=ORG_ID)
         assert len(patterns) == 1
         assert patterns[0].entity_id == ENTITY_A_ID
         assert patterns[0].frequent_predicates == {"upgrades": 5}
@@ -388,7 +388,7 @@ class TestDetectBehavioralPatterns:
                 "total_facts": 10,
             },
         ]
-        patterns = await service.detect_behavioral_patterns(PROJECT_ID, organization_id=ORG_ID)
+        patterns = await service.detect_behavioral_patterns(PROJECT_ID, user_id=ORG_ID)
         assert len(patterns) == 1
         preds = list(patterns[0].frequent_predicates.items())
         assert preds[0] == ("upgrades", 5)
@@ -403,7 +403,7 @@ class TestDetectBehavioralPatterns:
     ) -> None:
         """Org + effective-at predicates reach the predicate-counts query.
 
-        ``_get_fact_predicate_counts`` now requires ``organization_id`` and
+        ``_get_fact_predicate_counts`` now requires ``user_id`` and
         an effective-at datetime, delegates to
         ``FactRepository.get_fact_predicate_counts`` (which owns the
         bitemporal filter), and returns ``list[dict]`` — the old raw-SQL

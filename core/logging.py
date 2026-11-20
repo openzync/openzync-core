@@ -93,9 +93,6 @@ import contextvars  # noqa: E402 (import after _sensitive_keys for clarity)
 _request_id: contextvars.ContextVar[str] = contextvars.ContextVar(
     "request_id", default=""
 )
-_org_id: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "user_id", default=""
-)
 _user_id: contextvars.ContextVar[str] = contextvars.ContextVar(
     "user_id", default=""
 )
@@ -112,12 +109,9 @@ def bind_request_context(
 
     Args:
         request_id: Unique identifier for the current request.
-        user_id: Organisation identifier (optional).
         user_id: Authenticated user identifier (optional).
     """
     _request_id.set(request_id)
-    if user_id is not None:
-        _org_id.set(user_id)
     if user_id is not None:
         _user_id.set(user_id)
 
@@ -129,15 +123,12 @@ def _add_context_from_vars(
 ) -> structlog.types.EventDict:
     """Inject context-variable values into the event dict.
 
-    Registered as a processor so that ``request_id``, ``user_id``, and
-    ``user_id`` appear on every log line automatically.
+    Registered as a processor so that ``request_id`` and ``user_id``
+    appear on every log line automatically.
     """
     rid = _request_id.get()
     if rid:
         event_dict["request_id"] = rid
-    oid = _org_id.get()
-    if oid:
-        event_dict["user_id"] = oid
     uid = _user_id.get()
     if uid:
         event_dict["user_id"] = uid

@@ -5,7 +5,7 @@ Tests cover:
 - ``resolve_graph_backend()`` — all resolution paths: raise on failure
   (missing dispatcher, dispatcher error, None result for a configured
   backend), None on explicitly-disabled graph (no org config, ``"none"``).
-- ``_resolve_org_config()`` — primary path (with/without ``bao_client``),
+- ``_resolve_user_config()`` — primary path (with/without ``bao_client``),
   ImportError/Exception fallthrough, DB fallback, and full failure.
 """
 
@@ -34,7 +34,7 @@ class TestResolveGraphBackend:
     ``GraphBackendUnavailableError``.  There is no Postgres fallback.
     """
 
-    ORG_ID: UUID = uuid4()
+    USER_ID: UUID = uuid4()
 
     @pytest.fixture
     def mock_db(self) -> MagicMock:
@@ -75,7 +75,7 @@ class TestResolveGraphBackend:
         with pytest.raises(
             GraphBackendUnavailableError, match="graph_backend_dispatcher",
         ):
-            await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
+            await resolve_graph_backend(ctx, self.USER_ID, mock_db)
 
     # ── Org config is None ────────────────────────────────────────────────
 
@@ -85,7 +85,7 @@ class TestResolveGraphBackend:
         mock_dispatcher: MagicMock,
     ) -> None:
         """Org config resolves to ``None`` → raises (unknown defaults)."""
-        with patch("workers.backend._resolve_org_config", AsyncMock(return_value=None)):
+        with patch("workers.backend._resolve_user_config", AsyncMock(return_value=None)):
             from workers.backend import resolve_graph_backend
 
             ctx = {"graph_backend_dispatcher": mock_dispatcher}
@@ -93,7 +93,7 @@ class TestResolveGraphBackend:
                 GraphBackendUnavailableError,
                 match="cannot run enrichment under unknown defaults",
             ):
-                await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
+                await resolve_graph_backend(ctx, self.USER_ID, mock_db)
 
     # ── Backend name is empty / "none" / None ─────────────────────────────
 
@@ -108,11 +108,11 @@ class TestResolveGraphBackend:
         cfg = MagicMock()
         cfg.graph_backend = backend_name
 
-        with patch("workers.backend._resolve_org_config", AsyncMock(return_value=cfg)):
+        with patch("workers.backend._resolve_user_config", AsyncMock(return_value=cfg)):
             from workers.backend import resolve_graph_backend
 
             ctx = {"graph_backend_dispatcher": mock_dispatcher}
-            result = await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
+            result = await resolve_graph_backend(ctx, self.USER_ID, mock_db)
 
         assert result is None
 
@@ -125,11 +125,11 @@ class TestResolveGraphBackend:
         mock_dispatcher: MagicMock,
     ) -> None:
         """Dispatcher resolves a backend → returns it directly."""
-        with patch("workers.backend._resolve_org_config", AsyncMock(return_value=mock_org_config)):
+        with patch("workers.backend._resolve_user_config", AsyncMock(return_value=mock_org_config)):
             from workers.backend import resolve_graph_backend
 
             ctx = {"graph_backend_dispatcher": mock_dispatcher}
-            result = await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
+            result = await resolve_graph_backend(ctx, self.USER_ID, mock_db)
 
         mock_dispatcher.resolve_and_create.assert_called_once_with(
             org_config=mock_org_config,
@@ -149,16 +149,16 @@ class TestResolveGraphBackend:
         cfg = MagicMock()
         cfg.graph_backend = "surrealdb"
 
-        with patch("workers.backend._resolve_org_config", AsyncMock(return_value=cfg)):
+        with patch("workers.backend._resolve_user_config", AsyncMock(return_value=cfg)):
             from workers.backend import resolve_graph_backend
 
             ctx = {
                 "graph_backend_dispatcher": mock_dispatcher,
                 "surreal_connection_pool": mock_surreal_pool,
             }
-            result = await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
+            result = await resolve_graph_backend(ctx, self.USER_ID, mock_db)
 
-        mock_surreal_pool.get_or_create.assert_awaited_once_with(self.ORG_ID, cfg)
+        mock_surreal_pool.get_or_create.assert_awaited_once_with(self.USER_ID, cfg)
         mock_dispatcher.resolve_and_create.assert_called_once_with(
             org_config=cfg,
             db=mock_db,
@@ -176,7 +176,7 @@ class TestResolveGraphBackend:
         cfg = MagicMock()
         cfg.graph_backend = "surrealdb"
 
-        with patch("workers.backend._resolve_org_config", AsyncMock(return_value=cfg)):
+        with patch("workers.backend._resolve_user_config", AsyncMock(return_value=cfg)):
             from workers.backend import resolve_graph_backend
 
             ctx = {"graph_backend_dispatcher": mock_dispatcher}
@@ -184,7 +184,7 @@ class TestResolveGraphBackend:
                 GraphBackendUnavailableError,
                 match="no connection is available",
             ):
-                await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
+                await resolve_graph_backend(ctx, self.USER_ID, mock_db)
 
         mock_dispatcher.resolve_and_create.assert_not_called()
 
@@ -197,14 +197,14 @@ class TestResolveGraphBackend:
         """``falkordb_client`` in ctx → forwarded to dispatcher."""
         falkordb_client = MagicMock()
 
-        with patch("workers.backend._resolve_org_config", AsyncMock(return_value=mock_org_config)):
+        with patch("workers.backend._resolve_user_config", AsyncMock(return_value=mock_org_config)):
             from workers.backend import resolve_graph_backend
 
             ctx = {
                 "graph_backend_dispatcher": mock_dispatcher,
                 "falkordb_client": falkordb_client,
             }
-            result = await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
+            result = await resolve_graph_backend(ctx, self.USER_ID, mock_db)
 
         mock_dispatcher.resolve_and_create.assert_called_once_with(
             org_config=mock_org_config,
@@ -228,7 +228,7 @@ class TestResolveGraphBackend:
         pool = AsyncMock()
         pool.get_or_create = AsyncMock(side_effect=original_error)
 
-        with patch("workers.backend._resolve_org_config", AsyncMock(return_value=cfg)):
+        with patch("workers.backend._resolve_user_config", AsyncMock(return_value=cfg)):
             from workers.backend import resolve_graph_backend
 
             ctx = {
@@ -236,7 +236,7 @@ class TestResolveGraphBackend:
                 "surreal_connection_pool": pool,
             }
             with pytest.raises(GraphBackendUnavailableError, match="SurrealDB down"):
-                await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
+                await resolve_graph_backend(ctx, self.USER_ID, mock_db)
 
     async def test_surrealdb_pool_raises_generic_error_wraps(
         self,
@@ -249,7 +249,7 @@ class TestResolveGraphBackend:
         pool = AsyncMock()
         pool.get_or_create = AsyncMock(side_effect=ConnectionError("timeout"))
 
-        with patch("workers.backend._resolve_org_config", AsyncMock(return_value=cfg)):
+        with patch("workers.backend._resolve_user_config", AsyncMock(return_value=cfg)):
             from workers.backend import resolve_graph_backend
 
             ctx = {
@@ -257,7 +257,7 @@ class TestResolveGraphBackend:
                 "surreal_connection_pool": pool,
             }
             with pytest.raises(GraphBackendUnavailableError, match="SurrealDB connection failed"):
-                await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
+                await resolve_graph_backend(ctx, self.USER_ID, mock_db)
 
     # ── Dispatcher resolution failure ─────────────────────────────────────
 
@@ -270,7 +270,7 @@ class TestResolveGraphBackend:
         """Dispatcher raises ``ValueError`` → ``GraphBackendUnavailableError`` (unknown backend)."""
         mock_dispatcher.resolve_and_create.side_effect = ValueError("kaboom")
 
-        with patch("workers.backend._resolve_org_config", AsyncMock(return_value=mock_org_config)):
+        with patch("workers.backend._resolve_user_config", AsyncMock(return_value=mock_org_config)):
             from workers.backend import resolve_graph_backend
 
             ctx = {"graph_backend_dispatcher": mock_dispatcher}
@@ -278,7 +278,7 @@ class TestResolveGraphBackend:
                 GraphBackendUnavailableError,
                 match=r"Unknown graph backend 'postgres'.*kaboom",
             ):
-                await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
+                await resolve_graph_backend(ctx, self.USER_ID, mock_db)
 
     # ── Dispatcher resolves to None ───────────────────────────────────────
 
@@ -291,7 +291,7 @@ class TestResolveGraphBackend:
         """Dispatcher returns ``None`` for a configured backend → raises."""
         mock_dispatcher.resolve_and_create.return_value = None
 
-        with patch("workers.backend._resolve_org_config", AsyncMock(return_value=mock_org_config)):
+        with patch("workers.backend._resolve_user_config", AsyncMock(return_value=mock_org_config)):
             from workers.backend import resolve_graph_backend
 
             ctx = {"graph_backend_dispatcher": mock_dispatcher}
@@ -299,23 +299,23 @@ class TestResolveGraphBackend:
                 GraphBackendUnavailableError,
                 match="resolved to None",
             ):
-                await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
+                await resolve_graph_backend(ctx, self.USER_ID, mock_db)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# _resolve_org_config  (private helper)
+# _resolve_user_config  (private helper)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.unit
 class TestResolveOrgConfig:
-    """Branch coverage for ``_resolve_org_config``.
+    """Branch coverage for ``_resolve_user_config``.
 
     Because the function uses inline ``import`` inside the try block, we patch
     at the real module paths that the imports resolve to at runtime.
     """
 
-    ORG_ID: UUID = uuid4()
+    USER_ID: UUID = uuid4()
 
     @pytest.fixture
     def mock_db(self) -> MagicMock:
@@ -344,12 +344,12 @@ class TestResolveOrgConfig:
         mock_get = AsyncMock(return_value=mock_org_config)
 
         with patch("core.org_config.get_org_config", mock_get):
-            from workers.backend import _resolve_org_config
+            from workers.backend import _resolve_user_config
 
             ctx = {"openbao_client": bao_client, "redis": MagicMock()}
-            result = await _resolve_org_config(ctx, self.ORG_ID, mock_db)
+            result = await _resolve_user_config(ctx, self.USER_ID, mock_db)
 
-        mock_get.assert_awaited_once_with(self.ORG_ID, redis=ctx["redis"], bao_client=bao_client)
+        mock_get.assert_awaited_once_with(self.USER_ID, redis=ctx["redis"], bao_client=bao_client)
         assert result is mock_org_config
         assert result.graph_backend == "postgres"
 
@@ -372,10 +372,10 @@ class TestResolveOrgConfig:
             patch("core.config.BootstrapSettings") as mock_bootstrap,
             patch("core.openbao.OpenBaoClient", return_value=mock_bao_client),
         ):
-            from workers.backend import _resolve_org_config
+            from workers.backend import _resolve_user_config
 
             ctx = {"redis": MagicMock()}
-            result = await _resolve_org_config(ctx, self.ORG_ID, mock_db)
+            result = await _resolve_user_config(ctx, self.USER_ID, mock_db)
 
         mock_bootstrap.assert_called_once()
         assert result is mock_org_config
@@ -391,12 +391,12 @@ class TestResolveOrgConfig:
         bao_client = MagicMock()
 
         with patch("core.org_config.get_org_config", AsyncMock(return_value=mock_org_config)) as mock_get:
-            from workers.backend import _resolve_org_config
+            from workers.backend import _resolve_user_config
 
             ctx = {"openbao_client": bao_client, "redis": redis_client}
-            result = await _resolve_org_config(ctx, self.ORG_ID, mock_db)
+            result = await _resolve_user_config(ctx, self.USER_ID, mock_db)
 
-        mock_get.assert_awaited_once_with(self.ORG_ID, redis=redis_client, bao_client=bao_client)
+        mock_get.assert_awaited_once_with(self.USER_ID, redis=redis_client, bao_client=bao_client)
         assert result is mock_org_config
 
     # ── Primary path: fallthrough on ImportError ──────────────────────────
@@ -418,10 +418,10 @@ class TestResolveOrgConfig:
             mock_repo_cls.return_value = mock_repo
             mock_repo.get_config = AsyncMock(return_value={"graph_backend": "postgres"})
 
-            from workers.backend import _resolve_org_config
+            from workers.backend import _resolve_user_config
 
             ctx = {"openbao_client": MagicMock(), "redis": MagicMock()}
-            result = await _resolve_org_config(ctx, self.ORG_ID, mock_db)
+            result = await _resolve_user_config(ctx, self.USER_ID, mock_db)
 
         assert isinstance(result, OrgConfigBase)
         assert result.graph_backend == "postgres"
@@ -443,10 +443,10 @@ class TestResolveOrgConfig:
             mock_repo_cls.return_value = mock_repo
             mock_repo.get_config = AsyncMock(return_value={"graph_backend": "surrealdb"})
 
-            from workers.backend import _resolve_org_config
+            from workers.backend import _resolve_user_config
 
             ctx = {"openbao_client": MagicMock()}
-            result = await _resolve_org_config(ctx, self.ORG_ID, mock_db)
+            result = await _resolve_user_config(ctx, self.USER_ID, mock_db)
 
         assert isinstance(result, OrgConfigBase)
         assert result.graph_backend == "surrealdb"
@@ -468,10 +468,10 @@ class TestResolveOrgConfig:
             mock_repo_cls.return_value = mock_repo
             mock_repo.get_config = AsyncMock(return_value={})
 
-            from workers.backend import _resolve_org_config
+            from workers.backend import _resolve_user_config
 
             ctx: dict = {}
-            result = await _resolve_org_config(ctx, self.ORG_ID, mock_db)
+            result = await _resolve_user_config(ctx, self.USER_ID, mock_db)
 
         assert isinstance(result, OrgConfigBase)
         # All fields should be None for an empty config
@@ -494,10 +494,10 @@ class TestResolveOrgConfig:
                 return_value={"graph_backend": "postgres", "graph_max_traversal_depth": 5},
             )
 
-            from workers.backend import _resolve_org_config
+            from workers.backend import _resolve_user_config
 
             ctx: dict = {}
-            result = await _resolve_org_config(ctx, self.ORG_ID, mock_db)
+            result = await _resolve_user_config(ctx, self.USER_ID, mock_db)
 
         assert isinstance(result, OrgConfigBase)
         assert result.graph_backend == "postgres"
@@ -522,10 +522,10 @@ class TestResolveOrgConfig:
             mock_repo_cls.return_value = mock_repo
             mock_repo.get_config = AsyncMock(side_effect=RuntimeError("db unreachable"))
 
-            from workers.backend import _resolve_org_config
+            from workers.backend import _resolve_user_config
 
             ctx: dict = {}
-            await _resolve_org_config(ctx, self.ORG_ID, mock_db)
+            await _resolve_user_config(ctx, self.USER_ID, mock_db)
 
     async def test_primary_fails_with_generic_and_db_fails_too_returns_none(
         self,
@@ -544,7 +544,7 @@ class TestResolveOrgConfig:
             mock_repo_cls.return_value = mock_repo
             mock_repo.get_config = AsyncMock(side_effect=ValueError("bad query"))
 
-            from workers.backend import _resolve_org_config
+            from workers.backend import _resolve_user_config
 
             ctx: dict = {}
-            await _resolve_org_config(ctx, self.ORG_ID, mock_db)
+            await _resolve_user_config(ctx, self.USER_ID, mock_db)

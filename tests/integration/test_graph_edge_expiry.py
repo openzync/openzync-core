@@ -76,14 +76,14 @@ def _seed_worker_settings() -> Iterator[None]:
 async def _seed_user(db: AsyncSession, user_id: UUID) -> None:
     await db.execute(
         sa_text(
-            "INSERT INTO users (id, organization_id, external_id, name, "
+            "INSERT INTO users (id, user_id, external_id, name, "
             "role, is_active) "
-            "VALUES (:uid, :org_id, :eid, :name, 'member', true) "
+            "VALUES (:uid, :user_id, :eid, :name, 'member', true) "
             "ON CONFLICT (id) DO NOTHING"
         ),
         {
             "uid": user_id,
-            "org_id": ORG_ID,
+            "user_id": ORG_ID,
             "eid": f"edge-exp-{user_id}",
             "name": "Edge Expiry Test User",
         },
@@ -230,7 +230,7 @@ class TestCrossFormSupersessionExpiresEdge:
                 graph_sync=GraphEdgeSyncService(backends=[backend]),
             )
             r1 = await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[
@@ -255,7 +255,7 @@ class TestCrossFormSupersessionExpiresEdge:
                 graph_sync=GraphEdgeSyncService(backends=[backend]),
             )
             r2 = await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[_literal_triple("Robbie definitely wears Adidas")],
@@ -331,7 +331,7 @@ class TestCrossFormSupersessionExpiresEdge:
                 graph_sync=GraphEdgeSyncService(backends=[backend]),
             )
             await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[_entity_triple(graph["src_id"], graph["tgt_id"], "wears")],
@@ -362,7 +362,7 @@ class TestCrossFormSupersessionExpiresEdge:
                 graph_sync=GraphEdgeSyncService(backends=[backend]),
             )
             await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[_literal_triple("AsOfSource wears AsOfTarget now")],
@@ -429,7 +429,7 @@ class TestSameKeySupersessionKeepsEdge:
                     graph_sync=GraphEdgeSyncService(backends=[backend]),
                 )
                 result = await service.ingest_with_supersession(
-                    org_id=ORG_ID,
+                    
                     project_id=PROJECT_ID,
                     user_id=user_id,
                     facts=[_entity(content)],
@@ -477,7 +477,7 @@ class TestRetractionExpiresEdge:
                 graph_sync=GraphEdgeSyncService(backends=[backend]),
             )
             result = await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[
@@ -498,7 +498,7 @@ class TestRetractionExpiresEdge:
                     graph_sync=GraphEdgeSyncService(backends=[backend2]),
                 )
                 service2.notify_retraction(
-                    org_id=ORG_ID, project_id=PROJECT_ID, old_fact=old_fact, at_time=T1
+                    user_id=ORG_ID, project_id=PROJECT_ID, old_fact=old_fact, at_time=T1
                 )
                 await db2.commit()
             finally:
@@ -535,7 +535,7 @@ class TestIngestRollbackKeepsEdge:
                 graph_sync=GraphEdgeSyncService(backends=[backend]),
             )
             await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[_entity_triple(graph["src_id"], graph["tgt_id"], "v1")],
@@ -555,7 +555,7 @@ class TestIngestRollbackKeepsEdge:
                 graph_sync=GraphEdgeSyncService(backends=[backend]),
             )
             await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[_literal_triple("RBSrc wears RBTgt (never committed)")],
@@ -594,7 +594,7 @@ class TestInBatchCrossFormCollapse:
         try:
             service = FactInvalidationService(db=db, fact_repo=FactRepository(db))
             result = await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[
@@ -683,7 +683,7 @@ class TestReconcileAntiJoin:
         try:
             service = FactInvalidationService(db=db, fact_repo=FactRepository(db))
             await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[
@@ -741,7 +741,7 @@ class TestReconcileAntiJoin:
         try:
             service = FactInvalidationService(db=db, fact_repo=FactRepository(db))
             result = await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[
@@ -769,7 +769,7 @@ class TestReconcileAntiJoin:
                     db=db2, fact_repo=FactRepository(db2)
                 )
                 result2 = await service2.ingest_with_supersession(
-                    org_id=ORG_ID,
+                    
                     project_id=PROJECT_ID,
                     user_id=user_id,
                     facts=[
@@ -842,7 +842,7 @@ class TestReconcileAntiJoin:
         db = AsyncSession(engine, expire_on_commit=False)
         try:
             await FactRepository(db).batch_create(
-                organization_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[
@@ -905,7 +905,7 @@ class TestReconcileAntiJoin:
         db = AsyncSession(engine, expire_on_commit=False)
         try:
             await FactRepository(db).batch_create(
-                organization_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[
@@ -965,7 +965,7 @@ class TestReconcileAntiJoin:
         db = AsyncSession(engine, expire_on_commit=False)
         try:
             await FactRepository(db).batch_create(
-                organization_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[

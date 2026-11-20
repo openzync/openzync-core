@@ -16,7 +16,8 @@ from starlette.requests import (
 )
 
 from core.exceptions import NotFoundError, register_exception_handlers
-from dependencies.services import get_invite_service
+from dependencies.db import get_db
+from dependencies.services import get_auth_throttle, get_invite_service
 from middleware.auth import AuthMiddleware, _is_jwt_token, _is_public_path
 from routers.auth import router
 from schemas.auth import InviteInfoResponse
@@ -32,7 +33,6 @@ class TestAuthMiddleware:
     def _create_jwt(
         self,
         sub: str = "user-123",
-        org_id: str = "org-456",
         role: str = "member",
         token_type: str = "access",
         secret: str = "a" * 32,
@@ -41,7 +41,6 @@ class TestAuthMiddleware:
     ) -> str:
         payload: dict[str, Any] = {
             "sub": sub,
-            "org_id": org_id,
             "role": role,
             "type": token_type,
         }
@@ -76,7 +75,6 @@ class TestAuthMiddleware:
         async def check_state(request: Request) -> dict:
             return {
                 "auth_type": getattr(request.state, "auth_type", None),
-                "org_id": getattr(request.state, "org_id", None),
                 "user_id": getattr(request.state, "user_id", None),
                 "role": getattr(request.state, "role", None),
                 "api_key_permissions": getattr(request.state, "api_key_permissions", []),
@@ -189,7 +187,7 @@ class TestAuthMiddleware:
     @pytest.mark.asyncio
     async def test_valid_jwt_sets_state(self) -> None:
         """Valid JWT sets correct state values."""
-        token = self._create_jwt(sub="user-abc", org_id="org-xyz", role="admin")
+        token = self._create_jwt(sub="user-abc", role="admin")
         app = self._create_app_with_state_check()
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
@@ -199,7 +197,6 @@ class TestAuthMiddleware:
             )
             state = resp.json()
             assert state["auth_type"] == "jwt"
-            assert state["org_id"] == "org-xyz"
             assert state["user_id"] == "user-abc"
             assert state["role"] == "admin"
 
@@ -240,7 +237,7 @@ class TestAuthMiddleware:
 
     @pytest.mark.asyncio
     async def test_jwt_missing_required_claims(self) -> None:
-        """JWT missing sub or org_id is rejected."""
+        """JWT missing sub or user_id is rejected."""
         import core.config as cfg
 
         payload: dict[str, Any] = {
@@ -359,7 +356,7 @@ class TestAuthMiddleware:
 
     def _create_users_app(self) -> FastAPI:
         """Real users router + real AuthMiddleware, route deps mocked."""
-        from dependencies.auth import require_org_id
+        from dependencies.auth import require_user_id
         from dependencies.db import get_db
         from routers.users import get_user_service, router
 
@@ -370,7 +367,7 @@ class TestAuthMiddleware:
         )
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[get_user_service] = lambda: service
-        app.dependency_overrides[require_org_id] = (
+        app.dependency_overrides[require_user_id] = (
             lambda: "00000000-0000-0000-0000-000000000001"
         )
         app.include_router(router)
@@ -508,7 +505,7 @@ class TestAuthMiddleware:
     @pytest.mark.asyncio
     async def test_jwt_takes_precedence_over_api_key(self) -> None:
         """When token looks like JWT, it is tried first."""
-        token = self._create_jwt(sub="user-pri-1", org_id="org-pri-1")
+        token = self._create_jwt(sub="user-pri-1")
         app = self._create_app_with_state_check()
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
@@ -526,7 +523,7 @@ class TestAuthMiddleware:
         @app.get("/health")
         async def health(request: Request) -> dict:
             return {
-                "org_id": getattr(request.state, "org_id", "NONE"),
+                "user_id": getattr(request.state, "user_id", "NONE"),
                 "auth_type": getattr(request.state, "auth_type", "NONE"),
             }
 
@@ -535,7 +532,7 @@ class TestAuthMiddleware:
             resp = await c.get("/health")
             assert resp.status_code == 200
             data = resp.json()
-            assert data["org_id"] is None
+            assert data["user_id"] is None
             assert data["auth_type"] is None
 
 
@@ -555,6 +552,9 @@ class TestInviteEndpointsPublicThroughMiddleware:
         register_exception_handlers(app)
         service_mock = AsyncMock()
         app.dependency_overrides[get_invite_service] = lambda: service_mock
+        app.dependency_overrides[get_auth_throttle] = lambda: AsyncMock()
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
+        app.state.redis = AsyncMock()
         app.include_router(router)
         app.add_middleware(AuthMiddleware)
         return app, service_mock
@@ -564,7 +564,6 @@ class TestInviteEndpointsPublicThroughMiddleware:
         """No Authorization header → 200: the middleware must not 401."""
         app, service_mock = self._create_app()
         service_mock.get_invite_info.return_value = InviteInfoResponse(
-            org_name="Acme Corp",
             email="alice@acme.com",
             name="Alice Johnson",
         )
@@ -574,7 +573,7 @@ class TestInviteEndpointsPublicThroughMiddleware:
 
         assert resp.status_code == 200
         assert resp.status_code != 401
-        assert resp.json()["org_name"] == "Acme Corp"
+        assert resp.json()["email"] == "alice@acme.com"
 
     @pytest.mark.asyncio
     async def test_invite_info_bogus_token_reaches_route_404(self) -> None:

@@ -31,7 +31,7 @@ class TestRBACDemoteWindow:
         svc = _make_service(last_admin=True)
         with pytest.raises(ValidationError, match="last admin"):
             await svc.update_user(
-                organization_id=self.ORG_ID,
+                
                 user_id=UUID("00000000-0000-0000-0000-000000000012"),
                 update_fields={"role": "member"},
                 actor_user_id=UUID("00000000-0000-0000-0000-000000000013"),
@@ -46,7 +46,7 @@ class TestRBACDemoteWindow:
         svc._invalidate_permissions_cache = AsyncMock()  # type: ignore[method-assign]
         svc._user_to_dict = lambda u: {  # type: ignore[method-assign]
             "id": str(UUID("00000000-0000-0000-0000-000000000012")),
-            "organization_id": str(self.ORG_ID),
+            "user_id": str(self.ORG_ID),
             "external_id": "x",
             "name": "n",
             "email": "e@x.com",
@@ -60,7 +60,7 @@ class TestRBACDemoteWindow:
         # the guard (no ValidationError for demote) is what we assert.
         try:
             await svc.update_user(
-                organization_id=self.ORG_ID,
+                
                 user_id=UUID("00000000-0000-0000-0000-000000000012"),
                 update_fields={"role": "member"},
                 actor_user_id=UUID("00000000-0000-0000-0000-000000000013"),

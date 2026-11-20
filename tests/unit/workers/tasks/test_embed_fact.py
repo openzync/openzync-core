@@ -60,7 +60,7 @@ class TestEmbedFact:
         await embed_fact(
             ctx=self._ctx(db),
             fact_id=_FACT_ID,
-            org_id=_ORG_ID,
+            user_id=_ORG_ID,
             content=_CONTENT,
             trace_id=_TRACE_ID,
         )
@@ -78,7 +78,7 @@ class TestEmbedFact:
         await embed_fact(
             ctx=self._ctx(db),
             fact_id=_FACT_ID,
-            org_id=_ORG_ID,
+            user_id=_ORG_ID,
             content=None,
         )
 
@@ -87,7 +87,7 @@ class TestEmbedFact:
         """Fact embedding needs no org config, even when one is unavailable.
 
         Replaces the old "no embedding backend configured" case: there is no
-        such configuration any more, so the guarantee is that ``org_id`` is
+        such configuration any more, so the guarantee is that ``user_id`` is
         accepted by the task but never used to resolve a provider.
         """
         with patch("core.org_config.get_org_config") as mock_get_cfg:
@@ -98,7 +98,7 @@ class TestEmbedFact:
             await embed_fact(
                 ctx=self._ctx(db),
                 fact_id=_FACT_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 content=_CONTENT,
             )
 
@@ -119,7 +119,7 @@ class TestEmbedFact:
             await embed_fact(
                 ctx=ctx,
                 fact_id=_FACT_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 content=_CONTENT,
             )
 
@@ -135,7 +135,7 @@ class TestEmbedFact:
         await embed_fact(
             ctx=ctx,
             fact_id=_FACT_ID,
-            org_id=_ORG_ID,
+            user_id=_ORG_ID,
             content="",
         )
 
@@ -205,7 +205,7 @@ class TestEmbedFact:
             await embed_fact(
                 ctx=ctx,
                 fact_id=_FACT_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 content=_CONTENT,
             )
 
@@ -246,7 +246,7 @@ class TestEmbedFact:
             await embed_fact(
                 ctx=ctx,
                 fact_id=_FACT_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 content=_CONTENT,
             )
 
@@ -270,7 +270,7 @@ class TestEmbedFact:
         await embed_fact(
             ctx=self._ctx(db),
             fact_id=_FACT_ID,
-            org_id=_ORG_ID,
+            user_id=_ORG_ID,
             content=None,
         )
 
@@ -280,7 +280,7 @@ class TestEmbedFact:
     async def test_tenant_is_bound_before_the_fact_is_read(
         self, embedder: AsyncMock
     ) -> None:
-        """The ``app.org_id`` binding happens before the fact is read.
+        """The ``app.user_id`` binding happens before the fact is read.
 
         Under enforced row-level security a session that queries first and
         binds second sees zero rows — the task would embed nothing and
@@ -299,16 +299,15 @@ class TestEmbedFact:
         await embed_fact(
             ctx=self._ctx(db),
             fact_id=_FACT_ID,
-            org_id=_ORG_ID,
+            user_id=_ORG_ID,
             content=None,
         )
 
         calls = db.execute.await_args_list
-        assert "app.org_id" in str(calls[0].args[0])
+        assert "app.user_id" in str(calls[0].args[0])
         assert calls[0].args[1] == {
-            "org_id": _ORG_ID,
+            "user_id": _ORG_ID,
             "bypass_rls": "false",
-            "lookup_code": "",
         }
         assert "SELECT content FROM facts" in str(calls[1].args[0])
 
@@ -350,7 +349,7 @@ class TestEmbedFact:
         await embed_fact(
             ctx=self._ctx(db),
             fact_id=_FACT_ID,
-            org_id=_ORG_ID,
+            user_id=_ORG_ID,
             content=None,
         )
 
@@ -367,13 +366,13 @@ class TestEmbedFact:
         ]
         # The release issued no statement of its own — the last statement
         # is the write, not a context reset.
-        assert "set_config('app.org_id', ''" not in str(
+        assert "set_config('app.user_id', ''" not in str(
             db.execute.await_args_list[-1].args[0]
         )
 
     @pytest.mark.asyncio
-    async def test_missing_org_id_fails_loudly(self, embedder: AsyncMock) -> None:
-        """No org_id → RuntimeError, before anything is read or written.
+    async def test_missing_user_id_fails_loudly(self, embedder: AsyncMock) -> None:
+        """No user_id → RuntimeError, before anything is read or written.
 
         The tenant context cannot be derived without an org, and a task
         that proceeded without one would write nothing under enforced RLS
@@ -385,7 +384,7 @@ class TestEmbedFact:
 
         with (
             patch("workers.tasks.base.asyncio.sleep", new=AsyncMock()),
-            pytest.raises(RuntimeError, match="org_id"),
+            pytest.raises(RuntimeError, match="user_id"),
         ):
             await embed_fact(
                 ctx=self._ctx(db),
@@ -477,7 +476,7 @@ class TestEmbedFactRetryBehaviour:
                 await embed_fact(
                     ctx=ctx,
                     fact_id=_FACT_ID,
-                    org_id=_ORG_ID,
+                    user_id=_ORG_ID,
                     content=_CONTENT,
                 )
             elapsed = time.monotonic() - start
@@ -509,7 +508,7 @@ class TestEmbedFactRetryBehaviour:
             await embed_fact(
                 ctx=ctx,
                 fact_id=_FACT_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 content=_CONTENT,
             )
 

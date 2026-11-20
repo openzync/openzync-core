@@ -80,7 +80,7 @@ class TestPiiFailClosed:
             pytest.raises(PIIUnavailableError),
         ):
             await service.ingest(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJECT_ID,
                 created_by=USER_ID,
                 session_external_id="session-abc",

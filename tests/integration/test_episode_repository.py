@@ -28,11 +28,10 @@ class TestEpisodeRepository:
         user_repo = UserRepository(db)
         session_repo = SessionRepository(db)
         user = await user_repo.create(
-            organization_id=self.ORG_ID,
             external_id="episode_test_user",
         )
         session = await session_repo.create(
-            organization_id=self.ORG_ID,
+            user_id=user.id,
             project_id=self.PROJECT_ID,
             created_by=user.id,
             external_id="episode_test_session",
@@ -49,7 +48,7 @@ class TestEpisodeRepository:
                 {"role": "assistant", "content": "Hi there!", "metadata": {}},
             ]
             episodes = await repo.batch_create(
-                organization_id=self.ORG_ID,
+                
                 project_id=self.PROJECT_ID,
                 session_id=session_id,
                 user_id=user_id,
@@ -67,7 +66,7 @@ class TestEpisodeRepository:
         async with AsyncSession(engine) as db:
             repo = EpisodeRepository(db)
             result = await repo.batch_create(
-                organization_id=self.ORG_ID,
+                
                 project_id=self.PROJECT_ID,
                 session_id=UUID("00000000-0000-0000-0000-000000000001"),
                 user_id=UUID("00000000-0000-0000-0000-000000000001"),

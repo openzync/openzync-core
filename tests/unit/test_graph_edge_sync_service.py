@@ -111,7 +111,7 @@ class TestComputeExpiryCommands:
 
     def _command_for(self, event: SupersessionEvent):
         commands = compute_expiry_commands(
-            [event], org_id=ORG_ID, project_id=PROJECT_ID, at_time=AT_TIME
+            [event], user_id=ORG_ID, project_id=PROJECT_ID, at_time=AT_TIME
         )
         assert len(commands) == 1
         return commands[0]
@@ -139,7 +139,7 @@ class TestComputeExpiryCommands:
             _fact(), _fact(fact_id=NEW_FACT), {"predicate": "reports_to"}
         )
         commands = compute_expiry_commands(
-            [event], org_id=ORG_ID, project_id=PROJECT_ID, at_time=AT_TIME
+            [event], user_id=ORG_ID, project_id=PROJECT_ID, at_time=AT_TIME
         )
         assert commands == []
 
@@ -147,7 +147,7 @@ class TestComputeExpiryCommands:
         """Literal subject/object — no edge was created, nothing to expire."""
         event = make_supersession_event(_fact(object_entity_id=None), None, {})
         commands = compute_expiry_commands(
-            [event], org_id=ORG_ID, project_id=PROJECT_ID, at_time=AT_TIME
+            [event], user_id=ORG_ID, project_id=PROJECT_ID, at_time=AT_TIME
         )
         assert commands == []
 
@@ -167,7 +167,7 @@ class TestComputeExpiryCommands:
             ),
         ]
         commands = compute_expiry_commands(
-            events, org_id=ORG_ID, project_id=PROJECT_ID, at_time=AT_TIME
+            events, user_id=ORG_ID, project_id=PROJECT_ID, at_time=AT_TIME
         )
         assert len(commands) == 2
 
@@ -185,12 +185,12 @@ class TestSyncRouting:
 
         service = GraphEdgeSyncService(backends=[backend])
         await service.sync_supersessions(
-            org_id=ORG_ID, project_id=PROJECT_ID,
+            user_id=ORG_ID, project_id=PROJECT_ID,
             events=self._case1_events(), at_time=AT_TIME,
         )
 
         backend.expire_relationships_matching.assert_awaited_once_with(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJECT_ID,
             source_id=SRC_ENTITY,
             target_id=TGT_ENTITY,
@@ -210,7 +210,7 @@ class TestSyncRouting:
         ]
         service = GraphEdgeSyncService(backends=[backend])
         await service.sync_supersessions(
-            org_id=ORG_ID, project_id=PROJECT_ID,
+            user_id=ORG_ID, project_id=PROJECT_ID,
             events=events, at_time=AT_TIME,
         )
         backend.expire_relationships_matching.assert_not_awaited()
@@ -221,7 +221,7 @@ class TestSyncRouting:
         arq = AsyncMock()
         service = GraphEdgeSyncService(backends=[external], arq_pool=arq)
         await service.sync_supersessions(
-            org_id=ORG_ID, project_id=PROJECT_ID,
+            user_id=ORG_ID, project_id=PROJECT_ID,
             events=self._case1_events(), at_time=AT_TIME,
         )
 
@@ -230,7 +230,7 @@ class TestSyncRouting:
         arq.enqueue.assert_awaited_once_with(
             "expire_graph_edges",
             queue_name="OpenZync:test:queue:low",
-            org_id=str(ORG_ID),
+            user_id=str(ORG_ID),
             project_id=str(PROJECT_ID),
             source_id=str(SRC_ENTITY),
             target_id=str(TGT_ENTITY),
@@ -250,7 +250,7 @@ class TestSyncRouting:
             backends=[postgres, external], arq_pool=arq
         )
         await service.sync_supersessions(
-            org_id=ORG_ID, project_id=PROJECT_ID,
+            user_id=ORG_ID, project_id=PROJECT_ID,
             events=self._case1_events(), at_time=AT_TIME,
         )
 
@@ -268,7 +268,7 @@ class TestSyncRouting:
             backends=[postgres, external], arq_pool=arq
         )
         await service.sync_supersessions(
-            org_id=ORG_ID, project_id=PROJECT_ID,
+            user_id=ORG_ID, project_id=PROJECT_ID,
             events=[], at_time=AT_TIME,
         )
         postgres.expire_relationships_matching.assert_not_awaited()
@@ -278,7 +278,7 @@ class TestSyncRouting:
         """Graph disabled (no backends) → nothing happens."""
         service = GraphEdgeSyncService(backends=[])
         await service.sync_supersessions(
-            org_id=ORG_ID, project_id=PROJECT_ID,
+            user_id=ORG_ID, project_id=PROJECT_ID,
             events=self._case1_events(), at_time=AT_TIME,
         )
         # No assertion needed beyond not raising — covered by early return.
@@ -295,6 +295,6 @@ class TestSyncRouting:
 
         with pytest.raises(RuntimeError, match="pg boom"):
             await service.sync_supersessions(
-                org_id=ORG_ID, project_id=PROJECT_ID,
+                user_id=ORG_ID, project_id=PROJECT_ID,
                 events=self._case1_events(), at_time=AT_TIME,
             )

@@ -22,7 +22,6 @@ from schemas.auth import (
     DashboardUserResponse,
     UpdateProfileRequest,
 )
-from utils.password import hash_password, verify_password
 from utils.pii import mask_email
 
 if TYPE_CHECKING:
@@ -138,8 +137,10 @@ class ProfileMixin:
                         "This account does not have a password set."
                     )
                 # bcrypt blocks the event loop — offload to a worker thread.
+                from services import auth_service as _facade  # via facade (patchable)
+
                 if not await asyncio.to_thread(
-                    verify_password,
+                    _facade.verify_password,
                     payload.current_password,
                     user.password_hash,
                 ):
@@ -165,15 +166,17 @@ class ProfileMixin:
                     "This account does not have a password set."
                 )
             # bcrypt blocks the event loop — offload to a worker thread.
+            from services import auth_service as _facade  # via facade (patchable)
+
             if not await asyncio.to_thread(
-                verify_password,
+                _facade.verify_password,
                 payload.current_password,
                 user.password_hash,
             ):
                 raise AuthenticationError("Current password is incorrect.")
             self._validate_password(payload.new_password)
             update_kwargs["password_hash"] = await asyncio.to_thread(
-                hash_password, payload.new_password
+                _facade.hash_password, payload.new_password
             )
             has_changes = True
 

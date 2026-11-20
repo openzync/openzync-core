@@ -78,6 +78,7 @@ async def invite_user(
 @audit_action("admin.user_invite_revoke", "user", "Admin revoked user invite")
 async def revoke_invite(
     user_id: UUID,
+    _admin_id: str = Depends(require_permission("members:write")),  # noqa: B008
     service: InviteService = Depends(get_invite_service),  # noqa: B008
 ) -> Response:
     """Revoke a pending invite (admin-gated).

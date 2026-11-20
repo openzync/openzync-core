@@ -68,10 +68,10 @@ class TestParallelContentHashClaim:
 
         results = await asyncio.gather(
             service.claim_content_hash(
-                str(ORG_ID), str(USER_ID), "s1", messages, payload="job-A"
+                str(USER_ID), "s1", messages, payload="job-A"
             ),
             service.claim_content_hash(
-                str(ORG_ID), str(USER_ID), "s1", messages, payload="job-B"
+                str(USER_ID), "s1", messages, payload="job-B"
             ),
         )
 

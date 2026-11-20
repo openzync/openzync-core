@@ -92,7 +92,7 @@ class TestMemoryService:
             patch.object(service, "_get_org_pii_config", return_value={}),
         ):
             result = await service.ingest(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 session_external_id="session-abc",
@@ -120,7 +120,7 @@ class TestMemoryService:
             patch.object(service, "_get_org_pii_config", return_value={"mode": "off"}),
         ):
             result = await service.ingest(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 session_external_id="test",
@@ -143,7 +143,7 @@ class TestMemoryService:
 
         with pytest.raises(NotFoundError, match="not found"):
             await service.ingest(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 session_external_id="unknown-session",
@@ -166,7 +166,7 @@ class TestMemoryService:
 
         with patch.object(service, "_invalidate_context_cache"):
             episodes, facts = await service.delete_project_memory(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 confirm=str(self.PROJECT_ID),
                 actor_id=self.USER_ID,
@@ -197,7 +197,7 @@ class TestMemoryService:
             pytest.raises(ValidationError, match="confirm does not match"),
         ):
             await service.delete_project_memory(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 confirm="00000000-0000-0000-0000-000000000000",
                 actor_id=self.USER_ID,
@@ -217,10 +217,10 @@ class TestMemoryService:
             {"role": "assistant", "content": "Message 1"},
         ]
         h1 = IdempotencyService.compute_content_hash(
-            str(self.ORG_ID), str(self.USER_ID), "session_1", msgs,
+            str(self.USER_ID), "session_1", msgs,
         )
         h2 = IdempotencyService.compute_content_hash(
-            str(self.ORG_ID), str(self.USER_ID), "session_1", msgs,
+            str(self.USER_ID), "session_1", msgs,
         )
         assert h1 == h2
 
@@ -234,7 +234,7 @@ class TestMemoryService:
             {"role": "assistant", "content": "Message 1"},
         ]
         h3 = IdempotencyService.compute_content_hash(
-            str(self.ORG_ID), str(self.USER_ID), "session_1", msgs_with_other_meta,
+            str(self.USER_ID), "session_1", msgs_with_other_meta,
         )
         assert h3 != h1  # different metadata → different hash
 
@@ -279,7 +279,7 @@ class TestMemoryService:
                 patch.object(service, "_get_org_pii_config", return_value={}),
             ):
                 result = await service.ingest(
-                    org_id=self.ORG_ID,
+                    user_id=self.ORG_ID,
                     project_id=self.PROJECT_ID,
                     created_by=self.USER_ID,
                     session_external_id="session-abc",
@@ -312,7 +312,7 @@ class TestMemoryService:
         with patch.object(service, "_enqueue_arq_tasks") as mock_enqueue, \
              patch.object(service, "_invalidate_context_cache") as mock_invalidate:
             result = await service.ingest(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 session_external_id="session-abc",
@@ -335,7 +335,7 @@ class TestMemoryService:
 
         with pytest.raises(ConflictError):
             await service.ingest(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 session_external_id="session-abc",
@@ -371,7 +371,7 @@ class TestMemoryService:
             patch.object(service, "_get_org_pii_config", return_value={"mode": "off"}),
         ):
             result = await service.ingest(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 session_external_id="session-abc",
@@ -414,7 +414,7 @@ class TestMemoryService:
             patch.object(service, "_get_org_pii_config", return_value={"mode": "off"}),
         ):
             result = await service.ingest(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 session_external_id="session-abc",
@@ -450,7 +450,7 @@ class TestMemoryService:
             patch("services.pii_service.PIIService", return_value=mock_pii),
         ):
             result = await service.ingest(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 session_external_id="session-abc",
@@ -477,7 +477,7 @@ class TestMemoryService:
              patch.object(service, "_invalidate_context_cache"), \
              patch.object(service, "_get_org_pii_config", return_value={}):
             result = await service.ingest(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 session_external_id="session-abc",
@@ -486,12 +486,12 @@ class TestMemoryService:
         assert result.status == "accepted"
         assert mock_webhook.emit.await_count == 2
         mock_webhook.emit.assert_any_await(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             event_type=EventType.INGEST_BATCH_COMPLETED,
             payload=ANY,
         )
         mock_webhook.emit.assert_any_await(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             event_type=EventType.MESSAGE_ADDED,
             payload=ANY,
         )
@@ -527,7 +527,7 @@ class TestMemoryService:
             patch.object(service, "_get_org_pii_config", return_value={}),
         ):
             result = await service.ingest(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 session_external_id="session-abc",
@@ -564,7 +564,7 @@ class TestMemoryService:
             patch.object(service, "_enqueue_blob_extraction_tasks"),
         ):
             result = await service.ingest(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 session_external_id="session-abc",
@@ -588,7 +588,7 @@ class TestMemoryService:
              patch.object(service, "_invalidate_context_cache"), \
              patch.object(service, "_get_org_pii_config", return_value={}):
             result = await service.ingest(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 session_external_id="session-abc",
@@ -630,7 +630,7 @@ class TestMemoryService:
             patch.object(service, "_enqueue_blob_extraction_tasks") as mock_extract,
         ):
             result = await service.ingest(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 session_external_id="session-abc",
@@ -785,7 +785,7 @@ class TestMemoryServiceInfrastructure:
         with patch("services.memory_service.get_arq", return_value=mock_pool):
             await service._enqueue_arq_tasks(
                 job_id="job-1",
-                org_id=str(self.ORG_ID),
+                user_id=str(self.ORG_ID),
                 project_id=str(self.PROJECT_ID),
                 session_id=str(uuid4()),
                 episodes=[
@@ -815,7 +815,7 @@ class TestMemoryServiceInfrastructure:
         ):
             await service._enqueue_arq_tasks(
                 job_id="job-2",
-                org_id=str(self.ORG_ID),
+                user_id=str(self.ORG_ID),
                 project_id=str(self.PROJECT_ID),
                 session_id=str(uuid4()),
                 episodes=[
@@ -845,7 +845,7 @@ class TestMemoryServiceInfrastructure:
         with patch("services.memory_service.get_arq", return_value=mock_pool):
             await service._enqueue_blob_extraction_tasks(
                 blob_records=[blob, blob],
-                org_id=str(self.ORG_ID),
+                user_id=str(self.ORG_ID),
                 project_id=str(self.PROJECT_ID),
             )
 
@@ -879,7 +879,7 @@ class TestMemoryServiceInfrastructure:
         with patch("services.memory_service.get_arq", return_value=mock_pool):
             await service._enqueue_blob_extraction_tasks(
                 blob_records=[blob],
-                org_id=str(self.ORG_ID),
+                user_id=str(self.ORG_ID),
                 project_id=str(self.PROJECT_ID),
             )
 
@@ -895,7 +895,7 @@ class TestMemoryServiceInfrastructure:
     async def test_process_blobs_empty(self, service: MemoryService) -> None:
         """_process_blobs returns early when no messages have blobs."""
         count, records = await service._process_blobs(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             session_id=uuid4(),
             created_by=self.USER_ID,
@@ -927,7 +927,7 @@ class TestMemoryServiceInfrastructure:
             patch.object(service, "_get_org_pii_config", return_value={}),
         ):
             result = await service.ingest(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 session_external_id="session-abc",
@@ -961,14 +961,14 @@ class TestMemoryServiceInfrastructure:
         service._session_repo.get_by_uuid.return_value = mock_session
 
         result = await service._resolve_session(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             session_external_id=str(session_id),
         )
 
         assert result == mock_session
         service._session_repo.get_by_uuid.assert_awaited_once_with(
-            org_id=self.ORG_ID, session_id=session_id, project_id=self.PROJECT_ID,
+            user_id=self.ORG_ID, session_id=session_id, project_id=self.PROJECT_ID,
         )
 
     @pytest.mark.asyncio
@@ -982,7 +982,7 @@ class TestMemoryServiceInfrastructure:
 
         with pytest.raises(NotFoundError, match="not found"):
             await service._resolve_session(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 session_external_id=str(session_id),
             )

@@ -1,16 +1,16 @@
 """Unit tests for ``InviteService`` — the admin invite-by-email flow.
 
-All external IO (user repository, org repository, auth service, email
-service, password hashing) is mocked at the service boundary.  The email
-template renderers are real (they read the checked-in ``prompts/email/*``
-files), so the happy path also pins the template context keys.
+All external IO (user repository, auth service, email service, password
+hashing) is mocked at the service boundary.  The email template renderers
+are real (they read the checked-in ``prompts/email/*`` files), so the
+happy path also pins the template context keys.
 
-Observed contract:
-- invite: duplicate email → loud 409; missing org/admin → 404; row created
+Observed contract (singleton platform org — no org scope):
+- invite: duplicate email → loud 409; missing admin → 404; row created
   with ``password_hash=None`` + token hash BEFORE the email is sent; send
   failure propagates ``ExternalServiceError`` (the session dependency rolls
   the row back — never commit-then-send); response never carries the token.
-- revoke: hard-deletes only pending rows in the org; 404 otherwise.
+- revoke: hard-deletes only pending rows; 404 otherwise.
 - info: generic 404 for unknown/expired/used; expired rows self-cleaned.
 - accept: atomic claim via ``claim_invite`` (no select-then-update), then
   ``issue_tokens`` from the RETURNING row; miss → generic 404 with
@@ -29,7 +29,6 @@ from uuid import UUID
 import pytest
 
 from core.exceptions import ConflictError, ExternalServiceError, NotFoundError
-from repositories.organization_repository import OrganizationRepository
 from repositories.user_repository import UserRepository
 from schemas.auth import InviteRequest, InviteResponse, TokenResponse
 from services.auth_service import AuthService
@@ -38,7 +37,6 @@ from services.invite_service import INVITE_EXPIRY_HOURS, InviteService
 
 pytestmark = pytest.mark.unit
 
-ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 ADMIN_ID = UUID("00000000-0000-0000-0000-000000000002")
 INVITEE_ID = UUID("00000000-0000-0000-0000-000000000003")
 OTHER_USER_ID = UUID("00000000-0000-0000-0000-000000000004")
@@ -58,13 +56,6 @@ def _invite_request(
     return InviteRequest(email=email, name=name)
 
 
-def _make_org(name: str = "Acme Corp") -> AsyncMock:
-    org = AsyncMock()
-    org.id = ORG_ID
-    org.name = name
-    return org
-
-
 def _make_admin(name: str = "Boss Admin") -> AsyncMock:
     admin = AsyncMock()
     admin.id = ADMIN_ID
@@ -76,14 +67,12 @@ def _make_admin(name: str = "Boss Admin") -> AsyncMock:
 def _make_pending_user(
     *,
     user_id: UUID = INVITEE_ID,
-    org_id: UUID = ORG_ID,
     email: str = "alice@acme.com",
     name: str = "Alice Johnson",
     created_at: datetime | None = None,
 ) -> AsyncMock:
     user = AsyncMock()
     user.id = user_id
-    user.organization_id = org_id
     user.email = email
     user.name = name
     user.created_at = created_at or datetime.now(UTC)
@@ -108,22 +97,16 @@ class TestInviteService:
         return AsyncMock(spec=EmailService)
 
     @pytest.fixture
-    def mock_org_repo(self) -> AsyncMock:
-        return AsyncMock(spec=OrganizationRepository)
-
-    @pytest.fixture
     def service(
         self,
         mock_repo: AsyncMock,
         mock_auth_service: AsyncMock,
         mock_email_service: AsyncMock,
-        mock_org_repo: AsyncMock,
     ) -> InviteService:
         return InviteService(
             repo=mock_repo,
             auth_service=mock_auth_service,
             email_service=mock_email_service,
-            org_repo=mock_org_repo,
         )
 
     # ── invite_user ─────────────────────────────────────────────────────────
@@ -134,11 +117,9 @@ class TestInviteService:
         service: InviteService,
         mock_repo: AsyncMock,
         mock_email_service: AsyncMock,
-        mock_org_repo: AsyncMock,
     ) -> None:
         """Valid invite → pending row created, email sent, no token in response."""
         mock_repo.find_user_by_email.return_value = None
-        mock_org_repo.get_by_id.return_value = _make_org()
         mock_repo.get_by_uuid.return_value = _make_admin()
         mock_repo.create.return_value = _make_pending_user()
 
@@ -147,7 +128,6 @@ class TestInviteService:
         ):
             result = await service.invite_user(
                 admin_user_id=ADMIN_ID,
-                org_id=ORG_ID,
                 payload=_invite_request(),
             )
 
@@ -162,7 +142,7 @@ class TestInviteService:
 
         # Row created with password_hash=None + SHA-256 of the raw token
         create_kwargs = mock_repo.create.call_args.kwargs
-        assert create_kwargs["organization_id"] == ORG_ID
+        assert create_kwargs["external_id"] == "alice@acme.com"
         assert create_kwargs["email"] == "alice@acme.com"
         assert create_kwargs["role"] == "member"
         assert create_kwargs["password_hash"] is None
@@ -177,7 +157,7 @@ class TestInviteService:
         mock_email_service.send_email.assert_awaited_once()
         send_kwargs = mock_email_service.send_email.call_args.kwargs
         assert send_kwargs["to"] == "alice@acme.com"
-        assert send_kwargs["subject"] == "You've been invited to Acme Corp"
+        assert send_kwargs["subject"] == "You've been invited to OpenZync"
         link = "http://localhost:3000/invite?token=raw-token"
         assert link in send_kwargs["html_body"]
         assert link in send_kwargs["text_body"]
@@ -188,7 +168,6 @@ class TestInviteService:
         service: InviteService,
         mock_repo: AsyncMock,
         mock_email_service: AsyncMock,
-        mock_org_repo: AsyncMock,
     ) -> None:
         """Existing account with this email → loud 409, nothing created/sent."""
         mock_repo.find_user_by_email.return_value = _make_pending_user()
@@ -196,30 +175,26 @@ class TestInviteService:
         with pytest.raises(ConflictError) as exc:
             await service.invite_user(
                 admin_user_id=ADMIN_ID,
-                org_id=ORG_ID,
                 payload=_invite_request(),
             )
 
         assert str(exc.value) == "An account with this email already exists."
         mock_repo.create.assert_not_awaited()
-        mock_org_repo.get_by_id.assert_not_awaited()
         mock_email_service.send_email.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_invite_missing_org_raises_not_found(
+    async def test_invite_missing_admin_raises_not_found(
         self,
         service: InviteService,
         mock_repo: AsyncMock,
-        mock_org_repo: AsyncMock,
     ) -> None:
-        """Org deleted since login → loud 404, no row created."""
+        """Admin deleted since login → loud 404, no row created."""
         mock_repo.find_user_by_email.return_value = None
-        mock_org_repo.get_by_id.return_value = None
+        mock_repo.get_by_uuid.return_value = None
 
         with pytest.raises(NotFoundError):
             await service.invite_user(
                 admin_user_id=ADMIN_ID,
-                org_id=ORG_ID,
                 payload=_invite_request(),
             )
 
@@ -231,7 +206,6 @@ class TestInviteService:
         service: InviteService,
         mock_repo: AsyncMock,
         mock_email_service: AsyncMock,
-        mock_org_repo: AsyncMock,
     ) -> None:
         """Send failure → ExternalServiceError propagates (502 via handler).
 
@@ -241,7 +215,6 @@ class TestInviteService:
         raise``).  The service must NOT swallow the error or commit.
         """
         mock_repo.find_user_by_email.return_value = None
-        mock_org_repo.get_by_id.return_value = _make_org()
         mock_repo.get_by_uuid.return_value = _make_admin()
         mock_repo.create.return_value = _make_pending_user()
         mock_email_service.send_email.side_effect = ExternalServiceError(
@@ -257,7 +230,6 @@ class TestInviteService:
         ):
             await service.invite_user(
                 admin_user_id=ADMIN_ID,
-                org_id=ORG_ID,
                 payload=_invite_request(),
             )
 
@@ -275,17 +247,14 @@ class TestInviteService:
         self,
         mock_repo: AsyncMock,
         mock_auth_service: AsyncMock,
-        mock_org_repo: AsyncMock,
     ) -> None:
         """No email service → loud ExternalServiceError, never a silent invite."""
         service = InviteService(
             repo=mock_repo,
             auth_service=mock_auth_service,
             email_service=None,
-            org_repo=mock_org_repo,
         )
         mock_repo.find_user_by_email.return_value = None
-        mock_org_repo.get_by_id.return_value = _make_org()
         mock_repo.get_by_uuid.return_value = _make_admin()
         mock_repo.create.return_value = _make_pending_user()
 
@@ -294,7 +263,6 @@ class TestInviteService:
         ):
             await service.invite_user(
                 admin_user_id=ADMIN_ID,
-                org_id=ORG_ID,
                 payload=_invite_request(),
             )
 
@@ -306,13 +274,12 @@ class TestInviteService:
         service: InviteService,
         mock_repo: AsyncMock,
     ) -> None:
-        """Revoke hard-deletes the pending row in the org scope."""
+        """Revoke hard-deletes the pending row."""
         mock_repo.hard_delete_pending_user.return_value = 1
 
-        await service.revoke_invite(org_id=ORG_ID, user_id=INVITEE_ID)
+        await service.revoke_invite(pending_user_id=INVITEE_ID)
 
         mock_repo.hard_delete_pending_user.assert_awaited_once_with(
-            organization_id=ORG_ID,
             user_id=INVITEE_ID,
         )
 
@@ -322,11 +289,11 @@ class TestInviteService:
         service: InviteService,
         mock_repo: AsyncMock,
     ) -> None:
-        """No pending invite in this org → 404 (rowcount 0)."""
+        """No pending invite for this user → 404 (rowcount 0)."""
         mock_repo.hard_delete_pending_user.return_value = 0
 
         with pytest.raises(NotFoundError) as exc:
-            await service.revoke_invite(org_id=ORG_ID, user_id=OTHER_USER_ID)
+            await service.revoke_invite(pending_user_id=OTHER_USER_ID)
 
         assert str(exc.value) == "No pending invite for this user."
 
@@ -337,15 +304,12 @@ class TestInviteService:
         self,
         service: InviteService,
         mock_repo: AsyncMock,
-        mock_org_repo: AsyncMock,
     ) -> None:
-        """Valid unexpired token → org name + invitee identity."""
+        """Valid unexpired token → invitee identity (no org name)."""
         mock_repo.find_user_by_invite_token.return_value = _make_pending_user()
-        mock_org_repo.get_by_id.return_value = _make_org()
 
         result = await service.get_invite_info("raw-token")
 
-        assert result.org_name == "Acme Corp"
         assert result.email == "alice@acme.com"
         assert result.name == "Alice Johnson"
 
@@ -380,7 +344,6 @@ class TestInviteService:
 
         assert str(exc.value) == "This invitation link is invalid or has expired."
         mock_repo.hard_delete_pending_user.assert_awaited_once_with(
-            organization_id=ORG_ID,
             user_id=INVITEE_ID,
         )
         # The delete must be persisted BEFORE the 404 raise — the request-
@@ -400,7 +363,6 @@ class TestInviteService:
         """Claim wins → password hashed, tokens issued from the RETURNING row."""
         claimed = SimpleNamespace(
             id=INVITEE_ID,
-            organization_id=ORG_ID,
             role="member",
         )
         mock_repo.claim_invite.return_value = claimed
@@ -429,7 +391,6 @@ class TestInviteService:
         # select-then-update, no stale identity-mapped row.
         mock_auth_service.issue_tokens.assert_awaited_once_with(
             user_id=INVITEE_ID,
-            organization_id=ORG_ID,
             role="member",
         )
 
@@ -443,7 +404,6 @@ class TestInviteService:
         """An admin invite's claimed row carries role='admin' → minted as admin."""
         mock_repo.claim_invite.return_value = SimpleNamespace(
             id=INVITEE_ID,
-            organization_id=ORG_ID,
             role="admin",
         )
 
@@ -456,7 +416,6 @@ class TestInviteService:
         assert result == FAKE_TOKEN_RESPONSE
         mock_auth_service.issue_tokens.assert_awaited_once_with(
             user_id=INVITEE_ID,
-            organization_id=ORG_ID,
             role="admin",
         )
 
@@ -514,7 +473,6 @@ class TestInviteService:
 
         assert str(exc.value) == "This invitation link is invalid or has expired."
         mock_repo.hard_delete_pending_user.assert_awaited_once_with(
-            organization_id=ORG_ID,
             user_id=INVITEE_ID,
         )
         # Same persist-before-raise contract as the info path.
@@ -530,7 +488,6 @@ class TestInviteService:
         # First accept wins.
         mock_repo.claim_invite.return_value = SimpleNamespace(
             id=INVITEE_ID,
-            organization_id=ORG_ID,
             role="member",
         )
         with patch("services.invite_service.hash_password", return_value="hashed"):

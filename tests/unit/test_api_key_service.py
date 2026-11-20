@@ -36,7 +36,7 @@ class TestApiKeyService:
         """Mock an ApiKey ORM instance."""
         key = MagicMock()
         key.id = kwargs.get("id", self.KEY_ID)
-        key.organization_id = kwargs.get("org_id", self.ORG_ID)
+        key.user_id = kwargs.get("user_id", self.ORG_ID)
         key.project_id = kwargs.get("project_id", self.PROJECT_ID)
         key.name = kwargs.get("name", "Test Key")
         key.prefix = kwargs.get("prefix", "oz_test_")
@@ -59,7 +59,7 @@ class TestApiKeyService:
 
         payload = CreateApiKeyRequest(name="CI/CD Key")
         api_key, raw_key = await service.create_project_key(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             payload=payload,
         )
@@ -73,7 +73,7 @@ class TestApiKeyService:
         # Verify repo was called with the right args
         mock_repo.create.assert_awaited_once()
         call_kwargs = mock_repo.create.call_args.kwargs
-        assert call_kwargs["organization_id"] == self.ORG_ID
+        assert call_kwargs["user_id"] == self.ORG_ID
         assert call_kwargs["project_id"] == self.PROJECT_ID
         assert call_kwargs["name"] == "CI/CD Key"
         assert call_kwargs["permissions"] == ["project:read", "project:write"]
@@ -87,7 +87,7 @@ class TestApiKeyService:
 
         payload = CreateApiKeyRequest(name="Default Scopes Key")
         api_key, raw_key = await service.create_project_key(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             payload=payload,
         )
@@ -104,7 +104,7 @@ class TestApiKeyService:
 
         payload = CreateApiKeyRequest(name="Hash Test")
         await service.create_project_key(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             payload=payload,
         )
@@ -127,7 +127,7 @@ class TestApiKeyService:
         mock_repo.list_by_org.return_value = [mock_key1, mock_key2]
 
         keys = await service.list_project_keys(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
         )
 
@@ -136,7 +136,7 @@ class TestApiKeyService:
         assert keys[1].name == "Key 2"
 
         mock_repo.list_by_org.assert_awaited_once_with(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             include_revoked=False,
             sort=None,
@@ -149,13 +149,13 @@ class TestApiKeyService:
         spec = SortSpec(sort_by="name", sort_dir="asc")
 
         await service.list_project_keys(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             sort=spec,
         )
 
         mock_repo.list_by_org.assert_awaited_once_with(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             include_revoked=False,
             sort=spec,
@@ -167,7 +167,7 @@ class TestApiKeyService:
         mock_repo.list_by_org.return_value = []
 
         keys = await service.list_project_keys(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
         )
 
@@ -181,7 +181,7 @@ class TestApiKeyService:
         mock_repo.revoke.return_value = revoked_key
 
         result = await service.revoke_project_key(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             key_id=self.KEY_ID,
         )
@@ -191,7 +191,7 @@ class TestApiKeyService:
         assert result.id == self.KEY_ID
 
         mock_repo.revoke.assert_awaited_once_with(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             key_id=self.KEY_ID,
         )
@@ -202,7 +202,7 @@ class TestApiKeyService:
         mock_repo.revoke.return_value = None
 
         result = await service.revoke_project_key(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             key_id=uuid4(),
         )
@@ -219,7 +219,7 @@ class TestApiKeyService:
         ]
 
         keys_a = await service.list_project_keys(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
         )
 
@@ -232,7 +232,7 @@ class TestApiKeyService:
         mock_repo.list_by_org.return_value = []
 
         keys_b = await service.list_project_keys(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=other_project,
         )
 
@@ -252,7 +252,7 @@ class TestApiKeyService:
         mock_repo.revoke.return_value = revoked_key
 
         result = await service.revoke_project_key(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             key_id=self.KEY_ID,
         )
@@ -273,7 +273,7 @@ class TestApiKeyService:
         mock_repo.revoke.return_value = revoked_key
 
         result = await service.revoke_project_key(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             key_id=self.KEY_ID,
         )
@@ -289,7 +289,7 @@ class TestApiKeyService:
         mock_repo.revoke.return_value = None
 
         result = await service.revoke_project_key(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             key_id=uuid4(),
         )

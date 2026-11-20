@@ -18,7 +18,7 @@ from dependencies.services import get_fact_service
 from routers.facts import router
 from schemas.facts import FactBatchResponse
 
-ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 PROJECT_ID = UUID("00000000-0000-0000-0000-000000000003")
 
@@ -36,7 +36,7 @@ def _stub_permission_gate() -> None:
     ``require_permission("project:write")`` — closures created at router
     import time that cannot be keyed in ``dependency_overrides``.  Patching
     ``dependencies.auth._check_permission`` (the shared decision function)
-    stubs the gate while keeping the ``require_org_id`` chain intact.  The
+    stubs the gate while keeping the ``require_user_id`` chain intact.  The
     real gate matrix is covered by ``test_admin_gate_matrix.py``.
     """
     with patch("dependencies.auth._check_permission", new=AsyncMock()):
@@ -49,7 +49,7 @@ def _create_app() -> FastAPI:
 
     @app.middleware("http")
     async def _mock_auth(request, call_next):
-        request.state.org_id = str(ORG_ID)
+        request.state.user_id = str(USER_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "jwt"
         response = await call_next(request)
@@ -108,7 +108,7 @@ async def test_ingest_facts_success() -> None:
     # Verify service was called with correct arguments
     MOCK_FACT_SERVICE.ingest_facts.assert_awaited_once()
     call_kwargs = MOCK_FACT_SERVICE.ingest_facts.await_args[1]
-    assert call_kwargs["org_id"] == ORG_ID
+    assert call_kwargs["user_id"] == USER_ID
     assert call_kwargs["project_id"] == PROJECT_ID
     assert call_kwargs["created_by"] == USER_ID
     assert call_kwargs["session_external_id"] == "test-session"

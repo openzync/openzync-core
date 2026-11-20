@@ -17,13 +17,11 @@ class TestRefreshTokenModel:
         """Minimal required fields produce a valid instance."""
         expires = datetime.now(UTC)
         token = RefreshToken(
-            user_id="admin-1",
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             token_hash="abc123hash",
             expires_at=expires,
         )
-        assert token.user_id == "admin-1"
-        assert token.organization_id is not None
+        assert token.user_id is not None
         assert token.token_hash == "abc123hash"
         assert token.expires_at == expires
 
@@ -38,8 +36,7 @@ class TestRefreshTokenModel:
     def test_nullable_rotated_by(self) -> None:
         """rotated_by defaults to None."""
         token = RefreshToken(
-            user_id="admin-1",
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             token_hash="hash",
             expires_at=datetime.now(UTC),
         )
@@ -61,8 +58,7 @@ class TestRefreshTokenModel:
         """repr includes id, is_revoked, expires_at."""
         expires = datetime.now(UTC)
         token = RefreshToken(
-            user_id="admin-1",
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             token_hash="hash",
             expires_at=expires,
             is_revoked=False,

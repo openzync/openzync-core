@@ -1,7 +1,7 @@
 """Unit tests for process_classification_output — ON CONFLICT DO NOTHING.
 
 ``process_classification_output`` inserts a classification row with an
-``ON CONFLICT (organization_id, episode_id) DO NOTHING`` clause, making the
+``ON CONFLICT (user_id, episode_id) DO NOTHING`` clause, making the
 operation idempotent: calling it twice with the same ``episode_id`` does not
 raise a unique-constraint violation.
 """
@@ -69,7 +69,7 @@ class TestProcessClassificationOutput:
         """The INSERT statement includes ON CONFLICT … DO NOTHING."""
         await process_classification_output(
             db=mock_db,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             episode_id=self.EPISODE_ID,
             project_id=self.PROJECT_ID,
             parsed=valid_output,
@@ -95,7 +95,7 @@ class TestProcessClassificationOutput:
         # First call
         await process_classification_output(
             db=mock_db,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             episode_id=self.EPISODE_ID,
             project_id=self.PROJECT_ID,
             parsed=valid_output,
@@ -105,7 +105,7 @@ class TestProcessClassificationOutput:
         # Second call — ON CONFLICT DO NOTHING makes this safe
         await process_classification_output(
             db=mock_db,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             episode_id=self.EPISODE_ID,
             project_id=self.PROJECT_ID,
             parsed=valid_output,
@@ -126,7 +126,7 @@ class TestProcessClassificationOutput:
         """A flush is triggered after the insert."""
         await process_classification_output(
             db=mock_db,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             episode_id=self.EPISODE_ID,
             project_id=self.PROJECT_ID,
             parsed=valid_output,

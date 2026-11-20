@@ -63,14 +63,13 @@ def _otp_key(email: str) -> str:
     return f"otp:v1:{_PURPOSE}:{email.lower()}:hash"
 
 
-async def _seed_user(app: Any, org_id: UUID, email: str) -> UUID:
+async def _seed_user(app: Any, user_id: UUID, email: str) -> UUID:
     """Create a verified dashboard user (test infra)."""
     from repositories.auth_repository import AuthRepository
 
     async with app.state.db_session_factory() as session:
         repo = AuthRepository(session)
         user = await repo.create_dashboard_user(
-            organization_id=org_id,
             email=email,
             role="member",
         )
@@ -103,7 +102,7 @@ class TestDeactivatedOtp:
     ) -> None:
         """Deactivated send → generic 200 + no stored OTP; verify → 401."""
         user_id = await _seed_user(
-            isolated_app, isolated_org_and_key["org_id"], _DEACTIVATED_EMAIL
+            isolated_app, isolated_org_and_key["user_id"], _DEACTIVATED_EMAIL
         )
         await _deactivate(isolated_app, user_id)
 
@@ -140,7 +139,7 @@ class TestDeactivatedOtp:
         redis_client: Any,
     ) -> None:
         """Active user with a valid OTP → 200 token pair (unaffected)."""
-        await _seed_user(isolated_app, isolated_org_and_key["org_id"], _ACTIVE_EMAIL)
+        await _seed_user(isolated_app, isolated_org_and_key["user_id"], _ACTIVE_EMAIL)
         await redis_client.setex(
             _otp_key(_ACTIVE_EMAIL),
             600,

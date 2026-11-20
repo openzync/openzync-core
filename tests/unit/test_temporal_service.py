@@ -45,7 +45,7 @@ def _make_fact(
     f = Fact(
         id=UUID(fact_id),
         project_id=UUID("00000000-0000-0000-0000-000000000020"),
-        organization_id=UUID("00000000-0000-0000-0000-000000000001"),
+        
         user_id=UUID("00000000-0000-0000-0000-000000000030"),
         content=f"{subject} {predicate} {obj}",
         subject=subject,

@@ -48,14 +48,14 @@ class TestUserSummaryService:
         # Rate limit allows
         service._redis.set.return_value = True  # nx=True -> key was set
 
-        response = await service.trigger_generation(org_id=ORG_ID, user_id=USER_ID)
+        response = await service.trigger_generation(user_id=USER_ID)
 
         assert response.user_id == USER_ID
         assert response.status == "processing"
         assert "started" in response.message
 
         service._redis.set.assert_awaited_once_with(
-            f"ratelimit:summary:{ORG_ID}:{USER_ID}",
+            f"ratelimit:summary:{USER_ID}",
             "1",
             nx=True,
             ex=300,
@@ -70,7 +70,7 @@ class TestUserSummaryService:
         service._redis.set.return_value = None
 
         with pytest.raises(RateLimitError, match="rate limited"):
-            await service.trigger_generation(org_id=ORG_ID, user_id=USER_ID)
+            await service.trigger_generation(user_id=USER_ID)
 
         mock_arq.enqueue.assert_not_awaited()
 
@@ -81,7 +81,7 @@ class TestUserSummaryService:
         )
 
         with pytest.raises(CacheUnavailableError, match="Redis is required"):
-            await service.trigger_generation(org_id=ORG_ID, user_id=USER_ID)
+            await service.trigger_generation(user_id=USER_ID)
 
         mock_arq.enqueue.assert_not_awaited()
 
@@ -97,14 +97,14 @@ class TestUserSummaryService:
             now,
         )
 
-        response = await service.get_summary(org_id=ORG_ID, user_id=USER_ID)
+        response = await service.get_summary(user_id=USER_ID)
 
         assert response is not None
         assert response.user_id == USER_ID
         assert response.summary == "User is an active contributor."
         assert response.updated_at == now
         mock_user_repo.get_summary.assert_awaited_once_with(
-            organization_id=ORG_ID,
+            
             user_id=USER_ID,
         )
 
@@ -114,11 +114,11 @@ class TestUserSummaryService:
 
         mock_user_repo.get_summary.return_value = (None, None)
 
-        response = await service.get_summary(org_id=ORG_ID, user_id=USER_ID)
+        response = await service.get_summary(user_id=USER_ID)
 
         assert response is None
         mock_user_repo.get_summary.assert_awaited_once_with(
-            organization_id=ORG_ID,
+            
             user_id=USER_ID,
         )
 
@@ -133,11 +133,11 @@ class TestUserSummaryService:
         mock_item.text = "Be concise."
         mock_ci_repo.get_by_scope.return_value = [mock_item]
 
-        result = await service.get_instructions(org_id=ORG_ID, user_id=USER_ID)
+        result = await service.get_instructions(user_id=USER_ID)
 
         assert result == [{"name": "tone", "text": "Be concise."}]
         mock_ci_repo.get_by_scope.assert_awaited_once_with(
-            org_id=ORG_ID,
+            user_id=USER_ID,
             scope="user_summary",
             target_id=USER_ID,
         )
@@ -148,7 +148,7 @@ class TestUserSummaryService:
 
         mock_ci_repo.get_by_scope.return_value = []
 
-        result = await service.get_instructions(org_id=ORG_ID, user_id=USER_ID)
+        result = await service.get_instructions(user_id=USER_ID)
 
         assert result == []
 
@@ -164,14 +164,14 @@ class TestUserSummaryService:
         mock_ci_repo.set_by_scope.return_value = [mock_item]
 
         result = await service.set_instructions(
-            org_id=ORG_ID,
+            
             user_id=USER_ID,
             instructions=[{"name": "tone", "text": "Formal tone."}],
         )
 
         assert result == [{"name": "tone", "text": "Formal tone."}]
         mock_ci_repo.set_by_scope.assert_awaited_once_with(
-            org_id=ORG_ID,
+            user_id=USER_ID,
             scope="user_summary",
             target_id=USER_ID,
             instructions=[{"name": "tone", "text": "Formal tone."}],
@@ -183,10 +183,10 @@ class TestUserSummaryService:
         """delete_instructions calls the repo method."""
         service, mock_arq, mock_user_repo, mock_ci_repo = self._make_service()
 
-        await service.delete_instructions(org_id=ORG_ID, user_id=USER_ID)
+        await service.delete_instructions(user_id=USER_ID)
 
         mock_ci_repo.delete_by_scope.assert_awaited_once_with(
-            org_id=ORG_ID,
+            user_id=USER_ID,
             scope="user_summary",
             target_id=USER_ID,
         )

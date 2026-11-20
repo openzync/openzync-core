@@ -1147,15 +1147,15 @@ class TestOrgConfig:
 
     def test_org_ns_static_method(self) -> None:
         """``_org_ns`` builds the correct namespace path."""
-        org_id = UUID("00000000-0000-0000-0000-000000000001")
-        ns = OpenBaoClient._org_ns(org_id, parent="system/")
-        assert ns == f"system/{ORG_NAMESPACE_PREFIX}{org_id}/"
+        user_id = UUID("00000000-0000-0000-0000-000000000001")
+        ns = OpenBaoClient._org_ns(user_id, parent="system/")
+        assert ns == f"system/{ORG_NAMESPACE_PREFIX}{user_id}/"
 
     def test_org_ns_no_parent(self) -> None:
         """``_org_ns`` with empty parent returns just the prefix + id."""
-        org_id = UUID("00000000-0000-0000-0000-000000000002")
-        ns = OpenBaoClient._org_ns(org_id, parent="")
-        assert ns == f"{ORG_NAMESPACE_PREFIX}{org_id}/"
+        user_id = UUID("00000000-0000-0000-0000-000000000002")
+        ns = OpenBaoClient._org_ns(user_id, parent="")
+        assert ns == f"{ORG_NAMESPACE_PREFIX}{user_id}/"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

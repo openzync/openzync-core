@@ -41,7 +41,7 @@ class TestAuditLogRepository:
         details: dict | None = None,
     ) -> None:
         await repo.create(
-            organization_id=ORG_ID,
+            user_id=ORG_ID,
             actor_id="user_1",
             actor_type=actor_type,
             action=action,
@@ -136,7 +136,7 @@ class TestAuditLogRepository:
             repo = AuditLogRepository(db)
             for i in range(5):
                 await repo.create(
-                    organization_id=ORG_ID,
+                    user_id=ORG_ID,
                     actor_id=f"user_{i}",
                     actor_type="user",
                     action=f"action.{i}",
@@ -246,16 +246,16 @@ class TestEpisodeBlobRepository:
         session_repo = SessionRepository(db)
         episode_repo = EpisodeRepository(db)
         user = await user_repo.create(
-            organization_id=ORG_ID, external_id="blob_test_user",
+            external_id="blob_test_user",
         )
         session = await session_repo.create(
-            organization_id=ORG_ID,
+            user_id=user.id,
             project_id=PROJECT_ID,
             created_by=user.id,
             external_id="blob_test_session",
         )
         episodes = await episode_repo.batch_create(
-            organization_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             session_id=session.id,
             user_id=user.id,
@@ -296,7 +296,7 @@ class TestEpisodeBlobRepository:
             repo = EpisodeBlobRepository(db)
 
             blobs = await repo.batch_create(
-                organization_id=ORG_ID,
+                user_id=chain["user_id"],
                 project_id=PROJECT_ID,
                 session_id=chain["session_id"],
                 episode_id=chain["episode_id"],
@@ -314,7 +314,7 @@ class TestEpisodeBlobRepository:
         async with AsyncSession(engine) as db:
             repo = EpisodeBlobRepository(db)
             result = await repo.batch_create(
-                organization_id=ORG_ID,
+                user_id=chain["user_id"],
                 project_id=PROJECT_ID,
                 session_id=UUID("00000000-0000-0000-0000-000000000099"),
                 episode_id=UUID("00000000-0000-0000-0000-000000000099"),
@@ -329,7 +329,7 @@ class TestEpisodeBlobRepository:
             chain = await self._seed_chain(db)
             repo = EpisodeBlobRepository(db)
             await repo.batch_create(
-                organization_id=ORG_ID,
+                user_id=chain["user_id"],
                 project_id=PROJECT_ID,
                 session_id=chain["session_id"],
                 episode_id=chain["episode_id"],
@@ -349,7 +349,7 @@ class TestEpisodeBlobRepository:
             chain = await self._seed_chain(db)
             repo = EpisodeBlobRepository(db)
             blobs = await repo.batch_create(
-                organization_id=ORG_ID,
+                user_id=chain["user_id"],
                 project_id=PROJECT_ID,
                 session_id=chain["session_id"],
                 episode_id=chain["episode_id"],
@@ -372,7 +372,7 @@ class TestEpisodeBlobRepository:
             chain = await self._seed_chain(db)
             repo = EpisodeBlobRepository(db)
             await repo.batch_create(
-                organization_id=ORG_ID,
+                user_id=chain["user_id"],
                 project_id=PROJECT_ID,
                 session_id=chain["session_id"],
                 episode_id=chain["episode_id"],
@@ -390,7 +390,7 @@ class TestEpisodeBlobRepository:
             chain = await self._seed_chain(db)
             repo = EpisodeBlobRepository(db)
             blobs = await repo.batch_create(
-                organization_id=ORG_ID,
+                user_id=chain["user_id"],
                 project_id=PROJECT_ID,
                 session_id=chain["session_id"],
                 episode_id=chain["episode_id"],
@@ -415,7 +415,7 @@ class TestEpisodeBlobRepository:
             chain = await self._seed_chain(db)
             repo = EpisodeBlobRepository(db)
             await repo.batch_create(
-                organization_id=ORG_ID,
+                user_id=chain["user_id"],
                 project_id=PROJECT_ID,
                 session_id=chain["session_id"],
                 episode_id=chain["episode_id"],
@@ -434,7 +434,7 @@ class TestEpisodeBlobRepository:
             chain = await self._seed_chain(db)
             repo = EpisodeBlobRepository(db)
             await repo.batch_create(
-                organization_id=ORG_ID,
+                user_id=chain["user_id"],
                 project_id=PROJECT_ID,
                 session_id=chain["session_id"],
                 episode_id=chain["episode_id"],
@@ -452,7 +452,7 @@ class TestEpisodeBlobRepository:
             chain = await self._seed_chain(db)
             repo = EpisodeBlobRepository(db)
             blobs = await repo.batch_create(
-                organization_id=ORG_ID,
+                user_id=chain["user_id"],
                 project_id=PROJECT_ID,
                 session_id=chain["session_id"],
                 episode_id=chain["episode_id"],
@@ -470,7 +470,7 @@ class TestEpisodeBlobRepository:
             chain = await self._seed_chain(db)
             repo = EpisodeBlobRepository(db)
             await repo.batch_create(
-                organization_id=ORG_ID,
+                user_id=chain["user_id"],
                 project_id=PROJECT_ID,
                 session_id=chain["session_id"],
                 episode_id=chain["episode_id"],
@@ -478,11 +478,11 @@ class TestEpisodeBlobRepository:
                 blobs=self._blob_dicts(chain["episode_id"]),
             )
 
-            assert await repo.get_orphaned_blobs(ORG_ID) == []
+            assert await repo.get_orphaned_blobs(chain["user_id"]) == []
 
             episode_repo = EpisodeRepository(db)
-            await episode_repo.soft_delete_by_project(PROJECT_ID, ORG_ID)
+            await episode_repo.soft_delete_by_project(PROJECT_ID, chain["user_id"])
 
-            orphans = await repo.get_orphaned_blobs(ORG_ID)
+            orphans = await repo.get_orphaned_blobs(chain["user_id"])
             assert len(orphans) == 2
 

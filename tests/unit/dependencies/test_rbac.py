@@ -1,7 +1,7 @@
 """Unit tests for org-level RBAC — role/permission lookup, caching, gating.
 
 Covers:
-- ``core.rbac.get_org_role`` / ``invalidate_role``: cache TTL, cache-aside
+- ``core.rbac.get_user_role`` / ``invalidate_role``: cache TTL, cache-aside
   read path, fail-closed on read failures, cache-write failure does NOT
   downgrade a DB-verified admin.
 - ``core.rbac.get_effective_permissions`` / ``invalidate_permissions``:
@@ -27,7 +27,7 @@ from core.rbac import (
     RBAC_ROLE_CACHE_PREFIX,
     RBAC_ROLE_CACHE_TTL,
     get_effective_permissions,
-    get_org_role,
+    get_user_role,
     invalidate_permissions,
     invalidate_role,
 )
@@ -51,12 +51,12 @@ def _jwt_request() -> MagicMock:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# core.rbac.get_org_role / invalidate_role
+# core.rbac.get_user_role / invalidate_role
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestGetOrgRole:
-    """get_org_role: cache-aside role lookup with fail-closed semantics."""
+    """get_user_role: cache-aside role lookup with fail-closed semantics."""
 
     @pytest.fixture
     def db_session(self) -> AsyncMock:
@@ -85,10 +85,10 @@ class TestGetOrgRole:
         redis.get.return_value = b"admin"
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
-            role = await get_org_role(redis, db_session, ORG_ID, USER_ID)
+            role = await get_user_role(redis, db_session, USER_ID)
 
         assert role == "admin"
-        redis.get.assert_awaited_once_with(f"{RBAC_ROLE_CACHE_PREFIX}{ORG_ID}:{USER_ID}")
+        redis.get.assert_awaited_once_with(f"{RBAC_ROLE_CACHE_PREFIX}{USER_ID}")
         mock_user_repo.get_by_uuid.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -101,12 +101,12 @@ class TestGetOrgRole:
         mock_user_repo.get_by_uuid.return_value = mock_user
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
-            role = await get_org_role(redis, db_session, ORG_ID, USER_ID)
+            role = await get_user_role(redis, db_session, USER_ID)
 
         assert role == "admin"
-        mock_user_repo.get_by_uuid.assert_awaited_once_with(ORG_ID, USER_ID)
+        mock_user_repo.get_by_uuid.assert_awaited_once_with(USER_ID)
         redis.setex.assert_awaited_once_with(
-            f"{RBAC_ROLE_CACHE_PREFIX}{ORG_ID}:{USER_ID}", RBAC_ROLE_CACHE_TTL, "admin"
+            f"{RBAC_ROLE_CACHE_PREFIX}{USER_ID}", RBAC_ROLE_CACHE_TTL, "admin"
         )
 
     @pytest.mark.asyncio
@@ -119,7 +119,7 @@ class TestGetOrgRole:
         mock_user_repo.get_by_uuid.return_value = None
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
-            role = await get_org_role(redis, db_session, ORG_ID, USER_ID)
+            role = await get_user_role(redis, db_session, USER_ID)
 
         assert role == "member"
         redis.setex.assert_not_awaited()
@@ -135,7 +135,7 @@ class TestGetOrgRole:
         mock_user_repo.get_by_uuid.return_value = mock_user
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
-            role = await get_org_role(redis, db_session, ORG_ID, USER_ID)
+            role = await get_user_role(redis, db_session, USER_ID)
 
         assert role == "member"
 
@@ -149,10 +149,10 @@ class TestGetOrgRole:
         mock_user_repo.get_by_uuid.return_value = mock_user
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
-            role = await get_org_role(redis, db_session, ORG_ID, USER_ID)
+            role = await get_user_role(redis, db_session, USER_ID)
 
         assert role == "admin"
-        mock_user_repo.get_by_uuid.assert_awaited_once_with(ORG_ID, USER_ID)
+        mock_user_repo.get_by_uuid.assert_awaited_once_with(USER_ID)
 
     @pytest.mark.asyncio
     async def test_db_failure_fails_closed_to_member(
@@ -164,7 +164,7 @@ class TestGetOrgRole:
         mock_user_repo.get_by_uuid.side_effect = RuntimeError("db down")
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
-            role = await get_org_role(redis, db_session, ORG_ID, USER_ID)
+            role = await get_user_role(redis, db_session, USER_ID)
 
         assert role == "member"
 
@@ -183,7 +183,7 @@ class TestGetOrgRole:
         mock_user_repo.get_by_uuid.return_value = mock_user
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
-            role = await get_org_role(redis, db_session, ORG_ID, USER_ID)
+            role = await get_user_role(redis, db_session, USER_ID)
 
         assert role == "admin"
 
@@ -196,9 +196,9 @@ class TestInvalidateRole:
         """invalidate_role deletes ``rbac:role:{user_id}``."""
         redis = AsyncMock()
 
-        await invalidate_role(redis, ORG_ID, USER_ID)
+        await invalidate_role(redis, USER_ID)
 
-        redis.delete.assert_awaited_once_with(f"{RBAC_ROLE_CACHE_PREFIX}{ORG_ID}:{USER_ID}")
+        redis.delete.assert_awaited_once_with(f"{RBAC_ROLE_CACHE_PREFIX}{USER_ID}")
 
     @pytest.mark.asyncio
     async def test_redis_failure_logged_not_raised(self) -> None:
@@ -211,7 +211,7 @@ class TestInvalidateRole:
         redis.delete.side_effect = ConnectionError("redis down")
 
         # Must not raise — the exception is caught and logged inside.
-        await invalidate_role(redis, ORG_ID, USER_ID)
+        await invalidate_role(redis, USER_ID)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -250,11 +250,13 @@ class TestGetEffectivePermissions:
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
             perms = await get_effective_permissions(
-                redis, db_session, ORG_ID, USER_ID
+                redis,
+                db_session,
+                USER_ID,
             )
 
         assert perms == frozenset({"project:read", "project:write"})
-        redis.get.assert_awaited_once_with(f"{RBAC_PERMS_CACHE_PREFIX}{ORG_ID}:{USER_ID}")
+        redis.get.assert_awaited_once_with(f"{RBAC_PERMS_CACHE_PREFIX}{USER_ID}")
         mock_user_repo.get_by_uuid.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -268,13 +270,15 @@ class TestGetEffectivePermissions:
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
             perms = await get_effective_permissions(
-                redis, db_session, ORG_ID, USER_ID
+                redis,
+                db_session,
+                USER_ID,
             )
 
         assert perms == frozenset({"project:read", "project:write"})
-        mock_user_repo.get_by_uuid.assert_awaited_once_with(ORG_ID, USER_ID)
+        mock_user_repo.get_by_uuid.assert_awaited_once_with(USER_ID)
         redis.setex.assert_awaited_once_with(
-            f"{RBAC_PERMS_CACHE_PREFIX}{ORG_ID}:{USER_ID}",
+            f"{RBAC_PERMS_CACHE_PREFIX}{USER_ID}",
             RBAC_PERMS_CACHE_TTL,
             '["project:read", "project:write"]',
         )
@@ -290,7 +294,9 @@ class TestGetEffectivePermissions:
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
             perms = await get_effective_permissions(
-                redis, db_session, ORG_ID, USER_ID
+                redis,
+                db_session,
+                USER_ID,
             )
 
         assert perms == frozenset()
@@ -308,7 +314,9 @@ class TestGetEffectivePermissions:
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
             perms = await get_effective_permissions(
-                redis, db_session, ORG_ID, USER_ID
+                redis,
+                db_session,
+                USER_ID,
             )
 
         assert perms == frozenset()
@@ -324,11 +332,13 @@ class TestGetEffectivePermissions:
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
             perms = await get_effective_permissions(
-                redis, db_session, ORG_ID, USER_ID
+                redis,
+                db_session,
+                USER_ID,
             )
 
         assert perms == frozenset({"project:read", "project:write"})
-        mock_user_repo.get_by_uuid.assert_awaited_once_with(ORG_ID, USER_ID)
+        mock_user_repo.get_by_uuid.assert_awaited_once_with(USER_ID)
 
     @pytest.mark.asyncio
     async def test_db_failure_fails_closed_to_empty(
@@ -341,7 +351,9 @@ class TestGetEffectivePermissions:
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
             perms = await get_effective_permissions(
-                redis, db_session, ORG_ID, USER_ID
+                redis,
+                db_session,
+                USER_ID,
             )
 
         assert perms == frozenset()
@@ -362,7 +374,9 @@ class TestGetEffectivePermissions:
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
             perms = await get_effective_permissions(
-                redis, db_session, ORG_ID, USER_ID
+                redis,
+                db_session,
+                USER_ID,
             )
 
         assert perms == frozenset({"project:read", "project:write"})
@@ -376,9 +390,9 @@ class TestInvalidatePermissions:
         """invalidate_permissions deletes ``rbac:perms:{user_id}``."""
         redis = AsyncMock()
 
-        await invalidate_permissions(redis, ORG_ID, USER_ID)
+        await invalidate_permissions(redis, USER_ID)
 
-        redis.delete.assert_awaited_once_with(f"{RBAC_PERMS_CACHE_PREFIX}{ORG_ID}:{USER_ID}")
+        redis.delete.assert_awaited_once_with(f"{RBAC_PERMS_CACHE_PREFIX}{USER_ID}")
 
     @pytest.mark.asyncio
     async def test_redis_failure_logged_not_raised(self) -> None:
@@ -387,7 +401,7 @@ class TestInvalidatePermissions:
         redis.delete.side_effect = ConnectionError("redis down")
 
         # Must not raise — the exception is caught and logged inside.
-        await invalidate_permissions(redis, ORG_ID, USER_ID)
+        await invalidate_permissions(redis, USER_ID)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -408,14 +422,14 @@ class TestRequirePermission:
     async def test_jwt_admin_role_passes_any_permission(
         self, db_session: AsyncMock,
     ) -> None:
-        """JWT user with the org admin role → wildcard, returns the org_id."""
+        """JWT user with the org admin role → wildcard, returns the user_id."""
         from dependencies.auth import require_permission
 
         checker = require_permission("configuration:write")
         request = _jwt_request()
         with (
             patch(
-                "dependencies.auth.get_org_role", new=AsyncMock(return_value="admin")
+                "dependencies.auth.get_user_role", new=AsyncMock(return_value="admin")
             ) as mock_get_role,
             patch(
                 "dependencies.auth.get_effective_permissions",
@@ -437,7 +451,7 @@ class TestRequirePermission:
         checker = require_permission("members:write")
         request = _jwt_request()
         with patch(
-            "dependencies.auth.get_org_role", new=AsyncMock(return_value="superadmin")
+            "dependencies.auth.get_user_role", new=AsyncMock(return_value="superadmin")
         ):
             result = await checker(request, ORG_ID_STR, db_session)
         assert result == ORG_ID_STR
@@ -453,7 +467,7 @@ class TestRequirePermission:
         request = _jwt_request()
         with (
             patch(
-                "dependencies.auth.get_org_role", new=AsyncMock(return_value="member")
+                "dependencies.auth.get_user_role", new=AsyncMock(return_value="member")
             ),
             patch(
                 "dependencies.auth.get_effective_permissions",
@@ -474,7 +488,7 @@ class TestRequirePermission:
         request = _jwt_request()
         with (
             patch(
-                "dependencies.auth.get_org_role", new=AsyncMock(return_value="member")
+                "dependencies.auth.get_user_role", new=AsyncMock(return_value="member")
             ),
             patch(
                 "dependencies.auth.get_effective_permissions",
@@ -553,7 +567,7 @@ class TestRequirePermission:
         request = _jwt_request()
         with (
             patch(
-                "dependencies.auth.get_org_role", new=AsyncMock(return_value="member")
+                "dependencies.auth.get_user_role", new=AsyncMock(return_value="member")
             ),
             patch(
                 "dependencies.auth.get_effective_permissions",

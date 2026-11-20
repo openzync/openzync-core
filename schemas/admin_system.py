@@ -75,7 +75,7 @@ class MemberRoleResponse(BaseModel):
     """Response body for the member-role change endpoint."""
 
     id: UUID = Field(..., description="The member's user UUID.")
-    user_id: UUID = Field(..., description="Owning organization UUID.")
+    user_id: UUID = Field(..., description="Owner user UUID (self-ID).")
     role: str = Field(..., description="The updated role.")
 
 

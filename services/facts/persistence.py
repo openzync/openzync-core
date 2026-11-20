@@ -273,7 +273,7 @@ class FactPersistenceMixin:
                 transition.old_fact_id, transition.new_fact_id
             )
             await self._fact_repo.record_invalidation_event(
-                user_id=ctx.user_id,
+                user_id=user_id,
                 project_id=project_id,
                 old_fact_id=transition.old_fact_id,
                 new_fact_id=transition.new_fact_id,

@@ -36,7 +36,7 @@ from services.graph_edge_sync_service import GraphEdgeSyncService
 
 pytestmark = pytest.mark.unit
 
-ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 PROJECT_ID = UUID("00000000-0000-0000-0000-000000000002")
 USER_ID = UUID("00000000-0000-0000-0000-000000000003")
 FACT_1_ID = UUID("00000000-0000-0000-0000-000000000100")
@@ -157,7 +157,7 @@ class TestSupersessionLogic:
         mock_repo.find_conflicting_active_for_update.return_value = [candidate]
 
         result = await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[_triple(content="Alice likes hiking")],
@@ -182,7 +182,7 @@ class TestSupersessionLogic:
         ]
 
         result = await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[_triple(content="Alice loves hiking")],
@@ -207,7 +207,7 @@ class TestSupersessionLogic:
         ]
 
         result = await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[_triple(subject="Alice!", content="Alice! likes hiking")],
@@ -227,7 +227,7 @@ class TestSupersessionLogic:
         ]
 
         await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[_triple()],
@@ -236,7 +236,7 @@ class TestSupersessionLogic:
 
         mock_repo.find_conflicting_active_for_update.assert_awaited_once()
         kwargs = mock_repo.find_conflicting_active_for_update.await_args.kwargs
-        assert kwargs["org_id"] == ORG_ID
+        assert kwargs["user_id"] == USER_ID
         assert kwargs["project_id"] == PROJECT_ID
         assert kwargs["now"] == NOW
 
@@ -250,7 +250,7 @@ class TestSupersessionLogic:
         ]
 
         result = await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[
@@ -280,7 +280,7 @@ class TestSupersessionLogic:
 
         with pytest.raises(RuntimeError, match="insert boom"):
             await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=USER_ID,
                 facts=[_triple(content="Alice loves hiking")],
@@ -326,7 +326,7 @@ class TestFormFlexibleSupersession:
         ]
 
         result = await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[
@@ -363,7 +363,7 @@ class TestFormFlexibleSupersession:
         ]
 
         result = await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[
@@ -411,7 +411,7 @@ class TestFormFlexibleSupersession:
         ]
 
         result = await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[
@@ -445,7 +445,7 @@ class TestFormFlexibleSupersession:
         ]
 
         result = await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[
@@ -486,7 +486,7 @@ class TestFormFlexibleSupersession:
         ]
 
         await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[
@@ -508,7 +508,7 @@ class TestFormFlexibleSupersession:
         )
 
         keys = mock_repo.lock_conflict_identities.await_args.args[0]
-        assert keys == [f"sup:{ORG_ID}:{PROJECT_ID}:robbie:wears:adidas"]
+        assert keys == [f"sup:{USER_ID}:{PROJECT_ID}:robbie:wears:adidas"]
 
     @pytest.mark.asyncio
     async def test_cross_form_punctuation_normalization(
@@ -527,7 +527,7 @@ class TestFormFlexibleSupersession:
         mock_repo.batch_create.return_value = [_fact(id=FACT_2_ID)]
 
         result = await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[
@@ -572,7 +572,7 @@ class TestAdvisoryLock:
         mock_repo.batch_create.return_value = [_fact(id=FACT_2_ID)]
 
         await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[
@@ -597,14 +597,14 @@ class TestAdvisoryLock:
         mock_repo.batch_create.return_value = [_fact(id=FACT_2_ID)]
 
         await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[_triple()],
             now=NOW,
         )
         (key,) = mock_repo.lock_conflict_identities.await_args.args[0]
-        assert key.startswith(f"sup:{ORG_ID}:{PROJECT_ID}:")
+        assert key.startswith(f"sup:{USER_ID}:{PROJECT_ID}:")
 
     @pytest.mark.asyncio
     async def test_lock_key_always_uses_name_form_not_entity_uuids(
@@ -629,7 +629,7 @@ class TestAdvisoryLock:
         ]
 
         await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[
@@ -646,7 +646,7 @@ class TestAdvisoryLock:
         keys = mock_repo.lock_conflict_identities.await_args.args[0]
         # normalize_identity_term strips punctuation — including the
         # underscore in "works_at" — so the key is the canonical name form.
-        assert keys == [f"sup:{ORG_ID}:{PROJECT_ID}:alice:worksat:acme"]
+        assert keys == [f"sup:{USER_ID}:{PROJECT_ID}:alice:worksat:acme"]
 
     @pytest.mark.asyncio
     async def test_in_batch_dedup_locks_identity_once(
@@ -656,7 +656,7 @@ class TestAdvisoryLock:
         mock_repo.batch_create.return_value = [_fact(id=FACT_2_ID)]
 
         await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[_triple(), _triple()],
@@ -670,7 +670,7 @@ class TestAdvisoryLock:
         self, service: FactInvalidationService, mock_repo: AsyncMock
     ) -> None:
         await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[],
@@ -702,7 +702,7 @@ class TestSupersededWebhook:
         )
 
         await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[_triple(content="Alice loves hiking")],
@@ -716,7 +716,7 @@ class TestSupersededWebhook:
 
         webhook.emit.assert_awaited_once()
         _, kwargs = webhook.emit.await_args
-        assert kwargs["organization_id"] == ORG_ID
+        assert kwargs["user_id"] == USER_ID
         assert kwargs["event_type"] == EventType.FACT_SUPERSEDED
         assert kwargs["payload"]["old_fact_id"] == str(FACT_1_ID)
         assert kwargs["payload"]["new_fact_id"] == str(FACT_2_ID)
@@ -729,7 +729,7 @@ class TestSupersededWebhook:
         mock_repo.batch_create.return_value = [_fact(id=FACT_2_ID)]
 
         result = await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[_triple()],
@@ -755,7 +755,7 @@ class TestSupersededWebhook:
             "services.fact_invalidation_service.facts_superseded_total"
         ) as mock_counter:
             await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=USER_ID,
                 facts=[_triple(content="Alice loves hiking")],
@@ -782,7 +782,7 @@ class TestSupersededWebhook:
             db=mock_db, fact_repo=mock_repo, webhook_service=webhook
         )
         await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[_triple(content="Alice loves hiking")],
@@ -810,7 +810,7 @@ class TestSupersededWebhook:
         service = FactInvalidationService(db=mock_db, fact_repo=mock_repo)
 
         await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[_triple(content="Alice loves hiking")],
@@ -853,7 +853,7 @@ class TestSupersededWebhook:
         ]
 
         result = await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[
@@ -942,7 +942,7 @@ class TestGraphEdgeSync:
         service = self._service_with_sync(mock_db, mock_repo, backend)
 
         await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[
@@ -976,7 +976,7 @@ class TestGraphEdgeSync:
         service = self._service_with_sync(mock_db, mock_repo, backend)
 
         await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[_triple(content="Alice loves hiking")],
@@ -1017,7 +1017,7 @@ class TestGraphEdgeSync:
         service = self._service_with_sync(mock_db, mock_repo, backend)
 
         result = await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[
@@ -1047,14 +1047,14 @@ class TestGraphEdgeSync:
             predicate="works_at",
         )
         service.notify_retraction(
-            org_id=ORG_ID, project_id=PROJECT_ID, old_fact=old_fact, at_time=NOW
+            user_id=USER_ID, project_id=PROJECT_ID, old_fact=old_fact, at_time=NOW
         )
         backend.expire_relationships_matching.assert_not_awaited()
 
         await _commit(service, mock_db)
 
         backend.expire_relationships_matching.assert_awaited_once_with(
-            org_id=ORG_ID,
+            user_id=USER_ID,
             project_id=PROJECT_ID,
             source_id=self.SRC_ENTITY,
             target_id=self.TGT_ENTITY,
@@ -1085,7 +1085,7 @@ class TestGraphEdgeSync:
         service = self._service_with_sync(mock_db, mock_repo, backend)
 
         await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[
@@ -1125,7 +1125,7 @@ class TestGraphEdgeSync:
         service = FactInvalidationService(db=mock_db, fact_repo=mock_repo)
 
         await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[
@@ -1164,7 +1164,7 @@ class TestApplyLLMInvalidations:
         """Trust boundary — an unresolved candidate ref is a loud error."""
         with pytest.raises(ValidationError, match="Unknown fact reference"):
             await service.apply_llm_invalidations(
-                org_id=ORG_ID,
+                user_id=USER_ID,
                 project_id=PROJECT_ID,
                 invalidations=[{"existing_fact_ref": "ghost"}],
                 ref_to_fact={},
@@ -1184,7 +1184,7 @@ class TestApplyLLMInvalidations:
         old = _fact(id=FACT_1_ID, valid_to=NOW)
 
         result = await service.apply_llm_invalidations(
-            org_id=ORG_ID,
+            user_id=USER_ID,
             project_id=PROJECT_ID,
             invalidations=[
                 {"existing_fact_ref": "f1", "reason": "contradiction"}
@@ -1209,7 +1209,7 @@ class TestApplyLLMInvalidations:
         old = _fact(id=FACT_1_ID, invalid_at=NOW)
 
         result = await service.apply_llm_invalidations(
-            org_id=ORG_ID,
+            user_id=USER_ID,
             project_id=PROJECT_ID,
             invalidations=[
                 {"existing_fact_ref": "f1", "reason": "contradiction"}
@@ -1241,7 +1241,7 @@ class TestApplyLLMInvalidations:
             ValidationError, match="Unknown successor fact reference"
         ):
             await service.apply_llm_invalidations(
-                org_id=ORG_ID,
+                user_id=USER_ID,
                 project_id=PROJECT_ID,
                 invalidations=[
                     {
@@ -1271,7 +1271,7 @@ class TestApplyLLMInvalidations:
         successor = _fact(id=FACT_2_ID, content="Alice loves hiking")
 
         result = await service.apply_llm_invalidations(
-            org_id=ORG_ID,
+            user_id=USER_ID,
             project_id=PROJECT_ID,
             invalidations=[
                 {
@@ -1292,7 +1292,7 @@ class TestApplyLLMInvalidations:
             FACT_1_ID, FACT_2_ID
         )
         mock_repo.record_invalidation_event.assert_awaited_once_with(
-            organization_id=ORG_ID,
+            user_id=USER_ID,
             project_id=PROJECT_ID,
             old_fact_id=FACT_1_ID,
             new_fact_id=FACT_2_ID,
@@ -1314,7 +1314,7 @@ class TestApplyLLMInvalidations:
         )
 
         result = await service.apply_llm_invalidations(
-            org_id=ORG_ID,
+            user_id=USER_ID,
             project_id=PROJECT_ID,
             invalidations=[
                 {"existing_fact_ref": "f1", "reason": "pure contradiction"}
@@ -1338,7 +1338,7 @@ class TestApplyLLMInvalidations:
 
         webhook.emit.assert_awaited_once()
         _, kwargs = webhook.emit.await_args
-        assert kwargs["organization_id"] == ORG_ID
+        assert kwargs["user_id"] == USER_ID
         assert kwargs["event_type"] == EventType.FACT_INVALIDATED
         assert kwargs["payload"]["old_fact_id"] == str(FACT_1_ID)
         assert kwargs["payload"]["new_fact_id"] is None
@@ -1354,7 +1354,7 @@ class TestApplyLLMInvalidations:
         old_2 = _fact(id=FACT_2_ID)
 
         await service.apply_llm_invalidations(
-            org_id=ORG_ID,
+            user_id=USER_ID,
             project_id=PROJECT_ID,
             invalidations=[
                 {"existing_fact_ref": "f1"},
@@ -1369,8 +1369,8 @@ class TestApplyLLMInvalidations:
         keys = mock_repo.lock_conflict_identities.await_args.args[0]
         assert keys == sorted(
             [
-                f"inv:{ORG_ID}:{PROJECT_ID}:{FACT_1_ID}",
-                f"inv:{ORG_ID}:{PROJECT_ID}:{FACT_2_ID}",
+                f"inv:{USER_ID}:{PROJECT_ID}:{FACT_1_ID}",
+                f"inv:{USER_ID}:{PROJECT_ID}:{FACT_2_ID}",
             ]
         )
 
@@ -1400,7 +1400,7 @@ class TestRetractionWebhook:
         )
 
         service.notify_retraction(
-            org_id=ORG_ID,
+            user_id=USER_ID,
             project_id=PROJECT_ID,
             old_fact=old_fact,
             at_time=NOW,
@@ -1413,7 +1413,7 @@ class TestRetractionWebhook:
 
         webhook.emit.assert_awaited_once()
         _, kwargs = webhook.emit.await_args
-        assert kwargs["organization_id"] == ORG_ID
+        assert kwargs["user_id"] == USER_ID
         assert kwargs["event_type"] == EventType.FACT_RETRACTED
         payload = kwargs["payload"]
         assert payload["old_fact_id"] == str(FACT_1_ID)
@@ -1425,7 +1425,7 @@ class TestRetractionWebhook:
             "predicate": "works_at",
             "object": "Acme",
         }
-        assert payload["org_id"] == str(ORG_ID)
+        assert payload["user_id"] == str(USER_ID)
         assert payload["project_id"] == str(PROJECT_ID)
         assert "reason" not in payload, (
             "the retraction webhook payload carries no reason"
@@ -1456,7 +1456,7 @@ class TestTombstoneWins:
         mock_repo.find_retracted_by_match_keys.return_value = [tombstone]
 
         result = await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[_triple(content="Alice likes hiking v2")],
@@ -1487,7 +1487,7 @@ class TestTombstoneWins:
         mock_repo.find_retracted_by_match_keys.return_value = [tombstone]
 
         result = await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[
@@ -1525,7 +1525,7 @@ class TestTombstoneWins:
         ]
 
         result = await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[_triple(content="Alice loves hiking")],
@@ -1558,7 +1558,7 @@ class TestTombstoneWins:
         mock_repo.find_retracted_by_match_keys.return_value = [tombstone]
 
         result = await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[
@@ -1607,7 +1607,7 @@ class TestTombstoneWins:
         ]
 
         result = await service.ingest_with_supersession(
-            org_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=USER_ID,
             facts=[_triple(content="Alice likes hiking v2")],
@@ -1641,7 +1641,7 @@ class TestRetractAcquiresSupLock:
         NAME-identity key, after the idempotency gate, before set_invalid_at.
         """
         fact = _fact()
-        fact.organization_id = ORG_ID
+        fact.user_id = USER_ID
         fact.project_id = PROJECT_ID
         mock_repo.get_by_id.return_value = fact
 
@@ -1652,18 +1652,18 @@ class TestRetractAcquiresSupLock:
         )
         result = await service.retract_fact(
             FACT_1_ID,
-            organization_id=ORG_ID,
+            user_id=USER_ID,
             project_id=PROJECT_ID,
             reason="user correction",
             at_time=NOW,
         )
 
         expected_key = FactInvalidationService._lock_key_for_identity(
-            ORG_ID,
+            USER_ID,
             PROJECT_ID,
             FactInvalidationService._name_identity_of_fact(fact),
         )
-        assert expected_key == f"sup:{ORG_ID}:{PROJECT_ID}:alice:likes:hiking"
+        assert expected_key == f"sup:{USER_ID}:{PROJECT_ID}:alice:likes:hiking"
         mock_repo.lock_conflict_identities.assert_awaited_once_with([expected_key])
         mock_repo.set_invalid_at.assert_awaited_once_with(FACT_1_ID, NOW)
         mock_repo.record_invalidation_event.assert_awaited_once()

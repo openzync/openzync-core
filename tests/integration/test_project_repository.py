@@ -5,7 +5,7 @@ Requires testcontainers PostgreSQL (provided by ``tests/integration/conftest.py`
 
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +26,6 @@ class TestProjectRepository:
         self, repo: UserRepository, ext_id: str = "project_test_user"
     ) -> UUID:
         user = await repo.create(
-            organization_id=self.ORG_ID,
             external_id=ext_id,
             name="Project Tester",
         )
@@ -42,7 +41,7 @@ class TestProjectRepository:
             user_id = await self._seed_user(user_repo)
 
             project = await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 name="Test Project",
                 created_by=user_id,
                 description="A test project",
@@ -64,7 +63,7 @@ class TestProjectRepository:
 
             meta = {"department": "engineering", "tier": "gold"}
             project = await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 name="Metadata Project",
                 created_by=user_id,
                 metadata_=meta,
@@ -80,12 +79,12 @@ class TestProjectRepository:
             repo = ProjectRepository(db)
             user_id = await self._seed_user(user_repo)
             project = await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 name="Find Me",
                 created_by=user_id,
             )
 
-            found = await repo.get_by_id(self.ORG_ID, project.id)
+            found = await repo.get_by_id(user_id, project.id)
             assert found is not None
             assert found.id == project.id
             assert found.name == "Find Me"
@@ -96,7 +95,7 @@ class TestProjectRepository:
             repo = ProjectRepository(db)
 
             found = await repo.get_by_id(
-                self.ORG_ID,
+                uuid4(),
                 UUID("00000000-0000-0000-0000-000000000099"),
             )
             assert found is None
@@ -108,13 +107,13 @@ class TestProjectRepository:
             repo = ProjectRepository(db)
             user_id = await self._seed_user(user_repo)
             project = await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 name="Archive Me",
                 created_by=user_id,
             )
-            await repo.archive(self.ORG_ID, project.id)
+            await repo.archive(user_id, project.id)
 
-            found = await repo.get_by_id(self.ORG_ID, project.id)
+            found = await repo.get_by_id(user_id, project.id)
             assert found is None
 
     # ── Get By Name ──────────────────────────────────────────────────────────
@@ -126,12 +125,12 @@ class TestProjectRepository:
             repo = ProjectRepository(db)
             user_id = await self._seed_user(user_repo)
             await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 name="Unique Name",
                 created_by=user_id,
             )
 
-            found = await repo.get_by_name(self.ORG_ID, "Unique Name")
+            found = await repo.get_by_name(user_id, "Unique Name")
             assert found is not None
             assert found.name == "Unique Name"
 
@@ -140,7 +139,7 @@ class TestProjectRepository:
         async with AsyncSession(engine) as db:
             repo = ProjectRepository(db)
 
-            found = await repo.get_by_name(self.ORG_ID, "Non-existent")
+            found = await repo.get_by_name(uuid4(), "Non-existent")
             assert found is None
 
     # ── List ─────────────────────────────────────────────────────────────────
@@ -153,12 +152,12 @@ class TestProjectRepository:
             user_id = await self._seed_user(user_repo)
 
             p1 = await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 name="Project A",
                 created_by=user_id,
             )
             p2 = await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 name="Project B",
                 created_by=user_id,
             )
@@ -167,7 +166,7 @@ class TestProjectRepository:
             await repo.add_member(project_id=p2.id, user_id=user_id, role="member")
 
             projects = await repo.list(
-                organization_id=self.ORG_ID,
+                
                 user_id=user_id,
             )
             assert len(projects) == 2
@@ -182,21 +181,21 @@ class TestProjectRepository:
             user_id = await self._seed_user(user_repo)
 
             p1 = await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 name="Active Project",
                 created_by=user_id,
             )
             p2 = await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 name="Archived Project",
                 created_by=user_id,
             )
             await repo.add_member(project_id=p1.id, user_id=user_id, role="owner")
             await repo.add_member(project_id=p2.id, user_id=user_id, role="owner")
-            await repo.archive(self.ORG_ID, p2.id)
+            await repo.archive(user_id, p2.id)
 
             projects = await repo.list(
-                organization_id=self.ORG_ID,
+                
                 user_id=user_id,
             )
             assert len(projects) == 1
@@ -211,7 +210,7 @@ class TestProjectRepository:
             other_user_id = await self._seed_user(user_repo, "other_user")
 
             p = await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=other_user_id,
                 name="Other's Project",
                 created_by=other_user_id,
             )
@@ -220,7 +219,7 @@ class TestProjectRepository:
             )
 
             projects = await repo.list(
-                organization_id=self.ORG_ID,
+                
                 user_id=user_id,
             )
             assert len(projects) == 0
@@ -234,13 +233,13 @@ class TestProjectRepository:
             repo = ProjectRepository(db)
             user_id = await self._seed_user(user_repo)
             project = await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 name="Original Name",
                 created_by=user_id,
             )
 
             updated = await repo.update(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 project_id=project.id,
                 name="Updated Name",
             )
@@ -254,14 +253,14 @@ class TestProjectRepository:
             repo = ProjectRepository(db)
             user_id = await self._seed_user(user_repo)
             project = await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 name="Desc Test",
                 created_by=user_id,
                 description="Original description",
             )
 
             updated = await repo.update(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 project_id=project.id,
                 description="Updated description",
             )
@@ -274,7 +273,7 @@ class TestProjectRepository:
             repo = ProjectRepository(db)
 
             result = await repo.update(
-                organization_id=self.ORG_ID,
+                user_id=uuid4(),
                 project_id=UUID("00000000-0000-0000-0000-000000000099"),
                 name="Ghost",
             )
@@ -289,12 +288,12 @@ class TestProjectRepository:
             repo = ProjectRepository(db)
             user_id = await self._seed_user(user_repo)
             project = await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 name="Archivable",
                 created_by=user_id,
             )
 
-            archived = await repo.archive(self.ORG_ID, project.id)
+            archived = await repo.archive(user_id, project.id)
             assert archived is not None
             assert archived.is_archived is True
 
@@ -304,7 +303,7 @@ class TestProjectRepository:
             repo = ProjectRepository(db)
 
             result = await repo.archive(
-                self.ORG_ID,
+                uuid4(),
                 UUID("00000000-0000-0000-0000-000000000099"),
             )
             assert result is None
@@ -318,7 +317,7 @@ class TestProjectRepository:
             repo = ProjectRepository(db)
             user_id = await self._seed_user(user_repo)
             project = await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 name="Member Test",
                 created_by=user_id,
             )
@@ -340,7 +339,7 @@ class TestProjectRepository:
             repo = ProjectRepository(db)
             user_id = await self._seed_user(user_repo)
             project = await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 name="Remove Test",
                 created_by=user_id,
             )
@@ -369,7 +368,7 @@ class TestProjectRepository:
             repo = ProjectRepository(db)
             user_id = await self._seed_user(user_repo)
             project = await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 name="Get Member",
                 created_by=user_id,
             )
@@ -399,7 +398,7 @@ class TestProjectRepository:
             repo = ProjectRepository(db)
             user_id = await self._seed_user(user_repo)
             project = await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 name="List Members",
                 created_by=user_id,
             )
@@ -418,7 +417,7 @@ class TestProjectRepository:
             repo = ProjectRepository(db)
             user_id = await self._seed_user(user_repo)
             project = await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 name="Role Test",
                 created_by=user_id,
             )
@@ -453,7 +452,7 @@ class TestProjectRepository:
             repo = ProjectRepository(db)
             user_id = await self._seed_user(user_repo)
             project = await repo.create(
-                organization_id=self.ORG_ID,
+                user_id=user_id,
                 name="Count Test",
                 created_by=user_id,
             )

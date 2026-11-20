@@ -16,13 +16,13 @@ class TestFactModel:
         """Minimal required fields produce a valid instance."""
         fact = Fact(
             project_id=uuid.uuid4(),
+            
             user_id=uuid.uuid4(),
-            organization_id=uuid.uuid4(),
             content="Alice likes hiking",
         )
         assert fact.project_id is not None
         assert fact.user_id is not None
-        assert fact.organization_id is not None
+        assert fact.user_id is not None
         assert fact.content == "Alice likes hiking"
 
     @pytest.mark.unit
@@ -37,8 +37,8 @@ class TestFactModel:
         """subject, predicate, object, entity FKs, temporal fields, embedding default to None."""
         fact = Fact(
             project_id=uuid.uuid4(),
+            
             user_id=uuid.uuid4(),
-            organization_id=uuid.uuid4(),
             content="test",
         )
         assert fact.subject is None
@@ -70,8 +70,8 @@ class TestFactModel:
         """repr includes subject, predicate, object."""
         fact = Fact(
             project_id=uuid.uuid4(),
+            
             user_id=uuid.uuid4(),
-            organization_id=uuid.uuid4(),
             content="test",
             subject="Alice",
             predicate="likes",

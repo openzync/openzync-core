@@ -34,7 +34,7 @@ class TestAuthRepository:
     def _mock_user(self, **overrides: object) -> MagicMock:
         user = MagicMock()
         user.id = overrides.get("id", self.USER_ID)
-        user.organization_id = overrides.get("organization_id", self.ORG_ID)
+        user.user_id = overrides.get("user_id", self.ORG_ID)
         user.email = overrides.get("email", "user@example.com")
         user.external_id = overrides.get("external_id", "user@example.com")
         user.name = overrides.get("name", "Test User")
@@ -51,7 +51,7 @@ class TestAuthRepository:
         token = MagicMock()
         token.id = overrides.get("id", self.TOKEN_ID)
         token.user_id = overrides.get("user_id", str(self.USER_ID))
-        token.organization_id = overrides.get("organization_id", self.ORG_ID)
+        token.user_id = overrides.get("user_id", self.ORG_ID)
         token.token_hash = overrides.get("token_hash", "abc123")
         token.expires_at = overrides.get(
             "expires_at", datetime.now(UTC) + timedelta(hours=1)
@@ -126,26 +126,6 @@ class TestAuthRepository:
 
         assert result is None
 
-    # ── create_organization ────────────────────────────────────────────────────
-
-    async def test_create_organization(
-        self, repo: AuthRepository, mock_db: AsyncMock
-    ) -> None:
-        """create_organization creates and returns an org."""
-        mock_org = MagicMock()
-        mock_org.id = uuid4()
-        mock_org.name = "Test Org"
-        mock_db.add.return_value = None
-        mock_db.flush.return_value = None
-        mock_db.refresh.return_value = None
-
-        result = await repo.create_organization(name="Test Org")
-
-        assert result is not None
-        mock_db.add.assert_called_once()
-        mock_db.flush.assert_awaited_once()
-        mock_db.refresh.assert_awaited_once()
-
     # ── create_dashboard_user ──────────────────────────────────────────────────
 
     async def test_create_dashboard_user(
@@ -157,7 +137,6 @@ class TestAuthRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.create_dashboard_user(
-            organization_id=self.ORG_ID,
             email="admin@example.com",
             password_hash="$2b$12$hash",
             name="Admin",
@@ -180,8 +159,8 @@ class TestAuthRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.create_refresh_token(
-            user_id=self.USER_ID,
-            organization_id=self.ORG_ID,
+            
+            user_id=self.ORG_ID,
             token_hash="abc123",
             expires_at=datetime.now(UTC) + timedelta(days=7),
         )

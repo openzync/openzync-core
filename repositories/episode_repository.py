@@ -97,10 +97,9 @@ class EpisodeRepository:
             seq = start_seq + i
 
             params[f"id_{i}"] = episode_id
-            params[f"org_id_{i}"] = user_id
+            params[f"user_id_{i}"] = user_id
             params[f"project_id_{i}"] = project_id
             params[f"session_id_{i}"] = session_id
-            params[f"user_id_{i}"] = user_id
             params[f"role_{i}"] = msg["role"]
             params[f"content_{i}"] = msg["content"]
             params[f"metadata_{i}"] = orjson.dumps(msg.get("metadata", {})).decode("utf-8")
@@ -108,7 +107,7 @@ class EpisodeRepository:
             params[f"seq_{i}"] = seq
 
             placeholders = (
-                f"(:id_{i}, :org_id_{i}, :project_id_{i}, :session_id_{i}, :user_id_{i}, "
+                f"(:id_{i}, :user_id_{i}, :project_id_{i}, :session_id_{i}, "
                 f":role_{i}, :content_{i}, :metadata_{i}, "
                 f":created_at_{i}, :seq_{i})"
             )
@@ -117,12 +116,12 @@ class EpisodeRepository:
         stmt = text(
             f"""
             INSERT INTO episodes (
-                id, user_id, project_id, session_id, user_id,
+                id, user_id, project_id, session_id,
                 role, content, metadata, created_at, sequence_number
             )
             VALUES {', '.join(values)}
             RETURNING
-                id, user_id, session_id, user_id,
+                id, user_id, project_id, session_id,
                 role, content, metadata, embedding, token_count,
                 sequence_number, enrichment_status, is_deleted,
                 created_at, updated_at

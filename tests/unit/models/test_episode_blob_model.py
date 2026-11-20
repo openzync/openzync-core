@@ -15,7 +15,7 @@ class TestEpisodeBlobModel:
     def test_required_fields(self) -> None:
         """Minimal required fields produce a valid instance."""
         blob = EpisodeBlob(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             project_id=uuid.uuid4(),
             session_id=uuid.uuid4(),
             episode_id=uuid.uuid4(),
@@ -26,7 +26,7 @@ class TestEpisodeBlobModel:
             file_size=1024,
             content_hash="a" * 64,
         )
-        assert blob.organization_id is not None
+        assert blob.user_id is not None
         assert blob.project_id is not None
         assert blob.session_id is not None
         assert blob.episode_id is not None
@@ -49,7 +49,7 @@ class TestEpisodeBlobModel:
     def test_nullable_fields(self) -> None:
         """width, height, extracted_text default to None."""
         blob = EpisodeBlob(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             project_id=uuid.uuid4(),
             session_id=uuid.uuid4(),
             episode_id=uuid.uuid4(),
@@ -81,7 +81,7 @@ class TestEpisodeBlobModel:
     def test_repr(self) -> None:
         """repr includes file_name, mime_type, episode_id."""
         blob = EpisodeBlob(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             project_id=uuid.uuid4(),
             session_id=uuid.uuid4(),
             episode_id=uuid.uuid4(),

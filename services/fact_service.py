@@ -142,7 +142,6 @@ class FactService:
         hash_dicts = [f.model_dump() for f in facts]
         claim = await self._idem.claim_content_hash(
             str(user_id),
-            str(created_by),
             session_external_id,
             hash_dicts,
             payload=job_id,
@@ -230,7 +229,7 @@ class FactService:
             )
         except Exception:
             await self._idem.release_content_hash(
-                str(user_id), str(created_by), session_external_id, hash_dicts
+                str(user_id), session_external_id, hash_dicts
             )
             raise
 
@@ -312,7 +311,7 @@ class FactService:
             at_time = datetime.now(UTC)
 
         fact = await self._fact_repo.get_by_id(
-
+            fact_id, user_id=user_id
         )
         # NotFoundError, not 403 — a cross-project fact must be
         # indistinguishable from a nonexistent one (no existence leak).
@@ -439,7 +438,7 @@ class FactService:
                 scoped organization and project.
         """
         fact = await self._fact_repo.get_by_id(
-
+            fact_id, user_id=user_id
         )
         if fact is None or fact.project_id != project_id:
             raise NotFoundError(
@@ -449,7 +448,7 @@ class FactService:
 
         events = await self._fact_repo.get_fact_history(
             fact_id,
-
+            user_id=user_id,
             limit=limit,
             offset=offset,
             sort=sort,

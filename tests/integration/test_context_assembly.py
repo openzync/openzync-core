@@ -107,7 +107,7 @@ def sample_search_results() -> dict[str, Any]:
 
 def _build_mocked_retriever(
     db: AsyncSession,
-    org_id_val: UUID,
+    user_id_val: UUID,
     sample: dict[str, Any],
     *,
     org_config: OrgConfigBase | None = None,
@@ -121,7 +121,7 @@ def _build_mocked_retriever(
 
     Args:
         db: A mock async session.
-        org_id_val: Organisation UUID (for tenant isolation).
+        user_id_val: Organisation UUID (for tenant isolation).
         sample: The controlled search results to return.
         org_config: Optional org-level configuration.
 
@@ -130,7 +130,7 @@ def _build_mocked_retriever(
     """
     retriever = HybridRetriever(
         db=db,
-        org_id=org_id_val,
+        user_id=user_id_val,
         redis=None,
         graph_backends=[],
         org_config=org_config,
@@ -172,7 +172,7 @@ def _build_context_service(
     )
     service = ContextService(
         db=mock_db,
-        org_id=ORG_ID,
+        user_id=ORG_ID,
         redis=redis,
         graph_backends=[],
         org_config=org_config,

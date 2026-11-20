@@ -21,7 +21,7 @@ from httpx import ASGITransport, AsyncClient
 from core.sorting import SortSpec
 from routers.admin_webhooks import router
 
-ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 ENDPOINT_ID = UUID("00000000-0000-0000-0000-000000000003")
 
@@ -34,7 +34,7 @@ def _stub_permission_gate() -> None:
     ``require_permission("configuration:write")`` — closures created at
     router import time that cannot be keyed in ``dependency_overrides``.
     Patching ``dependencies.auth._check_permission`` (the shared decision
-    function) stubs the gate while keeping the ``require_org_id`` chain
+    function) stubs the gate while keeping the ``require_user_id`` chain
     intact.  The real gate matrix is covered by ``test_admin_gate_matrix.py``.
     """
     with patch("dependencies.auth._check_permission", new=AsyncMock()):
@@ -50,18 +50,18 @@ def _build_app(mock_service: AsyncMock) -> FastAPI:
         return mock_service
 
     app.dependency_overrides = {}  # reset
-    from dependencies.auth import get_dashboard_user, require_org_id
+    from dependencies.auth import get_dashboard_user, require_user_id
     from dependencies.db import get_db
     from dependencies.services import get_webhook_service
 
     app.dependency_overrides[get_webhook_service] = _mock_webhook_service
     app.dependency_overrides[get_db] = lambda: AsyncMock()
-    app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+    app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
     app.dependency_overrides[get_dashboard_user] = lambda: str(USER_ID)
 
     @app.middleware("http")
     async def _mock_auth(request: Request, call_next):
-        request.state.org_id = str(ORG_ID)
+        request.state.user_id = str(USER_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "jwt"
         request.state.api_key_permissions = []
@@ -148,7 +148,7 @@ class TestListWebhooks:
         assert len(body["data"]) == 1
         assert body["data"][0]["name"] == "test-hook"
         mock_service.list_endpoints.assert_awaited_once_with(
-            ORG_ID, sort=SortSpec(None, "desc")
+            USER_ID, sort=SortSpec(None, "desc")
         )
 
 
@@ -173,7 +173,7 @@ class TestGetWebhook:
         assert response.status_code == 200
         body = response.json()
         assert body["data"]["id"] == str(ENDPOINT_ID)
-        mock_service.get_endpoint.assert_awaited_once_with(ENDPOINT_ID, ORG_ID)
+        mock_service.get_endpoint.assert_awaited_once_with(ENDPOINT_ID, USER_ID)
 
     async def test_returns_404_when_not_found(
         self, client: AsyncClient, mock_service: AsyncMock
@@ -305,7 +305,7 @@ class TestDeleteWebhook:
         mock_service.delete_endpoint.return_value = True
         response = await client.delete(f"/v1/admin/webhooks/{ENDPOINT_ID}")
         assert response.status_code == 204
-        mock_service.delete_endpoint.assert_awaited_once_with(ENDPOINT_ID, ORG_ID)
+        mock_service.delete_endpoint.assert_awaited_once_with(ENDPOINT_ID, USER_ID)
 
     async def test_returns_404_when_not_found(
         self, client: AsyncClient, mock_service: AsyncMock

@@ -95,7 +95,7 @@ class ApiKeyService:
             )
 
         api_key = await self._repo.create(
-
+            user_id=user_id,
             project_id=project_id,
             lookup_hash=lookup_hash,
             key_hash=key_hash,

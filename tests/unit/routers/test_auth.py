@@ -14,7 +14,12 @@ from httpx import ASGITransport, AsyncClient
 
 from core.rbac import ALL_PERMISSIONS
 from dependencies.auth import get_dashboard_user
-from dependencies.services import get_auth_service, get_auth_throttle
+from dependencies.db import get_db
+from dependencies.services import (
+    get_auth_service,
+    get_auth_throttle,
+    get_setup_service,
+)
 from routers.auth import router
 from schemas.auth import (
     ChangePasswordRequest,
@@ -38,7 +43,7 @@ def _create_app() -> tuple[FastAPI, dict[str, AsyncMock]]:
     # Auth middleware that sets request.state
     @app.middleware("http")
     async def _mock_auth(request, call_next):
-        request.state.org_id = str(ORG_ID)
+        request.state.user_id = str(ORG_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "jwt"
         request.state.api_key_permissions = ["admin", "admin:write"]
@@ -48,10 +53,13 @@ def _create_app() -> tuple[FastAPI, dict[str, AsyncMock]]:
     # Mock services
     mocks["auth_service"] = AsyncMock()
     mocks["auth_throttle"] = AsyncMock()
+    mocks["setup_service"] = AsyncMock()
 
     app.dependency_overrides[get_auth_service] = lambda: mocks["auth_service"]
     app.dependency_overrides[get_auth_throttle] = lambda: mocks["auth_throttle"]
     app.dependency_overrides[get_dashboard_user] = lambda: str(USER_ID)
+    app.dependency_overrides[get_db] = lambda: AsyncMock()
+    app.dependency_overrides[get_setup_service] = lambda: mocks["setup_service"]
 
     app.include_router(router)
     return app, mocks
@@ -76,7 +84,6 @@ async def test_signup_success() -> None:
             json={
                 "email": "admin@acme.com",
                 "password": "secure-p@ssword-123",
-                "organization_name": "Acme Corp",
             },
         )
 
@@ -114,7 +121,6 @@ async def test_signup_invalid_email_422() -> None:
             json={
                 "email": "not-an-email",
                 "password": "secure-p@ssword-123",
-                "organization_name": "Acme Corp",
             },
         )
 
@@ -133,14 +139,13 @@ async def test_signup_short_password_422() -> None:
             json={
                 "email": "admin@acme.com",
                 "password": "short",
-                "organization_name": "Acme Corp",
             },
         )
 
     assert resp.status_code == 422
 
 
-# ── Org-code join ────────────────────────────────────────────────────────────────
+# ── Join ────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -163,7 +168,6 @@ async def test_join_success() -> None:
             json={
                 "email": "alice@acme.com",
                 "password": "SecurePass1",
-                "org_code": "K7M2Q9X4",
             },
         )
 
@@ -177,10 +181,10 @@ async def test_join_success() -> None:
 
 @pytest.mark.asyncio
 async def test_join_invalid_org_code_422_problem_json() -> None:
-    """POST /v1/auth/join with an unknown org code → 422 problem+json.
+    """POST /v1/auth/join service ValidationError → 422 problem+json.
 
     Observed contract: ``{"type":".../validation_error","title":"Validation
-    Error","status":422,"detail":"Invalid organization code"}`` — NOT a 400.
+    Error","status":422,"detail":"..."}`` — NOT a 400.
     """
     from core.exceptions import ValidationError, register_exception_handlers
 
@@ -197,7 +201,6 @@ async def test_join_invalid_org_code_422_problem_json() -> None:
             json={
                 "email": "alice@acme.com",
                 "password": "SecurePass1",
-                "org_code": "K7M2Q9X4",
             },
         )
 
@@ -211,14 +214,14 @@ async def test_join_invalid_org_code_422_problem_json() -> None:
 
 @pytest.mark.asyncio
 async def test_join_missing_field_422() -> None:
-    """POST /v1/auth/join missing org_code → 422 Pydantic detail array."""
+    """POST /v1/auth/join missing password → 422 Pydantic detail array."""
     app, mocks = _create_app()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(
             "/v1/auth/join",
-            json={"email": "alice@acme.com", "password": "SecurePass1"},
+            json={"email": "alice@acme.com"},
         )
 
     assert resp.status_code == 422
@@ -245,7 +248,6 @@ async def test_join_throttled_429() -> None:
             json={
                 "email": "alice@acme.com",
                 "password": "SecurePass1",
-                "org_code": "K7M2Q9X4",
             },
         )
 
@@ -728,7 +730,7 @@ async def test_get_me_success() -> None:
         email="admin@acme.com",
         name="Admin User",
         role="admin",
-        organization_id=ORG_ID,
+        user_id=ORG_ID,
         is_email_verified=True,
         mfa_enabled=False,
         permissions=sorted(ALL_PERMISSIONS),
@@ -757,7 +759,7 @@ async def test_update_me_success() -> None:
         email="updated@acme.com",
         name="Updated User",
         role="admin",
-        organization_id=ORG_ID,
+        user_id=ORG_ID,
         is_email_verified=True,
         mfa_enabled=False,
         permissions=sorted(ALL_PERMISSIONS),
@@ -790,7 +792,7 @@ async def test_get_me_unauthorized() -> None:
 
     @app.middleware("http")
     async def _mock_auth(request, call_next):
-        request.state.org_id = str(ORG_ID)
+        request.state.user_id = str(ORG_ID)
         request.state.user_id = None  # No user ID — not a JWT session
         request.state.auth_type = "api_key"
         response = await call_next(request)
@@ -836,7 +838,6 @@ async def test_signup_pending_approval_201() -> None:
             json={
                 "email": "admin@acme.com",
                 "password": "secure-p@ssword-123",
-                "organization_name": "Acme Corp",
             },
         )
 
@@ -865,7 +866,6 @@ async def test_signup_reserved_system_name_422() -> None:
             json={
                 "email": "admin@acme.com",
                 "password": "secure-p@ssword-123",
-                "organization_name": "SYSTEM",
             },
         )
 
@@ -914,42 +914,27 @@ async def test_change_password_success_200() -> None:
 
 @pytest.mark.asyncio
 async def test_registration_status_200_flat_defaults() -> None:
-    """GET /v1/auth/registration-status → flat two-field body (defaults)."""
-    app, _ = _create_app()
-    from schemas.system_config import SystemConfigResponse
+    """GET /v1/auth/registration-status → flat registration_mode (open)."""
+    app, mocks = _create_app()
+    mocks["setup_service"].get_registration_mode.return_value = "open"
 
-    with patch("routers.auth.get_system_config") as mock_get:
-        mock_get.return_value = SystemConfigResponse()
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/v1/auth/registration-status")
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/v1/auth/registration-status")
 
     assert resp.status_code == 200
-    assert resp.json() == {
-        "org_creation_policy": "allow_all",
-        "approval_scope": "both",
-    }
+    assert resp.json() == {"registration_mode": "open"}
 
 
 @pytest.mark.asyncio
 async def test_registration_status_200_flat_approvals() -> None:
-    """Approvals policy → flat body mirrors the stored config."""
-    app, _ = _create_app()
-    from schemas.system_config import SystemConfigResponse
+    """Approval mode → flat body mirrors the stored mode."""
+    app, mocks = _create_app()
+    mocks["setup_service"].get_registration_mode.return_value = "approval"
 
-    with patch("routers.auth.get_system_config") as mock_get:
-        mock_get.return_value = SystemConfigResponse(
-            org_creation_policy="approvals",
-            approval_scope="in_app",
-        )
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/v1/auth/registration-status")
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/v1/auth/registration-status")
 
     assert resp.status_code == 200
-    assert resp.json() == {
-        "org_creation_policy": "approvals",
-        "approval_scope": "in_app",
-    }
+    assert resp.json() == {"registration_mode": "approval"}

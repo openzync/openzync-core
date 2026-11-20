@@ -62,13 +62,13 @@ class TestRelationshipValidToUpsert:
     ) -> tuple[UUID, UUID]:
         """Create/upsert two test entities and return (id_a, id_b)."""
         a = await backend.create_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJECT_ID,
             name="temporal_test_a",
             entity_type="test",
         )
         b = await backend.create_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJECT_ID,
             name="temporal_test_b",
             entity_type="test",
@@ -84,7 +84,7 @@ class TestRelationshipValidToUpsert:
     ) -> dict:
         """Create or upsert the canonical test relationship."""
         return await backend.create_relationship(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJECT_ID,
             source_id=src,
             target_id=tgt,
@@ -196,40 +196,37 @@ class TestFactTemporalExclusion:
 
         await db.execute(
             sa_text(
-                "INSERT INTO users (id, organization_id, external_id, name, role, is_active) "
-                "VALUES (:uid, :org_id, :eid, :name, 'member', true) "
+                "INSERT INTO users (id, external_id, name, role, is_active) "
+                "VALUES (:uid, :eid, :name, 'member', true) "
                 "ON CONFLICT (id) DO NOTHING"
             ),
             {
                 "uid": self._USER_ID,
-                "org_id": ORG_ID,
                 "eid": f"test-user-{self._USER_ID}",
                 "name": "Temporal Test User",
             },
         )
         await db.execute(
             sa_text(
-                "INSERT INTO sessions (id, organization_id, project_id, user_id, external_id, is_active) "
-                "VALUES (:sid, :org_id, :proj_id, :uid, 'test-session', true) "
+                "INSERT INTO sessions (id, user_id, project_id, external_id, is_active) "
+                "VALUES (:sid, :uid, :proj_id, 'test-session', true) "
                 "ON CONFLICT (id) DO NOTHING"
             ),
             {
                 "sid": self._SESSION_ID,
-                "org_id": ORG_ID,
                 "proj_id": PROJECT_ID,
                 "uid": self._USER_ID,
             },
         )
         await db.execute(
             sa_text(
-                "INSERT INTO episodes (id, organization_id, project_id, session_id, "
-                "user_id, role, content, token_count, sequence_number, enrichment_status) "
-                "VALUES (:eid, :org_id, :proj_id, :sid, :uid, 'user', 'test', 0, 1, 0) "
+                "INSERT INTO episodes (id, user_id, project_id, session_id, "
+                "role, content, token_count, sequence_number, enrichment_status) "
+                "VALUES (:eid, :uid, :proj_id, :sid, 'user', 'test', 0, 1, 0) "
                 "ON CONFLICT (id) DO NOTHING"
             ),
             {
                 "eid": self._EPISODE_ID,
-                "org_id": ORG_ID,
                 "proj_id": PROJECT_ID,
                 "sid": self._SESSION_ID,
                 "uid": self._USER_ID,
@@ -264,7 +261,7 @@ class TestFactTemporalExclusion:
                  "valid_to": datetime(2024, 6, 30, tzinfo=UTC)},
             ]
             created = await repo.batch_create(
-                organization_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=self._USER_ID,
                 facts=facts,
@@ -288,7 +285,7 @@ class TestFactTemporalExclusion:
             ]
             with pytest.raises(IntegrityError):
                 await repo.batch_create(
-                    organization_id=ORG_ID,
+                    
                     project_id=PROJECT_ID,
                     user_id=self._USER_ID,
                     facts=facts,
@@ -310,7 +307,7 @@ class TestFactTemporalExclusion:
                  "valid_to": datetime(2024, 12, 31, tzinfo=UTC)},
             ]
             created = await repo.batch_create(
-                organization_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=self._USER_ID,
                 facts=facts,
@@ -333,7 +330,7 @@ class TestFactTemporalExclusion:
                  "valid_to": datetime(2024, 12, 31, tzinfo=UTC)},
             ]
             created = await repo.batch_create(
-                organization_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=self._USER_ID,
                 facts=facts,
@@ -353,7 +350,7 @@ class TestFactTemporalExclusion:
                 "valid_to": datetime(2024, 12, 31, tzinfo=UTC),
             }
             [fact] = await repo.batch_create(
-                organization_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=self._USER_ID,
                 facts=[fact_dict],
@@ -370,7 +367,7 @@ class TestFactTemporalExclusion:
 
             # Insert same triple + range — should succeed since first is invalidated
             [second] = await repo.batch_create(
-                organization_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=self._USER_ID,
                 facts=[fact_dict],
@@ -390,7 +387,7 @@ class TestFactTemporalExclusion:
                 "valid_to": datetime(2024, 12, 31, tzinfo=UTC),
             }
             first = await repo.batch_create(
-                organization_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=self._USER_ID,
                 facts=[fact_dict],
@@ -398,7 +395,7 @@ class TestFactTemporalExclusion:
 
             # Overlapping second batch with on_conflict="skip"
             skipped = await repo.batch_create(
-                organization_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=self._USER_ID,
                 facts=[fact_dict,  # conflict
@@ -424,7 +421,7 @@ class TestFactTemporalExclusion:
                 "valid_to": datetime(2024, 12, 31, tzinfo=UTC),
             }
             await repo.batch_create(
-                organization_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=self._USER_ID,
                 facts=[fact_dict],
@@ -433,7 +430,7 @@ class TestFactTemporalExclusion:
             # Same triple, same range — default (on_conflict="error")
             with pytest.raises(IntegrityError):
                 await repo.batch_create(
-                    organization_id=ORG_ID,
+                    
                     project_id=PROJECT_ID,
                     user_id=self._USER_ID,
                     facts=[fact_dict],
@@ -446,7 +443,7 @@ class TestFactTemporalExclusion:
         async def _test(db, repo):
             # First fact: open-ended (valid_to=NULL means "still active")
             await repo.batch_create(
-                organization_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=self._USER_ID,
                 facts=[{
@@ -460,7 +457,7 @@ class TestFactTemporalExclusion:
             # Second fact: same triple, overlapping range — should raise
             with pytest.raises(IntegrityError):
                 await repo.batch_create(
-                    organization_id=ORG_ID,
+                    
                     project_id=PROJECT_ID,
                     user_id=self._USER_ID,
                     facts=[{
@@ -495,40 +492,38 @@ class TestTemporalQueries:
 
         await db.execute(
             sa_text(
-                "INSERT INTO users (id, organization_id, external_id, name, role, is_active) "
-                "VALUES (:uid, :org_id, :eid, :name, 'member', true) "
+                "INSERT INTO users (id, user_id, external_id, name, role, is_active) "
+                "VALUES (:uid, :user_id, :eid, :name, 'member', true) "
                 "ON CONFLICT (id) DO NOTHING"
             ),
             {
                 "uid": self._USER_ID,
-                "org_id": ORG_ID,
+                "user_id": ORG_ID,
                 "eid": f"test-user-{self._USER_ID}",
                 "name": "Temporal Query Test User",
             },
         )
         await db.execute(
             sa_text(
-                "INSERT INTO sessions (id, organization_id, project_id, user_id, external_id, is_active) "
-                "VALUES (:sid, :org_id, :proj_id, :uid, 'test-session', true) "
+                "INSERT INTO sessions (id, user_id, project_id, external_id, is_active) "
+                "VALUES (:sid, :uid, :proj_id, 'test-session', true) "
                 "ON CONFLICT (id) DO NOTHING"
             ),
             {
                 "sid": self._SESSION_ID,
-                "org_id": ORG_ID,
                 "proj_id": PROJECT_ID,
                 "uid": self._USER_ID,
             },
         )
         await db.execute(
             sa_text(
-                "INSERT INTO episodes (id, organization_id, project_id, session_id, "
-                "user_id, role, content, token_count, sequence_number, enrichment_status) "
-                "VALUES (:eid, :org_id, :proj_id, :sid, :uid, 'user', 'test', 0, 1, 0) "
+                "INSERT INTO episodes (id, user_id, project_id, session_id, "
+                "role, content, token_count, sequence_number, enrichment_status) "
+                "VALUES (:eid, :uid, :proj_id, :sid, 'user', 'test', 0, 1, 0) "
                 "ON CONFLICT (id) DO NOTHING"
             ),
             {
                 "eid": self._EPISODE_ID,
-                "org_id": ORG_ID,
                 "proj_id": PROJECT_ID,
                 "sid": self._SESSION_ID,
                 "uid": self._USER_ID,
@@ -548,7 +543,7 @@ class TestTemporalQueries:
         Fact D: invalidated (valid 2024-01-01 to 2024-06-30, invalid_at set)
         """
         created = await repo.batch_create(
-            organization_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             user_id=self._USER_ID,
             facts=[

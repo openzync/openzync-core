@@ -11,7 +11,7 @@ Covers the ADR-007 gates added to the collection-level endpoints:
 Same contract-test approach as ``test_admin_gate_matrix.py``: the REAL
 ``require_permission`` / ``require_permission_or_self`` chain is never
 overridden — only the infrastructure underneath it is mocked
-(``get_org_role``, ``get_effective_permissions``, Redis, DB, services).
+(``get_user_role``, ``get_effective_permissions``, Redis, DB, services).
 
 Contract asserted per endpoint:
 - member JWT without the permission  -> 403
@@ -35,7 +35,7 @@ from dependencies.db import get_db
 from schemas.projects import ProjectResponse
 from schemas.users import UserListResponse, UserResponseWithStats
 
-ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 MEMBER_USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 OTHER_USER_ID = UUID("00000000-0000-0000-0000-000000000003")
 
@@ -95,7 +95,7 @@ def _make_user_service() -> AsyncMock:
     service.get_user.return_value = UserResponseWithStats(
         id=OTHER_USER_ID,
         external_id="gate_test_user",
-        organization_id=ORG_ID,
+        user_id=USER_ID,
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
         updated_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
@@ -130,7 +130,7 @@ def _make_app(
 
     @app.middleware("http")
     async def _mock_auth(request: Request, call_next):
-        request.state.org_id = str(ORG_ID)
+        request.state.user_id = str(USER_ID)
         if auth_type == "jwt":
             request.state.user_id = str(MEMBER_USER_ID)
         else:
@@ -167,7 +167,7 @@ async def test_member_jwt_denied_403(
     app = _make_app()
     with (
         patch(
-            "dependencies.auth.get_org_role",
+            "dependencies.auth.get_user_role",
             new=AsyncMock(return_value="member"),
         ),
         patch(
@@ -199,7 +199,7 @@ async def test_member_jwt_granted_200(
     app = _make_app()
     with (
         patch(
-            "dependencies.auth.get_org_role",
+            "dependencies.auth.get_user_role",
             new=AsyncMock(return_value="member"),
         ),
         patch(
@@ -244,7 +244,7 @@ async def test_get_own_user_without_permission_200() -> None:
     app = _make_app()
     with (
         patch(
-            "dependencies.auth.get_org_role",
+            "dependencies.auth.get_user_role",
             new=AsyncMock(return_value="member"),
         ),
         patch(

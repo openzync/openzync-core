@@ -15,14 +15,14 @@ class TestEpisodeModel:
     def test_required_fields(self) -> None:
         """Minimal required fields produce a valid instance."""
         ep = Episode(
-            organization_id=uuid.uuid4(),
+            
             project_id=uuid.uuid4(),
             session_id=uuid.uuid4(),
             user_id=uuid.uuid4(),
             role="user",
             content="Hello!",
         )
-        assert ep.organization_id is not None
+        assert ep.user_id is not None
         assert ep.project_id is not None
         assert ep.session_id is not None
         assert ep.user_id is not None
@@ -41,7 +41,7 @@ class TestEpisodeModel:
     def test_nullable_embedding(self) -> None:
         """embedding defaults to None (populated after enrichment)."""
         ep = Episode(
-            organization_id=uuid.uuid4(),
+            
             project_id=uuid.uuid4(),
             session_id=uuid.uuid4(),
             user_id=uuid.uuid4(),
@@ -77,7 +77,7 @@ class TestEpisodeModel:
     def test_repr(self) -> None:
         """repr includes session_id, sequence_number, role."""
         ep = Episode(
-            organization_id=uuid.uuid4(),
+            
             project_id=uuid.uuid4(),
             session_id=uuid.uuid4(),
             user_id=uuid.uuid4(),

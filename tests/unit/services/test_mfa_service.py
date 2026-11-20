@@ -45,9 +45,13 @@ class TestMfaService:
         mock_repo = AsyncMock()
         mock_otp = MagicMock()
         mock_redis = AsyncMock()
+        settings_repo = AsyncMock()
+        settings_repo.get_registration_mode.return_value = "open"
         service = AuthService(
-            repo=mock_repo, otp_service=mock_otp, redis=mock_redis,
-            org_repo=AsyncMock(),
+            repo=mock_repo,
+            otp_service=mock_otp,
+            redis=mock_redis,
+            settings_repo=settings_repo,
         )
         return service, mock_repo, mock_otp, mock_redis
 
@@ -55,7 +59,7 @@ class TestMfaService:
         """Build a MagicMock that mimics the User ORM attributes the service touches."""
         user = MagicMock()
         user.id = kwargs.get("id", self.USER_ID)
-        user.organization_id = kwargs.get("org_id", self.ORG_ID)
+        user.user_id = kwargs.get("user_id", self.ORG_ID)
         user.email = kwargs.get("email", "a@b.com")
         user.password_hash = kwargs.get(
             "password_hash", "$2b$12$abcdefghijklmnopqrstuvwxyz1234567890abcd"
@@ -140,7 +144,6 @@ class TestMfaService:
         assert call_args[0][1] == 600  # _MFA_SESSION_TTL_SEC
         payload = json.loads(call_args[0][2])
         assert payload["user_id"] == str(self.USER_ID)
-        assert payload["org_id"] == str(self.ORG_ID)
         assert payload["role"] == "admin"
 
     # ── MFA verify — valid ─────────────────────────────────────────────────
@@ -153,7 +156,7 @@ class TestMfaService:
         # Redis returns valid session data (email-bound).
         session_data = {
             "user_id": str(self.USER_ID),
-            "org_id": str(self.ORG_ID),
+            "user_id": str(self.ORG_ID),
             "role": "admin",
             "email": "session-bound@example.com",
         }
@@ -193,8 +196,8 @@ class TestMfaService:
 
         # Tokens were issued with the correct identity
         service.issue_tokens.assert_awaited_once_with(
-            user_id=self.USER_ID,
-            organization_id=self.ORG_ID,
+            
+            user_id=self.ORG_ID,
             role="admin",
         )
 
@@ -230,7 +233,7 @@ class TestMfaService:
 
         session_data = {
             "user_id": str(self.USER_ID),
-            "org_id": str(self.ORG_ID),
+            "user_id": str(self.ORG_ID),
             "role": "admin",
             "email": "session-bound@example.com",
         }

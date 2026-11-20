@@ -23,7 +23,7 @@ class TestApiKeyArchivedProject:
     async def test_api_key_archived_project_404(self) -> None:
         """Org-scoped lookup misses archived rows → 404, same as JWT."""
         request = MagicMock()
-        request.state.org_id = str(ORG_A)
+        request.state.user_id = str(ORG_A)
         request.state.auth_type = "api_key"
         request.state.api_key_project_id = str(PROJECT_ID)
 

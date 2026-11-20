@@ -15,12 +15,12 @@ class TestCustomInstructionModel:
     def test_required_fields(self) -> None:
         """Minimal required fields produce a valid instance."""
         inst = CustomInstruction(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             scope="extraction",
             name="legal_domain",
             text="Focus on legal terminology.",
         )
-        assert inst.organization_id is not None
+        assert inst.user_id is not None
         assert inst.scope == "extraction"
         assert inst.name == "legal_domain"
         assert inst.text == "Focus on legal terminology."
@@ -29,7 +29,7 @@ class TestCustomInstructionModel:
     def test_nullable_target_id(self) -> None:
         """target_id defaults to None (org-level instruction)."""
         inst = CustomInstruction(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             scope="user_summary",
             name="user_prefs",
             text="User prefers concise responses.",
@@ -45,7 +45,7 @@ class TestCustomInstructionModel:
     def test_repr(self) -> None:
         """repr includes name, scope, and target info."""
         inst = CustomInstruction(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             scope="extraction",
             name="test",
             text="hello",

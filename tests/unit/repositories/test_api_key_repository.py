@@ -33,7 +33,7 @@ class TestApiKeyRepository:
     def _mock_key(self, **overrides: object) -> MagicMock:
         key = MagicMock()
         key.id = overrides.get("id", self.KEY_ID)
-        key.organization_id = overrides.get("organization_id", self.ORG_ID)
+        key.user_id = overrides.get("user_id", self.ORG_ID)
         key.project_id = overrides.get("project_id", self.PROJECT_ID)
         key.name = overrides.get("name", "Test Key")
         key.lookup_hash = overrides.get("lookup_hash", "abc123")
@@ -60,7 +60,7 @@ class TestApiKeyRepository:
         mock_result.scalars.return_value.all.return_value = keys
         mock_db.execute.return_value = mock_result
 
-        result = await repo.list_by_org(organization_id=self.ORG_ID)
+        result = await repo.list_by_org(user_id=self.ORG_ID)
 
         assert list(result) == keys
         mock_db.execute.assert_awaited_once()
@@ -75,7 +75,7 @@ class TestApiKeyRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.list_by_org(
-            organization_id=self.ORG_ID, include_revoked=True
+            user_id=self.ORG_ID, include_revoked=True
         )
 
         assert len(result) == 2
@@ -89,7 +89,7 @@ class TestApiKeyRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.list_by_org(
-            organization_id=self.ORG_ID, project_id=self.PROJECT_ID
+            user_id=self.ORG_ID, project_id=self.PROJECT_ID
         )
 
         assert result == []
@@ -103,7 +103,7 @@ class TestApiKeyRepository:
         mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
-        result = await repo.list_by_org(organization_id=self.ORG_ID)
+        result = await repo.list_by_org(user_id=self.ORG_ID)
 
         assert result == []
 
@@ -118,7 +118,7 @@ class TestApiKeyRepository:
         mock_result.scalar_one_or_none.return_value = key
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_id(organization_id=self.ORG_ID, key_id=self.KEY_ID)
+        result = await repo.get_by_id(user_id=self.ORG_ID, key_id=self.KEY_ID)
 
         assert result == key
 
@@ -130,7 +130,7 @@ class TestApiKeyRepository:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_id(organization_id=self.ORG_ID, key_id=self.KEY_ID)
+        result = await repo.get_by_id(user_id=self.ORG_ID, key_id=self.KEY_ID)
 
         assert result is None
 
@@ -143,7 +143,7 @@ class TestApiKeyRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_id(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             key_id=self.KEY_ID,
             project_id=self.PROJECT_ID,
         )
@@ -169,7 +169,7 @@ class TestApiKeyRepository:
         mock_db.refresh.side_effect = _side_effect
 
         result = await repo.create(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             lookup_hash="abc123",
             key_hash="def456",
             salt="salt123",
@@ -194,7 +194,7 @@ class TestApiKeyRepository:
         mock_db.refresh.return_value = None
 
         await repo.create(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             lookup_hash="abc",
             key_hash="def",
             salt="salt",
@@ -216,7 +216,7 @@ class TestApiKeyRepository:
         mock_result.scalar_one_or_none.return_value = key
         mock_db.execute.return_value = mock_result
 
-        result = await repo.revoke(organization_id=self.ORG_ID, key_id=self.KEY_ID)
+        result = await repo.revoke(user_id=self.ORG_ID, key_id=self.KEY_ID)
 
         assert result is not None
         assert result.is_revoked is True
@@ -231,7 +231,7 @@ class TestApiKeyRepository:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        result = await repo.revoke(organization_id=self.ORG_ID, key_id=self.KEY_ID)
+        result = await repo.revoke(user_id=self.ORG_ID, key_id=self.KEY_ID)
 
         assert result is None
         mock_db.flush.assert_not_called()
@@ -245,7 +245,7 @@ class TestApiKeyRepository:
         mock_db.execute.return_value = mock_result
 
         await repo.revoke(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             key_id=self.KEY_ID,
             project_id=self.PROJECT_ID,
         )

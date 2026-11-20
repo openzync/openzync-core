@@ -28,7 +28,7 @@ Scenarios covered (architect's 14 adapted to the observed contract):
        (now) queries.
     13. Supersession never touches the source episode's enrichment bit
         (no reconcile_enrichment ping-pong).
-    14. The conflict scan respects ``organization_id`` — same SPO in
+    14. The conflict scan respects ``user_id`` — same SPO in
         another org does not supersede.
     Worker path: ``batch_create_or_skip`` supersedes correctly at real
        now.
@@ -46,7 +46,6 @@ import pytest
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.org_codes import generate_org_code
 from repositories.fact_repository import FactRepository
 from services.cache_service import CacheService
 from services.fact_invalidation_service import FactInvalidationService
@@ -69,17 +68,16 @@ def _new_uuid() -> UUID:
     return uuid4()
 
 
-async def _seed_user(db: AsyncSession, user_id: UUID, org_id: UUID = ORG_ID) -> None:
+async def _seed_user(db: AsyncSession, user_id: UUID) -> None:
     await db.execute(
         sa_text(
-            "INSERT INTO users (id, organization_id, external_id, name, "
+            "INSERT INTO users (id, external_id, name, "
             "role, is_active) "
-            "VALUES (:uid, :org_id, :eid, :name, 'member', true) "
+            "VALUES (:uid, :eid, :name, 'member', true) "
             "ON CONFLICT (id) DO NOTHING"
         ),
         {
             "uid": user_id,
-            "org_id": org_id,
             "eid": f"ss-user-{user_id}",
             "name": "Supersession Test User",
         },
@@ -93,19 +91,19 @@ async def _seed_org(db: AsyncSession, org_id: UUID) -> None:
             "VALUES (:oid, :name, :code) "
             "ON CONFLICT (id) DO NOTHING"
         ),
-        {"oid": org_id, "name": f"org-{org_id}", "code": generate_org_code()},
+        {"oid": org_id, "name": f"org-{org_id}", "code": uuid4().hex[:8].upper()},
     )
 
 
 async def _seed_project(
-    db: AsyncSession, project_id: UUID, org_id: UUID = ORG_ID
+    db: AsyncSession, project_id: UUID, user_id: UUID
 ) -> None:
     await db.execute(
         sa_text(
-            "INSERT INTO projects (id, organization_id, name) "
-            "VALUES (:pid, :oid, :name) ON CONFLICT (id) DO NOTHING"
+            "INSERT INTO projects (id, user_id, name) "
+            "VALUES (:pid, :uid, :name) ON CONFLICT (id) DO NOTHING"
         ),
-        {"pid": project_id, "oid": org_id, "name": f"proj-{project_id}"},
+        {"pid": project_id, "uid": user_id, "name": f"proj-{project_id}"},
     )
 
 
@@ -114,19 +112,18 @@ async def _seed_episode(
     episode_id: UUID,
     project_id: UUID,
     user_id: UUID,
-    org_id: UUID = ORG_ID,
 ) -> None:
+    await _seed_project(db, project_id, user_id)
     session_id = uuid4()
     await db.execute(
         sa_text(
-            "INSERT INTO sessions (id, organization_id, project_id, user_id, "
+            "INSERT INTO sessions (id, user_id, project_id, "
             "external_id, is_active) "
-            "VALUES (:sid, :org_id, :proj_id, :uid, :eid, true) "
+            "VALUES (:sid, :uid, :proj_id, :eid, true) "
             "ON CONFLICT (id) DO NOTHING"
         ),
         {
             "sid": session_id,
-            "org_id": org_id,
             "proj_id": project_id,
             "uid": user_id,
             "eid": f"ss-session-{episode_id}",
@@ -134,14 +131,13 @@ async def _seed_episode(
     )
     await db.execute(
         sa_text(
-            "INSERT INTO episodes (id, organization_id, project_id, session_id, "
-            "user_id, role, content, token_count, sequence_number, enrichment_status) "
-            "VALUES (:eid, :org_id, :proj_id, :sid, :uid, 'user', 'test', 0, 1, 0) "
+            "INSERT INTO episodes (id, user_id, project_id, session_id, "
+            "role, content, token_count, sequence_number, enrichment_status) "
+            "VALUES (:eid, :uid, :proj_id, :sid, 'user', 'test', 0, 1, 0) "
             "ON CONFLICT (id) DO NOTHING"
         ),
         {
             "eid": episode_id,
-            "org_id": org_id,
             "proj_id": project_id,
             "sid": session_id,
             "uid": user_id,
@@ -170,7 +166,6 @@ async def _ingest(
     facts: list[dict[str, Any]],
     user_id: UUID,
     project_id: UUID = PROJECT_ID,
-    org_id: UUID = ORG_ID,
     source_episode_id: UUID | None = None,
     insert_mode: str = "batch_create",
     now: datetime | None = None,
@@ -181,7 +176,6 @@ async def _ingest(
         repo = FactRepository(db)
         service = FactInvalidationService(db=db, fact_repo=repo)
         result = await service.ingest_with_supersession(
-            org_id=org_id,
             project_id=project_id,
             user_id=user_id,
             facts=facts,
@@ -196,13 +190,16 @@ async def _ingest(
 
 
 async def _facts_at(
-    engine, timestamp: datetime, project_id: UUID = PROJECT_ID, org_id: UUID = ORG_ID
+    engine,
+    timestamp: datetime,
+    project_id: UUID = PROJECT_ID,
+    user_id: UUID | None = None,
 ) -> list[Any]:
     db = AsyncSession(engine, expire_on_commit=False)
     try:
         repo = FactRepository(db)
         return await repo.get_facts_at_time(
-            project_id, timestamp, organization_id=org_id, limit=200
+            project_id, timestamp, user_id=user_id, limit=200
         )
     finally:
         await db.close()
@@ -496,7 +493,6 @@ class TestConcurrentSupersession:
             async with AsyncSession(engine, expire_on_commit=False) as db:
                 service = FactInvalidationService(db=db, fact_repo=FactRepository(db))
                 result = await service.ingest_with_supersession(
-                    org_id=ORG_ID,
                     project_id=PROJECT_ID,
                     user_id=user_id,
                     facts=[
@@ -545,7 +541,6 @@ class TestConcurrentSupersession:
             async with AsyncSession(engine, expire_on_commit=False) as db:
                 service = FactInvalidationService(db=db, fact_repo=FactRepository(db))
                 result = await service.ingest_with_supersession(
-                    org_id=ORG_ID,
                     project_id=PROJECT_ID,
                     user_id=user_id,
                     facts=[
@@ -603,7 +598,6 @@ class TestRollbackOnInsertFailure:
         service = FactInvalidationService(db=db, fact_repo=repo)
         with pytest.raises(RuntimeError, match="simulated insert failure"):
             await service.ingest_with_supersession(
-                org_id=ORG_ID,
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[_triple(content="Alice loves hiking")],
@@ -748,7 +742,7 @@ class TestSearchExcludesSuperseded:
 
         db = AsyncSession(engine, expire_on_commit=False)
         try:
-            retriever = HybridRetriever(db=db, org_id=ORG_ID, graph_backends=[])
+            retriever = HybridRetriever(db=db, user_id=user_id, graph_backends=[])
             retriever._embed_query = AsyncMock(return_value=vec)
 
             # Token present in both facts; only the current one returns.
@@ -836,21 +830,19 @@ class TestEnrichmentBitUntouched:
 
 
 class TestOrgScoping:
-    """Scenario 14 — conflict scan respects organization_id."""
+    """Scenario 14 — conflict scan respects user_id scope."""
 
-    async def test_same_spo_other_org_does_not_supersede(
+    async def test_same_spo_other_user_does_not_supersede(
         self, engine, db_session
     ) -> None:
-        org_a, org_b = ORG_ID, _new_uuid()
         project_a, project_b = PROJECT_ID, _new_uuid()
         user_a, user_b = _new_uuid(), _new_uuid()
 
         async with AsyncSession(engine) as db:
-            await _seed_org(db, org_b)
-            await _seed_user(db, user_a, org_id=org_a)
-            await _seed_user(db, user_b, org_id=org_b)
-            await _seed_project(db, project_a, org_id=org_a)
-            await _seed_project(db, project_b, org_id=org_b)
+            await _seed_user(db, user_a)
+            await _seed_user(db, user_b)
+            await _seed_project(db, project_a, user_a)
+            await _seed_project(db, project_b, user_b)
             await db.commit()
 
         await _ingest(
@@ -865,7 +857,6 @@ class TestOrgScoping:
             ],
             user_id=user_a,
             project_id=project_a,
-            org_id=org_a,
             now=T0,
         )
         r_b = await _ingest(
@@ -880,21 +871,20 @@ class TestOrgScoping:
             ],
             user_id=user_b,
             project_id=project_b,
-            org_id=org_b,
             now=T1,
         )
         assert r_b.superseded_count == 0, (
-            "Same SPO in a different org must not supersede org A's fact"
+            "Same SPO for a different user must not supersede user A's fact"
         )
 
         a_rows = await _facts_at(
-            engine, T1 + timedelta(minutes=1), project_id=project_a, org_id=org_a
+            engine, T1 + timedelta(minutes=1), project_id=project_a, user_id=user_a
         )
         assert [f.content for f in a_rows] == ["Shared owns Asset v1"]
         assert a_rows[0].valid_to is None
 
         b_rows = await _facts_at(
-            engine, T1 + timedelta(minutes=1), project_id=project_b, org_id=org_b
+            engine, T1 + timedelta(minutes=1), project_id=project_b, user_id=user_b
         )
         assert [f.content for f in b_rows] == ["Shared owns Asset v2"]
 
@@ -913,18 +903,18 @@ class TestFormFlexibleSupersession:
         engine,
         entity_id: UUID,
         name: str,
-        org_id: UUID = ORG_ID,
+        user_id: UUID,
         project_id: UUID = PROJECT_ID,
     ) -> None:
         async with AsyncSession(engine) as db:
             await db.execute(
                 sa_text(
                     "INSERT INTO graph_entities "
-                    "(id, organization_id, project_id, name, entity_type) "
-                    "VALUES (:eid, :org_id, :pid, :name, 'person') "
+                    "(id, user_id, project_id, name, entity_type) "
+                    "VALUES (:eid, :uid, :pid, :name, 'person') "
                     "ON CONFLICT (id) DO NOTHING"
                 ),
-                {"eid": entity_id, "org_id": org_id, "pid": project_id, "name": name},
+                {"eid": entity_id, "uid": user_id, "pid": project_id, "name": name},
             )
             await db.commit()
 
@@ -951,8 +941,8 @@ class TestFormFlexibleSupersession:
         async with AsyncSession(engine) as db:
             await _seed_user(db, user_id)
             await db.commit()
-        await self._seed_entity(engine, subj_entity, "Robbie")
-        await self._seed_entity(engine, obj_entity, "Adidas")
+        await self._seed_entity(engine, subj_entity, "Robbie", user_id)
+        await self._seed_entity(engine, obj_entity, "Adidas", user_id)
 
         r1 = await _ingest(
             engine,
@@ -1007,7 +997,7 @@ class TestFormFlexibleSupersession:
             (adidas_a, "Adidas"),
             (adidas_b, "Adidas II"),
         ):
-            await self._seed_entity(engine, eid, name)
+            await self._seed_entity(engine, eid, name, user_id)
 
         r1 = await _ingest(
             engine,
@@ -1044,8 +1034,8 @@ class TestFormFlexibleSupersession:
         async with AsyncSession(engine) as db:
             await _seed_user(db, user_id)
             await db.commit()
-        await self._seed_entity(engine, subj_entity, "Robbie")
-        await self._seed_entity(engine, obj_entity, "Adidas")
+        await self._seed_entity(engine, subj_entity, "Robbie", user_id)
+        await self._seed_entity(engine, obj_entity, "Adidas", user_id)
 
         r1 = await _ingest(
             engine,
@@ -1093,8 +1083,8 @@ class TestContextCachePurge:
             await db.commit()
 
         cache = CacheService(redis_client, default_ttl=30)
-        await cache.set(f"ctx:{ORG_ID}:{PROJECT_ID}:ab12", "stale-context")
-        await cache.set(f"ctx:{ORG_ID}:{PROJECT_ID}:cd34", "stale-context-2")
+        await cache.set(f"ctx:{user_id}:{PROJECT_ID}:ab12", "stale-context")
+        await cache.set(f"ctx:{user_id}:{PROJECT_ID}:cd34", "stale-context-2")
 
         db = AsyncSession(engine, expire_on_commit=False)
         try:
@@ -1103,14 +1093,12 @@ class TestContextCachePurge:
                 db=db, fact_repo=repo, cache_service=cache
             )
             await service.ingest_with_supersession(
-                org_id=ORG_ID,
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[_triple(content="Alice likes hiking")],
                 now=T0,
             )
             await service.ingest_with_supersession(
-                org_id=ORG_ID,
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[_triple(content="Alice loves hiking")],
@@ -1123,8 +1111,8 @@ class TestContextCachePurge:
         finally:
             await db.close()
 
-        assert await redis_client.get(f"ctx:{ORG_ID}:{PROJECT_ID}:ab12") is None
-        assert await redis_client.get(f"ctx:{ORG_ID}:{PROJECT_ID}:cd34") is None
+        assert await redis_client.get(f"ctx:{user_id}:{PROJECT_ID}:ab12") is None
+        assert await redis_client.get(f"ctx:{user_id}:{PROJECT_ID}:cd34") is None
 
 
 class TestSupersessionLineage:
@@ -1240,7 +1228,7 @@ class TestTombstoneWins:
             )
             await service.retract_fact(
                 fact_id,
-                organization_id=ORG_ID,
+                user_id=user_id,
                 project_id=PROJECT_ID,
                 reason="user correction",
                 at_time=T1,
@@ -1304,7 +1292,7 @@ class TestTombstoneWins:
             )
             await service.retract_fact(
                 fact_id,
-                organization_id=ORG_ID,
+                user_id=user_id,
                 project_id=PROJECT_ID,
                 reason="user correction",
                 at_time=T1,

@@ -187,7 +187,7 @@ class IngestMixin:
                 user_id, uploaded_keys
             )
             await self._idem.release_content_hash(
-                str(user_id), str(created_by), str(session_id), msgs
+                str(user_id), str(session_id), msgs
             )
             raise
         except Exception:
@@ -196,7 +196,7 @@ class IngestMixin:
                 user_id, uploaded_keys
             )
             await self._idem.release_content_hash(
-                str(user_id), str(created_by), str(session_id), msgs
+                str(user_id), str(session_id), msgs
             )
             raise
 

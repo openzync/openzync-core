@@ -43,7 +43,7 @@ class TestProjectService:
         """Mock a Project ORM instance."""
         project = MagicMock()
         project.id = kwargs.get("id", self.PROJECT_ID)
-        project.organization_id = kwargs.get("org_id", self.ORG_ID)
+        project.user_id = kwargs.get("user_id", self.ORG_ID)
         project.name = kwargs.get("name", "Test Project")
         project.description = kwargs.get("description", "A test project")
         project.created_by = kwargs.get("created_by", self.USER_ID)
@@ -55,7 +55,7 @@ class TestProjectService:
         """Mock a User ORM row — every field UserResponse requires."""
         user = MagicMock()
         user.id = kwargs.get("id", self.USER_ID)
-        user.organization_id = kwargs.get("org_id", self.ORG_ID)
+        user.user_id = kwargs.get("user_id", self.ORG_ID)
         user.external_id = kwargs.get("external_id", "ext-user")
         user.name = kwargs.get("name", "Test User")
         user.email = kwargs.get("email", "test@example.com")
@@ -92,7 +92,7 @@ class TestProjectService:
         payload = CreateProjectRequest(name="New Project")
 
         result = await service.create_project(
-            organization_id=self.ORG_ID,
+            
             user_id=self.USER_ID,
             payload=payload,
         )
@@ -113,7 +113,7 @@ class TestProjectService:
 
         with pytest.raises(ValidationError):
             await service.create_project(
-                organization_id=self.ORG_ID,
+                
                 user_id=self.USER_ID,
                 payload=payload,
             )
@@ -129,7 +129,7 @@ class TestProjectService:
         mock_repo.count_members.return_value = 3
 
         result = await service.get_project(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
         )
         assert result.id == self.PROJECT_ID
@@ -144,7 +144,7 @@ class TestProjectService:
 
         with pytest.raises(NotFoundError):
             await service.get_project(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=uuid4(),
             )
 
@@ -165,7 +165,7 @@ class TestProjectService:
         }
 
         results = await service.list_projects(
-            organization_id=self.ORG_ID,
+            
             user_id=self.USER_ID,
             limit=10,
             offset=0,
@@ -175,7 +175,7 @@ class TestProjectService:
         assert results[0].member_count == 5
         assert results[1].member_count == 3
         mock_repo.list.assert_awaited_once_with(
-            organization_id=self.ORG_ID,
+            
             user_id=self.USER_ID,
             limit=10,
             offset=0,
@@ -191,7 +191,7 @@ class TestProjectService:
         mock_repo.count_members_for_projects.return_value = {}
 
         results = await service.list_projects(
-            organization_id=self.ORG_ID,
+            
             user_id=self.USER_ID,
         )
         assert results == []
@@ -205,12 +205,12 @@ class TestProjectService:
         spec = SortSpec(sort_by="name", sort_dir="asc")
 
         await service.list_projects(
-            organization_id=self.ORG_ID,
+            
             user_id=self.USER_ID,
             sort=spec,
         )
         mock_repo.list.assert_awaited_once_with(
-            organization_id=self.ORG_ID,
+            
             user_id=self.USER_ID,
             limit=50,
             offset=0,
@@ -236,7 +236,7 @@ class TestProjectService:
         )
 
         result = await service.update_project(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             payload=payload,
         )
@@ -257,7 +257,7 @@ class TestProjectService:
 
         with pytest.raises(ValidationError):
             await service.update_project(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 payload=payload,
             )
@@ -274,7 +274,7 @@ class TestProjectService:
         payload = UpdateProjectRequest(name="Same Name")
 
         result = await service.update_project(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             payload=payload,
         )
@@ -292,7 +292,7 @@ class TestProjectService:
 
         with pytest.raises(NotFoundError):
             await service.update_project(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=uuid4(),
                 payload=payload,
             )
@@ -306,7 +306,7 @@ class TestProjectService:
         mock_repo.archive.return_value = self._make_mock_project()
 
         await service.archive_project(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
         )
         mock_repo.archive.assert_awaited_once()
@@ -320,7 +320,7 @@ class TestProjectService:
 
         with pytest.raises(NotFoundError):
             await service.archive_project(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=uuid4(),
             )
 
@@ -539,7 +539,7 @@ class TestProjectService:
 
         with pytest.raises(ValidationError) as exc_info:
             await service.pin_project(
-                organization_id=self.ORG_ID,
+                
                 user_id=self.USER_ID,
                 project_id=self.PROJECT_ID,
             )
@@ -554,7 +554,7 @@ class TestProjectService:
         mock_pin_repo.is_pinned.return_value = True
 
         await service.pin_project(
-            organization_id=self.ORG_ID,
+            
             user_id=self.USER_ID,
             project_id=self.PROJECT_ID,
         )
@@ -567,12 +567,12 @@ class TestProjectService:
         mock_pin_repo.unpin.return_value = True
 
         await service.unpin_project(
-            organization_id=self.ORG_ID,
+            
             user_id=self.USER_ID,
             project_id=self.PROJECT_ID,
         )
         mock_pin_repo.unpin.assert_awaited_once_with(
-            self.ORG_ID, self.USER_ID, self.PROJECT_ID
+            self.USER_ID, self.PROJECT_ID
         )
 
     @pytest.mark.asyncio
@@ -582,12 +582,12 @@ class TestProjectService:
         mock_pin_repo.unpin.return_value = False
 
         await service.unpin_project(
-            organization_id=self.ORG_ID,
+            
             user_id=self.USER_ID,
             project_id=self.PROJECT_ID,
         )
         mock_pin_repo.unpin.assert_awaited_once_with(
-            self.ORG_ID, self.USER_ID, self.PROJECT_ID
+            self.USER_ID, self.PROJECT_ID
         )
 
     @pytest.mark.asyncio
@@ -602,7 +602,7 @@ class TestProjectService:
 
         with pytest.raises(ValidationError) as exc_info:
             await service.pin_project(
-                organization_id=self.ORG_ID,
+                
                 user_id=self.USER_ID,
                 project_id=self.PROJECT_ID,
             )

@@ -28,7 +28,7 @@ class TestReconcileEnrichment:
         return {
             "id": episode_id or _EPISODE_ID,
             "content": _CONTENT,
-            "org_id": _ORG_ID,
+            "user_id": _ORG_ID,
             "project_id": _PROJECT_ID,
             "session_id": _SESSION_ID,
             "metadata": {},
@@ -39,7 +39,7 @@ class TestReconcileEnrichment:
         row = MagicMock()
         row.id = _EPISODE_ID
         row.content = _CONTENT
-        row.organization_id = _ORG_ID
+        row.user_id = _ORG_ID
         row.project_id = _PROJECT_ID
         row.session_id = _SESSION_ID
         row.metadata_ = {}
@@ -357,7 +357,7 @@ class TestReconcileEnrichment:
 class TestReconcileEnrichmentRls:
     """Cron RLS regression — both cross-org scans bypass RLS before querying.
 
-    The policies read ``NULLIF(current_setting('app.org_id', true), '')``,
+    The policies read ``NULLIF(current_setting('app.user_id', true), '')``,
     so an unset context matches no rows — the bypass is what makes the
     platform-wide scan possible.  The fix sets ``app.bypass_rls`` at the
     top of each scan session — fact-embedding repair pass and
@@ -409,4 +409,4 @@ class TestReconcileEnrichmentRls:
         assert bindings
         for params in bindings:
             assert params["bypass_rls"] == "true"
-            assert params["org_id"] == ""
+            assert params["user_id"] == ""

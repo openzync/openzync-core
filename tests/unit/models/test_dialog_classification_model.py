@@ -16,11 +16,11 @@ class TestDialogClassificationModel:
         """Minimal required fields produce a valid instance."""
         dc = DialogClassification(
             project_id=uuid.uuid4(),
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             episode_id=uuid.uuid4(),
         )
         assert dc.project_id is not None
-        assert dc.organization_id is not None
+        assert dc.user_id is not None
         assert dc.episode_id is not None
 
     @pytest.mark.unit
@@ -35,7 +35,7 @@ class TestDialogClassificationModel:
         """intent, emotion, valence, arousal, raw default to None."""
         dc = DialogClassification(
             project_id=uuid.uuid4(),
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             episode_id=uuid.uuid4(),
         )
         assert dc.intent is None
@@ -51,8 +51,8 @@ class TestDialogClassificationModel:
 
     @pytest.mark.unit
     def test_unique_constraint(self) -> None:
-        """UniqueConstraint on (organization_id, episode_id)."""
-        uq_name = "uq_dialog_classifications_org_episode"
+        """UniqueConstraint on (user_id, episode_id)."""
+        uq_name = "uq_dialog_classifications_user_episode"
         constraints = DialogClassification.__table_args__
         uq_names = {c.name for c in constraints if hasattr(c, "name")}
         assert uq_name in uq_names
@@ -62,7 +62,7 @@ class TestDialogClassificationModel:
         """repr includes episode_id, intent, emotion."""
         dc = DialogClassification(
             project_id=uuid.uuid4(),
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             episode_id=uuid.uuid4(),
             intent="greeting",
             emotion="joy",

@@ -25,7 +25,6 @@ from schemas.auth import (
     SignupRequest,
     SignupResponse,
 )
-from utils.password import hash_password
 from utils.pii import mask_email
 
 logger = logging.getLogger(__name__)
@@ -111,8 +110,10 @@ class RegistrationMixin:
         # invited/joined users never self-promote.
         try:
             # bcrypt blocks the event loop — offload to a worker thread.
+            from services import auth_service as _facade  # via facade (patchable)
+
             pw_hash = await asyncio.to_thread(
-                hash_password, payload.password
+                _facade.hash_password, payload.password
             )
             created = await self._repo.create_dashboard_user(
                 email=payload.email,

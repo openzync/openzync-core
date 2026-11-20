@@ -36,7 +36,7 @@ def _row(**overrides: object) -> SimpleNamespace:
     completion = int(overrides.get("completion_tokens", 5))  # type: ignore[arg-type]
     return SimpleNamespace(
         id=overrides.get("id", uuid4()),
-        organization_id=overrides.get("organization_id", ORG_ID),
+        user_id=overrides.get("user_id", ORG_ID),
         provider=overrides.get("provider", "openai"),
         model=overrides.get("model", "gpt-4o-mini"),
         worker=overrides.get("worker", "enrich_episode"),
@@ -77,7 +77,7 @@ def _make_app(*, authenticated: bool) -> FastAPI:
 
         @app.middleware("http")
         async def _auth(request, call_next):  # type: ignore[no-untyped-def]
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             return await call_next(request)
@@ -109,7 +109,7 @@ class TestAuth:
         app = _make_app(authenticated=True)
         with (
             patch(
-                "dependencies.auth.get_org_role",
+                "dependencies.auth.get_user_role",
                 new=AsyncMock(return_value="member"),
             ),
             patch(

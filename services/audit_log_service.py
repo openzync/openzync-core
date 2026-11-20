@@ -69,7 +69,7 @@ class AuditLogService:
             )
 
         await self._repo.create(
-
+            user_id=user_id,
             actor_id=actor_id,
             actor_type=actor_type,
             action=action,

@@ -7,8 +7,7 @@ New contract (RLS tenant context):
   can never survive onto a pooled connection that the next request
   picks up,
 * every session is **initialised** at the start of a request
-  (``init_context`` binds ``app.org_id``, pins ``app.bypass_rls='false'``
-  and clears ``app.lookup_code``),
+  (``init_context`` binds ``app.user_id`` and pins ``app.bypass_rls='false'``),
 * and it is **released** at the end (``release_tenant_context`` drops the
   remembered context and rolls back — there is nothing left standing on
   the connection to reset).
@@ -33,9 +32,8 @@ pytestmark = pytest.mark.unit
 # ─── Session instrumentation ───────────────────────────────────────────────────
 
 APPLY_CONTEXT_SQL = (
-    "SELECT set_config('app.org_id', :org_id, true), "
-    "set_config('app.bypass_rls', :bypass_rls, true), "
-    "set_config('app.lookup_code', :lookup_code, true)"
+    "SELECT set_config('app.user_id', :user_id, true), "
+    "set_config('app.bypass_rls', :bypass_rls, true)"
 )
 """The single statement every context binding goes through."""
 
@@ -122,14 +120,14 @@ class TestGetDb:
     def request_with_org(self) -> MagicMock:
         req = MagicMock()
         req.app.state.db_session_factory = MagicMock()
-        req.state.org_id = self.ORG_ID_STR
+        req.state.user_id = self.ORG_ID_STR
         return req
 
     @pytest.fixture
     def request_without_org(self) -> MagicMock:
         req = MagicMock()
         req.app.state.db_session_factory = MagicMock()
-        req.state.org_id = None
+        req.state.user_id = None
         return req
 
     @pytest.mark.asyncio
@@ -166,9 +164,8 @@ class TestGetDb:
         init_sql, init_params = _executed(mock_session)[0]
         assert init_sql == APPLY_CONTEXT_SQL
         assert init_params == {
-            "org_id": self.ORG_ID_STR,
+            "user_id": self.ORG_ID_STR,
             "bypass_rls": "false",
-            "lookup_code": "",
         }
 
         # Finish the generator → the request's data is committed, then the
@@ -216,13 +213,13 @@ class TestGetDb:
         ]
 
     @pytest.mark.asyncio
-    async def test_no_rls_when_org_id_missing(
+    async def test_no_rls_when_user_id_missing(
         self,
         mock_factory: AsyncMock,
         mock_session: MagicMock,
         request_without_org: MagicMock,
     ) -> None:
-        """No org_id in request.state → the context is initialised EMPTY.
+        """No user_id in request.state → the context is initialised EMPTY.
 
         Every request initialises the context — a pooled connection may
         still carry the previous request's tenant — but an unauthenticated
@@ -241,9 +238,8 @@ class TestGetDb:
         assert init_sql == APPLY_CONTEXT_SQL
         assert init_params == {
             # Empty tenant — not a stale one, and not an error.
-            "org_id": "",
+            "user_id": "",
             "bypass_rls": "false",
-            "lookup_code": "",
         }
 
         with pytest.raises(StopAsyncIteration):
@@ -277,7 +273,6 @@ class TestGetDbSuperadmin:
     def request_with_session(self) -> MagicMock:
         req = MagicMock()
         req.app.state.db_session_factory = MagicMock()
-        req.state.org_id = self.PLATFORM_ORG_ID_STR
         req.state.user_id = "00000000-0000-0000-0000-000000000003"
         return req
 
@@ -330,7 +325,7 @@ class TestGetDbSuperadmin:
         checked_on: list[object] = []
 
         async def record_ensure(*args: object, **kwargs: object) -> None:
-            checked_on.append(args[3])
+            checked_on.append(args[2])
             events.append("verify:ensure_superadmin")
 
         with patch(
@@ -352,9 +347,8 @@ class TestGetDbSuperadmin:
         init_sql, init_params = _executed(verify)[0]
         assert init_sql == APPLY_CONTEXT_SQL
         assert init_params == {
-            "org_id": self.PLATFORM_ORG_ID_STR,
+            "user_id": "00000000-0000-0000-0000-000000000003",
             "bypass_rls": "false",
-            "lookup_code": "",
         }
 
         # The context is bound before the role check and released after it;
@@ -376,7 +370,7 @@ class TestGetDbSuperadmin:
         verify_and_bypass_sessions: tuple[AsyncMock, AsyncMock],
         two_session_factory: MagicMock,
     ) -> None:
-        """The yielded bypass session gets bypass_rls='true' + the platform org.
+        """The yielded bypass session gets bypass_rls='true' + the caller context.
 
         The bypass is set only AFTER the superadmin check passed.  It is
         transaction-local, so it cannot outlive the transaction — and the
@@ -405,18 +399,16 @@ class TestGetDbSuperadmin:
         tenant_sql, tenant_params = _executed(bypass)[0]
         assert tenant_sql == APPLY_CONTEXT_SQL
         assert tenant_params == {
-            "org_id": str(PLATFORM_ORG_ID),
+            "user_id": "00000000-0000-0000-0000-000000000003",
             "bypass_rls": "false",
-            "lookup_code": "",
         }
 
         # …and the bypass is enabled by a second binding, transaction-local.
         bypass_sql, bypass_params = _executed(bypass)[1]
         assert bypass_sql == APPLY_CONTEXT_SQL
         assert bypass_params == {
-            "org_id": str(PLATFORM_ORG_ID),
+            "user_id": "00000000-0000-0000-0000-000000000003",
             "bypass_rls": "true",
-            "lookup_code": "",
         }
 
         assert events == [
@@ -430,12 +422,12 @@ class TestGetDbSuperadmin:
 
     @pytest.mark.asyncio
     async def test_raises_runtime_error_when_state_missing(self) -> None:
-        """No org_id/user_id on request.state → RuntimeError (fail-closed)."""
+        """No user_id/user_id on request.state → RuntimeError (fail-closed)."""
         from dependencies.db import get_db_superadmin
 
         request = MagicMock()
         request.app.state.db_session_factory = MagicMock()
-        request.state.org_id = None
+        request.state.user_id = None
         request.state.user_id = None
 
         with pytest.raises(RuntimeError, match="requires an authenticated JWT"):

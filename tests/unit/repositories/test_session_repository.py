@@ -37,7 +37,7 @@ class TestSessionRepository:
     def _mock_session(self, **overrides: object) -> MagicMock:
         s = MagicMock()
         s.id = overrides.get("id", self.SESSION_ID)
-        s.organization_id = overrides.get("organization_id", self.ORG_ID)
+        s.user_id = overrides.get("user_id", self.ORG_ID)
         s.project_id = overrides.get("project_id", self.PROJECT_ID)
         s.user_id = overrides.get("user_id", self.USER_ID)
         s.external_id = overrides.get("external_id", "ext-session-1")
@@ -68,7 +68,7 @@ class TestSessionRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.create(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             created_by=self.USER_ID,
             external_id="new-session",
@@ -89,7 +89,7 @@ class TestSessionRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.create(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             created_by=self.USER_ID,
             external_id="minimal",
@@ -109,7 +109,7 @@ class TestSessionRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_external_id(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             external_id="ext-session-1",
         )
@@ -125,7 +125,7 @@ class TestSessionRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_external_id(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             external_id="nonexistent",
         )
@@ -144,7 +144,7 @@ class TestSessionRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_uuid(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
+            user_id=self.ORG_ID, session_id=self.SESSION_ID
         )
 
         assert result == session
@@ -158,7 +158,7 @@ class TestSessionRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_uuid(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
+            user_id=self.ORG_ID, session_id=self.SESSION_ID
         )
 
         assert result is None
@@ -172,7 +172,7 @@ class TestSessionRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_uuid(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             session_id=self.SESSION_ID,
             project_id=self.PROJECT_ID,
         )
@@ -192,7 +192,7 @@ class TestSessionRepository:
         mock_db.execute.return_value = mock_result
 
         result, cursor = await repo.list(
-            org_id=self.ORG_ID, project_id=self.PROJECT_ID
+            user_id=self.ORG_ID, project_id=self.PROJECT_ID
         )
 
         assert result == sessions
@@ -213,7 +213,7 @@ class TestSessionRepository:
         mock_db.execute.return_value = mock_result
 
         result, cursor = await repo.list(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             cursor=valid_cursor,
         )
@@ -231,7 +231,7 @@ class TestSessionRepository:
         mock_db.execute.return_value = mock_result
 
         result, cursor = await repo.list(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             include_closed=True,
         )
@@ -247,7 +247,7 @@ class TestSessionRepository:
         mock_db.execute.return_value = mock_result
 
         result, cursor = await repo.list(
-            org_id=self.ORG_ID, project_id=self.PROJECT_ID
+            user_id=self.ORG_ID, project_id=self.PROJECT_ID
         )
 
         assert result == []
@@ -270,7 +270,7 @@ class TestSessionRepository:
         mock_db.execute.side_effect = [mock_session_check, mock_messages_result]
 
         result, cursor = await repo.get_messages(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
+            user_id=self.ORG_ID, session_id=self.SESSION_ID
         )
 
         assert result == episodes
@@ -285,7 +285,7 @@ class TestSessionRepository:
         mock_db.execute.return_value = mock_result
 
         result, cursor = await repo.get_messages(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
+            user_id=self.ORG_ID, session_id=self.SESSION_ID
         )
 
         assert result == []
@@ -310,7 +310,7 @@ class TestSessionRepository:
         mock_db.execute.side_effect = [mock_session_check, mock_messages_result]
 
         result, cursor = await repo.get_messages(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             session_id=self.SESSION_ID,
             cursor=valid_cursor,
         )
@@ -357,7 +357,7 @@ class TestSessionRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.update_metadata(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             session_id=self.SESSION_ID,
             metadata={"key2": "val2", "key1": None},
         )
@@ -376,7 +376,7 @@ class TestSessionRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.update_metadata(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             session_id=self.SESSION_ID,
             metadata={"key": "val"},
         )
@@ -397,7 +397,7 @@ class TestSessionRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.close(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
+            user_id=self.ORG_ID, session_id=self.SESSION_ID
         )
 
         assert result is not None
@@ -414,7 +414,7 @@ class TestSessionRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.close(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
+            user_id=self.ORG_ID, session_id=self.SESSION_ID
         )
 
         assert result is None
@@ -433,7 +433,7 @@ class TestSessionRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.soft_delete(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
+            user_id=self.ORG_ID, session_id=self.SESSION_ID
         )
 
         assert result is not None
@@ -450,7 +450,7 @@ class TestSessionRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.soft_delete(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
+            user_id=self.ORG_ID, session_id=self.SESSION_ID
         )
 
         assert result is None
@@ -464,7 +464,7 @@ class TestSessionRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.soft_delete(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             session_id=self.SESSION_ID,
             project_id=self.PROJECT_ID,
         )
@@ -520,7 +520,7 @@ class TestSessionRepository:
         mock_db.execute.return_value = mock_result
 
         count = await repo.get_observation_count(
-            org_id=self.ORG_ID, project_id=self.PROJECT_ID
+            user_id=self.ORG_ID, project_id=self.PROJECT_ID
         )
 
         assert count == 42
@@ -534,7 +534,7 @@ class TestSessionRepository:
         mock_db.execute.return_value = mock_result
 
         count = await repo.get_observation_count(
-            org_id=self.ORG_ID, project_id=self.PROJECT_ID
+            user_id=self.ORG_ID, project_id=self.PROJECT_ID
         )
 
         assert count == 0
@@ -560,7 +560,7 @@ class TestSessionRepository:
 
         stats = await repo.batch_get_stats(
             session_ids=[self.SESSION_ID, UUID("00000000-0000-0000-0000-000000000011")],
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
         )
 
         assert stats[self.SESSION_ID]["message_count"] == 10
@@ -571,7 +571,7 @@ class TestSessionRepository:
     ) -> None:
         """batch_get_stats returns empty dict for empty input."""
         stats = await repo.batch_get_stats(
-            session_ids=[], organization_id=self.ORG_ID
+            session_ids=[], user_id=self.ORG_ID
         )
 
         assert stats == {}

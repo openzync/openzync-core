@@ -211,10 +211,10 @@ class TestRateLimitMiddleware:
         ):
             app = self._create_app(mock_redis=mock_redis)
 
-            # Set scope["state"]["org_id"] the way AuthMiddleware would.
+            # Set scope["state"]["user_id"] the way AuthMiddleware would.
             @app.middleware("http")
             async def _fake_auth(request, call_next):
-                request.state.org_id = "org-123"
+                request.state.user_id = "org-123"
                 return await call_next(request)
 
             transport = ASGITransport(app=app)

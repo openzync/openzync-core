@@ -36,7 +36,7 @@ class TestEpisodeRepository:
     def _mock_episode(self, **overrides: object) -> MagicMock:
         ep = MagicMock()
         ep.id = overrides.get("id", self.EPISODE_ID)
-        ep.organization_id = overrides.get("organization_id", self.ORG_ID)
+        ep.user_id = overrides.get("user_id", self.ORG_ID)
         ep.session_id = overrides.get("session_id", self.SESSION_ID)
         ep.user_id = overrides.get("user_id", self.USER_ID)
         ep.role = overrides.get("role", "user")
@@ -54,7 +54,7 @@ class TestEpisodeRepository:
         row = MagicMock()
         row._mapping = {
             "id": overrides.get("id", self.EPISODE_ID),
-            "organization_id": overrides.get("organization_id", self.ORG_ID),
+            "user_id": overrides.get("user_id", self.ORG_ID),
             "session_id": overrides.get("session_id", self.SESSION_ID),
             "user_id": overrides.get("user_id", self.USER_ID),
             "role": overrides.get("role", "user"),
@@ -77,7 +77,7 @@ class TestEpisodeRepository:
     ) -> None:
         """batch_create returns empty list when no messages."""
         result = await repo.batch_create(
-            organization_id=self.ORG_ID,
+            
             project_id=self.PROJECT_ID,
             session_id=self.SESSION_ID,
             user_id=self.USER_ID,
@@ -102,7 +102,7 @@ class TestEpisodeRepository:
         ]
 
         result = await repo.batch_create(
-            organization_id=self.ORG_ID,
+            
             project_id=self.PROJECT_ID,
             session_id=self.SESSION_ID,
             user_id=self.USER_ID,
@@ -256,12 +256,12 @@ class TestEpisodeRepository:
     async def test_get_content_batch_with_org(
         self, repo: EpisodeRepository, mock_db: AsyncMock
     ) -> None:
-        """get_content_batch filters by org_id."""
+        """get_content_batch filters by user_id."""
         mock_db.execute.return_value = MagicMock()
         mock_db.execute.return_value.all.return_value = []
 
         result = await repo.get_content_batch(
-            episode_ids=[self.EPISODE_ID], org_id=self.ORG_ID
+            episode_ids=[self.EPISODE_ID], user_id=self.ORG_ID
         )
 
         assert result == {}
@@ -359,7 +359,7 @@ class TestEpisodeRepository:
         mock_db.execute.return_value = mock_result
 
         count = await repo.soft_delete_by_project(
-            project_id=self.PROJECT_ID, organization_id=self.ORG_ID
+            project_id=self.PROJECT_ID, user_id=self.ORG_ID
         )
 
         assert count == 5
@@ -373,7 +373,7 @@ class TestEpisodeRepository:
         mock_db.execute.return_value = mock_result
 
         count = await repo.soft_delete_by_project(
-            project_id=self.PROJECT_ID, organization_id=self.ORG_ID
+            project_id=self.PROJECT_ID, user_id=self.ORG_ID
         )
 
         assert count == 0
@@ -393,7 +393,7 @@ class TestEpisodeRepository:
         results = await repo.search_by_vector(
             embedding=[0.1, 0.2, 0.3],
             project_id=self.PROJECT_ID,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             limit=10,
         )
 
@@ -401,7 +401,7 @@ class TestEpisodeRepository:
         assert results[0]["score"] == 0.95
         assert results[0]["content"] == "Hello"
         params = mock_db.execute.call_args.args[1]
-        assert params["org_id"] == self.ORG_ID
+        assert params["user_id"] == self.ORG_ID
 
     async def test_search_by_vector_empty(
         self, repo: EpisodeRepository, mock_db: AsyncMock
@@ -414,18 +414,18 @@ class TestEpisodeRepository:
         results = await repo.search_by_vector(
             embedding=[0.1, 0.2, 0.3],
             project_id=self.PROJECT_ID,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             limit=10,
         )
 
         assert results == []
         params = mock_db.execute.call_args.args[1]
-        assert params["org_id"] == self.ORG_ID
+        assert params["user_id"] == self.ORG_ID
 
     async def test_search_by_vector_scopes_to_organization(
         self, repo: EpisodeRepository, mock_db: AsyncMock
     ) -> None:
-        """search_by_vector SQL filters on organization_id with bound org id."""
+        """search_by_vector SQL filters on user_id with bound org id."""
         mock_result = MagicMock()
         mock_result.fetchall.return_value = []
         mock_db.execute.return_value = mock_result
@@ -433,14 +433,14 @@ class TestEpisodeRepository:
         await repo.search_by_vector(
             embedding=[0.1, 0.2, 0.3],
             project_id=self.PROJECT_ID,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             limit=10,
         )
 
         stmt = mock_db.execute.call_args.args[0]
         params = mock_db.execute.call_args.args[1]
-        assert "organization_id = :org_id" in str(stmt.text)
-        assert params["org_id"] == self.ORG_ID
+        assert "user_id = :user_id" in str(stmt.text)
+        assert params["user_id"] == self.ORG_ID
 
     # ── search_by_bm25 ─────────────────────────────────────────────────────────
 
@@ -457,7 +457,7 @@ class TestEpisodeRepository:
         results = await repo.search_by_bm25(
             query="hello",
             project_id=self.PROJECT_ID,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             limit=10,
         )
 
@@ -475,7 +475,7 @@ class TestEpisodeRepository:
         results = await repo.search_by_bm25(
             query="nonexistent",
             project_id=self.PROJECT_ID,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             limit=10,
         )
 

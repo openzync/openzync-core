@@ -138,7 +138,7 @@ class UserService:
                 in the organization.
         """
         exists = await self._repo.exists_by_external_id(
-            user_id, external_id
+            external_id
         )
         if exists:
             raise ConflictError(
@@ -559,7 +559,7 @@ class UserService:
             raise ValidationError("limit must be between 1 and 200")
 
         users, next_cursor = await self._repo.list(
-
+            user_id=user_id,
             limit=limit,
             cursor=cursor,
             search=search,

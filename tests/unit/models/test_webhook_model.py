@@ -15,12 +15,12 @@ class TestWebhookEndpointModel:
     def test_required_fields(self) -> None:
         """Minimal required fields produce a valid instance."""
         ep = WebhookEndpoint(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             name="Production Slack",
             url="https://hooks.example.com/webhook",
             events='["session.created","fact.extracted"]',
         )
-        assert ep.organization_id is not None
+        assert ep.user_id is not None
         assert ep.name == "Production Slack"
         assert ep.url == "https://hooks.example.com/webhook"
         assert ep.events == '["session.created","fact.extracted"]'
@@ -36,7 +36,7 @@ class TestWebhookEndpointModel:
     def test_nullable_last_delivery_at(self) -> None:
         """last_delivery_at defaults to None."""
         ep = WebhookEndpoint(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             name="Test",
             url="https://example.com/hook",
             events="[]",
@@ -47,7 +47,7 @@ class TestWebhookEndpointModel:
     def test_signing_secret_nullable(self) -> None:
         """signing_secret defaults to None until generated (legacy rows migrate)."""
         ep = WebhookEndpoint(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             name="Test",
             url="https://example.com/hook",
             events="[]",
@@ -65,7 +65,7 @@ class TestWebhookEndpointModel:
     def test_repr(self) -> None:
         """repr includes name and is_active."""
         ep = WebhookEndpoint(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             name="Slack",
             url="https://hooks.example.com",
             events="[]",

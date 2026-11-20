@@ -100,13 +100,15 @@ class TestH5EnumerationClosed:
 
     @pytest.fixture
     def service(self) -> AuthService:
+        settings_repo = AsyncMock()
+        settings_repo.get_registration_mode.return_value = "open"
         return AuthService(
             repo=AsyncMock(spec=AuthRepository),
             otp_service=AsyncMock(),
             redis=AsyncMock(),
-            org_repo=AsyncMock(),
             email_service=AsyncMock(),
             bao_client=AsyncMock(),
+            settings_repo=settings_repo,
         )
 
     @pytest.mark.asyncio

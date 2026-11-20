@@ -15,10 +15,10 @@ class TestUserModel:
     def test_required_fields(self) -> None:
         """Minimal required fields produce a valid instance."""
         user = User(
-            organization_id=uuid.uuid4(),
+            id=uuid.uuid4(),
             external_id="customer-abc-123",
         )
-        assert user.organization_id is not None
+        assert user.id is not None
         assert user.external_id == "customer-abc-123"
 
     @pytest.mark.unit
@@ -32,7 +32,7 @@ class TestUserModel:
     def test_nullable_fields(self) -> None:
         """name, email, password_hash, summary, summary_updated_at, email_verified_at default to None."""
         user = User(
-            organization_id=uuid.uuid4(),
+            id=uuid.uuid4(),
             external_id="nullable-test",
         )
         assert user.name is None
@@ -49,17 +49,17 @@ class TestUserModel:
 
     @pytest.mark.unit
     def test_unique_constraint(self) -> None:
-        """UniqueConstraint on (organization_id, external_id)."""
-        uq_name = "uq_user_organization_external"
+        """UniqueConstraint on external_id (globally unique, user-owned)."""
+        uq_name = "uq_user_external"
         constraints = User.__table_args__
         names = {c.name for c in constraints if hasattr(c, "name")}
         assert uq_name in names
 
     @pytest.mark.unit
     def test_repr(self) -> None:
-        """repr includes org and external_id."""
+        """repr includes external_id."""
         user = User(
-            organization_id=uuid.uuid4(),
+            id=uuid.uuid4(),
             external_id="customer-xyz",
         )
         assert "User" in repr(user)

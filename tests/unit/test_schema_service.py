@@ -31,7 +31,7 @@ class TestSchemaService:
         m.json_schema = kwargs.get("json_schema", {"type": "object"})
         m.prompt_template = kwargs.get("prompt_template")
         m.is_active = kwargs.get("is_active", True)
-        m.organization_id = self.ORG_ID
+        m.user_id = self.ORG_ID
         m.type = kwargs.get("type", "structured")
         return m
 
@@ -45,7 +45,7 @@ class TestSchemaService:
             name="my-schema",
             json_schema={"type": "object"},
         )
-        result = await service.create_schema(org_id=self.ORG_ID, payload=payload)
+        result = await service.create_schema(user_id=self.ORG_ID, payload=payload)
         assert result.name == "my-schema"
 
     @pytest.mark.asyncio

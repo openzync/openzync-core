@@ -125,8 +125,9 @@ class TestBlobWipePaging:
             },
             # note: one file field per message is NOT supported by the
             # router (blob_id indexes into a shared files list); a single
-            # shared attachment keeps blob refs valid.
-            files={"blob_0": ("note.txt", b"hello-blob-bytes", "text/plain")},
+            # shared attachment keeps blob refs valid.  Every file part
+            # must use the field name "blobs" (repeat per file).
+            files=[("blobs", ("note.txt", b"hello-blob-bytes", "text/plain"))],
         )
         if ingest.status_code != 202:
             pytest.skip(

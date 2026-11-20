@@ -93,7 +93,7 @@ async def pipeline_auth_client(pipeline_app) -> tuple[AsyncClient, UUID, str, in
     """Create an authenticated HTTP client and bootstrap a test org.
 
     Returns:
-        Tuple of (auth_client, org_id, redis_host, redis_port).
+        Tuple of (auth_client, user_id, redis_host, redis_port).
     """
     app, redis_host, redis_port = pipeline_app
     transport = ASGITransport(app=app)
@@ -106,14 +106,14 @@ async def pipeline_auth_client(pipeline_app) -> tuple[AsyncClient, UUID, str, in
         )
         assert resp.status_code == 201, f"Bootstrap failed: {resp.text}"
         data = resp.json()
-        org_id = UUID(data["organization_id"])
+        user_id = UUID(data["user_id"])
         api_key = data["api_key"]
 
         # Authenticated client
         cli.headers["Authorization"] = f"Bearer {api_key}"
 
         # Yield the client — close is handled by the ``with`` block
-        yield cli, org_id, redis_host, redis_port
+        yield cli, user_id, redis_host, redis_port
 
 
 @pytest.mark.skip(reason="Needs per-test DB isolation — see TODO")
@@ -296,7 +296,7 @@ class TestEnrichmentPipeline:
         - Episode embedding column is non-NULL
         - Graph entity nodes are created
         """
-        auth_client, org_id, redis_host, redis_port = pipeline_auth_client
+        auth_client, user_id, redis_host, redis_port = pipeline_auth_client
 
         # ── Step 1: Create a user ──────────────────────────────────────
         user_resp = await auth_client.post(

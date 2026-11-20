@@ -44,14 +44,14 @@ class TestSurrealPoolGetOrCreate:
         from core.surreal_pool import SurrealConnectionPool
 
         pool = SurrealConnectionPool()
-        org_id = uuid4()
+        user_id = uuid4()
         org_config = _make_org_config()
 
         with patch("core.surreal_pool.AsyncSurreal") as mock_surreal_cls:
             mock_surreal = AsyncMock()
             mock_surreal_cls.return_value = mock_surreal
 
-            result = await pool.get_or_create(org_id, org_config)
+            result = await pool.get_or_create(user_id, org_config)
 
             assert result is mock_surreal
             mock_surreal_cls.assert_called_once_with("ws://localhost:8000/rpc")
@@ -67,15 +67,15 @@ class TestSurrealPoolGetOrCreate:
         from core.surreal_pool import SurrealConnectionPool
 
         pool = SurrealConnectionPool()
-        org_id = uuid4()
+        user_id = uuid4()
         org_config = _make_org_config()
 
         with patch("core.surreal_pool.AsyncSurreal") as mock_surreal_cls:
             mock_surreal = AsyncMock()
             mock_surreal_cls.return_value = mock_surreal
 
-            conn1 = await pool.get_or_create(org_id, org_config)
-            conn2 = await pool.get_or_create(org_id, org_config)
+            conn1 = await pool.get_or_create(user_id, org_config)
+            conn2 = await pool.get_or_create(user_id, org_config)
 
             assert conn1 is conn2  # same instance
             assert mock_surreal_cls.call_count == 1  # only created once
@@ -110,11 +110,11 @@ class TestSurrealPoolGetOrCreate:
         from core.surreal_pool import SurrealConnectionPool
 
         pool = SurrealConnectionPool()
-        org_id = uuid4()
+        user_id = uuid4()
         org_config = _make_org_config(url=None)
 
         with pytest.raises(ServiceUnavailableError, match="Failed to connect to SurrealDB"):
-            await pool.get_or_create(org_id, org_config)
+            await pool.get_or_create(user_id, org_config)
 
     @pytest.mark.asyncio
     async def test_raises_on_connection_failure(self) -> None:
@@ -122,7 +122,7 @@ class TestSurrealPoolGetOrCreate:
         from core.surreal_pool import SurrealConnectionPool
 
         pool = SurrealConnectionPool()
-        org_id = uuid4()
+        user_id = uuid4()
         org_config = _make_org_config()
 
         with patch("core.surreal_pool.AsyncSurreal") as mock_surreal_cls:
@@ -131,7 +131,7 @@ class TestSurrealPoolGetOrCreate:
             mock_surreal_cls.return_value = mock_surreal
 
             with pytest.raises(ServiceUnavailableError, match="SurrealDB connection failed"):
-                await pool.get_or_create(org_id, org_config)
+                await pool.get_or_create(user_id, org_config)
 
     @pytest.mark.asyncio
     async def test_uses_system_url_when_provided(self) -> None:
@@ -139,7 +139,7 @@ class TestSurrealPoolGetOrCreate:
         from core.surreal_pool import SurrealConnectionPool
 
         pool = SurrealConnectionPool()
-        org_id = uuid4()
+        user_id = uuid4()
         org_config = _make_org_config(
             url=None,  # org-level URL not set
             user="org_user",
@@ -153,7 +153,7 @@ class TestSurrealPoolGetOrCreate:
             mock_surreal_cls.return_value = mock_surreal
 
             result = await pool.get_or_create(
-                org_id, org_config, system_url="ws://system:8000/rpc",
+                user_id, org_config, system_url="ws://system:8000/rpc",
             )
 
             assert result is mock_surreal
@@ -169,7 +169,7 @@ class TestSurrealPoolGetOrCreate:
         from core.surreal_pool import SurrealConnectionPool
 
         pool = SurrealConnectionPool()
-        org_id = uuid4()
+        user_id = uuid4()
         org_config = _make_org_config(
             url="ws://localhost:8000/rpc",
             user=None,
@@ -182,7 +182,7 @@ class TestSurrealPoolGetOrCreate:
             mock_surreal = AsyncMock()
             mock_surreal_cls.return_value = mock_surreal
 
-            await pool.get_or_create(org_id, org_config)
+            await pool.get_or_create(user_id, org_config)
 
             mock_surreal.signin.assert_awaited_once_with(
                 {"username": "root", "password": "root"},
@@ -195,7 +195,7 @@ class TestSurrealPoolGetOrCreate:
         from core.surreal_pool import SurrealConnectionPool
 
         pool = SurrealConnectionPool()
-        org_id = uuid4()
+        user_id = uuid4()
         org_config = _make_org_config()
 
         with patch("core.surreal_pool.AsyncSurreal") as mock_surreal_cls:
@@ -206,7 +206,7 @@ class TestSurrealPoolGetOrCreate:
             import asyncio
 
             async def call() -> None:
-                await pool.get_or_create(org_id, org_config)
+                await pool.get_or_create(user_id, org_config)
 
             await asyncio.gather(call(), call())
             # Only one AsyncSurreal should have been created
@@ -218,21 +218,21 @@ class TestSurrealPoolGetOrCreate:
         from core.surreal_pool import SurrealConnectionPool
 
         pool = SurrealConnectionPool()
-        org_id = uuid4()
+        user_id = uuid4()
         org_config = _make_org_config()
 
         with patch("core.surreal_pool.AsyncSurreal") as mock_surreal_cls:
             mock_surreal = AsyncMock()
             mock_surreal_cls.return_value = mock_surreal
-            await pool.get_or_create(org_id, org_config)
+            await pool.get_or_create(user_id, org_config)
 
-            first_used = pool._pool[org_id]["last_used"]
+            first_used = pool._pool[user_id]["last_used"]
 
             import time
             time.sleep(0.001)
-            await pool.get_or_create(org_id, org_config)
+            await pool.get_or_create(user_id, org_config)
 
-            second_used = pool._pool[org_id]["last_used"]
+            second_used = pool._pool[user_id]["last_used"]
             assert second_used > first_used
 
 

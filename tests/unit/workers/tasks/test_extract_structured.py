@@ -31,7 +31,7 @@ class TestProcessStructuredOutput:
         from workers.tasks.extract_structured import process_structured_output
 
         await process_structured_output(
-            db=db, org_id=_ORG_ID, episode_id=_EPISODE_ID,
+            db=db, user_id=_ORG_ID, episode_id=_EPISODE_ID,
             project_id=_PROJECT_ID, session_id=_SESSION_ID,
             parsed={}, schemas=[{"name": "test", "id": str(uuid4()), "json_schema": {}}],
         )
@@ -44,7 +44,7 @@ class TestProcessStructuredOutput:
         from workers.tasks.extract_structured import process_structured_output
 
         await process_structured_output(
-            db=db, org_id=_ORG_ID, episode_id=_EPISODE_ID,
+            db=db, user_id=_ORG_ID, episode_id=_EPISODE_ID,
             project_id=_PROJECT_ID, session_id=_SESSION_ID,
             parsed={"unknown_name": {"field": "value"}},
             schemas=[{"name": "known_schema", "id": str(uuid4()), "json_schema": {}}],
@@ -58,7 +58,7 @@ class TestProcessStructuredOutput:
         from workers.tasks.extract_structured import process_structured_output
 
         await process_structured_output(
-            db=db, org_id=_ORG_ID, episode_id=_EPISODE_ID,
+            db=db, user_id=_ORG_ID, episode_id=_EPISODE_ID,
             project_id=_PROJECT_ID, session_id=_SESSION_ID,
             parsed={"test_schema": None},
             schemas=[{"name": "test_schema", "id": str(uuid4()), "json_schema": {}}],
@@ -72,7 +72,7 @@ class TestProcessStructuredOutput:
         from workers.tasks.extract_structured import process_structured_output
 
         await process_structured_output(
-            db=db, org_id=_ORG_ID, episode_id=_EPISODE_ID,
+            db=db, user_id=_ORG_ID, episode_id=_EPISODE_ID,
             project_id=_PROJECT_ID, session_id=_SESSION_ID,
             parsed={"test_schema": "string_data"},
             schemas=[{"name": "test_schema", "id": str(uuid4()), "json_schema": {}}],
@@ -93,7 +93,7 @@ class TestProcessStructuredOutput:
         ):
             schema_id = str(uuid4())
             await process_structured_output(
-                db=db, org_id=_ORG_ID, episode_id=_EPISODE_ID,
+                db=db, user_id=_ORG_ID, episode_id=_EPISODE_ID,
                 project_id=_PROJECT_ID, session_id=_SESSION_ID,
                 parsed={"test_schema": {"present": "value"}},
                 schemas=[{
@@ -129,7 +129,7 @@ class TestProcessStructuredOutput:
         ):
             schema_id = str(uuid4())
             await process_structured_output(
-                db=db, org_id=_ORG_ID, episode_id=_EPISODE_ID,
+                db=db, user_id=_ORG_ID, episode_id=_EPISODE_ID,
                 project_id=_PROJECT_ID, session_id=_SESSION_ID,
                 parsed={"test_schema": {"field": "value"}},
                 schemas=[{"name": "test_schema", "id": schema_id, "json_schema": {}}],

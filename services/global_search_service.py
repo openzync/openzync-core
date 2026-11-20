@@ -81,7 +81,7 @@ class GlobalSearchService:
     ) -> list[GlobalSearchItem]:
         """Search projects the user is a member of."""
         rows = await ProjectRepository(self._db).search_member_projects(
-            self._user_id, self._user_id, pattern, limit
+            self._user_id, pattern, limit
         )
         items: list[GlobalSearchItem] = []
         for row in rows:
@@ -128,7 +128,7 @@ class GlobalSearchService:
     ) -> list[GlobalSearchItem]:
         """Search sessions within projects the user is a member of."""
         rows = await SessionRepository(self._db).search_member_sessions(
-            self._user_id, self._user_id, pattern, limit
+            self._user_id, pattern, limit
         )
         items: list[GlobalSearchItem] = []
         for row in rows:

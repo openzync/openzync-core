@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.sorting import SortSpec
 from dependencies.auth import (
     get_dashboard_user,
-    require_org_id,
+    require_user_id,
 )
 from dependencies.db import get_db
 from routers.admin_organizations import (
@@ -25,7 +25,7 @@ from routers.admin_organizations import (
     router,
 )
 
-ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 
 
@@ -37,7 +37,7 @@ def _stub_permission_gate() -> None:
     ``require_permission("configuration:write")`` — closures created at
     router import time that cannot be keyed in ``dependency_overrides``.
     Patching ``dependencies.auth._check_permission`` (the shared decision
-    function) stubs the gate while keeping the ``require_org_id`` chain
+    function) stubs the gate while keeping the ``require_user_id`` chain
     intact.  The real gate matrix is covered by ``test_admin_gate_matrix.py``.
     """
     with patch("dependencies.auth._check_permission", new=AsyncMock()):
@@ -52,14 +52,14 @@ def _create_app() -> tuple[FastAPI, AsyncMock]:
     # Auth middleware
     @app.middleware("http")
     async def _mock_auth(request, call_next):
-        request.state.org_id = str(ORG_ID)
+        request.state.user_id = str(USER_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "jwt"
         response = await call_next(request)
         return response
 
     app.dependency_overrides[get_db] = lambda: db_mock
-    app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+    app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
     app.dependency_overrides[get_dashboard_user] = lambda: str(USER_ID)
 
     app.include_router(router)
@@ -96,7 +96,7 @@ async def test_list_custom_instructions_success() -> None:
     assert len(body["data"]) == 1
     assert body["data"][0]["name"] == "legal_domain"
     fake_service.list_for_scope.assert_awaited_once_with(
-        org_id=ORG_ID,
+        user_id=USER_ID,
         scope="extraction",
     )
 
@@ -153,7 +153,7 @@ async def test_clear_custom_instructions_success() -> None:
 
     assert resp.status_code == 204
     fake_service.clear_for_scope.assert_awaited_once_with(
-        org_id=ORG_ID,
+        user_id=USER_ID,
         scope="extraction",
     )
 

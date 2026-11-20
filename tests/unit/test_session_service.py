@@ -28,7 +28,7 @@ class TestSessionService:
     def _make_mock_session(self, **kwargs) -> AsyncMock:
         session = AsyncMock()
         session.id = kwargs.get("id", uuid4())
-        session.organization_id = kwargs.get("org_id", self.ORG_ID)
+        session.user_id = kwargs.get("user_id", self.ORG_ID)
         session.project_id = kwargs.get("project_id", self.PROJECT_ID)
         session.user_id = kwargs.get("user_id", self.USER_ID)
         session.external_id = kwargs.get("external_id", "test-session")
@@ -58,7 +58,7 @@ class TestSessionService:
         )
 
         result = await service.create_session(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             created_by=self.USER_ID,
             external_id="test-session",
@@ -74,7 +74,7 @@ class TestSessionService:
 
         with pytest.raises(ConflictError):
             await service.create_session(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 external_id="duplicate-session",
@@ -95,7 +95,7 @@ class TestSessionService:
 
         session_id = mock_session.id
         result = await service.get_session(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             session_id=session_id,
             project_id=self.PROJECT_ID,
         )
@@ -109,7 +109,7 @@ class TestSessionService:
 
         with pytest.raises(NotFoundError):
             await service.get_session(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 session_id=uuid4(),
                 project_id=self.PROJECT_ID,
             )
@@ -122,7 +122,7 @@ class TestSessionService:
 
         session_id = uuid4()
         await service.delete_session(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             session_id=session_id,
             project_id=self.PROJECT_ID,
         )
@@ -136,7 +136,7 @@ class TestSessionService:
 
         with pytest.raises(NotFoundError):
             await service.delete_session(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 session_id=uuid4(),
             )
 
@@ -157,7 +157,7 @@ class TestSessionService:
         mock_repo.create.return_value = mock_session
 
         result = await service.create_session(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             created_by=self.USER_ID,
             external_id="with-webhook",
@@ -165,7 +165,7 @@ class TestSessionService:
 
         assert result.external_id == "with-webhook"
         mock_webhook.emit.assert_awaited_once_with(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             event_type=EventType.SESSION_CREATED,
             payload={
                 "session_id": str(mock_session.id),
@@ -193,7 +193,7 @@ class TestSessionService:
         mock_repo.get_observation_count.return_value = 42
 
         result = await service.get_session_by_external_id(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             external_id="ext-123",
         )
@@ -212,7 +212,7 @@ class TestSessionService:
 
         with pytest.raises(NotFoundError):
             await service.get_session_by_external_id(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 external_id="nonexistent",
             )
@@ -235,7 +235,7 @@ class TestSessionService:
         mock_repo.get_observation_count.return_value = 0
 
         result = await service.get_session_by_uuid(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             session_id=mock_session.id,
             project_id=self.PROJECT_ID,
         )
@@ -263,7 +263,7 @@ class TestSessionService:
         }
 
         result = await service.list_sessions(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             limit=50,
         )
@@ -287,14 +287,14 @@ class TestSessionService:
 
         with pytest.raises(ValidationError, match="limit must be between 1 and 200"):
             await service.list_sessions(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 limit=0,
             )
 
         with pytest.raises(ValidationError, match="limit must be between 1 and 200"):
             await service.list_sessions(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 limit=201,
             )
@@ -306,7 +306,7 @@ class TestSessionService:
         mock_repo.list.return_value = ([], None)
 
         result = await service.list_sessions(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
         )
 
@@ -325,14 +325,14 @@ class TestSessionService:
         }
 
         result = await service.list_sessions(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             cursor="test-cursor",
             limit=25,
         )
 
         mock_repo.list.assert_awaited_once_with(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             limit=25,
             cursor="test-cursor",
@@ -350,13 +350,13 @@ class TestSessionService:
         spec = SortSpec(sort_by="created_at", sort_dir="asc")
 
         await service.list_sessions(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             sort=spec,
         )
 
         mock_repo.list.assert_awaited_once_with(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             limit=50,
             cursor=None,
@@ -398,7 +398,7 @@ class TestSessionService:
         mock_repo.get_messages.return_value = (episodes, "next-msg-cursor")
 
         result = await service.get_messages(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             session_id=mock_session.id,
             limit=100,
         )
@@ -419,7 +419,7 @@ class TestSessionService:
 
         with pytest.raises(NotFoundError):
             await service.get_messages(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 session_id=uuid4(),
             )
 
@@ -432,7 +432,7 @@ class TestSessionService:
             ValidationError, match="limit must be between 1 and 500"
         ):
             await service.get_messages(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 session_id=uuid4(),
                 limit=0,
             )
@@ -463,7 +463,7 @@ class TestSessionService:
         )
 
         result = await service.get_messages(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             session_id=mock_session.id,
         )
 
@@ -499,7 +499,7 @@ class TestSessionService:
 
         with pytest.raises(RuntimeError, match="S3 down"):
             await service.get_messages(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 session_id=mock_session.id,
             )
 
@@ -520,13 +520,13 @@ class TestSessionService:
 
         session_id = mock_session.id
         await service.delete_session(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             session_id=session_id,
             project_id=self.PROJECT_ID,
         )
 
         mock_webhook.emit.assert_awaited_once_with(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             event_type=EventType.SESSION_CLOSED,
             payload={
                 "session_id": str(session_id),

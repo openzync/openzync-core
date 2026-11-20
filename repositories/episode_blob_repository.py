@@ -61,7 +61,7 @@ class EpisodeBlobRepository:
 
         values: list[str] = []
         params: dict[str, str | int | None] = {}
-        org_id_str = str(user_id)
+        tenant_id_str = str(user_id)
         proj_id_str = str(project_id)
         sess_id_str = str(session_id)
         ep_id_str = str(episode_id)
@@ -71,7 +71,7 @@ class EpisodeBlobRepository:
             pfx = f"b{i}"
             params.update({
                 f"{pfx}_id": blob.get("id", str(uuid4())),
-                f"{pfx}_org": org_id_str,
+                f"{pfx}_org": tenant_id_str,
                 f"{pfx}_proj": proj_id_str,
                 f"{pfx}_sess": sess_id_str,
                 f"{pfx}_ep": ep_id_str,

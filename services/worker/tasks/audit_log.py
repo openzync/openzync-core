@@ -86,7 +86,7 @@ async def write_audit_log(
                     await rls.set_bypass_rls(db_session, True)
                 service = AuditLogService(db_session)
                 await service.log_action(
-
+                    user_id=org_uuid,
                     actor_id=actor_id,
                     actor_type=actor_type,
                     action=action,

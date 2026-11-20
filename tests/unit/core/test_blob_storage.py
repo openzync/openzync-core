@@ -340,7 +340,7 @@ class TestBlobStorageBuildKey:
         from core.blob_storage import BlobStorage
 
         key = BlobStorage.build_key(
-            org_id="org-123",
+            user_id="org-123",
             project_id="proj-456",
             episode_id="ep-789",
             blob_index=0,
@@ -353,7 +353,7 @@ class TestBlobStorageBuildKey:
         from core.blob_storage import BlobStorage
 
         key = BlobStorage.build_key(
-            org_id="o",
+            user_id="o",
             project_id="p",
             episode_id="e",
             blob_index=1,

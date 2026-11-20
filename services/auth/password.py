@@ -13,13 +13,11 @@ from core.exceptions import (
     ValidationError,
 )
 from core.rls import set_user_context
-from core.rbac import invalidate_must_change_password
 from schemas.auth import (
     ChangePasswordRequest,
     TokenResponse,
 )
 from schemas.email import OtpResponse, ResetPasswordRequest
-from utils.password import hash_password, verify_password
 from utils.pii import mask_email
 
 logger = logging.getLogger(__name__)
@@ -68,14 +66,16 @@ class PasswordMixin:
                 "This account does not have a password set."
             )
         # bcrypt blocks the event loop — offload to a worker thread.
+        from services import auth_service as _facade  # via facade (patchable)
+
         if not await asyncio.to_thread(
-            verify_password, payload.old_password, user.password_hash
+            _facade.verify_password, payload.old_password, user.password_hash
         ):
             raise AuthenticationError("Current password is incorrect.")
 
         self._validate_password(payload.new_password)
         new_hash = await asyncio.to_thread(
-            hash_password, payload.new_password
+            _facade.hash_password, payload.new_password
         )
 
         await self._repo.update_dashboard_user(
@@ -86,7 +86,7 @@ class PasswordMixin:
         # Rotate the refresh-token family — every prior session is dead,
         # including the one that logged the default credential in.
         await self._repo.revoke_all_refresh_tokens(user_id)
-        await invalidate_must_change_password(self._redis, user.id)
+        await _facade.invalidate_must_change_password(self._redis, user.id)
 
         logger.info(
             "auth.password_changed",
@@ -180,8 +180,10 @@ class PasswordMixin:
         # Validate and hash new password
         self._validate_password(payload.new_password)
         # bcrypt blocks the event loop — offload to a worker thread.
+        from services import auth_service as _facade  # via facade (patchable)
+
         new_hash = await asyncio.to_thread(
-            hash_password, payload.new_password
+            _facade.hash_password, payload.new_password
         )
 
         # Update password hash

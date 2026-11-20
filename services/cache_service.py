@@ -349,7 +349,7 @@ class CacheService:
         Returns:
             A glob pattern string for ``SCAN`` / ``KEYS``.
         """
-        return f"ctx:{user_id}:{user_id}:*"
+        return f"ctx:{user_id}:*"
 
     @staticmethod
     def build_project_cache_pattern(user_id: str, project_id: str) -> str:

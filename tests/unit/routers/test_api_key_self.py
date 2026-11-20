@@ -31,10 +31,10 @@ def _build_app(state_overrides: dict | None = None) -> FastAPI:
     app = FastAPI()
     app.include_router(router)
 
-    from dependencies.auth import require_org_id
+    from dependencies.auth import require_user_id
 
     merged_state = {
-        "org_id": str(ORG_ID),
+        "user_id": str(ORG_ID),
         "auth_type": "api_key",
         "api_key_project_id": str(PROJECT_ID),
         "api_key_permissions": ["read", "write"],
@@ -42,11 +42,11 @@ def _build_app(state_overrides: dict | None = None) -> FastAPI:
     if state_overrides:
         merged_state.update(state_overrides)
 
-    # Only override require_org_id when org_id is set — otherwise let the
+    # Only override require_user_id when user_id is set — otherwise let the
     # real dependency run and raise 401 for the "without auth" test case.
     app.dependency_overrides = {}
-    if merged_state.get("org_id"):
-        app.dependency_overrides[require_org_id] = lambda: merged_state["org_id"]
+    if merged_state.get("user_id"):
+        app.dependency_overrides[require_user_id] = lambda: merged_state["user_id"]
 
     @app.middleware("http")
     async def _mock_auth(request: Request, call_next):
@@ -107,10 +107,10 @@ class TestGetApiKeyProjectId:
         assert body["project_id"] is None
 
     async def test_returns_401_without_auth(self) -> None:
-        """Should return 401 when no auth is provided (require_org_id raises)."""
+        """Should return 401 when no auth is provided (require_user_id raises)."""
         app = _build_app(
             state_overrides={
-                "org_id": None,
+                "user_id": None,
                 "auth_type": None,
                 "api_key_project_id": None,
             }

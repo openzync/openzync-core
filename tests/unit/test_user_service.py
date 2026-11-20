@@ -30,7 +30,7 @@ class TestUserService:
         """Mock a User ORM object with the attributes the service accesses."""
         user = MagicMock()
         user.id = kwargs.get("id", self.USER_ID)
-        user.organization_id = kwargs.get("org_id", self.ORG_ID)
+        user.user_id = kwargs.get("user_id", self.ORG_ID)
         user.external_id = kwargs.get("external_id", "test-user")
         user.name = kwargs.get("name", "Test User")
         user.email = kwargs.get("email", "test@example.com")
@@ -50,7 +50,7 @@ class TestUserService:
         mock_repo.create.return_value = self._mock_user(external_id="new-user")
 
         result = await service.create_user(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             external_id="new-user",
             name="New User",
         )
@@ -65,7 +65,7 @@ class TestUserService:
 
         with pytest.raises(ConflictError):
             await service.create_user(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 external_id="existing-user",
             )
 
@@ -78,7 +78,7 @@ class TestUserService:
             "message_count": 0, "fact_count": 0, "session_count": 0,
         }
 
-        result = await service.get_user(self.ORG_ID, self.USER_ID)
+        result = await service.get_user(self.USER_ID)
         assert result.id == self.USER_ID
 
     @pytest.mark.asyncio
@@ -88,7 +88,7 @@ class TestUserService:
         mock_repo.get_by_uuid.return_value = None
 
         with pytest.raises(NotFoundError):
-            await service.get_user(self.ORG_ID, uuid4())
+            await service.get_user(uuid4())
 
     @pytest.mark.asyncio
     async def test_delete_user(self) -> None:
@@ -98,7 +98,7 @@ class TestUserService:
 
         # delete_user returns None on success (raises on failure)
         result = await service.delete_user(
-            self.ORG_ID, self.USER_ID, actor_user_id=self.OTHER_USER_ID,
+            self.USER_ID, actor_user_id=self.OTHER_USER_ID,
         )
         assert result is None
         mock_repo.soft_delete.assert_awaited_once()
@@ -112,7 +112,7 @@ class TestUserService:
 
         with pytest.raises(NotFoundError):
             await service.delete_user(
-                self.ORG_ID, uuid4(), actor_user_id=self.OTHER_USER_ID,
+                uuid4(), actor_user_id=self.OTHER_USER_ID,
             )
 
     @pytest.mark.asyncio
@@ -122,7 +122,7 @@ class TestUserService:
         mock_repo.update.return_value = self._mock_user(name="Updated Name")
 
         result = await service.update_user(
-            self.ORG_ID, self.USER_ID, {"name": "Updated Name"},
+            self.USER_ID, {"name": "Updated Name"},
             actor_user_id=self.OTHER_USER_ID,
         )
         assert result.name == "Updated Name"

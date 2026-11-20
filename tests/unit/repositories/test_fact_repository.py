@@ -40,7 +40,7 @@ class TestFactRepository:
         f = MagicMock()
         f.id = overrides.get("id", self.FACT_ID)
         f.user_id = overrides.get("user_id", self.USER_ID)
-        f.organization_id = overrides.get("organization_id", self.ORG_ID)
+        f.user_id = overrides.get("user_id", self.ORG_ID)
         f.project_id = overrides.get("project_id", self.PROJECT_ID)
         f.content = overrides.get("content", "Alice likes hiking")
         f.subject = overrides.get("subject", "Alice")
@@ -70,8 +70,8 @@ class TestFactRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.create(
-            user_id=self.USER_ID,
-            organization_id=self.ORG_ID,
+            
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             content="Alice likes hiking",
             subject="Alice",
@@ -95,8 +95,8 @@ class TestFactRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.create(
-            user_id=self.USER_ID,
-            organization_id=self.ORG_ID,
+            
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             content="Test fact",
         )
@@ -115,8 +115,8 @@ class TestFactRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.create_or_skip(
-            user_id=self.USER_ID,
-            organization_id=self.ORG_ID,
+            
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             content="Alice likes hiking",
             subject="Alice",
@@ -136,8 +136,8 @@ class TestFactRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.create_or_skip(
-            user_id=self.USER_ID,
-            organization_id=self.ORG_ID,
+            
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             content="Duplicate",
         )
@@ -162,7 +162,7 @@ class TestFactRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.batch_create(
-            organization_id=self.ORG_ID,
+            
             project_id=self.PROJECT_ID,
             user_id=self.USER_ID,
             facts=facts,
@@ -176,7 +176,7 @@ class TestFactRepository:
     ) -> None:
         """batch_create returns empty list when no facts."""
         result = await repo.batch_create(
-            organization_id=self.ORG_ID,
+            
             project_id=self.PROJECT_ID,
             user_id=self.USER_ID,
             facts=[],
@@ -195,7 +195,7 @@ class TestFactRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.batch_create(
-            organization_id=self.ORG_ID,
+            
             project_id=self.PROJECT_ID,
             user_id=self.USER_ID,
             facts=facts,
@@ -220,7 +220,7 @@ class TestFactRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.batch_create_or_skip(
-            organization_id=self.ORG_ID,
+            
             project_id=self.PROJECT_ID,
             user_id=self.USER_ID,
             source_episode_id=self.EPISODE_ID,
@@ -247,7 +247,7 @@ class TestFactRepository:
         mock_db.execute.return_value = mock_result
 
         await repo.batch_create_or_skip(
-            organization_id=self.ORG_ID,
+            
             project_id=self.PROJECT_ID,
             user_id=self.USER_ID,
             source_episode_id=self.EPISODE_ID,
@@ -269,7 +269,7 @@ class TestFactRepository:
         mock_db.execute.return_value = mock_result
 
         await repo.batch_create_or_skip(
-            organization_id=self.ORG_ID,
+            
             project_id=self.PROJECT_ID,
             user_id=self.USER_ID,
             source_episode_id=self.EPISODE_ID,
@@ -298,7 +298,7 @@ class TestFactRepository:
         mock_db.execute.return_value = mock_result
 
         await repo.batch_create_or_skip(
-            organization_id=self.ORG_ID,
+            
             project_id=self.PROJECT_ID,
             user_id=self.USER_ID,
             source_episode_id=self.EPISODE_ID,
@@ -320,7 +320,7 @@ class TestFactRepository:
         mock_db.execute.return_value = mock_result
 
         await repo.batch_create_or_skip(
-            organization_id=self.ORG_ID,
+            
             project_id=self.PROJECT_ID,
             user_id=self.USER_ID,
             source_episode_id=self.EPISODE_ID,
@@ -425,7 +425,7 @@ class TestFactRepository:
         mock_db.execute.return_value = mock_result
 
         count = await repo.soft_delete_by_project(
-            project_id=self.PROJECT_ID, organization_id=self.ORG_ID
+            project_id=self.PROJECT_ID, user_id=self.ORG_ID
         )
 
         assert count == 10
@@ -440,7 +440,7 @@ class TestFactRepository:
         mock_db.execute.return_value = mock_result
 
         count = await repo.soft_delete_by_project(
-            project_id=self.PROJECT_ID, organization_id=self.ORG_ID
+            project_id=self.PROJECT_ID, user_id=self.ORG_ID
         )
 
         assert count == 0
@@ -463,7 +463,7 @@ class TestFactRepository:
         mock_db.execute.return_value = mock_result
 
         facts, cursor = await repo.list_by_session(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             session_id=self.SESSION_ID,
             limit=10,
         )
@@ -477,7 +477,7 @@ class TestFactRepository:
         """list_by_session fails closed on an undecodable cursor."""
         with pytest.raises(ValidationError, match="cursor"):
             await repo.list_by_session(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 session_id=self.SESSION_ID,
                 limit=10,
                 cursor="some-cursor",
@@ -492,7 +492,7 @@ class TestFactRepository:
         mock_db.execute.return_value = mock_result
 
         facts, cursor = await repo.list_by_session(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             session_id=self.SESSION_ID,
             limit=10,
         )
@@ -522,14 +522,14 @@ class TestFactRepository:
         results = await repo.search_by_vector(
             embedding=[0.1, 0.2, 0.3],
             project_id=self.PROJECT_ID,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             limit=10,
         )
 
         assert len(results) == 1
         assert results[0]["score"] == 0.92
         params = mock_db.execute.call_args.args[1]
-        assert params["org_id"] == self.ORG_ID
+        assert params["user_id"] == self.ORG_ID
 
     async def test_search_by_vector_empty(
         self, repo: FactRepository, mock_db: AsyncMock
@@ -542,18 +542,18 @@ class TestFactRepository:
         results = await repo.search_by_vector(
             embedding=[0.1, 0.2, 0.3],
             project_id=self.PROJECT_ID,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             limit=10,
         )
 
         assert results == []
         params = mock_db.execute.call_args.args[1]
-        assert params["org_id"] == self.ORG_ID
+        assert params["user_id"] == self.ORG_ID
 
     async def test_search_by_vector_scopes_to_organization(
         self, repo: FactRepository, mock_db: AsyncMock
     ) -> None:
-        """search_by_vector SQL filters on organization_id with bound org id."""
+        """search_by_vector SQL filters on user_id with bound org id."""
         mock_result = MagicMock()
         mock_result.fetchall.return_value = []
         mock_db.execute.return_value = mock_result
@@ -561,14 +561,14 @@ class TestFactRepository:
         await repo.search_by_vector(
             embedding=[0.1, 0.2, 0.3],
             project_id=self.PROJECT_ID,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             limit=10,
         )
 
         stmt = mock_db.execute.call_args.args[0]
         params = mock_db.execute.call_args.args[1]
-        assert "organization_id = :org_id" in str(stmt.text)
-        assert params["org_id"] == self.ORG_ID
+        assert "user_id = :user_id" in str(stmt.text)
+        assert params["user_id"] == self.ORG_ID
 
     # ── search_by_bm25 ─────────────────────────────────────────────────────────
 
@@ -588,7 +588,7 @@ class TestFactRepository:
         results = await repo.search_by_bm25(
             query="hiking",
             project_id=self.PROJECT_ID,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             limit=10,
         )
 
@@ -606,7 +606,7 @@ class TestFactRepository:
         results = await repo.search_by_bm25(
             query="nonexistent",
             project_id=self.PROJECT_ID,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             limit=10,
         )
 
@@ -637,7 +637,7 @@ class TestFactRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_id(
-            self.FACT_ID, organization_id=self.ORG_ID
+            self.FACT_ID, user_id=self.ORG_ID
         )
 
         assert result is None
@@ -653,7 +653,7 @@ class TestFactRepository:
         mock_db.flush.return_value = None
 
         await repo.record_invalidation_event(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             old_fact_id=self.FACT_ID,
             new_fact_id=None,
@@ -664,7 +664,7 @@ class TestFactRepository:
 
         mock_db.add.assert_called_once()
         event = mock_db.add.call_args.args[0]
-        assert event.organization_id == self.ORG_ID
+        assert event.user_id == self.ORG_ID
         assert event.project_id == self.PROJECT_ID
         assert event.old_fact_id == self.FACT_ID
         assert event.new_fact_id is None
@@ -695,7 +695,7 @@ class TestFactRepository:
         mock_db.refresh.return_value = None
 
         await repo.batch_create(
-            organization_id=self.ORG_ID,
+            
             project_id=self.PROJECT_ID,
             user_id=self.USER_ID,
             facts=facts,
@@ -720,7 +720,7 @@ class TestFactRepository:
 
         with pytest.raises(ValidationError):
             await repo.batch_create(
-                organization_id=self.ORG_ID,
+                
                 project_id=self.PROJECT_ID,
                 user_id=self.USER_ID,
                 facts=facts,
@@ -747,7 +747,7 @@ class TestFactRepository:
 
         with pytest.raises(ValidationError):
             await repo.batch_create(
-                organization_id=self.ORG_ID,
+                
                 project_id=self.PROJECT_ID,
                 user_id=self.USER_ID,
                 facts=facts,
@@ -775,7 +775,7 @@ class TestFactRepository:
         mock_db.execute.return_value = mock_result
 
         await repo.batch_create_or_skip(
-            organization_id=self.ORG_ID,
+            
             project_id=self.PROJECT_ID,
             user_id=self.USER_ID,
             source_episode_id=self.EPISODE_ID,
@@ -802,7 +802,7 @@ class TestFactRepository:
 
         with pytest.raises(ValidationError):
             await repo.batch_create_or_skip(
-                organization_id=self.ORG_ID,
+                
                 project_id=self.PROJECT_ID,
                 user_id=self.USER_ID,
                 source_episode_id=self.EPISODE_ID,

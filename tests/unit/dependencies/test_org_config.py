@@ -19,11 +19,11 @@ class TestGetOrgConfig:
 
     @pytest.mark.asyncio
     async def test_returns_org_config_from_resolver(self) -> None:
-        """Valid org_id → delegates to core.org_config.get_org_config."""
+        """Valid user_id → delegates to core.org_config.get_org_config."""
         from dependencies.org_config import get_org_config
 
         request = MagicMock(spec=Request)
-        request.state.org_id = ORG_ID_STR
+        request.state.user_id = ORG_ID_STR
         request.app.state.openbao_client = MagicMock()
         request.app.state.redis = MagicMock()
 
@@ -55,7 +55,7 @@ class TestGetOrgConfig:
         from dependencies.org_config import get_org_config
 
         request = MagicMock(spec=Request)
-        request.state.org_id = ORG_ID_STR
+        request.state.user_id = ORG_ID_STR
         request.app.state.openbao_client = None
         request.app.state.redis = None
 

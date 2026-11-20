@@ -38,9 +38,8 @@ ORG_ID_STR = "00000000-0000-0000-0000-000000000001"
 OTHER_ORG_ID_STR = "00000000-0000-0000-0000-000000000002"
 
 APPLY_SQL = (
-    "SELECT set_config('app.org_id', :org_id, true), "
-    "set_config('app.bypass_rls', :bypass_rls, true), "
-    "set_config('app.lookup_code', :lookup_code, true)"
+    "SELECT set_config('app.user_id', :user_id, true), "
+    "set_config('app.bypass_rls', :bypass_rls, true)"
 )
 """The single statement every context binding goes through."""
 
@@ -80,9 +79,9 @@ class TestInitContext:
 
     @pytest.mark.asyncio
     async def test_binds_the_tenant_and_neutralises_the_connection(self) -> None:
-        """The tenant is bound, the bypass is pinned off, the lookup code cleared.
+        """The tenant is bound and the bypass is pinned off.
 
-        All three GUCs are bound by **one** statement, and the statement is
+        Both GUCs are bound by **one** statement, and the statement is
         transaction-local (``is_local => true``) — the context can never
         outlive the transaction that set it.
         """
@@ -94,9 +93,8 @@ class TestInitContext:
         sql, params = db.executed[0]
         assert sql == APPLY_SQL
         assert params == {
-            "org_id": ORG_ID_STR,
+            "user_id": ORG_ID_STR,
             "bypass_rls": "false",
-            "lookup_code": "",
         }
 
     @pytest.mark.asyncio
@@ -113,8 +111,8 @@ class TestInitContext:
         await rls.init_context(db, ORG_ID_STR)
 
         sql, _params = db.executed[0]
-        assert sql.count("set_config(") == 3
-        assert sql.count(", true)") == 3
+        assert sql.count("set_config(") == 2
+        assert sql.count(", true)") == 2
         assert ", false)" not in sql
 
     @pytest.mark.asyncio
@@ -122,7 +120,7 @@ class TestInitContext:
         """No tenant → an EMPTY context, never an unset one.
 
         The org-isolation policies read
-        ``NULLIF(current_setting('app.org_id', true), '')::UUID``, so an
+        ``NULLIF(current_setting('app.user_id', true), '')::UUID``, so an
         empty context is NULL: no row matches, and nothing raises.
         """
         db = _FakeSession()
@@ -131,9 +129,8 @@ class TestInitContext:
 
         _sql, params = db.executed[0]
         assert params == {
-            "org_id": "",
+            "user_id": "",
             "bypass_rls": "false",
-            "lookup_code": "",
         }
 
     @pytest.mark.asyncio
@@ -143,18 +140,18 @@ class TestInitContext:
 
         await rls.init_context(db, ORG_ID_STR)
 
-        assert db.rls_context == RlsContext(org_id=ORG_ID_STR)
+        assert db.rls_context == RlsContext(user_id=ORG_ID_STR)
 
     @pytest.mark.asyncio
     async def test_init_context_pins_a_remembered_bypass_off(self) -> None:
         """A context initialised from scratch cannot inherit a stale bypass."""
         db = _FakeSession()
-        db.rls_context = RlsContext(org_id=OTHER_ORG_ID_STR, bypass_rls=True)
+        db.rls_context = RlsContext(user_id=OTHER_ORG_ID_STR, bypass_rls=True)
 
         await rls.init_context(db, ORG_ID_STR)
 
         assert db.rls_context.bypass_rls is False
-        assert db.rls_context.org_id == ORG_ID_STR
+        assert db.rls_context.user_id == ORG_ID_STR
 
 
 class TestSetTenantContext:
@@ -168,22 +165,21 @@ class TestSetTenantContext:
         await rls.set_tenant_context(db, ORG_ID_STR)
 
         _sql, params = db.executed[0]
-        assert params["org_id"] == ORG_ID_STR
-        assert db.rls_context.org_id == ORG_ID_STR
+        assert params["user_id"] == ORG_ID_STR
+        assert db.rls_context.user_id == ORG_ID_STR
 
     @pytest.mark.asyncio
-    async def test_preserves_the_bypass_and_the_lookup_code(self) -> None:
+    async def test_preserves_the_bypass(self) -> None:
         """Binding a tenant does not silently clear the bypass."""
         db = _FakeSession()
-        db.rls_context = RlsContext(bypass_rls=True, lookup_code="abc")
+        db.rls_context = RlsContext(bypass_rls=True)
 
         await rls.set_tenant_context(db, ORG_ID_STR)
 
         _sql, params = db.executed[0]
         assert params == {
-            "org_id": ORG_ID_STR,
+            "user_id": ORG_ID_STR,
             "bypass_rls": "true",
-            "lookup_code": "abc",
         }
 
     @pytest.mark.asyncio
@@ -198,8 +194,8 @@ class TestSetTenantContext:
         db = _FakeSession()
 
         await db.execute(
-            text("SELECT set_config('app.org_id', :org_id, true)"),
-            {"org_id": ORG_ID_STR},
+            text("SELECT set_config('app.user_id', :user_id, true)"),
+            {"user_id": ORG_ID_STR},
         )
 
         assert db.rls_context.is_empty
@@ -217,7 +213,7 @@ class TestReleaseTenantContext:
         left standing on the pooled connection to reset.
         """
         db = _FakeSession()
-        db.rls_context = RlsContext(org_id=ORG_ID_STR, bypass_rls=True)
+        db.rls_context = RlsContext(user_id=ORG_ID_STR, bypass_rls=True)
 
         await rls.release_tenant_context(db)
 
@@ -342,7 +338,7 @@ class TestRlsAsyncSession:
         statements = [str(c.args[0]) for c in session.execute.await_args_list]
         params = [c.args[1] for c in session.execute.await_args_list]
         assert statements == [APPLY_SQL, APPLY_SQL]
-        assert params[1]["org_id"] == ORG_ID_STR
+        assert params[1]["user_id"] == ORG_ID_STR
 
     @pytest.mark.asyncio
     async def test_the_rebind_is_the_first_statement_after_the_commit(self) -> None:
@@ -414,13 +410,13 @@ class TestRlsAsyncSession:
 
         with patch.object(AsyncSession, "commit", new=AsyncMock()):
             await session.execute(
-                text("SELECT set_config('app.org_id', :org_id, true)"),
-                {"org_id": ORG_ID_STR},
+                text("SELECT set_config('app.user_id', :user_id, true)"),
+                {"user_id": ORG_ID_STR},
             )
             await session.commit()
 
         statements = [str(c.args[0]) for c in session.execute.await_args_list]
-        assert statements == ["SELECT set_config('app.org_id', :org_id, true)"]
+        assert statements == ["SELECT set_config('app.user_id', :user_id, true)"]
 
     @pytest.mark.asyncio
     async def test_an_empty_context_is_not_rebound(self) -> None:
@@ -443,15 +439,15 @@ class _FakeOp:
         self.statements.append(statement)
 
 
-def _load_migration_0059() -> Any:
-    """Import ``migrations/versions/0059_force_rls.py`` (not a valid module name)."""
+def _load_migration_0069() -> Any:
+    """Import ``migrations/versions/0069_drop_org_add_user.py`` (not a valid module name)."""
     path = (
         Path(__file__).resolve().parents[3]
         / "migrations"
         / "versions"
-        / "0059_force_rls.py"
+        / "0069_drop_org_add_user.py"
     )
-    spec = importlib.util.spec_from_file_location("mig_0059_force_rls", path)
+    spec = importlib.util.spec_from_file_location("mig_0069_user_isolation", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -461,68 +457,77 @@ def _load_migration_0059() -> Any:
 class TestUnsetTenantContext:
     """An unset tenant context must match no rows — it must not raise.
 
-    ``current_setting('app.org_id')`` without ``missing_ok`` raises
+    ``current_setting('app.user_id')`` without ``missing_ok`` raises
     ``UndefinedObjectError`` when the GUC is unset (a 500 instead of an
-    empty result set).  The org-isolation policies use
-    ``NULLIF(current_setting('app.org_id', true), '')::UUID``: an unset or
+    empty result set).  The user-isolation policies use
+    ``NULLIF(current_setting('app.user_id', true), '')::uuid``: an unset or
     empty context is NULL, so the comparison matches nothing.
     """
 
     @pytest.mark.asyncio
     async def test_policies_fail_closed_instead_of_raising(self, monkeypatch) -> None:
-        """Every org-isolation policy uses the fail-closed expression."""
-        module = _load_migration_0059()
+        """Every user-isolation policy uses the fail-closed expression."""
+        module = _load_migration_0069()
         statements: list[str] = []
         monkeypatch.setattr(module, "op", _FakeOp(statements))
 
         module.upgrade()
 
-        policies = [s for s in statements if "CREATE POLICY org_isolation_" in s]
-        assert policies, "the migration must create the org-isolation policies"
+        policies = [
+            s
+            for s in statements
+            if "CREATE POLICY user_isolation" in s
+            and "WITH CHECK (true)" not in s
+        ]
+        assert policies, "the migration must create the user-isolation policies"
         for policy in policies:
-            assert "NULLIF(current_setting('app.org_id', true), '')::UUID" in policy
-            # The raising form must not survive anywhere.
-            assert "current_setting('app.org_id')" not in policy
+            assert "current_setting('app.user_id', true)" in policy
+            # The raising form (no missing_ok) must not survive anywhere.
+            assert "current_setting('app.user_id')::" not in policy
 
 
-class TestOrgAnonInsertPolicy:
-    """``org_anon_insert`` must not admit an arbitrary organization row.
+class TestUserInsertPolicy:
+    """``users`` INSERT stays open (signup is public); data tables bind rows.
 
-    Permissive policies are OR'ed, so a ``WITH CHECK (true)`` overrides
-    the ``FOR ALL`` policy's ``id = <app.org_id>`` and lets a
-    tenant-bound session insert an organization row for *any* id.  The
-    CHECK is therefore the same expression the SELECT policy uses.
+    Permissive policies are OR'ed, so each user table's ``WITH CHECK``
+    binds the inserted row to the session tenant — otherwise a
+    tenant-bound session could insert rows for *any* user id.
     """
 
     @pytest.mark.asyncio
-    async def test_the_check_is_not_unconditionally_true(self, monkeypatch) -> None:
-        """The INSERT policy's CHECK binds the row to the session's tenant."""
-        module = _load_migration_0059()
+    async def test_data_tables_check_binds_the_row_to_the_tenant(
+        self, monkeypatch
+    ) -> None:
+        """Each user table's INSERT CHECK binds the row to the tenant."""
+        module = _load_migration_0069()
         statements: list[str] = []
         monkeypatch.setattr(module, "op", _FakeOp(statements))
 
         module.upgrade()
 
-        policy = next(s for s in statements if "CREATE POLICY org_anon_insert" in s)
-        assert "WITH CHECK (true)" not in policy
-        assert "id = NULLIF(current_setting('app.org_id', true), '')::UUID" in policy
+        checks = [
+            s
+            for s in statements
+            if "CREATE POLICY user_isolation ON" in s and "WITH CHECK" in s
+        ]
+        assert checks, "user tables must carry a WITH CHECK policy"
+        for policy in checks:
+            assert "user_id = NULLIF(current_setting('app.user_id', true), '')::uuid" in policy
 
     @pytest.mark.asyncio
-    async def test_the_audit_policy_no_longer_admits_platform_rows(
+    async def test_the_users_insert_stays_open_for_public_signup(
         self, monkeypatch
     ) -> None:
-        """``audit_logs`` no longer hands the organization-less rows to tenants.
-
-        Those rows carry every unauthenticated request's IP address, user
-        agent, path and query string — a cross-tenant disclosure.
-        """
-        module = _load_migration_0059()
+        """``users`` INSERT is open — signup precedes any tenant context."""
+        module = _load_migration_0069()
         statements: list[str] = []
         monkeypatch.setattr(module, "op", _FakeOp(statements))
 
         module.upgrade()
 
         policy = next(
-            s for s in statements if "CREATE POLICY org_isolation_audit_logs" in s
+            s
+            for s in statements
+            if "CREATE POLICY user_isolation_insert ON users" in s
         )
-        assert "organization_id IS NULL" not in policy
+        assert "WITH CHECK (true)" in policy

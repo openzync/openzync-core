@@ -57,7 +57,7 @@ def mock_db() -> AsyncMock:
 
 
 @pytest.fixture
-def org_id() -> str:
+def user_id() -> str:
     """Dummy organization UUID."""
     return "550e8400-e29b-41d4-a716-446655440000"
 
@@ -111,7 +111,7 @@ class TestSelectCanonical:
     async def test_selects_entity_with_most_relationships(
         self,
         mock_db: AsyncMock,
-        org_id: str,
+        user_id: str,
         sample_cluster: list[dict],
     ) -> None:
         """Entity with 5 relationships should beat entities with 0 or 2."""
@@ -122,7 +122,7 @@ class TestSelectCanonical:
         ]
 
         canonical = await _select_canonical(
-            mock_db, org_id, sample_cluster,
+            mock_db, user_id, sample_cluster,
         )
 
         assert canonical["id"] == "11111111-1111-4111-a111-111111111111"
@@ -132,7 +132,7 @@ class TestSelectCanonical:
     async def test_selects_most_recently_updated_on_tie(
         self,
         mock_db: AsyncMock,
-        org_id: str,
+        user_id: str,
         sample_cluster: list[dict],
     ) -> None:
         """When relationship counts are equal, the most recently updated wins."""
@@ -151,7 +151,7 @@ class TestSelectCanonical:
         cluster[1]["updated_at"] = datetime(2024, 6, 1, tzinfo=UTC)
 
         canonical = await _select_canonical(
-            mock_db, org_id, cluster,
+            mock_db, user_id, cluster,
         )
 
         assert canonical["id"] == "33333333-3333-4333-a333-333333333333"
@@ -160,12 +160,12 @@ class TestSelectCanonical:
     async def test_returns_single_entity_unchanged(
         self,
         mock_db: AsyncMock,
-        org_id: str,
+        user_id: str,
         single_entity_cluster: list[dict],
     ) -> None:
         """A cluster with one entity should return that entity as canonical."""
         canonical = await _select_canonical(
-            mock_db, org_id, single_entity_cluster,
+            mock_db, user_id, single_entity_cluster,
         )
 
         assert canonical["id"] == "44444444-4444-4444-a444-444444444444"
@@ -181,7 +181,7 @@ class TestMergeCluster:
     async def test_merge_cluster_rewires_relationships(
         self,
         mock_db: AsyncMock,
-        org_id: str,
+        user_id: str,
         sample_cluster: list[dict],
     ) -> None:
         """Merge rewires source_id and target_id, marks duplicates merged."""
@@ -194,7 +194,7 @@ class TestMergeCluster:
         mock_db.execute.return_value.rowcount = 2
 
         result = await _merge_cluster(
-            mock_db, org_id, sample_cluster,
+            mock_db, user_id, sample_cluster,
         )
 
         assert result["entities_merged"] == 2
@@ -210,12 +210,12 @@ class TestMergeCluster:
     async def test_merge_single_entity_does_nothing(
         self,
         mock_db: AsyncMock,
-        org_id: str,
+        user_id: str,
         single_entity_cluster: list[dict],
     ) -> None:
         """A single-entity cluster should return zero merges."""
         result = await _merge_cluster(
-            mock_db, org_id, single_entity_cluster,
+            mock_db, user_id, single_entity_cluster,
         )
 
         assert result["entities_merged"] == 0
@@ -227,7 +227,7 @@ class TestMergeCluster:
     async def test_merge_writes_audit_log(
         self,
         mock_db: AsyncMock,
-        org_id: str,
+        user_id: str,
         sample_cluster: list[dict],
     ) -> None:
         """Merge writes an audit_log entry with before/after snapshot."""
@@ -236,7 +236,7 @@ class TestMergeCluster:
         ]
         mock_db.execute.return_value.rowcount = 2
 
-        await _merge_cluster(mock_db, org_id, sample_cluster)
+        await _merge_cluster(mock_db, user_id, sample_cluster)
 
         # Audit log is created via ``AuditLogService`` which uses
         # ``db.add(entry)`` — check ``add`` calls, not ``execute`` calls.

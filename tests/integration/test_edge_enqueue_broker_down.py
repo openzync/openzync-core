@@ -52,7 +52,7 @@ async def test_fact_ingest_broker_down_nothing_committed(engine, redis_client) -
                 side_effect=ConnectionError("broker down")
             )
             await svc.ingest_facts(
-                org_id=UUID("00000000-0000-0000-0000-000000000001"),
+                user_id=UUID("00000000-0000-0000-0000-000000000001"),
                 project_id=UUID("00000000-0000-0000-0000-000000000003"),
                 created_by=UUID("00000000-0000-0000-0000-000000000002"),
                 facts=[FactTriple(subject="a", predicate="b", object="c")],

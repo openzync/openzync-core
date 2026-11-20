@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dependencies.auth import require_org_id
+from dependencies.auth import require_user_id
 from dependencies.db import get_db
 from routers import admin_metrics
 from routers.admin_metrics import _get_metrics_service, router
@@ -44,7 +44,7 @@ def _stub_permission_gate() -> None:
     closure created at router import time that cannot be keyed in
     ``dependency_overrides``.  Patching ``dependencies.auth._check_permission``
     (the shared decision function) stubs the gate while keeping the
-    ``require_org_id`` chain intact.  The real gate matrix is covered by
+    ``require_user_id`` chain intact.  The real gate matrix is covered by
     ``test_admin_gate_matrix.py``.
     """
     with patch("dependencies.auth._check_permission", new=AsyncMock()):
@@ -83,14 +83,14 @@ def _create_app() -> tuple[FastAPI, AsyncMock]:
 
     @app.middleware("http")
     async def _mock_auth(request, call_next):
-        request.state.org_id = str(ORG_ID)
+        request.state.user_id = str(ORG_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "jwt"
         response = await call_next(request)
         return response
 
     app.dependency_overrides[get_db] = lambda: db_mock
-    app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+    app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
 
     app.include_router(router)
     return app, db_mock
@@ -436,14 +436,14 @@ async def test_get_prometheus_targets_502() -> None:
 
 @pytest.mark.asyncio
 async def test_metrics_endpoint_requires_auth() -> None:
-    """All /metrics endpoints return 401 when org_id is not provided."""
+    """All /metrics endpoints return 401 when user_id is not provided."""
     app = FastAPI()
     db_mock = AsyncMock(spec=AsyncSession)
     db_mock.execute.return_value = MagicMock()
 
-    # No auth middleware — request.state.org_id will not be set
+    # No auth middleware — request.state.user_id will not be set
     app.dependency_overrides[get_db] = lambda: db_mock
-    app.dependency_overrides[require_org_id] = lambda: _raise_401()
+    app.dependency_overrides[require_user_id] = lambda: _raise_401()
     app.include_router(router)
 
     transport = ASGITransport(app=app)

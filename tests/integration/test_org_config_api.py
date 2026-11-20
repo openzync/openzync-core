@@ -167,8 +167,8 @@ class TestCacheInvalidation:
 
         # Verify cache exists
         redis = app.state.redis
-        org_id = org_and_key["org_id"]
-        cache_key = f"org_config:{org_id}"
+        user_id = org_and_key["user_id"]
+        cache_key = f"org_config:{user_id}"
         cached = await redis.get(cache_key)
         assert cached is not None, "Cache should have been warmed by the GET"
 
@@ -180,9 +180,9 @@ class TestCacheInvalidation:
         """After a core-level update, the cache should be invalidated."""
         from unittest.mock import AsyncMock
 
-        org_id = org_and_key["org_id"]
+        user_id = org_and_key["user_id"]
         redis = app.state.redis
-        cache_key = f"org_config:{org_id}"
+        cache_key = f"org_config:{user_id}"
 
         # Warm the cache by fetching via the API
         from tests.integration.conftest import asgi_transport
@@ -201,7 +201,7 @@ class TestCacheInvalidation:
         mock_bao.write_org_config.return_value = None
 
         update = UpdateOrgConfigRequest(llm_backend="anthropic")
-        await update_org_config(org_id, update, bao_client=mock_bao, redis=redis)
+        await update_org_config(user_id, update, bao_client=mock_bao, redis=redis)
 
         # Cache should be invalidated
         cached_after = await redis.get(cache_key)
@@ -228,7 +228,7 @@ class TestResolutionEndToEnd:
         mock_bao.read_org_config.return_value = {}
 
         config = await get_org_config(
-            org_and_key["org_id"],
+            org_and_key["user_id"],
             redis=app.state.redis,
             bao_client=mock_bao,
         )
@@ -250,13 +250,13 @@ class TestResolutionEndToEnd:
         """After an OpenBao update, stored config should reflect the override."""
         from unittest.mock import AsyncMock
 
-        org_id = org_and_key["org_id"]
+        user_id = org_and_key["user_id"]
 
         mock_bao = AsyncMock()
         mock_bao.read_org_config.return_value = {}
 
         # Update via core function — write and then read back
-        def _side_effect(org_id: UUID, config: dict) -> None:
+        def _side_effect(user_id: UUID, config: dict) -> None:
             mock_bao.read_org_config.return_value = config
 
         mock_bao.write_org_config = AsyncMock(side_effect=_side_effect)
@@ -267,7 +267,7 @@ class TestResolutionEndToEnd:
             context_cache_ttl=120,
         )
         config = await update_org_config(
-            org_id, update, bao_client=mock_bao, redis=app.state.redis
+            user_id, update, bao_client=mock_bao, redis=app.state.redis
         )
         assert config.llm_backend == "anthropic"
         assert config.llm_model == "claude-3-5-sonnet"

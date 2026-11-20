@@ -146,6 +146,7 @@ async def get_user(
     service: UserService = Depends(get_user_service),
     # ⚠️ BREAKING: reading another member's record now requires
     # ``members:read``; a JWT user may still fetch their own record.
+    _viewer_id: str = Depends(require_permission_or_self("members:read")),  # noqa: B008
 ) -> UserResponseWithStats:
     """Get a user by internal UUID.
 
@@ -162,6 +163,7 @@ async def update_user(
     body: UpdateUserRequest,
     request: Request,
     service: UserService = Depends(get_user_service),
+    _writer_id: str = Depends(require_permission("members:write")),  # noqa: B008
     actor_permissions: frozenset[str] | None = Depends(get_actor_permissions),
 ) -> UserResponse:
     """Update user fields.
@@ -200,6 +202,7 @@ async def delete_user(
     user_id: UUID,
     request: Request,
     service: UserService = Depends(get_user_service),
+    _writer_id: str = Depends(require_permission("members:write")),  # noqa: B008
 ) -> Response:
     """Delete a user and all associated data.
 
@@ -246,6 +249,7 @@ async def get_user_summary_service(
 async def get_user_summary(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
+    _viewer_id: str = Depends(require_permission_or_self("members:read")),  # noqa: B008
 ) -> UserSummaryResponse:
     """Get the current summary for a user.
 
@@ -253,7 +257,7 @@ async def get_user_summary(
 
     Returns 404 if no summary has been generated yet.
     """
-    summary = await service.get_summary(user_id=UUID(user_id))
+    summary = await service.get_summary(user_id=user_id)
     if summary is None:
         raise HTTPException(
             status_code=404,
@@ -274,6 +278,7 @@ async def get_user_summary(
 async def trigger_user_summary(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
+    _writer_id: str = Depends(require_permission("members:write")),  # noqa: B008
 ) -> UserSummaryTriggerResponse:
     """Trigger generation of a user summary.
 
@@ -284,7 +289,7 @@ async def trigger_user_summary(
     """
     try:
         return await service.trigger_generation(
-            user_id=UUID(user_id),
+            user_id=user_id,
         )
     except RateLimitError as exc:
         raise HTTPException(status_code=429, detail=exc.message) from exc
@@ -297,13 +302,14 @@ async def trigger_user_summary(
 async def list_user_summary_instructions(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
+    _viewer_id: str = Depends(require_permission_or_self("members:read")),  # noqa: B008
 ) -> CustomInstructionsResponse:
     """List custom instructions for a user's summary generation.
 
     Readable by the target user themself or an org admin (JWT only).
     """
     instructions = await service.get_instructions(
-        user_id=UUID(user_id),
+        user_id=user_id,
     )
     return CustomInstructionsResponse(
         data=[CustomInstructionSchema(**i) for i in instructions],
@@ -320,6 +326,7 @@ async def set_user_summary_instructions(
     user_id: UUID,
     body: SetCustomInstructionsRequest,
     service: UserSummaryService = Depends(get_user_summary_service),
+    _writer_id: str = Depends(require_permission("members:write")),  # noqa: B008
 ) -> CustomInstructionsResponse:
     """Replace all summary instructions for a user.
 
@@ -328,7 +335,7 @@ async def set_user_summary_instructions(
     """
     instructions_data = [i.model_dump() for i in body.instructions]
     instructions = await service.set_instructions(
-        user_id=UUID(user_id),
+        user_id=user_id,
         instructions=instructions_data,
     )
     return CustomInstructionsResponse(
@@ -341,11 +348,12 @@ async def set_user_summary_instructions(
 async def delete_user_summary_instructions(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
+    _writer_id: str = Depends(require_permission("members:write")),  # noqa: B008
 ) -> Response:
     """Clear all summary instructions for a user.
 
     Permission-gated (``require_permission("members:write")``): mutates
     another user's data.
     """
-    await service.delete_instructions(user_id=UUID(user_id))
+    await service.delete_instructions(user_id=user_id)
     return Response(status_code=204)

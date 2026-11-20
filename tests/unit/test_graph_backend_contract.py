@@ -126,7 +126,7 @@ def _make_mock_obs_row(**overrides: Any) -> MockRow:
     """Create a mock DB row representing a graph_observation."""
     defaults: dict[str, Any] = {
         "id": uuid4(),
-        "organization_id": ORG_ID,
+        "user_id": ORG_ID,
         "project_id": PROJ_ID,
         "subject_entity_id": ENTITY_ID,
         "related_entity_id": None,
@@ -476,7 +476,7 @@ class TestCreateEntity:
         _configure_entity_create_result(backend, mock_db, mock_surreal, mock_falkordb_client, row)
 
         result = await backend.create_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             name="Test Person",
             entity_type="Person",
@@ -501,7 +501,7 @@ class TestCreateEntity:
 
         with pytest.raises(ExternalServiceError, match="Failed to create entity|DB connection lost|surreal not reachable|falkordb connection refused|FalkorDB schema bootstrap failed"):
             await backend.create_entity(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 name="Test",
                 entity_type="Person",
@@ -663,7 +663,7 @@ class TestUpdateEntity:
             graph.query.return_value = MagicMock(result_set=[row])
 
         result = await backend.update_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             entity_id=ENTITY_ID,
             name="Updated",
@@ -693,7 +693,7 @@ class TestUpdateEntity:
 
         with pytest.raises(NotFoundError):
             await backend.update_entity(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 entity_id=ENTITY_ID,
                 name="Anything",
@@ -711,7 +711,7 @@ class TestUpdateEntity:
 
         with pytest.raises(ExternalServiceError):
             await backend.update_entity(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 entity_id=ENTITY_ID,
                 name="Test",
@@ -764,7 +764,7 @@ class TestCreateRelationship:
             graph.query.return_value = MagicMock(result_set=[row])
 
         result = await backend.create_relationship(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             source_id=ENTITY_ID,
             target_id=TARGET_ID,
@@ -790,7 +790,7 @@ class TestCreateRelationship:
 
         with pytest.raises(ExternalServiceError):
             await backend.create_relationship(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 source_id=ENTITY_ID,
                 target_id=TARGET_ID,
@@ -1242,14 +1242,14 @@ class TestLinkEntityToEpisode:
 
         # First call
         await backend.link_entity_to_episode(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             episode_id=EPISODE_ID,
             entity_id=ENTITY_ID,
         )
         # Second call — must not raise
         await backend.link_entity_to_episode(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             episode_id=EPISODE_ID,
             entity_id=ENTITY_ID,
@@ -1281,7 +1281,7 @@ class TestLinkEntityToEpisode:
             graph.query.return_value = MagicMock(result_set=[(str(ENTITY_ID), "test", "Person", "", "{}", NOW.isoformat())])
 
         result = await backend.link_entity_to_episode(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             episode_id=EPISODE_ID,
             entity_id=ENTITY_ID,
@@ -1307,7 +1307,7 @@ class TestLinkEntityToEpisode:
 
         with pytest.raises(ExternalServiceError):
             await backend.link_entity_to_episode(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 episode_id=EPISODE_ID,
                 entity_id=ENTITY_ID,
@@ -1738,7 +1738,7 @@ class TestUpsertObservation:
                     {"status": "OK", "result": []},
                     {"status": "OK", "result": [{
                         "id": str(uuid4()),
-                        "organization_id": str(ORG_ID),
+                        "user_id": str(ORG_ID),
                         "project_id": str(PROJ_ID),
                         "subject_entity_id": str(ENTITY_ID),
                         "observation_type": "co_occurrence",
@@ -1765,7 +1765,7 @@ class TestUpsertObservation:
             graph.query.return_value = MagicMock(result_set=[row])
 
         result = await backend.upsert_observation(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             subject_entity_id=ENTITY_ID,
             observation_type="co_occurrence",
@@ -1793,7 +1793,7 @@ class TestUpsertObservation:
 
         with pytest.raises(ExternalServiceError):
             await backend.upsert_observation(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 subject_entity_id=ENTITY_ID,
                 observation_type="test",
@@ -2202,7 +2202,7 @@ class TestRetrieveGraphAsOf:
         if _get_backend_name(backend) == "postgres":
             # Postgres threads the instant through its ``at_time`` kwarg.
             backend.traverse.assert_called_once_with(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 start_node_id=ENTITY_ID,
                 max_depth=2,
@@ -2210,7 +2210,7 @@ class TestRetrieveGraphAsOf:
             )
         else:
             backend.traverse.assert_called_once_with(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 start_node_id=ENTITY_ID,
                 max_depth=2,
@@ -2241,7 +2241,7 @@ class TestRetrieveGraphAsOf:
             assert "as_of" not in kwargs
         else:
             backend.traverse.assert_called_once_with(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 start_node_id=ENTITY_ID,
                 max_depth=2,

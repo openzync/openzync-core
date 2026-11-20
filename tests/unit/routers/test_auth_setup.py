@@ -62,7 +62,7 @@ async def test_setup_returns_201() -> None:
     assert resp.status_code == 201
     assert "root" in resp.json()["message"]
     mocks["setup_service"].create_root_once.assert_awaited_once_with(
-        "StrongPass1"
+        "StrongPass1", "Platform"
     )
     mocks["auth_throttle"].check_signup_attempt.assert_awaited_once()
 

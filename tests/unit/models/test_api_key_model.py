@@ -15,14 +15,14 @@ class TestApiKeyModel:
     def test_required_fields(self) -> None:
         """Minimal required fields produce a valid instance."""
         key = ApiKey(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             project_id=uuid.uuid4(),
             lookup_hash="abc123",
             key_hash="salted_hash",
             salt="random_salt",
             prefix="oz_live_",
         )
-        assert key.organization_id is not None
+        assert key.user_id is not None
         assert key.project_id is not None
         assert key.lookup_hash == "abc123"
         assert key.key_hash == "salted_hash"
@@ -41,7 +41,7 @@ class TestApiKeyModel:
     def test_nullable_fields(self) -> None:
         """created_by, name, last_used_at, expires_at are nullable."""
         key = ApiKey(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             project_id=uuid.uuid4(),
             lookup_hash="abc",
             key_hash="def",
@@ -83,7 +83,7 @@ class TestApiKeyModel:
     def test_repr(self) -> None:
         """repr includes id, prefix, and is_revoked."""
         key = ApiKey(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             project_id=uuid.uuid4(),
             lookup_hash="abc",
             key_hash="def",

@@ -30,7 +30,7 @@ FACT_ID = UUID("00000000-0000-0000-0000-000000000100")
 AT_TIME = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
 
 _TASK_ARGS = dict(
-    org_id=str(ORG_ID),
+    user_id=str(ORG_ID),
     project_id=str(PROJECT_ID),
     source_id=str(SRC_ENTITY),
     target_id=str(TGT_ENTITY),
@@ -79,7 +79,7 @@ class TestExpireGraphEdgesTask:
 
         assert result == f"expired 2 edge(s) for {SRC_ENTITY}->{TGT_ENTITY} reports_to"
         backend.expire_relationships_matching.assert_awaited_once_with(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJECT_ID,
             source_id=SRC_ENTITY,
             target_id=TGT_ENTITY,
@@ -190,7 +190,7 @@ class TestExpireGraphEdgesTask:
 
 
 class TestExpireGraphEdgesRls:
-    """Per-org RLS scoping — ``app.org_id`` is set before any org query.
+    """Per-org RLS scoping — ``app.user_id`` is set before any org query.
 
     Same root cause as the cron scans (an unset tenant context matches no
     rows), but the fix differs by design: this is a single-org task, so
@@ -198,7 +198,7 @@ class TestExpireGraphEdgesRls:
     """
 
     @pytest.mark.asyncio
-    async def test_org_id_set_before_backend_resolution(self) -> None:
+    async def test_user_id_set_before_backend_resolution(self) -> None:
         """First statement scopes RLS with the exact task org UUID."""
         db = _make_db()
         backend = _backend(count=1)
@@ -211,11 +211,10 @@ class TestExpireGraphEdgesRls:
         calls = db.execute.await_args_list
         assert len(calls) >= 1
         first = calls[0]
-        assert "app.org_id" in str(first.args[0])
+        assert "app.user_id" in str(first.args[0])
         assert first.args[1] == {
-            "org_id": str(ORG_ID),
+            "user_id": str(ORG_ID),
             "bypass_rls": "false",
-            "lookup_code": "",
         }
         backend.expire_relationships_matching.assert_awaited_once()
 

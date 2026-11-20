@@ -125,11 +125,11 @@ class DedupClaimMixin:
             when this attempt lost and must return the winner's response.
         """
         content_hash = self._idem.compute_content_hash(
-            str(user_id), str(created_by), str(session_id), msgs
+            str(user_id), str(session_id), msgs
         )
         try:
             _peek = await self._idem.check_content_hash(
-                str(user_id), str(created_by), str(session_id), msgs
+                str(user_id), str(session_id), msgs
             )
         except Exception:
             _peek = None
@@ -154,7 +154,6 @@ class DedupClaimMixin:
         job_id = uuid4()
         claim = await self._idem.claim_content_hash(
             str(user_id),
-            str(created_by),
             str(session_id),
             msgs,
             payload=_encode_claim_payload(job_id, len(msgs)),
@@ -191,7 +190,7 @@ class DedupClaimMixin:
                 },
             )
             await self._idem.release_content_hash(
-                str(user_id), str(created_by), str(session_id), msgs
+                str(user_id), str(session_id), msgs
             )
             return IngestMemoryResponse(
                 job_id=str(prior_job_id) if prior_job_id else None,

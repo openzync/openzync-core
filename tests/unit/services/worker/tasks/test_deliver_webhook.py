@@ -828,7 +828,7 @@ class TestWriteAuditLog:
         """Audit log is written successfully when trace_id is provided."""
         await write_audit_log(
             DEFAULT_CTX,
-            organization_id=ORG_ID,
+            user_id=ORG_ID,
             actor_id=ACTOR_ID,
             actor_type="user",
             action="session.create",
@@ -841,7 +841,7 @@ class TestWriteAuditLog:
 
         self._mock_bind.assert_called_once_with(trace_id="trace-xyz-789")
         self._mock_service.log_action.assert_awaited_once_with(
-            organization_id=ANY,
+            user_id=ANY,
             actor_id=ACTOR_ID,
             actor_type="user",
             action="session.create",
@@ -857,7 +857,7 @@ class TestWriteAuditLog:
         """Audit log is written successfully without trace_id."""
         await write_audit_log(
             DEFAULT_CTX,
-            organization_id=ORG_ID,
+            user_id=ORG_ID,
             actor_id=ACTOR_ID,
             actor_type="user",
             action="session.create",
@@ -879,7 +879,7 @@ class TestWriteAuditLog:
 
         await write_audit_log(
             DEFAULT_CTX,
-            organization_id=ORG_ID,
+            user_id=ORG_ID,
             actor_id=ACTOR_ID,
             actor_type="user",
             action="resource.update",
@@ -898,7 +898,7 @@ class TestWriteAuditLog:
         """When details is None or empty, parsed_details defaults to {}."""
         await write_audit_log(
             DEFAULT_CTX,
-            organization_id=ORG_ID,
+            user_id=ORG_ID,
             actor_id=ACTOR_ID,
             actor_type="user",
             action="resource.update",
@@ -922,7 +922,7 @@ class TestWriteAuditLog:
         )
 
         self._mock_service.log_action.assert_awaited_once_with(
-            organization_id=None,
+            user_id=None,
             actor_id=None,
             actor_type=None,
             action="session.create",
@@ -945,7 +945,7 @@ class TestWriteAuditLog:
         ):
             await write_audit_log(
                 DEFAULT_CTX,
-                organization_id=ORG_ID,
+                user_id=ORG_ID,
                 actor_id=ACTOR_ID,
                 actor_type="invalid_type",
                 action="session.create",
@@ -991,7 +991,7 @@ class TestWriteAuditLog:
         """
         await write_audit_log(
             DEFAULT_CTX,
-            organization_id=ORG_ID,
+            user_id=ORG_ID,
             actor_id=ACTOR_ID,
             actor_type="user",
             action="session.create",

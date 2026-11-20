@@ -22,7 +22,7 @@ from schemas.organization_config import (
 
 
 @pytest.fixture
-def org_id() -> UUID:
+def user_id() -> UUID:
     return uuid4()
 
 
@@ -49,7 +49,7 @@ class TestGetOrgConfig:
 
     async def test_fresh_fetch_from_openbao(
         self,
-        org_id: UUID,
+        user_id: UUID,
         mock_bao_client: AsyncMock,
         mock_redis: AsyncMock,
     ) -> None:
@@ -60,7 +60,7 @@ class TestGetOrgConfig:
         }
 
         config = await get_org_config(
-            org_id, redis=mock_redis, bao_client=mock_bao_client
+            user_id, redis=mock_redis, bao_client=mock_bao_client
         )
 
         assert isinstance(config, OrgConfigBase)
@@ -69,11 +69,11 @@ class TestGetOrgConfig:
 
         # Cache should have been warmed
         mock_redis.setex.assert_awaited_once()
-        mock_bao_client.read_org_config.assert_awaited_once_with(org_id)
+        mock_bao_client.read_org_config.assert_awaited_once_with(user_id)
 
     async def test_cache_hit(
         self,
-        org_id: UUID,
+        user_id: UUID,
         mock_bao_client: AsyncMock,
         mock_redis: AsyncMock,
     ) -> None:
@@ -81,7 +81,7 @@ class TestGetOrgConfig:
         mock_redis.get.return_value = '{"llm_backend": "openai"}'
 
         config = await get_org_config(
-            org_id, redis=mock_redis, bao_client=mock_bao_client
+            user_id, redis=mock_redis, bao_client=mock_bao_client
         )
 
         assert config.llm_backend == "openai"
@@ -90,7 +90,7 @@ class TestGetOrgConfig:
 
     async def test_cache_corrupted_data_falls_back_to_openbao(
         self,
-        org_id: UUID,
+        user_id: UUID,
         mock_bao_client: AsyncMock,
         mock_redis: AsyncMock,
     ) -> None:
@@ -99,14 +99,14 @@ class TestGetOrgConfig:
         mock_bao_client.read_org_config.return_value = {"llm_backend": "ollama"}
 
         config = await get_org_config(
-            org_id, redis=mock_redis, bao_client=mock_bao_client
+            user_id, redis=mock_redis, bao_client=mock_bao_client
         )
 
         assert config.llm_backend == "ollama"  # fell back to OpenBao
 
     async def test_empty_openbao_config_returns_all_none(
         self,
-        org_id: UUID,
+        user_id: UUID,
         mock_bao_client: AsyncMock,
         mock_redis: AsyncMock,
     ) -> None:
@@ -114,7 +114,7 @@ class TestGetOrgConfig:
         mock_bao_client.read_org_config.return_value = {}
 
         config = await get_org_config(
-            org_id, redis=mock_redis, bao_client=mock_bao_client
+            user_id, redis=mock_redis, bao_client=mock_bao_client
         )
 
         # Every field except graph_backend should be None — graph defaults to falkordb
@@ -130,7 +130,7 @@ class TestGetOrgConfig:
 
     async def test_skip_cache_flag(
         self,
-        org_id: UUID,
+        user_id: UUID,
         mock_bao_client: AsyncMock,
         mock_redis: AsyncMock,
     ) -> None:
@@ -139,7 +139,7 @@ class TestGetOrgConfig:
         mock_bao_client.read_org_config.return_value = {"llm_backend": "openai"}
 
         config = await get_org_config(
-            org_id, redis=mock_redis, bao_client=mock_bao_client, skip_cache=True
+            user_id, redis=mock_redis, bao_client=mock_bao_client, skip_cache=True
         )
 
         assert config.llm_backend == "openai"  # from OpenBao, not cache
@@ -147,28 +147,28 @@ class TestGetOrgConfig:
 
     async def test_no_redis_skips_cache_entirely(
         self,
-        org_id: UUID,
+        user_id: UUID,
         mock_bao_client: AsyncMock,
     ) -> None:
         """When redis is None, always fetch from OpenBao (no cache layer)."""
         mock_bao_client.read_org_config.return_value = {"llm_backend": "openai"}
 
         config = await get_org_config(
-            org_id, redis=None, bao_client=mock_bao_client
+            user_id, redis=None, bao_client=mock_bao_client
         )
 
         assert config.llm_backend == "openai"
-        mock_bao_client.read_org_config.assert_awaited_once_with(org_id)
+        mock_bao_client.read_org_config.assert_awaited_once_with(user_id)
 
     async def test_requires_client(
         self,
-        org_id: UUID,
+        user_id: UUID,
     ) -> None:
         """When bao_client is None, an error should be raised."""
         from core.openbao_exceptions import OpenBaoConnectionError
 
         with pytest.raises(OpenBaoConnectionError):
-            await get_org_config(org_id, bao_client=None)
+            await get_org_config(user_id, bao_client=None)
 
 
 class TestUpdateOrgConfig:
@@ -176,7 +176,7 @@ class TestUpdateOrgConfig:
 
     async def test_partial_update_merges_correctly(
         self,
-        org_id: UUID,
+        user_id: UUID,
         mock_bao_client: AsyncMock,
         mock_redis: AsyncMock,
     ) -> None:
@@ -188,13 +188,13 @@ class TestUpdateOrgConfig:
 
         update = UpdateOrgConfigRequest(llm_backend="openai")
         resolved = await update_org_config(
-            org_id, update, bao_client=mock_bao_client, redis=mock_redis
+            user_id, update, bao_client=mock_bao_client, redis=mock_redis
         )
 
         assert resolved.llm_backend == "openai"
         # Should have written merged config to OpenBao
         mock_bao_client.write_org_config.assert_awaited_once_with(
-            org_id,
+            user_id,
             {"llm_backend": "openai", "llm_model": "llama3"},
         )
         # Cache should have been invalidated
@@ -202,7 +202,7 @@ class TestUpdateOrgConfig:
 
     async def test_none_field_removes_key(
         self,
-        org_id: UUID,
+        user_id: UUID,
         mock_bao_client: AsyncMock,
         mock_redis: AsyncMock,
     ) -> None:
@@ -214,13 +214,13 @@ class TestUpdateOrgConfig:
 
         update = UpdateOrgConfigRequest(llm_backend=None)
         resolved = await update_org_config(
-            org_id, update, bao_client=mock_bao_client, redis=mock_redis
+            user_id, update, bao_client=mock_bao_client, redis=mock_redis
         )
 
         # llm_backend must reach write_org_config as None so the client's
         # None→delete branch removes the stale KV secret
         mock_bao_client.write_org_config.assert_awaited_once_with(
-            org_id,
+            user_id,
             {"llm_backend": None, "llm_model": "llama3"},
         )
         # Other fields preserved
@@ -229,7 +229,7 @@ class TestUpdateOrgConfig:
 
     async def test_cache_invalidation_failure_does_not_raise(
         self,
-        org_id: UUID,
+        user_id: UUID,
         mock_bao_client: AsyncMock,
         mock_redis: AsyncMock,
     ) -> None:
@@ -240,7 +240,7 @@ class TestUpdateOrgConfig:
         update = UpdateOrgConfigRequest(llm_backend="openai")
         # Should not raise despite Redis failure
         resolved = await update_org_config(
-            org_id, update, bao_client=mock_bao_client, redis=mock_redis
+            user_id, update, bao_client=mock_bao_client, redis=mock_redis
         )
         assert resolved.llm_backend == "openai"
 

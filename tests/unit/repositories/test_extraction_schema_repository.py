@@ -32,7 +32,7 @@ class TestExtractionSchemaRepository:
     def _mock_schema(self, **overrides: object) -> MagicMock:
         s = MagicMock()
         s.id = overrides.get("id", self.SCHEMA_ID)
-        s.organization_id = overrides.get("organization_id", self.ORG_ID)
+        s.user_id = overrides.get("user_id", self.ORG_ID)
         s.name = overrides.get("name", "test-schema")
         s.type = overrides.get("type", "structured")
         s.json_schema = overrides.get("json_schema", {"type": "object"})
@@ -52,7 +52,7 @@ class TestExtractionSchemaRepository:
         mock_result.scalar_one_or_none.return_value = schema
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_id(org_id=self.ORG_ID, schema_id=self.SCHEMA_ID)
+        result = await repo.get_by_id(user_id=self.ORG_ID, schema_id=self.SCHEMA_ID)
 
         assert result == schema
 
@@ -64,7 +64,7 @@ class TestExtractionSchemaRepository:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_id(org_id=self.ORG_ID, schema_id=self.SCHEMA_ID)
+        result = await repo.get_by_id(user_id=self.ORG_ID, schema_id=self.SCHEMA_ID)
 
         assert result is None
 
@@ -79,7 +79,7 @@ class TestExtractionSchemaRepository:
         mock_result.scalar_one_or_none.return_value = schema
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_name(org_id=self.ORG_ID, name="my-schema")
+        result = await repo.get_by_name(user_id=self.ORG_ID, name="my-schema")
 
         assert result == schema
 
@@ -91,7 +91,7 @@ class TestExtractionSchemaRepository:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_name(org_id=self.ORG_ID, name="nonexistent")
+        result = await repo.get_by_name(user_id=self.ORG_ID, name="nonexistent")
 
         assert result is None
 
@@ -106,7 +106,7 @@ class TestExtractionSchemaRepository:
         mock_result.scalars.return_value.all.return_value = schemas
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_all(org_id=self.ORG_ID)
+        result = await repo.get_all(user_id=self.ORG_ID)
 
         assert result == schemas
 
@@ -120,7 +120,7 @@ class TestExtractionSchemaRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_all(
-            org_id=self.ORG_ID, schema_type="classification"
+            user_id=self.ORG_ID, schema_type="classification"
         )
 
         assert result == schemas
@@ -133,7 +133,7 @@ class TestExtractionSchemaRepository:
         mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_all(org_id=self.ORG_ID, is_active=True)
+        result = await repo.get_all(user_id=self.ORG_ID, is_active=True)
 
         assert result == []
 
@@ -145,7 +145,7 @@ class TestExtractionSchemaRepository:
         mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_all(org_id=self.ORG_ID)
+        result = await repo.get_all(user_id=self.ORG_ID)
 
         assert result == []
 
@@ -160,7 +160,7 @@ class TestExtractionSchemaRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.create(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             name="new-schema",
             json_schema={"type": "object", "properties": {}},
             type="structured",
@@ -181,7 +181,7 @@ class TestExtractionSchemaRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.create(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             name="with-prompt",
             json_schema={},
             type="classification",
@@ -257,7 +257,7 @@ class TestExtractionSchemaRepository:
         mock_result.scalar_one.return_value = 7
         mock_db.execute.return_value = mock_result
 
-        count = await repo.count_for_org(org_id=self.ORG_ID)
+        count = await repo.count_for_org(user_id=self.ORG_ID)
 
         assert count == 7
 
@@ -270,7 +270,7 @@ class TestExtractionSchemaRepository:
         mock_db.execute.return_value = mock_result
 
         count = await repo.count_for_org(
-            org_id=self.ORG_ID, schema_type="classification"
+            user_id=self.ORG_ID, schema_type="classification"
         )
 
         assert count == 3
@@ -286,7 +286,7 @@ class TestExtractionSchemaRepository:
         mock_result.all.return_value = [(l,) for l in labels]
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_classification_labels(org_id=self.ORG_ID)
+        result = await repo.get_classification_labels(user_id=self.ORG_ID)
 
         assert result == labels
 
@@ -298,6 +298,6 @@ class TestExtractionSchemaRepository:
         mock_result.all.return_value = []
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_classification_labels(org_id=self.ORG_ID)
+        result = await repo.get_classification_labels(user_id=self.ORG_ID)
 
         assert result == []

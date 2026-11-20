@@ -269,6 +269,6 @@ async def update_member_role(
         ) from None
     return MemberRoleResponse(
         id=user.id,
-
+        user_id=user.id,
         role=user.role,
     )

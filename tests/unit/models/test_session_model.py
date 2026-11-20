@@ -15,12 +15,12 @@ class TestSessionModel:
     def test_required_fields(self) -> None:
         """Minimal required fields produce a valid instance."""
         session = Session(
-            organization_id=uuid.uuid4(),
+            
             project_id=uuid.uuid4(),
             user_id=uuid.uuid4(),
             external_id="ext-001",
         )
-        assert session.organization_id is not None
+        assert session.user_id is not None
         assert session.project_id is not None
         assert session.user_id is not None
         assert session.external_id == "ext-001"
@@ -36,7 +36,7 @@ class TestSessionModel:
     def test_nullable_closed_at(self) -> None:
         """closed_at defaults to None."""
         session = Session(
-            organization_id=uuid.uuid4(),
+            
             project_id=uuid.uuid4(),
             user_id=uuid.uuid4(),
             external_id="ext-003",
@@ -60,7 +60,7 @@ class TestSessionModel:
     def test_repr(self) -> None:
         """repr includes user_id and is_active."""
         session = Session(
-            organization_id=uuid.uuid4(),
+            
             project_id=uuid.uuid4(),
             user_id=uuid.uuid4(),
             external_id="ext",

@@ -91,7 +91,7 @@ class TestIdempotencyService:
     # ── Tenant (org) namespacing ─────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_cache_key_includes_org_id(self, mock_redis: AsyncMock) -> None:
+    async def test_cache_key_includes_user_id(self, mock_redis: AsyncMock) -> None:
         """Stored cache key is namespaced by org: ...idempotency:{org}:{key}."""
         captured: dict = {}
 
@@ -150,8 +150,8 @@ class TestIdempotencyService:
         assert result_a_again.response_data == {"job_id": "job-a"}
 
     @pytest.mark.asyncio
-    async def test_org_id_accepts_uuid_or_str(self, mock_redis: AsyncMock) -> None:
-        """org_id may be passed as UUID or str — both normalize to the same key."""
+    async def test_user_id_accepts_uuid_or_str(self, mock_redis: AsyncMock) -> None:
+        """user_id may be passed as UUID or str — both normalize to the same key."""
         keys: list[str] = []
 
         async def _fake_get(key: str) -> str | None:
@@ -175,7 +175,7 @@ class TestIdempotencyService:
         service = IdempotencyService(redis=mock_redis)
 
         result = await service.check_content_hash(
-            "org1", "user1", "session1",
+            "user1", "session1",
             [{"role": "user", "content": "Hello"}],
         )
         assert result == "job-123"
@@ -187,7 +187,7 @@ class TestIdempotencyService:
         service = IdempotencyService(redis=mock_redis)
 
         result = await service.check_content_hash(
-            "org1", "user1", "session1",
+            "user1", "session1",
             [{"role": "user", "content": "Hello"}],
         )
         assert result is None
@@ -200,7 +200,7 @@ class TestIdempotencyService:
         service = IdempotencyService(redis=mock_redis)
 
         result = await service.store_content_hash(
-            "org1", "user1", "session1",
+            "user1", "session1",
             [{"role": "user", "content": "Hello"}],
         )
         assert isinstance(result, str)
@@ -222,7 +222,7 @@ class TestIdempotencyService:
         service = IdempotencyService(redis=mock_redis)
 
         content_hash = await service.store_content_hash(
-            "org1", "user1", "session1",
+            "user1", "session1",
             [{"role": "user", "content": "Hello"}],
             payload="job-456",
         )
@@ -230,7 +230,7 @@ class TestIdempotencyService:
 
         mock_redis.get.return_value = stored_value["value"]
         result = await service.check_content_hash(
-            "org1", "user1", "session1",
+            "user1", "session1",
             [{"role": "user", "content": "Hello"}],
         )
         assert result == "job-456"
@@ -252,12 +252,12 @@ class TestIdempotencyService:
             }
         ]
 
-        h_base = IdempotencyService.compute_content_hash("org1", "user1", "s1", base)
+        h_base = IdempotencyService.compute_content_hash("user1", "s1", base)
         h_meta = IdempotencyService.compute_content_hash(
-            "org1", "user1", "s1", with_meta
+            "user1", "s1", with_meta
         )
         h_blobs = IdempotencyService.compute_content_hash(
-            "org1", "user1", "s1", with_blobs
+            "user1", "s1", with_blobs
         )
 
         assert h_meta != h_base  # metadata participates in the hash
@@ -272,12 +272,12 @@ class TestIdempotencyService:
             {"role": "user", "content": "Hello", "metadata": {}, "blobs": []}
         ]
         # Absence vs presence changes the shape — no collision is the contract.
-        h1 = IdempotencyService.compute_content_hash("org1", "user1", "s1", msg_plain)
+        h1 = IdempotencyService.compute_content_hash("user1", "s1", msg_plain)
         h2 = IdempotencyService.compute_content_hash(
-            "org1", "user1", "s1", msg_explicit_empty
+            "user1", "s1", msg_explicit_empty
         )
         assert h1 != h2
 
         # Determinism: same dicts hash the same.
-        h3 = IdempotencyService.compute_content_hash("org1", "user1", "s1", msg_plain)
+        h3 = IdempotencyService.compute_content_hash("user1", "s1", msg_plain)
         assert h1 == h3

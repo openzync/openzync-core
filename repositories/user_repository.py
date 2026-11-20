@@ -173,8 +173,7 @@ class UserRepository:
                 from core.exceptions import NotFoundError
 
                 raise NotFoundError(
-                    f"Failed to get-or-create user '{external_id}' "
-                    f"in organization {user_id}"
+                    f"Failed to get-or-create user '{external_id}'"
                 ) from err
             return user
 
@@ -1020,13 +1019,13 @@ class UserRepository:
 
     async def exists_by_external_id(
         self,
-        user_id: UUID,
         external_id: str,
     ) -> bool:
-        """Check if a user with this ``external_id`` exists in the org.
+        """Check if a user with this ``external_id`` exists.
 
         Efficient boolean query — fetches only the primary key (no
-        full-row transfer).
+        full-row transfer).  ``external_id`` is globally unique
+        (``uq_user_external``), so no tenant scope is needed.
 
         Args:
             external_id: The caller-defined identifier.

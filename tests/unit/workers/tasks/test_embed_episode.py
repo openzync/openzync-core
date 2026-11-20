@@ -68,7 +68,7 @@ class TestEmbedEpisode:
             await embed_episode(
                 ctx=self._ctx(db),
                 episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 content=_CONTENT,
                 trace_id=_TRACE_ID,
@@ -98,7 +98,7 @@ class TestEmbedEpisode:
             await embed_episode(
                 ctx=self._ctx(db),
                 episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 content=_CONTENT,
             )
@@ -123,7 +123,7 @@ class TestEmbedEpisode:
                 await embed_episode(
                     ctx=self._ctx(db),
                     episode_id=_EPISODE_ID,
-                    org_id=_ORG_ID,
+                    user_id=_ORG_ID,
                     project_id=_PROJECT_ID,
                     content=_CONTENT,
                 )
@@ -157,7 +157,7 @@ class TestEmbedEpisode:
             await embed_episode(
                 ctx=self._ctx(db),
                 episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 content=_CONTENT,
             )
@@ -188,7 +188,7 @@ class TestEmbedEpisode:
                 await embed_episode(
                     ctx=self._ctx(db),
                     episode_id=_EPISODE_ID,
-                    org_id=_ORG_ID,
+                    user_id=_ORG_ID,
                     project_id=_PROJECT_ID,
                     content=_CONTENT,
                 )
@@ -214,7 +214,7 @@ class TestEmbedEpisode:
             await embed_episode(
                 ctx=self._ctx(db),
                 episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 content="",
             )
@@ -244,7 +244,7 @@ class TestEmbedEpisode:
             await embed_episode(
                 ctx=self._ctx(db),
                 episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 content=None,
             )
@@ -257,7 +257,7 @@ class TestEmbedEpisode:
     async def test_tenant_is_bound_before_the_episode_is_read(
         self, embedder: AsyncMock
     ) -> None:
-        """The ``app.org_id`` binding happens before the row is read.
+        """The ``app.user_id`` binding happens before the row is read.
 
         Under enforced row-level security a session that queries first and
         binds second sees zero rows — the task would report success
@@ -288,7 +288,7 @@ class TestEmbedEpisode:
             await embed_episode(
                 ctx=self._ctx(db),
                 episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 content=_CONTENT,
             )
@@ -297,11 +297,10 @@ class TestEmbedEpisode:
             read_index = next(i for i, c in enumerate(calls) if c[0] == "get_by_id")
             # Exactly one statement ran before the read — the tenant bind.
             assert [c[0] for c in calls[:read_index]] == ["execute"]
-            assert "app.org_id" in str(calls[0].args[0])
+            assert "app.user_id" in str(calls[0].args[0])
             assert calls[0].args[1] == {
-                "org_id": _ORG_ID,
+                "user_id": _ORG_ID,
                 "bypass_rls": "false",
-                "lookup_code": "",
             }
 
     @pytest.mark.asyncio
@@ -338,7 +337,7 @@ class TestEmbedEpisode:
             await embed_episode(
                 ctx=self._ctx(db),
                 episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 content=_CONTENT,
             )
@@ -356,6 +355,6 @@ class TestEmbedEpisode:
             ]
             # The release issued no statement of its own — the last
             # statement is the write, not a context reset.
-            assert "set_config('app.org_id', ''" not in str(
+            assert "set_config('app.user_id', ''" not in str(
                 db.execute.await_args_list[-1].args[0]
             )

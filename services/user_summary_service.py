@@ -85,7 +85,7 @@ class UserSummaryService:
             raise CacheUnavailableError(
                 "Redis is required for user summary rate limiting."
             )
-        key = f"ratelimit:summary:{user_id}:{user_id}"
+        key = f"ratelimit:summary:{user_id}"
         ok = await self._redis.set(key, "1", nx=True, ex=300)
         return bool(ok)
 

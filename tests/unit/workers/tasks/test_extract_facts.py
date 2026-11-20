@@ -187,7 +187,7 @@ class TestProcessFactsOutput:
                 entity_repo=MagicMock(),
                 fact_repo=fact_repo,
                 episode_repo=episode_repo,
-                org_id=_ORG_ID,
+                
                 episode_id=_EPISODE_ID,
                 project_id=_PROJECT_ID,
                 session_id=_SESSION_ID,
@@ -223,7 +223,7 @@ class TestProcessFactsOutput:
                 entity_repo=MagicMock(),
                 fact_repo=fact_repo,
                 episode_repo=episode_repo,
-                org_id=_ORG_ID,
+                
                 episode_id=_EPISODE_ID,
                 project_id=_PROJECT_ID,
                 session_id=_SESSION_ID,
@@ -276,7 +276,7 @@ class TestProcessFactsOutput:
                 entity_repo=entity_repo,
                 fact_repo=fact_repo,
                 episode_repo=episode_repo,
-                org_id=_ORG_ID,
+                
                 episode_id=_EPISODE_ID,
                 project_id=_PROJECT_ID,
                 session_id=_SESSION_ID,
@@ -326,7 +326,7 @@ class TestProcessFactsOutput:
                 entity_repo=None,
                 fact_repo=fact_repo,
                 episode_repo=episode_repo,
-                org_id=_ORG_ID,
+                
                 episode_id=_EPISODE_ID,
                 project_id=_PROJECT_ID,
                 session_id=_SESSION_ID,
@@ -394,7 +394,7 @@ class TestProcessFactsOutput:
                 entity_repo=entity_repo,
                 fact_repo=fact_repo,
                 episode_repo=episode_repo,
-                org_id=_ORG_ID,
+                
                 episode_id=_EPISODE_ID,
                 project_id=_PROJECT_ID,
                 session_id=_SESSION_ID,
@@ -459,7 +459,7 @@ class TestProcessFactsOutput:
                 entity_repo=entity_repo,
                 fact_repo=fact_repo,
                 episode_repo=episode_repo,
-                org_id=_ORG_ID,
+                
                 episode_id=_EPISODE_ID,
                 project_id=_PROJECT_ID,
                 session_id=_SESSION_ID,
