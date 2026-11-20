@@ -365,10 +365,11 @@ class TestUserCrud:
         """GET /v1/users with cursor-based pagination.
 
         Each test gets a fixture user (``fixture_user``) created by the
-        ``isolated_org_and_key`` fixture, plus 4 test users = 5 total.
-        With limit=2: page 1 → 2, page 2 → 2, page 3 → 1.
+        ``isolated_org_and_key`` fixture, plus the bootstrap user and
+        4 test users = 6 total.
+        With limit=2: page 1 → 2, page 2 → 2, page 3 → 2.
         """
-        # Seed 4 users (fixture user brings total to 5)
+        # Seed 4 users (fixture + bootstrap users bring total to 6)
         for i in range(4):
             resp = await admin_client.post(
                 "/v1/users",
@@ -406,7 +407,7 @@ class TestUserCrud:
         )
         assert page3.status_code == 200
         body3 = page3.json()
-        assert len(body3["data"]) == 1
+        assert len(body3["data"]) == 2
         assert body3["has_more"] is False
         assert body3["next_cursor"] is None
 

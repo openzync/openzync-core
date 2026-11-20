@@ -43,10 +43,10 @@ async def _seed_user_and_session(engine) -> tuple[UUID, UUID]:
         user_repo = UserRepository(db)
         session_repo = SessionRepository(db)
         user = await user_repo.create(
-            user_id=ORG_ID, external_id="repo_test_user",
+            external_id="repo_test_user",
         )
         session = await session_repo.create(
-            user_id=ORG_ID, project_id=PROJECT_ID, created_by=user.id,
+            user_id=user.id, project_id=PROJECT_ID, created_by=user.id,
             external_id="repo_test_session",
         )
         return user.id, session.id
@@ -188,7 +188,6 @@ class TestAuthRepository:
             repo = AuthRepository(db)
             user = await repo.create_dashboard_user(
                 email="test@openzync.tech", password_hash="hash",
-                user_id=ORG_ID,
             )
             assert user.id is not None
             assert user.email == "test@openzync.tech"
@@ -198,7 +197,6 @@ class TestAuthRepository:
             repo = AuthRepository(db)
             await repo.create_dashboard_user(
                 email="findme@openzync.tech", password_hash="hash",
-                user_id=ORG_ID,
             )
             user = await repo.find_user_by_email("findme@openzync.tech")
             assert user is not None
@@ -208,7 +206,7 @@ class TestAuthRepository:
         async with AsyncSession(engine) as db:
             repo = AuthRepository(db)
             token = await repo.create_refresh_token(
-                user_id=ORG_ID,
+                user_id=uuid4(),
                 token_hash="tok_hash", expires_at=datetime.now(),
             )
             assert token.id is not None

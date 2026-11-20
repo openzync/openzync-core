@@ -78,18 +78,18 @@ def setup_module() -> None:
         )
         conn.execute(
             text(
-                "INSERT INTO projects (id, user_id, name) "
-                "VALUES ('00000000-0000-0000-0000-000000000002', "
-                "'00000000-0000-0000-0000-000000000005', 'Test Project') "
-                "ON CONFLICT (id) DO NOTHING"
-            )
-        )
-        conn.execute(
-            text(
                 "INSERT INTO users (id, external_id, name, email, is_active) "
                 "VALUES ('00000000-0000-0000-0000-000000000005', "
                 "'enrich-user', 'Enrich User', "
                 "'enrich@test.local', TRUE) ON CONFLICT (id) DO NOTHING"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO projects (id, user_id, name) "
+                "VALUES ('00000000-0000-0000-0000-000000000002', "
+                "'00000000-0000-0000-0000-000000000005', 'Test Project') "
+                "ON CONFLICT (id) DO NOTHING"
             )
         )
         conn.execute(

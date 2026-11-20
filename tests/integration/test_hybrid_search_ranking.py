@@ -201,15 +201,14 @@ class TestHnswSearchRanking:
                 await db_session.execute(
                     sqltext(
                         "INSERT INTO episodes "
-                        "(user_id, project_id, session_id, user_id, "
+                        "(user_id, project_id, session_id, "
                         "role, content, sequence_number, embedding) "
-                        "SELECT :org, :proj, :sess, :user, 'user', "
+                        "SELECT :user, :proj, :sess, 'user', "
                         "'scale filler ' || g, g, "
                         "CAST(:emb AS vector) "
                         "FROM generate_series(0, 1499) AS g"
                     ),
                     {
-                        "org": str(user_id),
                         "proj": str(isolated_project_id),
                         "sess": session_id,
                         "user": str(user_id),

@@ -106,19 +106,25 @@ class ProjectRepository:
     async def get_by_id(
         self, user_id: UUID, project_id: UUID
     ) -> Project | None:
-        """Look up a project by its UUID, scoped to the organisation.
+        """Look up a project by its UUID, excluding archived projects.
+
+        This is an existence check only — it does not scope by owner.
+        Callers enforce access separately (``require_project_membership``
+        on routes, ``get_member`` checks in services): scoping by owner
+        here would 404 for project members who did not create the
+        project, silently breaking sharing.
 
         Args:
-            user_id: Tenant scope.
+            user_id: Accepted for call-site compatibility; not used as a
+                row filter (RLS + membership gates own access control).
             project_id: The project's UUID primary key.
 
         Returns:
-            The Project if found, ``None`` otherwise.
+            The Project if found and not archived, ``None`` otherwise.
         """
         result = await self._db.execute(
             select(Project).where(
                 Project.id == project_id,
-                Project.user_id == user_id,
                 Project.is_archived.is_(False),
             )
         )
@@ -259,16 +265,15 @@ class ProjectRepository:
         spec = sort if sort is not None else SortSpec()
         req_sort, req_dir = spec.effective("created_at", "desc")
 
-        query = select(Project).where(
-            Project.user_id == user_id,
-        )
-        if not include_archived:
-            query = query.where(Project.is_archived.is_(False))
-
+        query = select(Project)
         if user_id is not None:
+            # Membership narrows the list — ownership alone must not:
+            # members who did not create the project still see it.
             query = query.join(
                 ProjectMember, Project.id == ProjectMember.project_id
             ).where(ProjectMember.user_id == user_id)
+        if not include_archived:
+            query = query.where(Project.is_archived.is_(False))
 
         result = await self._db.execute(
             query.order_by(

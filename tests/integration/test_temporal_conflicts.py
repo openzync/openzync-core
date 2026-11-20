@@ -492,13 +492,12 @@ class TestTemporalQueries:
 
         await db.execute(
             sa_text(
-                "INSERT INTO users (id, user_id, external_id, name, role, is_active) "
-                "VALUES (:uid, :user_id, :eid, :name, 'member', true) "
+                "INSERT INTO users (id, external_id, name, role, is_active) "
+                "VALUES (:uid, :eid, :name, 'member', true) "
                 "ON CONFLICT (id) DO NOTHING"
             ),
             {
                 "uid": self._USER_ID,
-                "user_id": ORG_ID,
                 "eid": f"test-user-{self._USER_ID}",
                 "name": "Temporal Query Test User",
             },

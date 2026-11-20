@@ -124,7 +124,7 @@ class AuditLogService:
             Tuple of (list of AuditLog ORM objects, total_count).
         """
         return await self._repo.list(
-
+            user_id,
             action=action,
             actor_id=actor_id,
             actor_type=actor_type,

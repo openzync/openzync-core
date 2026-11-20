@@ -149,6 +149,7 @@ class TestAuditLogService:
         assert len(entries) == 1
         assert total == 1
         mock_repo.list.assert_awaited_once_with(
+            self.ORG_ID,
             action="session.create",
             actor_id=None,
             actor_type=None,
@@ -176,6 +177,7 @@ class TestAuditLogService:
         )
 
         mock_repo.list.assert_awaited_once_with(
+            self.ORG_ID,
             action=None,
             actor_id=None,
             actor_type=None,
@@ -208,6 +210,7 @@ class TestAuditLogService:
         )
 
         mock_repo.list.assert_awaited_once_with(
+            self.ORG_ID,
             action="user.login",
             actor_id=self.USER_ID,
             actor_type="user",

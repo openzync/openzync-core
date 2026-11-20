@@ -60,8 +60,8 @@ def setup_module() -> None:
     driver_url = url.replace("postgresql://", "postgresql+asyncpg://")
     _run_alembic_upgrade(driver_url)
 
-    # Seed the well-known test organization and project so FK constraints
-    # (graph_entities.user_id → organizations.id) are satisfied.
+    # Seed the well-known test user and project so FK constraints
+    # (graph_entities.user_id → users.id) are satisfied.
     from sqlalchemy import create_engine as create_sync_engine
     from sqlalchemy import text
 
@@ -70,9 +70,9 @@ def setup_module() -> None:
     with sync_engine.begin() as conn:
         conn.execute(
             text(
-                "INSERT INTO organizations (id, name, org_code) "
+                "INSERT INTO users (id, external_id, name) "
                 "VALUES ('00000000-0000-0000-0000-000000000001', "
-                "'Test Org', 'testorg01') "
+                "'pg-backend-test-user', 'PG Backend Test User') "
                 "ON CONFLICT (id) DO NOTHING"
             )
         )
@@ -170,13 +170,12 @@ async def _create_test_episode(
 
     await db.execute(
         sa_text(
-            "INSERT INTO users (id, user_id, external_id, name, email, is_active) "
-            "VALUES (:id, :user_id, :ext, :name, :email, TRUE) "
+            "INSERT INTO users (id, external_id, name, email, is_active) "
+            "VALUES (:id, :ext, :name, :email, TRUE) "
             "ON CONFLICT (id) DO NOTHING"
         ),
         {
             "id": str(uid),
-            "user_id": str(ORG_ID),
             "ext": f"ep-user-{uid}",
             "name": "ep-test-user",
             "email": f"{uid}@test.local",

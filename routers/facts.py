@@ -318,7 +318,7 @@ async def get_fact_history(
     project_id = UUID(request.path_params["project_id"])
     result = await service.get_fact_history(
         fact_id,
-
+        user_id=user_id,
         project_id=project_id,
         limit=limit,
         offset=offset,
