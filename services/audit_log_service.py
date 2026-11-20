@@ -34,7 +34,7 @@ class AuditLogService:
     async def log_action(
         self,
         *,
-        user_id: UUID | None = None,
+        user_id: UUID | None,
         actor_id: str | None = None,
         actor_type: str | None = None,
         action: str,
@@ -46,7 +46,8 @@ class AuditLogService:
         """Record an audit log entry.
 
         Args:
-            user_id: Organization UUID (nullable for unauthenticated actions).
+            user_id: Organization UUID — required kwarg (None for
+                unauthenticated actions).
             actor_id: Identifier of the acting entity.
             actor_type: ``user``, ``api_key``, or ``system``.
             action: The action performed (e.g. ``session.create``).

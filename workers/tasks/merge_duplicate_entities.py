@@ -492,7 +492,7 @@ async def _merge_cluster(
 
     audit_service = AuditLogService(db)
     await audit_service.log_action(
-
+        user_id=user_id,
         actor_id="system",
         actor_type="system",
         action="entity.merge",

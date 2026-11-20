@@ -146,7 +146,7 @@ class ProjectWipeMixin:
         from services.audit_log_service import AuditLogService
 
         await AuditLogService(self._db).log_action(
-
+            user_id=user_id,
             actor_id=str(actor_id),
             actor_type="user",
             action="memory.wipe",
