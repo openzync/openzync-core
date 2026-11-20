@@ -693,7 +693,7 @@ async def get_profile(
         user_id: Authenticated user UUID from JWT claims.
 
     Returns:
-        The user's public profile (email, name, role, org, verification).
+        The user's public profile (email, name, role, verification).
     """
     return await service.get_profile(user_id=UUID(user_id))
 

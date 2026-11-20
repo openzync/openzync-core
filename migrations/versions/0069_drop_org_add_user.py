@@ -273,6 +273,12 @@ def upgrade() -> None:
     op.execute("DROP POLICY IF EXISTS org_isolation ON users")
     op.execute("DROP POLICY IF EXISTS org_join_code_lookup ON users")
     op.execute("DROP POLICY IF EXISTS user_isolation ON users")
+    # Pending-only hard-delete guard (app-level, see
+    # UserRepository.hard_delete_pending_user): a DELETE of a users row is
+    # only a revoke/self-clean when ``invite_token_hash IS NOT NULL`` —
+    # accepted or ordinary users must never be hard-deleted.  The policy
+    # below admits any self-row; the pending-only restriction lives in the
+    # repository predicate, not in RLS.
     op.execute(
         "CREATE POLICY user_isolation_select ON users FOR SELECT "
         f"USING ({_using(_ME)})"

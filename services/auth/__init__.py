@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING
 
 from repositories.auth_repository import AuthRepository
 from repositories.instance_settings_repository import InstanceSettingsRepository
-from repositories.organization_repository import OrganizationRepository
 from services.auth.org_join import OrgJoinMixin
 from services.auth.password import PasswordMixin
 from services.auth.passwordless import PasswordlessMixin
@@ -55,7 +54,6 @@ class AuthService(
         repo: Repository for auth-related DB access.
         otp_service: OTP service for email verification and MFA.
         redis: Async Redis client for MFA session storage.
-        org_repo: Repository for organization lookups (org-code join).
         email_service: Optional email service for notification-only emails
             (e.g. password-change confirmation).  ``None`` skips notifications.
         bao_client: Optional OpenBao client for bootstrapping org namespaces
@@ -69,7 +67,6 @@ class AuthService(
         repo: AuthRepository,
         otp_service: OtpService,
         redis: AsyncRedis,
-        org_repo: OrganizationRepository,
         email_service: EmailService | None = None,
         bao_client: OpenBaoClient | None = None,
         settings_repo: InstanceSettingsRepository | None = None,
@@ -77,7 +74,6 @@ class AuthService(
         self._repo = repo
         self._otp_service = otp_service
         self._redis = redis
-        self._org_repo = org_repo
         self._email_service = email_service
         self._bao_client = bao_client
         self._settings_repo = settings_repo

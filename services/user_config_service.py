@@ -8,7 +8,6 @@ System layer comes from OpenBao; the user layer is the
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 from uuid import UUID
 
@@ -19,8 +18,6 @@ from core.org_config import get_org_config
 from core.system_config import get_system_config
 from repositories.auth_repository import AuthRepository
 from repositories.user_repository import UserRepository
-
-logger = logging.getLogger(__name__)
 
 
 class UserConfigService:
@@ -114,19 +111,11 @@ class UserConfigService:
         effective: dict[str, Any] = deep_merge(
             {}, system.model_dump(exclude_none=True)
         )
-        try:
-            org = await get_org_config(
-                user.id,
-                redis=self._redis,
-                bao_client=bao,
-            )
-        except Exception:
-            logger.error(
-                "user_config.org_layer_failed",
-                extra={"user_id": str(user_id)},
-                exc_info=True,
-            )
-            raise
+        org = await get_org_config(
+            user.id,
+            redis=self._redis,
+            bao_client=bao,
+        )
         effective = deep_merge(effective, org.model_dump(exclude_none=True))
 
         override = await self._user_repo.get_config_override(user_id)

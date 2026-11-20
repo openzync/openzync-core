@@ -36,7 +36,6 @@ class ProfileMixin:
     _repo: Any
     _otp_service: Any
     _redis: Any
-    _org_repo: Any
     _email_service: Any
     _bao_client: Any
 
@@ -81,7 +80,6 @@ class ProfileMixin:
             email=user.email or "",
             name=user.name,
             role=user.role if user.role is not None else "member",
-            user_id=user.id,
             is_email_verified=user.is_email_verified,
             mfa_enabled=user.mfa_enabled,
             must_change_password=bool(user.must_change_password),
@@ -227,7 +225,6 @@ class ProfileMixin:
             email=user.email or "",
             name=user.name,
             role=user.role if user.role is not None else "member",
-
             is_email_verified=user.is_email_verified,
             mfa_enabled=user.mfa_enabled,
             must_change_password=bool(user.must_change_password),

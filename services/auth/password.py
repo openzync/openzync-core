@@ -30,7 +30,6 @@ class PasswordMixin:
     _repo: Any
     _otp_service: Any
     _redis: Any
-    _org_repo: Any
     _email_service: Any
     _bao_client: Any
 
@@ -208,25 +207,15 @@ class PasswordMixin:
     def _validate_password(password: str) -> None:
         """Validate password meets minimum strength requirements.
 
+        Thin delegate to :func:`utils.password.validate_password_strength`
+        (kept so existing mixin call sites are unchanged).
+
         Args:
             password: The plaintext password.
 
         Raises:
             ValidationError: If the password is too weak.
         """
-        if len(password) < 8:
-            raise ValidationError(
-                "Password must be at least 8 characters long."
-            )
-        if not any(c.isupper() for c in password):
-            raise ValidationError(
-                "Password must contain at least one uppercase letter."
-            )
-        if not any(c.islower() for c in password):
-            raise ValidationError(
-                "Password must contain at least one lowercase letter."
-            )
-        if not any(c.isdigit() for c in password):
-            raise ValidationError(
-                "Password must contain at least one digit."
-            )
+        from utils.password import validate_password_strength
+
+        validate_password_strength(password)

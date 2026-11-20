@@ -20,9 +20,10 @@ from pydantic import BaseModel, ConfigDict, Field
 class UserConfigUpdate(BaseModel):
     """Request body for ``PATCH /v1/me/config``.
 
-    Partial deep-merge onto the stored override: provided keys override,
-    ``None`` removes that top-level key (nested removal is not supported).
-    Unknown keys are rejected.
+    Partial deep-merge onto the stored override: provided keys override
+    recursively, ``None`` removes that **top-level** key (nested removal
+    is not supported — a nested ``None`` replaces the nested value, and
+    only a top-level ``None`` deletes).  Unknown keys are rejected.
     """
 
     model_config = ConfigDict(extra="forbid")

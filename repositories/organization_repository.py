@@ -36,24 +36,6 @@ class OrganizationRepository:
         """
         return self._db
 
-    # ── Tenant context ──────────────────────────────────────────────────────
-
-    async def set_tenant_context(self, user_id: UUID) -> None:
-        """Bind this session to one owner (user).
-
-        The public flows (signup, join, login, refresh) only learn their
-        owner *after* their first lookup, so they bind the session to the
-        resolved user before any user-scoped write.  Session-scoped,
-        so the owner survives a mid-request commit.
-
-        TODO(0070): remove with the ``organizations`` table drop — callers
-        should use :func:`core.rls.set_user_context` directly.
-
-        Args:
-            user_id: The owner user UUID the session may act on.
-        """
-        await rls.set_user_context(self._db, user_id)
-
     # ── Organization rows ───────────────────────────────────────────────────
 
     async def get_by_id(self, user_id: UUID) -> Organization | None:
@@ -72,7 +54,7 @@ class OrganizationRepository:
         Returns:
             The Organization if found, or ``None``.
         """
-        await self.set_tenant_context(user_id)
+        await rls.set_user_context(self._db, user_id)
         result = await self._db.execute(
             select(Organization).where(Organization.id == user_id)
         )
@@ -103,7 +85,7 @@ class OrganizationRepository:
             # gone; blocked on a NOT NULL migration, not worth it yet.
             org_code=secrets.token_hex(4).upper(),
         )
-        await self.set_tenant_context(org.id)
+        await rls.set_user_context(self._db, org.id)
         self._db.add(org)
         await self._db.flush()
         await self._db.refresh(org)
@@ -170,7 +152,7 @@ class OrganizationRepository:
             The config dict, or ``{}`` if not configured or the org does
             not exist.
         """
-        await self.set_tenant_context(user_id)
+        await rls.set_user_context(self._db, user_id)
         result = await self._db.execute(
             text("SELECT config FROM organizations WHERE id = :user_id"),
             {"user_id": user_id},
@@ -193,7 +175,7 @@ class OrganizationRepository:
             The PII config dict, or ``{}`` if not configured or the
             organization does not exist.
         """
-        await self.set_tenant_context(user_id)
+        await rls.set_user_context(self._db, user_id)
         result = await self._db.execute(
             text(
                 "SELECT quotas->'pii' AS pii_config "
@@ -223,7 +205,7 @@ class OrganizationRepository:
         Returns:
             The LLM config dict, or ``{}`` if not configured.
         """
-        await self.set_tenant_context(user_id)
+        await rls.set_user_context(self._db, user_id)
         # Primary: read from new config JSONB
         result = await self._db.execute(
             text(
@@ -258,7 +240,7 @@ class OrganizationRepository:
             The quota value as an ``int``, or ``None`` if the quota key is
             not set or the organization does not exist.
         """
-        await self.set_tenant_context(user_id)
+        await rls.set_user_context(self._db, user_id)
         result = await self._db.execute(
             text(
                 "SELECT quotas->>:quota_name AS quota "

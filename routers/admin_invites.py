@@ -1,9 +1,9 @@
 """Admin endpoints for the invite-by-email flow.
 
-An org admin invites a user by email; the invitee sets a password via the
+An admin invites a user by email; the invitee sets a password via the
 emailed magic link (``POST /v1/auth/invites/accept``).  Both endpoints
-require the org ``admin`` role (JWT only) — the router is a thin adapter:
-it extracts the org ID and admin user from the admin-gate dependencies,
+require the ``admin`` role (JWT only) — the router is a thin adapter:
+it extracts the admin user from the admin-gate dependencies,
 delegates to :class:`InviteService`, and maps the result to a schema.
 
 The raw invite token never appears in any response — it is delivered to
@@ -17,7 +17,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Response
 
 from core.audit import audit_action
-from dependencies.auth import get_dashboard_user, require_permission
+from dependencies.auth import require_permission
 from dependencies.services import get_invite_service
 from schemas.auth import InviteRequest, InviteResponse
 from services.invite_service import InviteService  # noqa: TC001
@@ -34,9 +34,9 @@ router = APIRouter(
     status_code=201,
     summary="Invite a user by email",
     description=(
-        "Creates a pending member user in the authenticated organization "
-        "and emails them a magic link to set a password.  The response "
-        "never contains the raw token.  Requires the org admin role (JWT)."
+        "Creates a pending member user and emails them a magic link to "
+        "set a password.  The response never contains the raw token.  "
+        "Requires the admin role (JWT)."
     ),
 )
 @audit_action("admin.user_invite", "user", "Admin invited user")
@@ -49,9 +49,8 @@ async def invite_user(
 
     Args:
         payload: Invitee email + name.
-        service: Invite service (injected).
-        user_id: Authenticated organization ID (admin-gated).
         user_id: Authenticated admin user ID (for inviter attribution).
+        service: Invite service (injected).
 
     Returns:
         The pending user's id/email/name.
@@ -62,7 +61,6 @@ async def invite_user(
     """
     return await service.invite_user(
         admin_user_id=UUID(user_id),
-        user_id=UUID(user_id),
         payload=payload,
     )
 
@@ -74,7 +72,7 @@ async def invite_user(
     description=(
         "Hard-deletes the pending user row for an invite that has not been "
         "accepted.  Only pending invites are affected — accepted or "
-        "ordinary users are never touched.  Requires the org admin role (JWT)."
+        "ordinary users are never touched.  Requires the admin role (JWT)."
     ),
 )
 @audit_action("admin.user_invite_revoke", "user", "Admin revoked user invite")
@@ -92,11 +90,9 @@ async def revoke_invite(
     Args:
         user_id: The pending user's UUID (path param).
         service: Invite service (injected).
-        user_id: Authenticated organization ID (admin-gated).
 
     Raises:
-        NotFoundError: If there is no pending invite for this user in this
-            org (→ 404).
+        NotFoundError: If there is no pending invite for this user (→ 404).
     """
-    await service.revoke_invite(user_id=UUID(user_id))
+    await service.revoke_invite(pending_user_id=user_id)
     return Response(status_code=204)

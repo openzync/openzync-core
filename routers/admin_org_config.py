@@ -20,6 +20,7 @@ from uuid import UUID
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
+from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 — runtime import
 
 from core.audit import audit_action
@@ -119,7 +120,10 @@ async def _check_config_test_throttle(redis: Any | None, user_id: str) -> None:
         count = await redis.incr(key)
         if count == 1:
             await redis.expire(key, _TEST_THROTTLE_WINDOW_S)
-    except Exception:
+    except RedisError:
+        # Fail-open: throttling is protective, not load-bearing — a Redis
+        # outage must never block config testing.  Non-Redis errors still
+        # propagate.
         logger.error(
             "org_config.test_throttle_failed",
             extra={"user_id": user_id},
@@ -249,14 +253,13 @@ async def replace_org_config(
     _user_id: str = Depends(require_permission("configuration:write")),
     service: OrgConfigService = Depends(_get_config_service),
 ) -> OrgConfigBase:
-    """Replace the entire user configuration.
+    """Merge-alias for ``PATCH /admin/org/config`` (kept for API compat).
 
-    Every field is stored as provided.  Fields set to ``null`` are stored
-    as ``null``.  Fields not included in the request body are **removed**
-    from the stored config.
-
-    Prefer ``PATCH`` for updating individual fields.  ``PUT`` is useful
-    for initial setup where you want to set everything at once.
+    Despite the ``PUT`` verb, this does NOT replace the stored config:
+    only fields explicitly provided in the request body are updated and
+    missing keys are preserved (merge, not replace).  Set a field to
+    ``null`` to remove it.  Documented as an alias — not a true replace —
+    so callers are never surprised by preserved keys.
 
     Requires an API key with ``admin:write`` scope or a JWT dashboard
     session.
@@ -313,14 +316,22 @@ async def test_org_config(
     action metadata in the audit log.
     """
     from repositories.user_repository import UserRepository
+    from services.user_config_service import UserConfigService
 
     redis = getattr(request.app.state, "redis", None)
     await _check_config_test_throttle(redis, _user_id)
     candidate = body.config
     if as_user is not None:
-        # Single-call probe path — direct repo read is intentional (no
-        # service round-trip); the candidate merge below is in-memory only.
-        override = await UserRepository(db).get_config_override(as_user)
+        # Single-call probe path — read through the user-config service
+        # (no direct repo round-trip from the router); the candidate
+        # merge below is in-memory only.
+        bao_client = getattr(request.app.state, "openbao_client", None)
+        user_config_service = UserConfigService(
+            user_repo=UserRepository(db),
+            bao_client=bao_client,
+            redis=redis,
+        )
+        override = await user_config_service.get_override(as_user)
         if override:
             from schemas.organization_config import UpdateOrgConfigRequest
 

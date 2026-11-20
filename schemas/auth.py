@@ -391,13 +391,15 @@ class DashboardUserResponse(BaseModel):
     """Public-facing dashboard user profile.
 
     Returned by user-info endpoints — never includes the password hash.
+
+    ⚠️ BREAKING: the redundant ``user_id`` field is removed — it always
+    duplicated ``id`` (self-ID).  Use ``id`` only.
     """
 
     id: UUID = Field(..., description="User UUID.")
     email: str = Field(..., description="Email address.")
     name: str | None = Field(default=None, description="Display name.")
     role: str = Field(default="member", description="User role.")
-    user_id: UUID = Field(..., description="Owner user UUID (self-ID).")
     is_email_verified: bool = Field(
         default=False,
         description="Whether the user's email has been verified.",

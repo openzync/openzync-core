@@ -35,7 +35,6 @@ class OrgJoinMixin:
     _repo: Any
     _otp_service: Any
     _redis: Any
-    _org_repo: Any
     _email_service: Any
     _bao_client: Any
     _settings_repo: Any
@@ -44,7 +43,7 @@ class OrgJoinMixin:
         """Return the injected settings repo (fallback constructs one)."""
         if self._settings_repo is not None:
             return self._settings_repo
-        return InstanceSettingsRepository(self._org_repo.session)
+        return InstanceSettingsRepository(self._repo.session)
 
     # ── Org-code join ────────────────────────────────────────────────────────
 
@@ -77,6 +76,8 @@ class OrgJoinMixin:
             raise AuthorizationError("Registration is disabled")
 
         # No org gate — the single-user model has no platform org.
+        # Join mints ``member`` (unlike open signup, which mints the
+        # bootstrapping ``admin``) — joined users never self-promote.
         existing = await self._repo.find_user_by_email(payload.email)
         if existing is not None:
             logger.warning(

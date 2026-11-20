@@ -299,6 +299,10 @@ class UserRepository:
         expired (the only claim condition not mirrored below is the
         72-hour window).
 
+        Pre-authentication — runs under an explicit RLS bypass (no tenant
+        context on invite info/accept sessions), otherwise the lookup
+        would always miss and every token would 404.
+
         Args:
             token_hash: SHA-256 hex digest of the raw invite token.
 
@@ -327,10 +331,14 @@ class UserRepository:
         Exactly one concurrent caller wins (the loser's UPDATE matches zero
         rows).  This is the same race-free pattern as
         ``AuthRepository.revoke_refresh_token_if_current``, extended with
-        ``RETURNING`` so the winner reads back ``id``, ``user_id``
-        and ``role`` without a second round-trip — the caller must not
+        ``RETURNING`` so the winner reads back ``id`` and ``role``
+        without a second round-trip — the caller must not
         select-then-update, because any identity-mapped User instance goes
         stale once this UPDATE runs.
+
+        Pre-authentication — runs under an explicit RLS bypass (no tenant
+        context on the accept session), otherwise the claim would match
+        zero rows and every token would 404.
 
         Args:
             token_hash: SHA-256 hex digest of the raw invite token.
@@ -391,13 +399,18 @@ class UserRepository:
 
         The ``invite_token_hash IS NOT NULL`` predicate makes this a revoke
         (or a self-clean of an expired invite) — an already-accepted or
-        ordinary user is never touched.  A pending invite row has no audit
-        trail (the invitee never logged in), so hard delete is safe.
+        ordinary user is never touched (pending-only guard: the token
+        column is cleared on accept, so accepted rows can never match).
+        A pending invite row has no audit trail (the invitee never logged
+        in), so hard delete is safe.
+
+        Runs under an explicit RLS bypass: the row belongs to the invitee,
+        but the session belongs to the revoking admin (or to nobody on the
+        pre-auth self-clean path) — without the bypass the tenant policy
+        would match zero rows and the revoke would always 404.
 
         Args:
-            user_id: Tenant scope (always applied — a revoke must
-                not delete a row from another org).
-            user_id: The internal OpenZync user UUID.
+            user_id: The pending user's UUID.
 
         Returns:
             Number of rows deleted (1 = pending invite revoked, 0 = no
@@ -405,14 +418,15 @@ class UserRepository:
         """
         from sqlalchemy import delete
 
-        result = await self._db.execute(
-            delete(User).where(
-                User.id == user_id,
-                User.invite_token_hash.is_not(None),
-                User.is_deleted.is_(False),
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                delete(User).where(
+                    User.id == user_id,
+                    User.invite_token_hash.is_not(None),
+                    User.is_deleted.is_(False),
+                )
             )
-        )
-        await self._db.flush()
+            await self._db.flush()
         return result.rowcount or 0  # type: ignore[attr-defined]
 
     # ── Config override (per-user layer over org config) ───────────────────
@@ -420,16 +434,18 @@ class UserRepository:
     async def get_config_override(self, user_id: UUID) -> dict[str, Any]:
         """Return the user's stored config override (``{}`` when none).
 
-        Intentionally scoped by PK only (no tenant bind): ``id`` is
-        globally unique, the caller is already authenticated via
-        ``get_dashboard_user`` (ownership = JWT sub), and the RLS bypass
-        lives in ``AuthRepository.get_user_by_id`` for the user row itself.
+        PK lookup with no tenant bind: the caller is already authenticated
+        (ownership = JWT sub for self-reads).  Note this does NOT bypass
+        RLS — under a tenant session the ``user_isolation_select`` policy
+        (``id = current user``) still applies, so reading another user's
+        row returns ``{}`` fail-closed rather than leaking it.
 
         Args:
             user_id: The internal OpenZync user UUID.
 
         Returns:
-            The override dict, or ``{}`` if unset or the user is missing.
+            The override dict, or ``{}`` if unset or not visible to this
+            session.
         """
         result = await self._db.execute(
             select(User.config_override).where(User.id == user_id)
@@ -444,12 +460,15 @@ class UserRepository:
     ) -> dict[str, Any]:
         """Deep-merge ``patch`` onto the user's config override.
 
-        Keys set to ``None`` remove that top-level key.  Returns the stored override.
-        Same PK-only scoping rationale as :meth:`get_config_override`.
+        Nested dicts merge recursively (see :func:`core.dict_merge.deep_merge`);
+        ``None`` removes that **top-level** key only — a nested ``None``
+        never deletes a deep path.  Returns the stored override.
+        Same PK-scoping rationale as :meth:`get_config_override`
+        (no bypass — other users' rows stay invisible fail-closed).
 
         Args:
             user_id: The internal OpenZync user UUID.
-            patch: Partial keys to merge (``None`` removes a key).
+            patch: Partial keys to merge (``None`` removes a top-level key).
 
         Returns:
             The updated override dict.

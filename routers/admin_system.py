@@ -1,23 +1,23 @@
 """Platform super-admin endpoints — HTTP adapter layer only.
 
 Every endpoint requires ``require_superadmin`` (JWT dashboard session,
-``user_id == PLATFORM_ORG_ID``, DB-verified ``superadmin`` role) and — for
-anything touching org rows — the RLS-bypass session
-``get_db_superadmin``.
+DB-verified ``superadmin`` role) and — for member-role changes — the
+RLS-bypass session ``get_db_superadmin``.
 
 ⚠️ BREAKING: multi-org approval endpoints are removed (single platform
 org): ``GET /admin/system/orgs``, ``POST .../approve``,
 ``POST .../reject`` are gone.
+⚠️ BREAKING: cross-org ``GET/PATCH /admin/system/orgs/{user_id}/config``
+are removed — per-user config is self-serve via
+``GET/PATCH /admin/org/config`` (singleton org made the cross-org
+variants meaningless).
 
 Endpoints:
     GET    /admin/system/config                        — platform system config
     PATCH  /admin/system/config                        — update platform system config
     GET    /admin/system/settings                      — list settings (masked)
     POST   /admin/system/settings/{key}/reveal         — reveal one setting (audited)
-    GET    /admin/system/orgs/{user_id}/members         — list an org's dashboard users
-    GET    /admin/system/orgs/{user_id}/config          — read any org's config
-    PATCH  /admin/system/orgs/{user_id}/config          — update any org's config
-    PATCH  /admin/system/orgs/{user_id}/members/{user_id}/role — promote/demote
+    PATCH  /admin/system/users/{user_id}/role          — promote/demote
 """
 
 from __future__ import annotations
@@ -38,18 +38,11 @@ from dependencies.db import get_db_superadmin
 from repositories.user_repository import UserRepository
 from schemas.admin_system import (
     MemberRoleResponse,
-    SystemMemberListItem,
     SystemSettingRevealResponse,
     SystemSettingsResponse,
     UpdateMemberRoleRequest,
 )
-from schemas.organization_config import (
-    OrgConfigBase,
-    OrgConfigResponse,
-    UpdateOrgConfigRequest,
-)
 from schemas.system_config import SystemConfigResponse, SystemConfigUpdate
-from services.org_config_service import OrgConfigService
 from services.user_service import UserService
 
 router = APIRouter(
@@ -73,24 +66,15 @@ def _get_openbao_and_redis(request: Request) -> tuple[object, object]:
     return bao_client, redis
 
 
-def _get_config_service(
-    request: Request,
-) -> OrgConfigService:
-    """Build a request-scoped OrgConfigService for cross-org config access."""
-    bao_client, redis = _get_openbao_and_redis(request)
-    return OrgConfigService(bao_client=bao_client, redis=redis)
-
-
-
-
 def _get_user_service(
     request: Request,
     db: AsyncSession = Depends(get_db_superadmin),  # noqa: B008
 ) -> UserService:
     """Build a superadmin UserService on the RLS-bypass session.
 
-    Cross-org member-role changes must bypass tenant RLS — the target
-    user may live in any organization.
+    Role changes run on the bypass session because the target row belongs
+    to the member, not the acting superadmin (the tenant policy would
+    otherwise match zero rows).
     """
     redis = getattr(request.app.state, "redis", None)
     return UserService(repo=UserRepository(db), redis=redis)
@@ -238,65 +222,8 @@ async def reveal_platform_system_setting(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-@router.get(
-    "/orgs/{user_id}/config",
-    response_model=OrgConfigResponse,
-    summary="Read any organization's config",
-    description=(
-        "Returns the stored per-org config for the given organization. "
-        "Requires the platform super-admin role (cross-org access)."
-    ),
-)
-async def get_org_config(
-    user_id: UUID,
-    service: OrgConfigService = Depends(_get_config_service),  # noqa: B008
-    _user_id: str = Depends(require_superadmin),  # noqa: B008
-) -> OrgConfigResponse:
-    """Read another org's stored config.
-
-    Args:
-        user_id: The target organization UUID.
-        service: Injected org-config service.
-        _user_id: Superadmin user UUID (superadmin-gated).
-
-    Returns:
-        The stored config wrapped in an :class:`OrgConfigResponse`.
-    """
-    return await service.get_config_response(user_id)
-
-
-@router.patch(
-    "/orgs/{user_id}/config",
-    response_model=OrgConfigBase,
-    summary="Update any organization's config",
-    description=(
-        "Partially updates another org's stored config.  Requires the "
-        "platform super-admin role (cross-org access)."
-    ),
-)
-@audit_action(
-    "system.org_config.update",
-    "organization",
-    "Org config updated by superadmin",
-)
-async def update_org_config(
-    user_id: UUID,
-    body: UpdateOrgConfigRequest,
-    _user_id: str = Depends(require_superadmin),  # noqa: B008
-    service: OrgConfigService = Depends(_get_config_service),  # noqa: B008
-) -> OrgConfigBase:
-    """Partially update another org's config.
-
-    Args:
-        user_id: The target organization UUID.
-        body: Fields to update (``None`` removes a key).
-        service: Injected org-config service.
-        _user_id: Superadmin user UUID (superadmin-gated).
-
-    Returns:
-        The freshly stored config.
-    """
-    return await service.update_config(user_id, body)
+# Member roles (platform-wide — the singleton org has no per-org membership)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 @router.patch(

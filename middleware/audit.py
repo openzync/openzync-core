@@ -50,11 +50,11 @@ async def _resolve_audit_body_capture(
 ) -> bool:
     """Resolve whether to capture the response body for this request.
 
-    Checks the org's DB config (via Redis cache, then DB).  When the
-    field is not set for the org, defaults to ``False``.
+    Checks the user's stored config (via Redis cache, then OpenBao).  When
+    the field is not set for the user, defaults to ``False``.
 
     Args:
-        user_id: The authenticated organization ID (may be ``None`` for
+        user_id: The authenticated user ID (may be ``None`` for
             unauthenticated requests).
         scope: The ASGI connection scope (used to access ``app.state``).
 
@@ -79,9 +79,9 @@ async def _resolve_audit_body_capture(
             cached = await redis.get(cache_key)
             if cached:
                 raw = orjson.loads(cached.encode())
-                org_val = raw.get("audit_log_response_body")
-                if org_val is not None:
-                    return bool(org_val)
+                user_val = raw.get("audit_log_response_body")
+                if user_val is not None:
+                    return bool(user_val)
         except Exception:
             logger.warning("audit.org_config_cache_read_failed", exc_info=True)
             # Fall through to OpenBao — cache miss is acceptable, OpenBao is authoritative
@@ -113,7 +113,7 @@ async def _resolve_audit_body_capture(
     except Exception as exc:
         logger.error("audit.org_config_db_resolve_failed", exc_info=True)
         raise DatabaseUnavailableError(
-            "Cannot resolve org config for audit decision."
+            "Cannot resolve user config for audit decision."
         ) from exc
 
 
@@ -292,11 +292,11 @@ class AuditMiddleware:
             "display_name": display_name,
         }
 
-        # Resolve audit_log_response_body: per-org config → env default.
+        # Resolve audit_log_response_body: per-user config → env default.
         _capture_body = await _resolve_audit_body_capture(user_id, scope)
         if (method, path) in WEBHOOK_SECRET_RESPONSE_ROUTES:
             # SECURITY: never persist one-time secrets (webhook signing
-            # secret, freshly rotated org join code, unmasked LLM API keys) —
+            # secret, unmasked LLM API keys) —
             # see the constant's comment for the routes this covers.
             _capture_body = False
         if _capture_body and body_chunks:

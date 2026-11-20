@@ -637,10 +637,11 @@ async def require_superadmin(
     """Require a JWT dashboard session with the platform super-admin role.
 
     Raises 401 for API-key auth or a missing user id (via
-    :func:`get_dashboard_user`), 403 for any non-platform org, any
-    non-``superadmin`` role, or a user who must still change their
-    password.  The role is verified against the DB (Redis-cached for
-    60 s, fail-closed) — never trusted from the JWT ``role`` claim.
+    :func:`get_dashboard_user`), 403 for any non-``superadmin`` role or a
+    user who must still change their password.  The gate is role-only —
+    there is no org check (single platform org).  The role is verified
+    against the DB (Redis-cached for 60 s, fail-closed) — never trusted
+    from the JWT ``role`` claim.
 
     Args:
         request: The incoming HTTP request.
@@ -649,7 +650,7 @@ async def require_superadmin(
         db: Request-scoped async DB session.
 
     Returns:
-        The authenticated platform-org UUID string.
+        The authenticated superadmin's UUID string.
 
     Raises:
         HTTPException: 401 if not a JWT-authenticated session.

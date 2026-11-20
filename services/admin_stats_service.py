@@ -7,7 +7,6 @@ graph backend (fail-soft to zeros) for node counts.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,12 +17,9 @@ from repositories.admin_stats_repository import AdminStatsRepository
 from schemas.admin_stats import OrgStatsResponse, UsageStatsResponse
 from services.graph_stats_service import GraphStatsService
 
-if TYPE_CHECKING:
-    from schemas.organization_config import OrgConfigBase
-
 
 class AdminStatsService:
-    """Orchestrates org/usage stats for the admin dashboard."""
+    """Orchestrates user/usage stats for the admin dashboard."""
 
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
@@ -73,18 +69,20 @@ class AdminStatsService:
     async def get_usage_stats(
         self,
         request: Request,
-        org_config: OrgConfigBase,
         user_id: UUID,
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
     ) -> list[UsageStatsResponse]:
-        """Return daily usage counts for the organization, newest first.
+        """Return daily usage counts for the user, newest first.
+
+        Resolves the user's stored config internally (for graph backend
+        selection) from app-state OpenBao/Redis — no extra caller wiring.
 
         Args:
-            request: FastAPI request (graph backend dispatcher + pools).
-            org_config: Org config (graph backend selection).
-            user_id: Authenticated organization ID.
+            request: FastAPI request (graph backend dispatcher + pools,
+                app-state OpenBao/Redis for user-config resolution).
+            user_id: Authenticated user ID.
             start: Window start (inclusive).
             end_exclusive: Window end (exclusive), or ``None`` for open-ended.
             project_id: Optional project scope.
@@ -93,6 +91,14 @@ class AdminStatsService:
             List of daily usage data points, newest first.
         """
         daily_counts: dict[str, dict[str, int]] = {}
+
+        from core.org_config import get_org_config as _get_org_config
+
+        bao_client = getattr(request.app.state, "openbao_client", None)
+        redis = getattr(request.app.state, "redis", None)
+        user_config = await _get_org_config(
+            user_id, redis=redis, bao_client=bao_client
+        )
 
         def _ensure(date_str: str) -> dict[str, int]:
             return daily_counts.setdefault(
@@ -147,7 +153,7 @@ class AdminStatsService:
 
         # Daily node counts (graph entities — backend-backed, not the PG stub).
         backend = await resolve_graph_backend_fail_soft(
-            request, org_config, user_id, self._db, "admin_stats"
+            request, user_config, user_id, self._db, "admin_stats"
         )
         stats = GraphStatsService(self._db, backend)
         node_project_ids = await stats.resolve_project_ids(

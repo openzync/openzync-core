@@ -18,6 +18,7 @@ from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 
+from core.rls import set_user_context
 from repositories.instance_settings_repository import InstanceSettingsRepository
 from schemas.auth import (
     PendingOrgResponse,
@@ -36,7 +37,6 @@ class RegistrationMixin:
     _repo: Any
     _otp_service: Any
     _redis: Any
-    _org_repo: Any
     _email_service: Any
     _bao_client: Any
     _settings_repo: Any
@@ -45,7 +45,7 @@ class RegistrationMixin:
         """Return the injected settings repo (fallback constructs one)."""
         if self._settings_repo is not None:
             return self._settings_repo
-        return InstanceSettingsRepository(self._org_repo.session)
+        return InstanceSettingsRepository(self._repo.session)
 
     async def _registration_mode(self) -> str:
         """Return the platform registration mode (defaults ``invite_only``).
@@ -106,6 +106,9 @@ class RegistrationMixin:
         # No org gate — the single-user model has no platform org.
         # The users INSERT policy is open (signup is public); bind the new
         # user's own context right after creation for the reads below.
+        # Signup mints the first live user as ``admin`` (self-serve
+        # bootstrap); the org-code join path below mints ``member`` —
+        # invited/joined users never self-promote.
         try:
             # bcrypt blocks the event loop — offload to a worker thread.
             pw_hash = await asyncio.to_thread(
@@ -121,7 +124,7 @@ class RegistrationMixin:
                 # live-then-deactivate window where the user could log in.
                 is_active=mode != "approval",
             )
-            await self._org_repo.set_tenant_context(created.id)
+            await set_user_context(self._repo.session, created.id)
         except IntegrityError:
             # Concurrent duplicate signup — the unique email index won.
             # Same generic response as a fresh signup; roll back the aborted

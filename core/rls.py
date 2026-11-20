@@ -83,13 +83,15 @@ logger = logging.getLogger(__name__)
 
 _APPLY_CONTEXT_SQL = text(
     "SELECT set_config('app.user_id', :user_id, true), "
-    "set_config('app.bypass_rls', :bypass_rls, true), "
-    "set_config('app.lookup_code', :lookup_code, true)"
+    "set_config('app.bypass_rls', :bypass_rls, true)"
 )
 """Bind the whole isolation context to the session's current transaction.
 
 ``is_local => true`` is ``SET LOCAL``: the value is discarded when the
 transaction ends, so it cannot survive onto a pooled connection.
+
+``app.lookup_code`` is deliberately NOT bound (the org-code join policy
+was dropped in migration 0069) — see :func:`set_lookup_code`.
 """
 
 
@@ -100,9 +102,10 @@ class RlsContext:
     Attributes:
         user_id: The owner UUID, or ``''`` for no user.
         bypass_rls: Whether the row-level-security policies are disabled.
-        lookup_code: Legacy, always ``""`` (org-code join removed).
-        TODO(0070): drop the column with the ``organizations`` table and
-        remove ``set_lookup_code`` / the ``app.lookup_code`` binding.
+        lookup_code: Legacy, always ``""`` — never bound (the
+            ``org_join_code_lookup`` policy was dropped in migration 0069).
+            TODO(0070): drop the column with the ``organizations`` table and
+            remove ``set_lookup_code`` / the ``app.lookup_code`` binding.
     """
 
     user_id: str = ""
@@ -111,11 +114,14 @@ class RlsContext:
 
     @property
     def is_empty(self) -> bool:
-        """Whether the context binds no user, no bypass and no lookup code."""
-        return not (self.user_id or self.bypass_rls or self.lookup_code)
+        """Whether the context binds no user and no bypass."""
+        return not (self.user_id or self.bypass_rls)
 
     def as_params(self) -> dict[str, str]:
         """Render the context as ``set_config`` bind parameters.
+
+        Only the live GUCs are rendered — the legacy ``lookup_code`` is
+        intentionally omitted (no policy reads it anymore).
 
         Returns:
             The bind parameters for :data:`_APPLY_CONTEXT_SQL`.
@@ -123,7 +129,6 @@ class RlsContext:
         return {
             "user_id": self.user_id,
             "bypass_rls": "true" if self.bypass_rls else "false",
-            "lookup_code": self.lookup_code,
         }
 
 
@@ -299,19 +304,19 @@ async def set_bypass_rls(db: AsyncSession, enabled: bool = True) -> None:
 
 
 async def set_lookup_code(db: AsyncSession, code: str) -> None:
-    """Allow a single-row read of the organization owning ``code``.
+    """Legacy no-op — org-code join is removed (single platform org).
 
-    Legacy — org-code join is removed (single platform org).  Retained
-    because the ``org_join_code_lookup`` RLS policy still references the
-    ``app.lookup_code`` setting; removing the plumbing requires a policy
-    migration (deferred to 0070 DROP organizations).
+    Retained only because the ``organizations`` table drop is deferred to
+    0070; the ``org_join_code_lookup`` RLS policy it served was dropped in
+    migration 0069, so there is no GUC left to bind.  Does nothing by
+    design — callers should stop calling it.
+
+    TODO(0070): remove with the ``organizations`` table drop.
 
     Args:
-        db: The session to bind.
-        code: The normalized organization code.
+        db: The session (unused).
+        code: The normalized organization code (ignored).
     """
-    ctx = _remembered_context(db)
-    await _apply_context(db, replace(ctx, lookup_code=code))
 
 
 async def init_context(db: AsyncSession, user_id: str | None) -> None:

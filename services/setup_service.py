@@ -83,12 +83,12 @@ class SetupService:
                 or the org name is blank.
         """
         from core.exceptions import ConflictError, ValidationError
-        from services.auth_service import AuthService
+        from utils.password import validate_password_strength
 
         if not org_name.strip():
             raise ValidationError("Organization name must not be blank.")
 
-        AuthService._validate_password(password)
+        validate_password_strength(password)
 
         await self._org_repo.ensure_platform_org(name=org_name.strip())
         # bcrypt blocks the event loop — offload to a worker thread.

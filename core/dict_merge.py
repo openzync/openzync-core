@@ -1,8 +1,14 @@
 """Shared deep-merge helper for layered config dicts.
 
 Single implementation used by both ``repositories.user_repository``
-(one-level merge) and ``services.user_config_service`` (recursive merge)
+(recursive merge) and ``services.user_config_service`` (recursive merge)
 so the two layers can never drift apart.
+
+Removal semantics live in the callers, not here: ``None`` values in the
+overlay are kept as-is.  Callers strip ``None`` first, where ``None``
+removes that **top-level** key only — a nested ``None`` never deletes a
+deep path (it replaces the nested value with ``None``, which the caller
+then drops at the top level).
 """
 
 from __future__ import annotations

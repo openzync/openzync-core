@@ -20,9 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.auth import require_permission
 from dependencies.db import get_db
-from dependencies.org_config import get_org_config
 from schemas.admin_stats import OrgStatsResponse, UsageStatsResponse
-from schemas.organization_config import OrgConfigBase
 from services.admin_stats_service import AdminStatsService
 
 router = APIRouter(
@@ -130,23 +128,23 @@ async def get_usage_stats(
     to_date: date | None = Query(default=None, alias="to"),
     project_id: UUID | None = Query(default=None),
     user_id: str = Depends(require_permission("members:read")),
-    org_config: OrgConfigBase = Depends(get_org_config),
     service: AdminStatsService = Depends(_get_admin_stats_service),
 ) -> list[UsageStatsResponse]:
-    """Get daily usage statistics for the organization.
+    """Get daily usage statistics for the user.
 
     Windowed by days/from/to and optional project_id. Default window is
     last 30 days.
 
     Args:
-        request: FastAPI request (graph backend dispatcher + pools).
+        request: FastAPI request (graph backend dispatcher + pools, plus
+            app-state OpenBao/Redis for user-config resolution inside the
+            service).
         days: Look-back window in days (default 30 when no window provided, max 365).
             Ignored if from/to provided.
         from_date: Inclusive start date (YYYY-MM-DD).
         to_date: Inclusive end date (YYYY-MM-DD).
         project_id: Optional project scope.
-        user_id: Authenticated organization ID.
-        org_config: Org config (graph backend selection).
+        user_id: Authenticated user ID.
         service: Admin stats service.
 
     Returns:
@@ -154,5 +152,5 @@ async def get_usage_stats(
     """
     start, end_exclusive = _resolve_window(days, from_date, to_date)
     return await service.get_usage_stats(
-        request, org_config, UUID(user_id), start, end_exclusive, project_id
+        request, UUID(user_id), start, end_exclusive, project_id
     )
