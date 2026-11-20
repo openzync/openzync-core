@@ -5,10 +5,10 @@ also be triggered manually per-org.
 
 Two modes:
 
-* **Scheduled / org-discovery** (``org_id=None``): discovers all
+* **Scheduled / org-discovery** (``user_id=None``): discovers all
   organization IDs via ``select(Organization.id)`` and processes each org
   independently, collecting per-org failures into a summary dict.
-* **Manual / single-org** (``org_id`` provided): processes exactly one org
+* **Manual / single-org** (``user_id`` provided): processes exactly one org
   and returns the number of blobs cleaned (legacy contract).
 
 Idempotent: deleting already-deleted keys from S3 is a no-op (S3 does
@@ -37,7 +37,7 @@ logger = structlog.get_logger(__name__)
 async def cleanup_orphan_blobs(
     ctx: object,
     *,
-    org_id: str | None = None,
+    user_id: str | None = None,
     project_id: str | None = None,
     episode_id: str | None = None,
     batch_size: int = 100,
@@ -45,8 +45,8 @@ async def cleanup_orphan_blobs(
 ) -> int | dict:
     """Remove orphaned S3 blobs whose episodes are soft-deleted.
 
-    When ``org_id`` is provided, processes a single org and returns the
-    number of blobs cleaned (``int``).  When ``org_id`` is ``None``
+    When ``user_id`` is provided, processes a single org and returns the
+    number of blobs cleaned (``int``).  When ``user_id`` is ``None``
     (scheduled cron), discovers all orgs and returns a summary dict
     (``{"status", "orgs_processed", "orgs_failed", "blobs_cleaned"}``).
 
@@ -59,7 +59,7 @@ async def cleanup_orphan_blobs(
 
     Args:
         ctx: ARQ worker context.
-        org_id: Organization UUID string.  ``None`` (cron) processes all
+        user_id: Organization UUID string.  ``None`` (cron) processes all
             orgs.
         project_id: Optional project UUID to scope cleanup.  Unused —
             retained for API parity with the memory deletion flow.
@@ -78,7 +78,7 @@ async def cleanup_orphan_blobs(
     if trace_id:
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
 
-    log = logger.bind(org_id=org_id)
+    log = logger.bind(user_id=user_id)
     log.info("cleanup_orphan_blobs.start")
 
     # Lazy imports — ARQ workers run in separate process.
@@ -109,7 +109,7 @@ async def cleanup_orphan_blobs(
         """Remove orphaned blobs for a single org within the open session.
 
         Args:
-            db: Open DB session (RLS ``app.org_id`` set per call).
+            db: Open DB session (RLS ``app.user_id`` set per call).
             org_uuid: Organization UUID.
             bao_client: Authenticated OpenBao client from the ARQ context,
                 or ``None`` (falls back to BootstrapSettings).
@@ -117,8 +117,8 @@ async def cleanup_orphan_blobs(
         Returns:
             Number of blobs cleaned for this org.
         """
-        org_id = str(org_uuid)
-        org_log = logger.bind(org_id=org_id)
+        user_id = str(org_uuid)
+        org_log = logger.bind(user_id=user_id)
         org_log.info("cleanup_orphan_blobs.org_start")
 
         # Bind the tenant on the session.  ``rls.set_tenant_context`` is
@@ -220,10 +220,10 @@ async def cleanup_orphan_blobs(
 
     try:
         async with session_factory() as db:
-            if org_id is None:
+            if user_id is None:
                 # ── Scheduled cron mode: discover all orgs ───────────────
                 # The organizations RLS policy (migrations/0001) requires
-                # app.bypass_rls='true' OR a matching app.org_id — the cron
+                # app.bypass_rls='true' OR a matching app.user_id — the cron
                 # sets neither, so without this the discovery would return
                 # zero rows under any RLS-enforced role and the S3 leak
                 # would silently continue.  Safe to bypass: get_orphaned_blobs
@@ -256,7 +256,7 @@ async def cleanup_orphan_blobs(
                     except Exception as exc:
                         log.error(
                             "cleanup_orphan_blobs.org_failed",
-                            org_id=str(org_uuid),
+                            user_id=str(org_uuid),
                             error=str(exc),
                         )
                         org_errors.append(str(org_uuid))
@@ -275,7 +275,7 @@ async def cleanup_orphan_blobs(
 
             # ── Manual mode: single org, legacy int contract ─────────────
             return await _cleanup_for_org(
-                db, UUID(org_id), bao_client,
+                db, UUID(user_id), bao_client,
             )
 
     except Exception:

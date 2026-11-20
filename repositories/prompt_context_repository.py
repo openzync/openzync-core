@@ -37,12 +37,12 @@ class PromptContextRepository:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
-    async def get_episode_content(self, episode_id: UUID, org_id: UUID) -> str | None:
+    async def get_episode_content(self, episode_id: UUID, user_id: UUID) -> str | None:
         """Fetch the ``content`` column of one episode.
 
         Args:
             episode_id: The episode being enriched.
-            org_id: Tenant scope — defense-in-depth alongside RLS.
+            user_id: Tenant scope — defense-in-depth alongside RLS.
 
         Returns:
             The content, or ``None`` when the episode is not found.
@@ -50,19 +50,19 @@ class PromptContextRepository:
         result = await self._db.execute(
             select(Episode.content).where(
                 Episode.id == episode_id,
-                Episode.organization_id == org_id,
+                Episode.user_id == user_id,
             )
         )
         return result.scalar_one_or_none()
 
     async def get_episode_metadata(
-        self, episode_id: UUID, org_id: UUID
+        self, episode_id: UUID, user_id: UUID
     ) -> dict[str, Any] | None:
         """Fetch the ``metadata`` JSONB of one episode.
 
         Args:
             episode_id: The episode being enriched.
-            org_id: Tenant scope — defense-in-depth alongside RLS.
+            user_id: Tenant scope — defense-in-depth alongside RLS.
 
         Returns:
             The metadata dict, or ``None`` when the episode is not found.
@@ -70,19 +70,19 @@ class PromptContextRepository:
         result = await self._db.execute(
             select(Episode.metadata_).where(
                 Episode.id == episode_id,
-                Episode.organization_id == org_id,
+                Episode.user_id == user_id,
             )
         )
         return result.scalar_one_or_none()
 
     async def get_episode_content_and_project(
-        self, episode_id: UUID, org_id: UUID
+        self, episode_id: UUID, user_id: UUID
     ) -> tuple[str, UUID] | None:
         """Fetch one episode's content plus its project (BM25 query source).
 
         Args:
             episode_id: The episode being enriched.
-            org_id: Tenant scope — defense-in-depth alongside RLS.
+            user_id: Tenant scope — defense-in-depth alongside RLS.
 
         Returns:
             ``(content, project_id)``, or ``None`` when not found.
@@ -90,7 +90,7 @@ class PromptContextRepository:
         result = await self._db.execute(
             select(Episode.content, Episode.project_id).where(
                 Episode.id == episode_id,
-                Episode.organization_id == org_id,
+                Episode.user_id == user_id,
             )
         )
         row = result.one_or_none()
@@ -128,12 +128,12 @@ class PromptContextRepository:
         return [(row[0], row[1]) for row in result.all()]
 
     async def list_schema_json_by_type(
-        self, org_id: UUID, schema_type: str
+        self, user_id: UUID, schema_type: str
     ) -> list[Any]:
         """Fetch active ``json_schema`` payloads for one schema type.
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             schema_type: ``entity_type`` or ``classification``.
 
         Returns:
@@ -142,19 +142,19 @@ class PromptContextRepository:
         result = await self._db.execute(
             text("""
                 SELECT json_schema FROM extraction_schemas
-                WHERE organization_id = :org_id
+                WHERE user_id = :user_id
                   AND type = :schema_type
                   AND is_active = true
             """),
-            {"org_id": org_id, "schema_type": schema_type},
+            {"user_id": user_id, "schema_type": schema_type},
         )
         return [row[0] for row in result.all()]
 
-    async def list_structured_schemas(self, org_id: UUID) -> list[dict[str, Any]]:
+    async def list_structured_schemas(self, user_id: UUID) -> list[dict[str, Any]]:
         """Fetch active structured extraction schemas for an org.
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
 
         Returns:
             Dicts with ``id``, ``name``, ``json_schema``, ``prompt_template``.
@@ -162,12 +162,12 @@ class PromptContextRepository:
         result = await self._db.execute(
             text("""
                 SELECT id, name, json_schema, prompt_template FROM extraction_schemas
-                WHERE organization_id = :org_id
+                WHERE user_id = :user_id
                   AND type = 'structured'
                   AND is_active = true
                 ORDER BY name
             """),
-            {"org_id": org_id},
+            {"user_id": user_id},
         )
         return [
             {
@@ -180,13 +180,13 @@ class PromptContextRepository:
         ]
 
     async def list_user_episodes(
-        self, user_id: UUID, org_id: UUID, limit: int
+        self, user_id: UUID, limit: int
     ) -> list[tuple[str, str]]:
         """Fetch recent ``(role, content)`` turns across a user's sessions.
 
         Args:
             user_id: The user scope.
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             limit: Maximum rows (newest-first; caller reverses).
 
         Returns:
@@ -197,20 +197,19 @@ class PromptContextRepository:
                 SELECT role, content FROM episodes
                 WHERE session_id IN (
                     SELECT id FROM sessions
-                    WHERE user_id = :user_id AND organization_id = :org_id
+                    WHERE user_id = :user_id AND user_id = :user_id
                 )
                 AND is_deleted = false
                 ORDER BY created_at DESC
                 LIMIT :limit
             """),
-            {"user_id": user_id, "org_id": org_id, "limit": limit},
+            {"user_id": user_id, "limit": limit},
         )
         return [(row[0], row[1]) for row in result.fetchall()]
 
     async def list_user_facts(
         self,
         user_id: UUID,
-        org_id: UUID,
         effective_at: datetime,
         limit: int,
     ) -> list[tuple[str, str, str]]:
@@ -221,7 +220,7 @@ class PromptContextRepository:
 
         Args:
             user_id: The user scope.
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             effective_at: Validity instant (caller passes ``now(UTC)``).
             limit: Maximum rows.
 
@@ -233,21 +232,20 @@ class PromptContextRepository:
                 SELECT f.subject, f.predicate, f.object FROM facts f
                 JOIN episodes e ON f.source_episode_id = e.id
                 JOIN sessions s ON e.session_id = s.id
-                WHERE s.user_id = :user_id AND s.organization_id = :org_id
+                WHERE s.user_id = :user_id AND s.user_id = :user_id
                   AND (f.invalid_at IS NULL OR f.invalid_at > :effective_at)
                   AND (f.valid_from IS NULL OR f.valid_from <= :effective_at)
                   AND (f.valid_to IS NULL OR f.valid_to > :effective_at)
                 ORDER BY f.created_at DESC
                 LIMIT :limit
             """),
-            {"user_id": user_id, "org_id": org_id, "effective_at": effective_at},
+            {"user_id": user_id, "effective_at": effective_at},
         )
         return [(row[0], row[1], row[2]) for row in result.fetchall()]
 
     async def list_user_episode_ids(
         self,
         user_id: UUID,
-        org_id: UUID,
         project_id: UUID | None,
         cap: int,
     ) -> list[tuple[UUID, UUID]]:
@@ -255,14 +253,14 @@ class PromptContextRepository:
 
         Args:
             user_id: The user scope.
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: Optional project narrowing (same result, fewer rows).
             cap: Bound on the IN-list (most-recent episodes first).
 
         Returns:
             ``(episode_id, project_id)`` rows, newest first.
         """
-        params: dict[str, Any] = {"user_id": user_id, "org_id": org_id}
+        params: dict[str, Any] = {"user_id": user_id}
         project_filter = ""
         if project_id is not None:
             project_filter = "AND e.project_id = :project_id"
@@ -275,7 +273,7 @@ class PromptContextRepository:
                 "SELECT e.id, e.project_id "  # noqa: S608
                 "FROM episodes e "  # noqa: S608
                 "JOIN sessions s ON e.session_id = s.id "  # noqa: S608
-                "WHERE s.user_id = :user_id AND s.organization_id = :org_id "  # noqa: S608
+                "WHERE s.user_id = :user_id AND s.user_id = :user_id "  # noqa: S608
                 "AND e.is_deleted = false AND s.is_deleted = false "  # noqa: S608
                 f"{project_filter} "  # noqa: S608
                 "ORDER BY e.created_at DESC "  # noqa: S608
@@ -286,7 +284,7 @@ class PromptContextRepository:
         return [(row[0], row[1]) for row in result.fetchall()]
 
     async def list_user_classifications(
-        self, user_id: UUID, org_id: UUID, limit: int
+        self, user_id: UUID, limit: int
     ) -> list[tuple[str | None, str | None]]:
         """Fetch aggregate ``(intent, emotion)`` rows for a user's summary.
 
@@ -296,7 +294,7 @@ class PromptContextRepository:
 
         Args:
             user_id: The user scope.
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             limit: Maximum aggregated rows.
 
         Returns:
@@ -309,12 +307,12 @@ class PromptContextRepository:
                 JOIN episodes e ON dc.episode_id = e.id
                 JOIN sessions s ON e.session_id = s.id
                 JOIN projects p ON s.project_id = p.id
-                WHERE s.user_id = :user_id AND s.organization_id = :org_id
+                WHERE s.user_id = :user_id AND s.user_id = :user_id
                   AND p.is_archived = false
                 GROUP BY intent, emotion
                 ORDER BY cnt DESC
                 LIMIT :limit
             """),
-            {"user_id": user_id, "org_id": org_id, "limit": limit},
+            {"user_id": user_id, "limit": limit},
         )
         return [(row[0], row[1]) for row in result.fetchall()]

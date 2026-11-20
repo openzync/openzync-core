@@ -32,7 +32,7 @@ class StructuredExtractionRepository:
 
     async def get_by_session(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         *,
         sort_by: str,
@@ -49,11 +49,11 @@ class StructuredExtractionRepository:
         ``ValidationError``.
 
         # ⚠️ BREAKING: signature changed from
-        # ``(org_id, session_id, sort=None, limit, cursor=None)`` to
+        # ``(user_id, session_id, sort=None, limit, cursor=None)`` to
         # resolved ``(sort_by, sort_dir, limit, cursor_value, cursor_id)``.
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             session_id: The session UUID.
             sort_by: Validated sort key (``sequence_number``/``created_at``).
             sort_dir: Validated direction (``asc``/``desc``).
@@ -74,7 +74,7 @@ class StructuredExtractionRepository:
             .join(Episode, Episode.id == StructuredExtraction.episode_id)
             .where(
                 Episode.session_id == session_id,
-                Episode.organization_id == org_id,
+                Episode.user_id == user_id,
                 Episode.is_deleted == False,
                 StructuredExtraction.project_id.not_in(archived_project_ids()),
             )
@@ -124,7 +124,7 @@ class StructuredExtractionRepository:
         return [e for e, _ in page], next_cursor
 
     async def get_by_episode(
-        self, org_id: UUID, episode_id: UUID
+        self, user_id: UUID, episode_id: UUID
     ) -> StructuredExtraction | None:
         """Return the extraction for a specific episode, if one exists."""
         result = await self._db.execute(
@@ -132,7 +132,7 @@ class StructuredExtractionRepository:
             .join(Episode, Episode.id == StructuredExtraction.episode_id)
             .where(
                 StructuredExtraction.episode_id == episode_id,
-                Episode.organization_id == org_id,
+                Episode.user_id == user_id,
                 Episode.is_deleted == False,
             )
         )
@@ -140,7 +140,7 @@ class StructuredExtractionRepository:
 
     async def count_for_session(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         project_id: UUID | None = None,
     ) -> int:
@@ -156,7 +156,7 @@ class StructuredExtractionRepository:
         """
         conditions = [
             Episode.session_id == session_id,
-            Episode.organization_id == org_id,
+            Episode.user_id == user_id,
             Episode.is_deleted == False,
             StructuredExtraction.project_id.not_in(archived_project_ids()),
         ]

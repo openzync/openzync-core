@@ -33,7 +33,7 @@ class EpisodeBlob(TimestampMixin, Base):
 
     Columns:
         id: UUID primary key.
-        organization_id: Tenant isolation FK.
+        user_id: Tenant isolation FK.
         project_id: Project-scoped FK (denormalized for query perf).
         session_id: Session FK.
         episode_id: Episode FK — the message this blob is attached to.
@@ -64,9 +64,9 @@ class EpisodeBlob(TimestampMixin, Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
     )
-    organization_id: Mapped[uuid.UUID] = mapped_column(
+    user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("organizations.id", ondelete="CASCADE"),
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
     project_id: Mapped[uuid.UUID] = mapped_column(

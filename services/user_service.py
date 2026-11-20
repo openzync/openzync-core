@@ -63,37 +63,34 @@ class UserService:
         self._webhook_service = webhook_service
         self._redis = redis
 
-    async def _invalidate_role_cache(self, org_id: UUID, user_id: UUID) -> None:
+    async def _invalidate_role_cache(self, user_id: UUID) -> None:
         """Invalidate the cached role for a user after a role-affecting change.
 
         Args:
-            org_id: The organization UUID scoping the cached entry.
             user_id: The user whose cached role must be dropped.
         """
         if self._redis is None:
             logger.error(
                 "user_service.role_cache_missing_redis",
-                extra={"org_id": str(org_id), "user_id": str(user_id)},
+                extra={"user_id": str(user_id)},
             )
             return
-        await invalidate_role(self._redis, org_id, user_id)
+        await invalidate_role(self._redis, user_id)
 
     async def _invalidate_permissions_cache(
-        self, org_id: UUID, user_id: UUID
-    ) -> None:
+        self, user_id: UUID) -> None:
         """Invalidate the cached permission set for a user after a change.
 
         Args:
-            org_id: The organization UUID scoping the cached entry.
             user_id: The user whose cached permissions must be dropped.
         """
         if self._redis is None:
             logger.error(
                 "user_service.perms_cache_missing_redis",
-                extra={"org_id": str(org_id), "user_id": str(user_id)},
+                extra={"user_id": str(user_id)},
             )
             return
-        await invalidate_permissions(self._redis, org_id, user_id)
+        await invalidate_permissions(self._redis, user_id)
 
     @staticmethod
     def _permissions_for_role(role: str | None) -> list[str]:
@@ -116,7 +113,7 @@ class UserService:
 
     async def create_user(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         external_id: str,
         name: str | None = None,
         email: str | None = None,
@@ -126,7 +123,7 @@ class UserService:
         """Create a new user within an organization.
 
         Args:
-            organization_id: Tenant scope.
+            user_id: Tenant scope.
             external_id: Caller-defined unique user identifier.
             name: Optional display name.
             email: Optional email address.
@@ -141,16 +138,16 @@ class UserService:
                 in the organization.
         """
         exists = await self._repo.exists_by_external_id(
-            organization_id, external_id
+            user_id, external_id
         )
         if exists:
             raise ConflictError(
                 f"User with external_id '{external_id}' already exists "
-                f"in organization {organization_id}"
+                f"in organization {user_id}"
             )
 
         user = await self._repo.create(
-            organization_id=organization_id,
+
             external_id=external_id,
             name=name,
             email=email,
@@ -161,7 +158,7 @@ class UserService:
 
         if self._webhook_service:
             await self._webhook_service.emit(
-                organization_id=organization_id,
+                user_id=user_id,
                 event_type=EventType.USER_CREATED,
                 payload={
                     "user_id": str(user.id),
@@ -179,7 +176,7 @@ class UserService:
         """
         return {
             "id": user.id,
-            "organization_id": user.organization_id,
+            "user_id": user.id,
             "external_id": user.external_id,
             "name": user.name,
             "email": user.email,
@@ -197,7 +194,7 @@ class UserService:
 
     async def get_or_create_user(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         external_id: str,
         name: str | None = None,
         email: str | None = None,
@@ -208,12 +205,12 @@ class UserService:
         This is the primary entry point for memory ingestion. Callers do
         not need to pre-create users before sending messages.
 
-        Thread-safe via the ``(organization_id, external_id)`` unique
+        Thread-safe via the global ``uq_user_external`` ``external_id`` unique
         constraint: if two concurrent calls race, one will raise
         ``IntegrityError``; this method catches it and refetches.
 
         Args:
-            organization_id: Tenant scope.
+            user_id: Tenant scope.
             external_id: Caller-defined unique user identifier.
             name: Optional display name (used only when creating).
             email: Optional email (used only when creating).
@@ -228,7 +225,7 @@ class UserService:
         """
         # Fast path: user already exists
         user = await self._repo.get_by_external_id(
-            organization_id, external_id
+            external_id
         )
         if user is not None:
             return UserResponse.model_validate(self._user_to_dict(user))
@@ -239,7 +236,7 @@ class UserService:
         is_new = False
         try:
             user = await self._repo.create(
-                organization_id=organization_id,
+
                 external_id=external_id,
                 name=name,
                 email=email,
@@ -252,7 +249,7 @@ class UserService:
             # Concurrent insert won. Rollback stale tx, then re-fetch.
             await self._repo.rollback()
             user = await self._repo.get_by_external_id(
-                organization_id, external_id
+                external_id
             )
             if user is None:
                 # Should never happen — the IntegrityError proves the
@@ -265,7 +262,7 @@ class UserService:
 
         if is_new and self._webhook_service:
             await self._webhook_service.emit(
-                organization_id=organization_id,
+                user_id=user_id,
                 event_type=EventType.USER_CREATED,
                 payload={
                     "user_id": str(user.id),
@@ -278,12 +275,12 @@ class UserService:
     # ── Get ─────────────────────────────────────────────────────────────────
 
     async def get_user(
-        self, organization_id: UUID, user_id: UUID
+        self, user_id: UUID
     ) -> UserResponseWithStats:
         """Get a user by internal UUID with aggregate statistics.
 
         Args:
-            organization_id: Tenant scope (must match the user's org).
+
             user_id: The internal OpenZync user UUID.
 
         Returns:
@@ -293,7 +290,7 @@ class UserService:
             NotFoundError: No user with this UUID (or the user is
                 soft-deleted).
         """
-        user = await self._repo.get_by_uuid(organization_id, user_id)
+        user = await self._repo.get_by_uuid(user_id)
         if user is None or user.is_deleted:
             raise NotFoundError(f"User {user_id} not found")
 
@@ -308,7 +305,7 @@ class UserService:
 
     async def update_user(
         self,
-        organization_id: UUID,
+
         user_id: UUID,
         update_fields: dict[str, Any],
         *,
@@ -338,7 +335,7 @@ class UserService:
         is invalidated after any role or permissions change.
 
         Args:
-            organization_id: Tenant scope (must match the user's org).
+
             user_id: The internal OpenZync user UUID.
             update_fields: Only the fields the client explicitly set.
                 Valid keys: ``name``, ``email``, ``metadata``, ``role``,
@@ -357,10 +354,10 @@ class UserService:
             NotFoundError: No user with this UUID in this organization.
         """
         if "role" in update_fields:
-            target = await self._repo.get_by_uuid(organization_id, user_id)
+            target = await self._repo.get_by_uuid(user_id)
             if target is None:
                 raise NotFoundError(
-                    f"User {user_id} not found in organization {organization_id}"
+                    f"User {user_id} not found in organization {user_id}"
                 )
             new_role = update_fields["role"]
             if user_id == actor_user_id:
@@ -371,7 +368,7 @@ class UserService:
                 )
             if target.role == "admin" and new_role != "admin":
                 admin_count = await self._repo.count_active_admins(
-                    organization_id
+                    user_id
                 )
                 # ⚠️ RACE CONDITION: two concurrent demotions of different
                 # admins can both pass this check when the org has exactly 2
@@ -395,7 +392,7 @@ class UserService:
 
         try:
             user = await self._repo.update(
-                organization_id=organization_id,
+
                 user_id=user_id,
                 update_fields=update_fields,
             )
@@ -406,14 +403,14 @@ class UserService:
 
             raise ConflictError("Email is already in use.") from None
         if user is None:
-            raise NotFoundError(f"User {user_id} not found in organization {organization_id}")
+            raise NotFoundError(f"User {user_id} not found in organization {user_id}")
 
         if "role" in update_fields:
-            await self._invalidate_role_cache(organization_id, user_id)
+            await self._invalidate_role_cache(user_id)
         if "role" in update_fields or "permissions" in update_fields:
             # A role change alters effective permissions (admin = wildcard),
             # so both caches must drop.
-            await self._invalidate_permissions_cache(organization_id, user_id)
+            await self._invalidate_permissions_cache(user_id)
 
         return UserResponse.model_validate(self._user_to_dict(user))
 
@@ -421,7 +418,7 @@ class UserService:
 
     async def update_member_role(
         self,
-        organization_id: UUID,
+
         user_id: UUID,
         role: str,
     ) -> User:
@@ -433,7 +430,7 @@ class UserService:
         Invalidates the cached role so RBAC cannot outlive the change.
 
         Args:
-            organization_id: The organization UUID.
+
             user_id: The member's user UUID.
             role: The new role (``admin`` or ``member``).
 
@@ -444,23 +441,23 @@ class UserService:
             NotFoundError: If the user does not exist in the org.
         """
         user = await self._repo.update(
-            organization_id=organization_id,
+
             user_id=user_id,
             update_fields={"role": role},
         )
         if user is None:
             raise NotFoundError(
-                f"User {user_id} not found in organization {organization_id}."
+                f"User {user_id} not found in organization {user_id}."
             )
-        await self._invalidate_role_cache(organization_id, user_id)
-        await self._invalidate_permissions_cache(organization_id, user_id)
+        await self._invalidate_role_cache(user_id)
+        await self._invalidate_permissions_cache(user_id)
         return user
 
     # ── Delete ──────────────────────────────────────────────────────────────
 
     async def delete_user(
         self,
-        organization_id: UUID,
+
         user_id: UUID,
         *,
         actor_user_id: UUID,
@@ -477,7 +474,7 @@ class UserService:
         The deleted user's cached role is invalidated.
 
         Args:
-            organization_id: Tenant scope (must match the user's org).
+
             user_id: The internal OpenZync user UUID.
             actor_user_id: The authenticated user performing the deletion.
 
@@ -493,10 +490,10 @@ class UserService:
         if user_id == actor_user_id:
             raise ValidationError("You cannot delete your own account.")
 
-        user = await self._repo.get_by_uuid(organization_id, user_id)
+        user = await self._repo.get_by_uuid(user_id)
         if user is None:
             raise NotFoundError(
-                f"User {user_id} not found in organization {organization_id}"
+                f"User {user_id} not found in organization {user_id}"
             )
         if user.role == "superadmin":
             raise ValidationError(
@@ -504,7 +501,7 @@ class UserService:
                 "Use the superadmin console."
             )
         if user.role == "admin":
-            admin_count = await self._repo.count_active_admins(organization_id)
+            admin_count = await self._repo.count_active_admins(user_id)
             # ⚠️ Same TOCTOU window as update_user's demotion guard — two
             # concurrent deletes of different admins (org has exactly 2)
             # could both pass, leaving zero admins.
@@ -514,15 +511,15 @@ class UserService:
                 )
 
         deleted = await self._repo.soft_delete(
-            organization_id=organization_id, user_id=user_id
+            user_id,
         )
         if deleted is None:
             raise NotFoundError(
-                f"User {user_id} not found in organization {organization_id}"
+                f"User {user_id} not found in organization {user_id}"
             )
 
-        await self._invalidate_role_cache(organization_id, user_id)
-        await self._invalidate_permissions_cache(organization_id, user_id)
+        await self._invalidate_role_cache(user_id)
+        await self._invalidate_permissions_cache(user_id)
 
         # TODO(phase2): Enqueue GDPR purge task for 30 days later
         # from workers.gdpr_jobs import schedule_user_purge
@@ -533,7 +530,7 @@ class UserService:
 
     async def list_users(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         limit: int = 50,
         cursor: str | None = None,
         search: str | None = None,
@@ -544,7 +541,7 @@ class UserService:
         """List users with cursor-based pagination and optional filters.
 
         Args:
-            organization_id: Tenant scope.
+            user_id: Tenant scope.
             limit: Max results per page (1-200).
             cursor: Opaque pagination token from previous response.
             search: Fuzzy match against external_id, name, email, metadata.
@@ -562,7 +559,7 @@ class UserService:
             raise ValidationError("limit must be between 1 and 200")
 
         users, next_cursor = await self._repo.list(
-            organization_id=organization_id,
+
             limit=limit,
             cursor=cursor,
             search=search,

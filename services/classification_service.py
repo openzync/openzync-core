@@ -34,7 +34,7 @@ class ClassificationService:
 
     async def get_classifications_for_session(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         project_id: UUID | None = None,
         sort: SortSpec | None = None,
@@ -47,7 +47,7 @@ class ClassificationService:
         offered without breaking the default.
 
         Args:
-            org_id: The authenticated organization UUID.
+            user_id: The authenticated organization UUID.
             session_id: The session UUID.
             project_id: Optional project UUID for intra-org isolation
                 of the session ownership check.
@@ -65,20 +65,20 @@ class ClassificationService:
         """
         # Verify session exists (optionally scoped to project)
         session = await self._session_repo.get_by_uuid(
-            org_id=org_id, session_id=session_id, project_id=project_id
+            user_id=user_id, session_id=session_id, project_id=project_id
         )
         if session is None:
             raise NotFoundError(f"Session '{session_id}' not found")
 
         classifications, next_cursor = await self._repo.get_by_session(
-            org_id, session_id, sort=sort, limit=limit, cursor=cursor
+            user_id, session_id, sort=sort, limit=limit, cursor=cursor
         )
         if not classifications:
             return [], None
 
         # Batch-fetch episode content to avoid N+1
         episode_ids = [c.episode_id for c in classifications]
-        episode_map = await self._episode_repo.get_content_batch(episode_ids, org_id=org_id)
+        episode_map = await self._episode_repo.get_content_batch(episode_ids, user_id=user_id)
 
         return [
             ClassificationResponse(
@@ -98,24 +98,24 @@ class ClassificationService:
 
     async def get_classification_for_episode(
         self,
-        org_id: UUID,
+        user_id: UUID,
         episode_id: UUID,
     ) -> ClassificationResponse | None:
         """Return the classification for a specific episode, or ``None``.
 
         Args:
-            org_id: The authenticated organization UUID.
+            user_id: The authenticated organization UUID.
             episode_id: The episode UUID.
 
         Returns:
             A ``ClassificationResponse`` with ``message`` and ``role``
             populated, or ``None`` if not yet classified.
         """
-        classification = await self._repo.get_by_episode(org_id, episode_id)
+        classification = await self._repo.get_by_episode(user_id, episode_id)
         if classification is None:
             return None
 
-        episode_map = await self._episode_repo.get_content_batch([episode_id], org_id=org_id)
+        episode_map = await self._episode_repo.get_content_batch([episode_id], user_id=user_id)
         content, role = episode_map.get(episode_id, ("", ""))
 
         return ClassificationResponse(
@@ -133,16 +133,16 @@ class ClassificationService:
 
     async def count_classifications_for_session(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         project_id: UUID | None = None,
     ) -> int:
         """Count how many classified episodes exist in a session.
 
         Args:
-            org_id: The authenticated organization UUID.
+            user_id: The authenticated organization UUID.
             session_id: The session UUID.
             project_id: Optional project UUID (reserved for future
                 defense-in-depth — not yet used by the repo layer).
         """
-        return await self._repo.count_for_session(org_id, session_id)
+        return await self._repo.count_for_session(user_id, session_id)

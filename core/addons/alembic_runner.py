@@ -7,7 +7,7 @@ Each chain runs against the platform database but stays isolated:
   ``alembic_version`` table;
 * only ``addon_<slug>_<table>`` tables drawn from the manifest
   allowlist may be created, and every created table must carry an
-  ``organization_id`` column (checked statically before anything runs);
+  ``user_id`` column (checked statically before anything runs);
 * any failure raises loud — callers fail the row/record closed.
 """
 
@@ -55,7 +55,7 @@ def enforce_table_policy(
 
     Raises:
         ValidationError: On non-allowlisted tables, missing
-            ``organization_id``, branching/merging, or multiple heads.
+            ``user_id``, branching/merging, or multiple heads.
     """
     if not ID_RE.match(addon_id):
         raise ValidationError(f"Invalid addon id: {addon_id!r}.")
@@ -75,10 +75,10 @@ def enforce_table_policy(
                     f"Revision {path.name} creates {name!r}, "
                     "outside the manifest tables allowlist."
                 )
-        if created and "organization_id" not in source:
+        if created and "user_id" not in source:
             raise ValidationError(
                 f"Revision {path.name} creates tables "
-                "without an organization_id column."
+                "without an user_id column."
             )
 
 

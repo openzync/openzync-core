@@ -1,8 +1,8 @@
-"""User model — represents an end-user within an organization.
+"""User model — represents an end-user (ownership root, no org layer).
 
 Users are identified by an ``external_id`` chosen by the calling application
-(e.g., a UUID from the customer's auth system). The combination
-``(organization_id, external_id)`` is unique.
+(e.g., a UUID from the customer's auth system). The ``external_id``
+is globally unique (``uq_user_external``).
 """
 
 import uuid
@@ -26,11 +26,11 @@ from models.base import Base, TimestampMixin
 
 
 class User(TimestampMixin, Base):
-    """An end-user scoped to an organization.
+    """An end-user. Row ownership root — every other row carries a
+    ``user_id`` FK to this table with ``ON DELETE CASCADE``.
 
     Attributes:
         id: UUID primary key.
-        organization_id: Foreign key to the owning organization.
         external_id: Caller-chosen identifier for this user
             (e.g., ``customer-abc-123``).
         name: Optional display name.
@@ -45,14 +45,6 @@ class User(TimestampMixin, Base):
         primary_key=True,
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
-    )
-    organization_id: Mapped[uuid.UUID] = mapped_column(
-        # ⚠️ RESTRICT (not CASCADE): the singleton platform org must never
-        # be wiped by an org delete — a cascading FK would delete every
-        # user row.  Deleting the platform org is refused while users exist.
-        ForeignKey("organizations.id", ondelete="RESTRICT"),
-        nullable=False,
-        # index defined explicitly in __table_args__ below
     )
     external_id: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -148,11 +140,9 @@ class User(TimestampMixin, Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "organization_id",
             "external_id",
-            name="uq_user_organization_external",
+            name="uq_user_external",
         ),
-        Index("ix_user_organization_id", "organization_id"),
         Index("ix_user_email_unique", "email", postgresql_where=text("email IS NOT NULL AND is_deleted = false")),
         Index(
             "ix_user_invite_token_hash",
@@ -163,6 +153,6 @@ class User(TimestampMixin, Base):
 
     def __repr__(self) -> str:
         return (
-            f"<User id={self.id} org={self.organization_id} "
+            f"<User id={self.id} "
             f"external={self.external_id!r}>"
         )

@@ -30,7 +30,7 @@ def _service(
 @router.post("", response_model=AddonResponse, status_code=201)
 async def install_addon(
     body: AddonInstallRequest,
-    _org_id: str = Depends(require_superadmin),  # noqa: B008
+    _user_id: str = Depends(require_superadmin),  # noqa: B008
     service: AddonService = Depends(_service),  # noqa: B008
 ) -> AddonResponse:
     """Install an addon from ``local_path`` or ``github_url`` (disabled by default)."""
@@ -45,7 +45,7 @@ async def install_addon(
 
 @router.get("", response_model=AddonListResponse)
 async def list_addons(
-    _org_id: str = Depends(require_superadmin),  # noqa: B008
+    _user_id: str = Depends(require_superadmin),  # noqa: B008
     service: AddonService = Depends(_service),  # noqa: B008
 ) -> AddonListResponse:
     """List all installed addons."""
@@ -57,7 +57,7 @@ async def list_addons(
 
 @router.post("/check-updates", response_model=AddonListResponse)
 async def check_addon_updates(
-    _org_id: str = Depends(require_superadmin),  # noqa: B008
+    _user_id: str = Depends(require_superadmin),  # noqa: B008
     service: AddonService = Depends(_service),  # noqa: B008
 ) -> AddonListResponse:
     """Manually refresh ``latest_seen``/``update_available`` for all addons."""
@@ -73,7 +73,7 @@ async def check_addon_updates(
 async def issue_panel_ticket(
     addon_id: str,
     body: PanelTicketRequest,
-    _org_id: str = Depends(require_superadmin),  # noqa: B008
+    _user_id: str = Depends(require_superadmin),  # noqa: B008
     service: AddonService = Depends(_service),  # noqa: B008
 ) -> PanelTicketResponse:
     """Issue a 5-min ``?ticket=`` for one addon panel.
@@ -82,7 +82,7 @@ async def issue_panel_ticket(
     gate as every other route here); the ticket is bound to the addon id
     + panel path in Redis and presented by the iframe as ``?ticket=``.
     """
-    ticket = await service.issue_panel_ticket(addon_id, body.panel_path, _org_id)
+    ticket = await service.issue_panel_ticket(addon_id, body.panel_path, _user_id)
     return PanelTicketResponse(ticket=ticket)
 
 
@@ -97,7 +97,7 @@ async def issue_panel_ticket(
 @router.get("/{addon_id}", response_model=AddonResponse)
 async def get_addon(
     addon_id: str,
-    _org_id: str = Depends(require_superadmin),  # noqa: B008
+    _user_id: str = Depends(require_superadmin),  # noqa: B008
     service: AddonService = Depends(_service),  # noqa: B008
 ) -> AddonResponse:
     """Fetch one addon with panels attached."""
@@ -107,7 +107,7 @@ async def get_addon(
 @router.post("/{addon_id}/enable", response_model=AddonResponse)
 async def enable_addon(
     addon_id: str,
-    _org_id: str = Depends(require_superadmin),  # noqa: B008
+    _user_id: str = Depends(require_superadmin),  # noqa: B008
     service: AddonService = Depends(_service),  # noqa: B008
 ) -> AddonResponse:
     """Enable (hot-load + mount) an addon platform-wide."""
@@ -117,7 +117,7 @@ async def enable_addon(
 @router.post("/{addon_id}/disable", response_model=AddonResponse)
 async def disable_addon(
     addon_id: str,
-    _org_id: str = Depends(require_superadmin),  # noqa: B008
+    _user_id: str = Depends(require_superadmin),  # noqa: B008
     service: AddonService = Depends(_service),  # noqa: B008
 ) -> AddonResponse:
     """Disable an addon platform-wide (routes 403, jobs fail closed)."""
@@ -128,7 +128,7 @@ async def disable_addon(
 async def upgrade_addon(
     addon_id: str,
     tag: str | None = None,
-    _org_id: str = Depends(require_superadmin),  # noqa: B008
+    _user_id: str = Depends(require_superadmin),  # noqa: B008
     service: AddonService = Depends(_service),  # noqa: B008
 ) -> AddonResponse:
     """Manual upgrade — reinstall from source (github tag or latest)."""
@@ -140,7 +140,7 @@ async def uninstall_addon(
     addon_id: str,
     remove_data: bool = Query(default=False),
     confirm: bool = Query(default=False),
-    _org_id: str = Depends(require_superadmin),  # noqa: B008
+    _user_id: str = Depends(require_superadmin),  # noqa: B008
     service: AddonService = Depends(_service),  # noqa: B008
 ) -> None:
     """Uninstall; ``?remove_data=true&confirm=true`` downgrades + drops tables."""
@@ -155,7 +155,7 @@ async def uninstall_addon(
 @router.get("/{addon_id}/health", response_model=AddonHealthResponse)
 async def addon_health(
     addon_id: str,
-    _org_id: str = Depends(require_superadmin),  # noqa: B008
+    _user_id: str = Depends(require_superadmin),  # noqa: B008
     service: AddonService = Depends(_service),  # noqa: B008
 ) -> AddonHealthResponse:
     """Health snapshot for one addon."""

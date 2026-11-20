@@ -152,7 +152,7 @@ def create_jwt_token(
     """Create a signed JWT token (HS256).
 
     Args:
-        data: Payload claims to encode (e.g. ``{"sub": user_id, "org_id": ...}``).
+        data: Payload claims to encode (e.g. ``{"sub": user_id, "user_id": ...}``).
         secret: HMAC secret key (must be at least 32 chars in production).
         expires_delta: Relative duration until the token expires.
 

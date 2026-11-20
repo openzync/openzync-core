@@ -22,7 +22,7 @@ class DialogClassification(TimestampMixin, Base):
 
     Attributes:
         id: UUID primary key.
-        organization_id: Foreign key to the owning organization (tenant isolation).
+        user_id: Foreign key to the owning organization (tenant isolation).
         episode_id: Foreign key to the classified episode.
         intent: Predicted intent label (e.g., ``greeting``, ``question``,
             ``command``).
@@ -38,7 +38,7 @@ class DialogClassification(TimestampMixin, Base):
     __tablename__ = "dialog_classifications"
 
     __table_args__ = (
-        UniqueConstraint("organization_id", "episode_id", name="uq_dialog_classifications_org_episode"),
+        UniqueConstraint("user_id", "episode_id", name="uq_dialog_classifications_user_episode"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -52,8 +52,8 @@ class DialogClassification(TimestampMixin, Base):
         index=True,
         comment="Denormalized for efficient project-scoped queries without joining through episode.",
     )
-    organization_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="CASCADE"),
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
     episode_id: Mapped[uuid.UUID] = mapped_column(

@@ -99,7 +99,7 @@ async def list_llm_usage(
     sort_by: LLMUsageSortBy | None = Query(default=None),
     sort_dir: Literal["asc", "desc"] = Query(default="desc"),
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_permission("members:read")),
 ) -> LLMUsageListResponse:
     """List metering rows with a window summary for the org.
 
@@ -116,18 +116,18 @@ async def list_llm_usage(
             ``total_tokens``).
         sort_dir: Sort direction.
         db: Async database session.
-        org_id: Authenticated organization ID (from JWT or API key).
+        user_id: Authenticated organization ID (from JWT or API key).
 
     Returns:
         ``LLMUsageListResponse`` with rows, total, and summary.
     """
     start, end_exclusive = _resolve_window(days, from_date, to_date)
-    org_uuid = UUID(org_id)
+    org_uuid = UUID(user_id)
     sort = SortSpec(sort_by=sort_by, sort_dir=sort_dir)
 
     rows, total = await list_usage(
         db,
-        org_id=org_uuid,
+        user_id=org_uuid,
         start=start,
         end=end_exclusive,
         project_id=project_id,
@@ -139,7 +139,7 @@ async def list_llm_usage(
     )
     summary = await summarize_usage(
         db,
-        org_id=org_uuid,
+        user_id=org_uuid,
         start=start,
         end=end_exclusive,
         project_id=project_id,

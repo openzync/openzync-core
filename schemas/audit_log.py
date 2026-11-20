@@ -12,7 +12,7 @@ class AuditLogResponse(BaseModel):
     """Single audit log entry returned to the frontend."""
 
     id: UUID = Field(..., description="Audit log entry ID")
-    organization_id: UUID | None = Field(None, description="Organization UUID (may be null for unauthenticated actions)")
+    user_id: UUID | None = Field(None, description="Organization UUID (may be null for unauthenticated actions)")
     actor_id: str | None = Field(None, description="Identifier of the acting entity")
     actor_type: str | None = Field(None, description="Actor category: user, api_key, or system")
     action: str = Field(..., description="The action performed, e.g. session.create")

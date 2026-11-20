@@ -117,7 +117,7 @@ DEFINE ANALYZER openzync_entity
 
 -- 2. Entity table
 DEFINE TABLE entity SCHEMAFULL;
-DEFINE FIELD organization_id ON entity TYPE string;
+DEFINE FIELD user_id ON entity TYPE string;
 DEFINE FIELD project_id ON entity TYPE string;
 DEFINE FIELD name ON entity TYPE string;
 DEFINE FIELD entity_type ON entity TYPE string;
@@ -134,15 +134,15 @@ DEFINE INDEX entity_name_fts ON entity FIELDS name
 DEFINE INDEX entity_summary_fts ON entity FIELDS summary
     FULLTEXT ANALYZER openzync_entity BM25;
 
--- 4. Unique index for entity upsert by (org_id, project_id, name)
+-- 4. Unique index for entity upsert by (user_id, project_id, name)
 DEFINE INDEX entity_org_project_name ON entity
-    FIELDS organization_id, project_id, name UNIQUE;
+    FIELDS user_id, project_id, name UNIQUE;
 
 -- 5. Episode table (lightweight mirror for graph-edge traversal)
 --    The caller is responsible for ensuring episode records exist
 --    with `session_id` populated before `get_entities_for_session` is used.
 DEFINE TABLE episode SCHEMAFULL;
-DEFINE FIELD organization_id ON episode TYPE string;
+DEFINE FIELD user_id ON episode TYPE string;
 DEFINE FIELD project_id ON episode TYPE string;
 DEFINE FIELD session_id ON episode TYPE string;
 DEFINE FIELD created_at ON episode TYPE datetime DEFAULT time::now();
@@ -150,12 +150,12 @@ DEFINE FIELD created_at ON episode TYPE datetime DEFAULT time::now();
 -- 6. has_entity edge table (episode -> entity mapping)
 --    Records that an entity was extracted from a specific episode.
 DEFINE TABLE has_entity SCHEMAFULL;
-DEFINE FIELD organization_id ON has_entity TYPE string;
+DEFINE FIELD user_id ON has_entity TYPE string;
 DEFINE FIELD project_id ON has_entity TYPE string;
 
 -- 7. Observation table (second-pass inferences)
 DEFINE TABLE observation SCHEMAFULL;
-DEFINE FIELD organization_id ON observation TYPE string;
+DEFINE FIELD user_id ON observation TYPE string;
 DEFINE FIELD project_id ON observation TYPE string;
 DEFINE FIELD subject_entity_id ON observation TYPE string;
 DEFINE FIELD observation_type ON observation TYPE string;
@@ -170,7 +170,7 @@ DEFINE FIELD observation_metadata ON observation TYPE object FLEXIBLE DEFAULT {}
 DEFINE FIELD created_at ON observation TYPE datetime DEFAULT time::now();
 DEFINE FIELD updated_at ON observation TYPE datetime VALUE time::now();
 DEFINE INDEX idx_observation_dedup ON observation
-    FIELDS organization_id, project_id, subject_entity_id, observation_type, related_entity_id UNIQUE;
+    FIELDS user_id, project_id, subject_entity_id, observation_type, related_entity_id UNIQUE;
 """
 
 # ── Pagination helpers ────────────────────────────────────────────────────
@@ -405,7 +405,7 @@ class SurrealGraphBackend(GraphBackend):
         """
         return {
             "id": cls._record_id_to_str(row.get("id")),
-            "organization_id": str(row.get("organization_id", "")),
+            "user_id": str(row.get("user_id", "")),
             "project_id": str(row.get("project_id", "")),
             "subject_entity_id": row.get("subject_entity_id", ""),
             "related_entity_id": row.get("related_entity_id") or None,
@@ -485,7 +485,7 @@ class SurrealGraphBackend(GraphBackend):
 
     async def create_entity(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         name: str,
         entity_type: str,
@@ -494,7 +494,7 @@ class SurrealGraphBackend(GraphBackend):
         """Create or update an entity node in the graph.
 
         Uses the ``LET + IF/THEN/ELSE`` pattern for an atomic upsert:
-        - Looks up an existing entity by ``(organization_id, project_id, name)``
+        - Looks up an existing entity by ``(user_id, project_id, name)``
         - If found: updates ``entity_type`` (with type-upgrade guard) and
           ``summary`` (only if a non-empty value is provided).
         - If not found: creates a new entity record.
@@ -518,7 +518,7 @@ class SurrealGraphBackend(GraphBackend):
 
         query = """
         LET $existing = (SELECT id, entity_type, summary FROM entity
-            WHERE organization_id = $org_id
+            WHERE user_id = $user_id
               AND project_id = $project_id
               AND name = $name
             LIMIT 1);
@@ -535,7 +535,7 @@ class SurrealGraphBackend(GraphBackend):
             RETURN AFTER)
         ELSE
             (CREATE entity SET
-                organization_id = $org_id,
+                user_id = $user_id,
                 project_id = $project_id,
                 name = $name,
                 entity_type = $type,
@@ -548,7 +548,7 @@ class SurrealGraphBackend(GraphBackend):
         """
 
         params: dict[str, Any] = {
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
             "name": name_lower,
             "type": entity_type,
@@ -564,7 +564,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.info(
                 "surreal_graph.entity_upserted",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": entity["id"],
                     "entity_type": entity_type,
@@ -578,7 +578,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.create_entity_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "name": name_lower,
                     "error": str(exc),
@@ -586,11 +586,11 @@ class SurrealGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Failed to create entity '{name_lower}': {exc}",
-                detail={"org_id": str(org_id), "name": name_lower},
+                detail={"user_id": str(user_id), "name": name_lower},
             ) from exc
 
     async def get_entity(
-        self, org_id: UUID, project_id: UUID, entity_id: UUID
+        self, user_id: UUID, project_id: UUID, entity_id: UUID
     ) -> dict | None:
         """Retrieve an entity node by its ID, scoped to org and project.
 
@@ -602,7 +602,7 @@ class SurrealGraphBackend(GraphBackend):
 
         params: dict[str, Any] = {
             "id": RecordID("entity", str(entity_id)),
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
         }
 
@@ -611,7 +611,7 @@ class SurrealGraphBackend(GraphBackend):
                 """
                 SELECT * FROM entity
                 WHERE id = $id
-                  AND organization_id = $org_id
+                  AND user_id = $user_id
                   AND project_id = $project_id
                 LIMIT 1;
                 """,
@@ -625,7 +625,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.get_entity_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
@@ -633,11 +633,11 @@ class SurrealGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Failed to retrieve entity {entity_id}: {exc}",
-                detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                detail={"user_id": str(user_id), "entity_id": str(entity_id)},
             ) from exc
 
     async def delete_entity(
-        self, org_id: UUID, project_id: UUID, entity_id: UUID
+        self, user_id: UUID, project_id: UUID, entity_id: UUID
     ) -> bool:
         """Remove an entity node from the graph.
 
@@ -652,7 +652,7 @@ class SurrealGraphBackend(GraphBackend):
 
         params: dict[str, Any] = {
             "entity_id": RecordID("entity", str(entity_id)),
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
         }
 
@@ -661,7 +661,7 @@ class SurrealGraphBackend(GraphBackend):
                 """
                 DELETE entity
                 WHERE id = $entity_id
-                  AND organization_id = $org_id
+                  AND user_id = $user_id
                   AND project_id = $project_id
                 RETURNING id;
                 """,
@@ -672,7 +672,7 @@ class SurrealGraphBackend(GraphBackend):
                 logger.info(
                     "surreal_graph.entity_deleted",
                     extra={
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                         "entity_id": str(entity_id),
                     },
@@ -682,7 +682,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.delete_entity_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
@@ -690,12 +690,12 @@ class SurrealGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Failed to delete entity {entity_id}: {exc}",
-                detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                detail={"user_id": str(user_id), "entity_id": str(entity_id)},
             ) from exc
 
     async def update_entity(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_id: UUID,
         *,
@@ -709,7 +709,7 @@ class SurrealGraphBackend(GraphBackend):
         fields.  Returns the updated entity dict.
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
             entity_id: UUID of the entity to update.
             name: New name, or ``None`` to leave unchanged.
@@ -730,7 +730,7 @@ class SurrealGraphBackend(GraphBackend):
         set_parts: list[str] = []
         params: dict[str, Any] = {
             "entity_id": RecordID("entity", str(entity_id)),
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
         }
 
@@ -746,11 +746,11 @@ class SurrealGraphBackend(GraphBackend):
 
         if not set_parts:
             # Nothing to update — return current state
-            entity = await self.get_entity(org_id, project_id, entity_id)
+            entity = await self.get_entity(user_id, project_id, entity_id)
             if entity is None:
                 raise NotFoundError(
                     message=f"Entity {entity_id} not found",
-                    detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                    detail={"user_id": str(user_id), "entity_id": str(entity_id)},
                 )
             return entity
 
@@ -763,7 +763,7 @@ class SurrealGraphBackend(GraphBackend):
                     {set_clause},
                     updated_at = time::now()
                 WHERE id = $entity_id
-                  AND organization_id = $org_id
+                  AND user_id = $user_id
                   AND project_id = $project_id
                 RETURN AFTER;
                 """,
@@ -773,7 +773,7 @@ class SurrealGraphBackend(GraphBackend):
             if not rows:
                 raise NotFoundError(
                     message=f"Entity {entity_id} not found",
-                    detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                    detail={"user_id": str(user_id), "entity_id": str(entity_id)},
                 )
             return self._row_to_entity(rows[0])
         except NotFoundError:
@@ -782,7 +782,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.update_entity_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
@@ -790,14 +790,14 @@ class SurrealGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Failed to update entity {entity_id}: {exc}",
-                detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                detail={"user_id": str(user_id), "entity_id": str(entity_id)},
             ) from exc
 
     # ── Relationship CRUD ───────────────────────────────────────────────────
 
     async def create_relationship(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         source_id: UUID,
         target_id: UUID,
@@ -830,7 +830,7 @@ class SurrealGraphBackend(GraphBackend):
         target_rid = RecordID("entity", str(target_id))
 
         params: dict[str, Any] = {
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
             "source_id": source_rid,
             "target_id": target_rid,
@@ -857,7 +857,7 @@ class SurrealGraphBackend(GraphBackend):
         ELSE
             (RELATE $source_id -> {safe_type} -> $target_id
             CONTENT {{
-                organization_id: $org_id,
+                user_id: $user_id,
                 project_id: $project_id,
                 properties: $properties,
                 fact: "",
@@ -879,7 +879,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.info(
                 "surreal_graph.relationship_upserted",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
@@ -895,7 +895,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.create_relationship_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
@@ -906,7 +906,7 @@ class SurrealGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to create relationship '{relationship_type}': {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
                 },
@@ -916,7 +916,7 @@ class SurrealGraphBackend(GraphBackend):
 
     async def traverse(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         start_node_id: UUID,
         max_depth: int = 2,
@@ -946,7 +946,7 @@ class SurrealGraphBackend(GraphBackend):
 
         # Distinguish None (all types) from [] (no types)
         if edge_types is not None and len(edge_types) == 0:
-            start = await self.get_entity(org_id, project_id, start_node_id)
+            start = await self.get_entity(user_id, project_id, start_node_id)
             if start is None:
                 return []
             start["depth"] = 0
@@ -968,7 +968,7 @@ class SurrealGraphBackend(GraphBackend):
                 continue
             visited.add(current_id)
 
-            entity = await self.get_entity(org_id, project_id, UUID(current_id))
+            entity = await self.get_entity(user_id, project_id, UUID(current_id))
             if entity:
                 entity["depth"] = depth
                 nodes.append(entity)
@@ -1041,7 +1041,7 @@ class SurrealGraphBackend(GraphBackend):
 
     async def search_entities(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         query: str,
         types: list[str] | None = None,
@@ -1061,7 +1061,7 @@ class SurrealGraphBackend(GraphBackend):
         self._require_connection()
 
         params: dict[str, Any] = {
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
             "query": query,
             "entity_types": types if types is not None else [],
@@ -1073,7 +1073,7 @@ class SurrealGraphBackend(GraphBackend):
                 f"""
                 SELECT *, search::score(0) AS score
                 FROM entity
-                WHERE organization_id = $org_id
+                WHERE user_id = $user_id
                   AND project_id = $project_id
                   AND (name @@ $query OR summary @@ $query)
                   AND ($entity_types_null OR entity_type IN $entity_types)
@@ -1093,7 +1093,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.search_entities_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "query": query,
                     "error": str(exc),
@@ -1101,14 +1101,14 @@ class SurrealGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Entity search failed: {exc}",
-                detail={"org_id": str(org_id), "query": query},
+                detail={"user_id": str(user_id), "query": query},
             ) from exc
 
     # ── Entity Listing ──────────────────────────────────────────────────────
 
     async def list_entities(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         *,
         entity_type: str | None = None,
@@ -1140,12 +1140,12 @@ class SurrealGraphBackend(GraphBackend):
         )
 
         params: dict[str, Any] = {
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
         }
 
         where_clause = (
-            "organization_id = $org_id AND project_id = $project_id"
+            "user_id = $user_id AND project_id = $project_id"
         )
 
         if entity_type:
@@ -1175,7 +1175,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.list_entities_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_type": entity_type,
                     "error": str(exc),
@@ -1183,12 +1183,12 @@ class SurrealGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message="Failed to list entities",
-                detail={"org_id": str(org_id)},
+                detail={"user_id": str(user_id)},
             ) from exc
 
     async def list_entity_edges(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_id: UUID,
         *,
@@ -1277,7 +1277,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.list_entity_edges_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
@@ -1285,12 +1285,12 @@ class SurrealGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Failed to list edges for entity {entity_id}",
-                detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                detail={"user_id": str(user_id), "entity_id": str(entity_id)},
             ) from exc
 
     async def get_entity_with_edges(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_id: UUID,
     ) -> dict | None:
@@ -1300,15 +1300,15 @@ class SurrealGraphBackend(GraphBackend):
             A dict with ``node`` (entity dict) and ``edges`` (list of edge
             dicts), or ``None`` if the entity does not exist.
         """
-        entity = await self.get_entity(org_id, project_id, entity_id)
+        entity = await self.get_entity(user_id, project_id, entity_id)
         if entity is None:
             return None
-        edges_result = await self.list_entity_edges(org_id, project_id, entity_id)
+        edges_result = await self.list_entity_edges(user_id, project_id, entity_id)
         return {"node": entity, "edges": edges_result["items"]}
 
     async def retrieve_graph(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         query: str,
         *,
@@ -1341,7 +1341,7 @@ class SurrealGraphBackend(GraphBackend):
         try:
             # Step 1: Search for entities matching the query
             matched_entities = await self.search_entities(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=project_id,
                 query=query,
                 limit=match_limit,
@@ -1380,7 +1380,7 @@ class SurrealGraphBackend(GraphBackend):
                         {"as_of": as_of} if as_of is not None else {}
                     )
                     related = await self.traverse(
-                        org_id=org_id,
+                        user_id=user_id,
                         project_id=project_id,
                         start_node_id=eid,
                         max_depth=max_depth,
@@ -1441,7 +1441,7 @@ class SurrealGraphBackend(GraphBackend):
 
     async def link_entity_to_episode(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         episode_id: UUID,
         entity_id: UUID,
@@ -1476,14 +1476,14 @@ class SurrealGraphBackend(GraphBackend):
             (RETURN NONE)
         ELSE
             (RELATE $episode_rid -> has_entity -> $entity_rid
-             SET organization_id = $org_id, project_id = $project_id
+             SET user_id = $user_id, project_id = $project_id
              RETURN id)
         END;
         """
         params: dict[str, Any] = {
             "episode_rid": episode_rid,
             "entity_rid": entity_rid,
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
         }
 
@@ -1492,7 +1492,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.info(
                 "surreal_graph.link_entity_to_episode",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "episode_id": str(episode_id),
                     "entity_id": str(entity_id),
@@ -1504,7 +1504,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.link_entity_to_episode_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "episode_id": str(episode_id),
                     "entity_id": str(entity_id),
@@ -1514,7 +1514,7 @@ class SurrealGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to link entity {entity_id} to episode {episode_id}: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "episode_id": str(episode_id),
                     "entity_id": str(entity_id),
                 },
@@ -1522,7 +1522,7 @@ class SurrealGraphBackend(GraphBackend):
 
     async def get_entities_for_session(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         session_id: UUID,
     ) -> list[dict[str, Any]]:
@@ -1541,7 +1541,7 @@ class SurrealGraphBackend(GraphBackend):
         self._require_connection()
 
         params: dict[str, Any] = {
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
             "session_id": str(session_id),
         }
@@ -1551,10 +1551,10 @@ class SurrealGraphBackend(GraphBackend):
                 """
                 SELECT DISTINCT id, name, entity_type, summary
                 FROM entity
-                WHERE organization_id = $org_id
+                WHERE user_id = $user_id
                   AND project_id = $project_id
                   AND <-has_entity<-(episode WHERE session_id = $session_id
-                      AND organization_id = $org_id
+                      AND user_id = $user_id
                       AND project_id = $project_id)
                 ORDER BY name ASC;
                 """,
@@ -1574,7 +1574,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.get_entities_for_session_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "session_id": str(session_id),
                     "error": str(exc),
@@ -1583,16 +1583,15 @@ class SurrealGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to get entities for session {session_id}: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "session_id": str(session_id),
                 },
             ) from exc
 
     async def get_entities_for_user(
         self,
-        org_id: UUID,
-        project_id: UUID,
         user_id: UUID,
+        project_id: UUID,
         episode_ids: list[UUID],
         *,
         limit: int = 50,
@@ -1606,7 +1605,7 @@ class SurrealGraphBackend(GraphBackend):
         always yields ``[]`` on prod data.
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
             user_id: User UUID — log scope only; episode scoping comes
                 from ``episode_ids`` (the graph stores no user linkage).
@@ -1624,7 +1623,7 @@ class SurrealGraphBackend(GraphBackend):
         limit = max(1, min(int(limit), 200))
 
         params: dict[str, Any] = {
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
             "episode_rids": [RecordID("episode", str(e)) for e in episode_ids],
             "limit": limit,
@@ -1636,7 +1635,7 @@ class SurrealGraphBackend(GraphBackend):
                 SELECT DISTINCT out.id AS id, out.name AS name,
                     out.entity_type AS entity_type, out.summary AS summary
                 FROM has_entity
-                WHERE organization_id = $org_id
+                WHERE user_id = $user_id
                   AND project_id = $project_id
                   AND in IN $episode_rids
                 LIMIT $limit;
@@ -1657,9 +1656,8 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.get_entities_for_user_failed",
                 extra={
-                    "org_id": str(org_id),
-                    "project_id": str(project_id),
                     "user_id": str(user_id),
+                    "project_id": str(project_id),
                     "episode_count": len(episode_ids),
                     "error": str(exc),
                 },
@@ -1667,14 +1665,13 @@ class SurrealGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to get entities for user {user_id}: {exc}",
                 detail={
-                    "org_id": str(org_id),
                     "user_id": str(user_id),
                 },
             ) from exc
 
     async def get_entities_for_episodes(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         episode_ids: list[UUID],
         *,
@@ -1690,7 +1687,7 @@ class SurrealGraphBackend(GraphBackend):
         ``session_id``).
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
             episode_ids: Episode UUIDs to scope the lookup to.
             limit: Maximum entities to return (default 200, max 200).
@@ -1706,7 +1703,7 @@ class SurrealGraphBackend(GraphBackend):
         limit = max(1, min(int(limit), 200))
 
         params: dict[str, Any] = {
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
             "episode_rids": [RecordID("episode", str(e)) for e in episode_ids],
             "limit": limit,
@@ -1718,7 +1715,7 @@ class SurrealGraphBackend(GraphBackend):
                 SELECT DISTINCT out.id AS id, out.name AS name,
                     out.entity_type AS entity_type, out.summary AS summary
                 FROM has_entity
-                WHERE organization_id = $org_id
+                WHERE user_id = $user_id
                   AND project_id = $project_id
                   AND in IN $episode_rids
                 LIMIT $limit;
@@ -1739,7 +1736,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.get_entities_for_episodes_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "episode_count": len(episode_ids),
                     "error": str(exc),
@@ -1748,14 +1745,14 @@ class SurrealGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to get entities for episodes: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "episode_count": len(episode_ids),
                 },
             ) from exc
 
     async def get_co_occurring_entity_pairs(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         min_co_count: int = 2,
     ) -> list[dict[str, Any]]:
@@ -1776,7 +1773,7 @@ class SurrealGraphBackend(GraphBackend):
         self._require_connection()
 
         params: dict[str, Any] = {
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
         }
 
@@ -1786,7 +1783,7 @@ class SurrealGraphBackend(GraphBackend):
                 """
                 SELECT VALUE in
                 FROM has_entity
-                WHERE organization_id = $org_id
+                WHERE user_id = $user_id
                   AND project_id = $project_id
                 GROUP BY in;
                 """,
@@ -1820,7 +1817,7 @@ class SurrealGraphBackend(GraphBackend):
                 for er in entity_rids:
                     eid_str = self._record_id_to_str(er)
                     if eid_str and eid_str not in entity_name_cache:
-                        entity = await self.get_entity(org_id, project_id, UUID(eid_str))
+                        entity = await self.get_entity(user_id, project_id, UUID(eid_str))
                         entity_name_cache[eid_str] = entity.get("name", eid_str) if entity else eid_str
 
                 # Build all pairs within this episode
@@ -1853,7 +1850,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.get_co_occurring_pairs_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "min_co_count": min_co_count,
                     "error": str(exc),
@@ -1861,14 +1858,14 @@ class SurrealGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Failed to get co-occurring entity pairs: {exc}",
-                detail={"org_id": str(org_id), "project_id": str(project_id)},
+                detail={"user_id": str(user_id), "project_id": str(project_id)},
             ) from exc
 
     # ── Group B: Bulk / Merge Operations ────────────────────────────────────────
 
     async def get_all_entities(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         *,
         include_merged: bool = False,
@@ -1882,7 +1879,7 @@ class SurrealGraphBackend(GraphBackend):
         self._require_connection()
 
         params: dict[str, Any] = {
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
             "include_merged": include_merged,
         }
@@ -1892,7 +1889,7 @@ class SurrealGraphBackend(GraphBackend):
                 """
                 SELECT id, name, entity_type, summary, is_merged, created_at
                 FROM entity
-                WHERE organization_id = $org_id
+                WHERE user_id = $user_id
                   AND project_id = $project_id
                   AND ($include_merged OR is_merged IS NONE OR is_merged = false)
                 ORDER BY name ASC;
@@ -1915,19 +1912,19 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.get_all_entities_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "error": str(exc),
                 },
             )
             raise ExternalServiceError(
                 message=f"Failed to get all entities: {exc}",
-                detail={"org_id": str(org_id)},
+                detail={"user_id": str(user_id)},
             ) from exc
 
     async def get_all_relationships(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
     ) -> list[dict[str, Any]]:
         """Return ALL non-expired relationships for a project (no pagination).
@@ -1943,7 +1940,7 @@ class SurrealGraphBackend(GraphBackend):
         self._require_connection()
 
         params: dict[str, Any] = {
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
         }
 
@@ -1953,9 +1950,9 @@ class SurrealGraphBackend(GraphBackend):
                 SELECT *, meta::tb(id) AS edge_table_name
                 FROM (SELECT VALUE ->?
                       FROM (SELECT * FROM entity
-                            WHERE organization_id = $org_id
+                            WHERE user_id = $user_id
                               AND project_id = $project_id))
-                WHERE organization_id = $org_id
+                WHERE user_id = $user_id
                   AND project_id = $project_id
                   AND (invalid_at IS NONE)
                 ORDER BY created_at ASC;
@@ -1980,19 +1977,19 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.get_all_relationships_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "error": str(exc),
                 },
             )
             raise ExternalServiceError(
                 message=f"Failed to get all relationships: {exc}",
-                detail={"org_id": str(org_id)},
+                detail={"user_id": str(user_id)},
             ) from exc
 
     async def bulk_search_entities(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         query: str,
         *,
@@ -2015,7 +2012,7 @@ class SurrealGraphBackend(GraphBackend):
         self._require_connection()
 
         params: dict[str, Any] = {
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
             "query": query,
             "limit": limit,
@@ -2026,7 +2023,7 @@ class SurrealGraphBackend(GraphBackend):
                 """
                 SELECT *, search::score(0) AS raw_score
                 FROM entity
-                WHERE organization_id = $org_id
+                WHERE user_id = $user_id
                   AND project_id = $project_id
                   AND name @@ $query
                   AND (is_merged IS NONE OR is_merged = false)
@@ -2054,7 +2051,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.bulk_search_entities_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "query": query,
                     "error": str(exc),
@@ -2062,12 +2059,12 @@ class SurrealGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Bulk entity search failed: {exc}",
-                detail={"org_id": str(org_id), "query": query},
+                detail={"user_id": str(user_id), "query": query},
             ) from exc
 
     async def merge_entities(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         canonical_id: UUID,
         merged_ids: list[UUID],
@@ -2102,11 +2099,11 @@ class SurrealGraphBackend(GraphBackend):
         merged_rids = [RecordID("entity", str(mid)) for mid in merged_ids]
 
         # Step 1: Verify canonical entity exists
-        canonical = await self.get_entity(org_id, project_id, canonical_id)
+        canonical = await self.get_entity(user_id, project_id, canonical_id)
         if canonical is None:
             raise NotFoundError(
                 message=f"Canonical entity {canonical_id} not found",
-                detail={"org_id": str(org_id), "canonical_id": str(canonical_id)},
+                detail={"user_id": str(user_id), "canonical_id": str(canonical_id)},
             )
 
         rewired_count = 0
@@ -2121,11 +2118,11 @@ class SurrealGraphBackend(GraphBackend):
                     """
                     SELECT *, meta::tb(id) AS edge_table_name
                     FROM (SELECT VALUE ->? FROM $merged_rid)
-                    WHERE organization_id = $org_id AND project_id = $project_id;
+                    WHERE user_id = $user_id AND project_id = $project_id;
                     """,
                     {
                         "merged_rid": merged_rid,
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                     },
                 )
@@ -2144,7 +2141,7 @@ class SurrealGraphBackend(GraphBackend):
                         f"""
                         RELATE $canonical_rid -> {edge_table} -> $target_rid
                         CONTENT {{
-                            organization_id: $org_id,
+                            user_id: $user_id,
                             project_id: $project_id,
                             properties: $properties,
                             confidence: $confidence,
@@ -2157,7 +2154,7 @@ class SurrealGraphBackend(GraphBackend):
                         {
                             "canonical_rid": canonical_rid,
                             "target_rid": target_rid,
-                            "org_id": str(org_id),
+                            "user_id": str(user_id),
                             "project_id": str(project_id),
                             "properties": properties,
                             "confidence": confidence,
@@ -2172,11 +2169,11 @@ class SurrealGraphBackend(GraphBackend):
                     """
                     SELECT *, meta::tb(id) AS edge_table_name
                     FROM (SELECT VALUE <-? FROM $merged_rid)
-                    WHERE organization_id = $org_id AND project_id = $project_id;
+                    WHERE user_id = $user_id AND project_id = $project_id;
                     """,
                     {
                         "merged_rid": merged_rid,
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                     },
                 )
@@ -2195,7 +2192,7 @@ class SurrealGraphBackend(GraphBackend):
                         f"""
                         RELATE $source_rid -> {edge_table} -> $canonical_rid
                         CONTENT {{
-                            organization_id: $org_id,
+                            user_id: $user_id,
                             project_id: $project_id,
                             properties: $properties,
                             confidence: $confidence,
@@ -2208,7 +2205,7 @@ class SurrealGraphBackend(GraphBackend):
                         {
                             "source_rid": source_rid,
                             "canonical_rid": canonical_rid,
-                            "org_id": str(org_id),
+                            "user_id": str(user_id),
                             "project_id": str(project_id),
                             "properties": properties,
                             "confidence": confidence,
@@ -2224,11 +2221,11 @@ class SurrealGraphBackend(GraphBackend):
                     """
                     SELECT VALUE id, meta::tb(id) AS edge_table_name
                     FROM (SELECT VALUE ->? FROM $merged_rid)
-                    WHERE organization_id = $org_id AND project_id = $project_id;
+                    WHERE user_id = $user_id AND project_id = $project_id;
                     """,
                     {
                         "merged_rid": merged_rid,
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                     },
                 )
@@ -2247,11 +2244,11 @@ class SurrealGraphBackend(GraphBackend):
                     """
                     SELECT VALUE id, meta::tb(id) AS edge_table_name
                     FROM (SELECT VALUE <-? FROM $merged_rid)
-                    WHERE organization_id = $org_id AND project_id = $project_id;
+                    WHERE user_id = $user_id AND project_id = $project_id;
                     """,
                     {
                         "merged_rid": merged_rid,
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                     },
                 )
@@ -2274,12 +2271,12 @@ class SurrealGraphBackend(GraphBackend):
                     is_merged = true,
                     updated_at = time::now()
                 WHERE id IN $merged_rids
-                  AND organization_id = $org_id
+                  AND user_id = $user_id
                   AND project_id = $project_id;
                 """,
                 {
                     "merged_rids": merged_rids,
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                 },
             )
@@ -2294,7 +2291,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.info(
                 "surreal_graph.entities_merged",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "canonical_id": str(canonical_id),
                     "merged_ids": merged_id_strs,
@@ -2318,7 +2315,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.merge_entities_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "canonical_id": str(canonical_id),
                     "merged_ids": [str(mid) for mid in merged_ids],
@@ -2328,14 +2325,14 @@ class SurrealGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to merge entities: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "canonical_id": str(canonical_id),
                 },
             ) from exc
 
     async def create_relationship_bulk(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         relationships: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
@@ -2345,7 +2342,7 @@ class SurrealGraphBackend(GraphBackend):
         from its built-in idempotency (LET/IF/THEN/ELSE upsert pattern).
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
             relationships: List of relationship descriptor dicts.
 
@@ -2372,7 +2369,7 @@ class SurrealGraphBackend(GraphBackend):
                     )
 
                 result = await self.create_relationship(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=project_id,
                     source_id=UUID(str(source_id)),
                     target_id=UUID(str(target_id)),
@@ -2387,7 +2384,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.info(
                 "surreal_graph.create_relationship_bulk",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "count": len(created),
                 },
@@ -2399,7 +2396,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.create_relationship_bulk_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "count": len(relationships),
                     "error": str(exc),
@@ -2407,14 +2404,14 @@ class SurrealGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Bulk relationship creation failed: {exc}",
-                detail={"org_id": str(org_id)},
+                detail={"user_id": str(user_id)},
             ) from exc
 
     # ── Group C: Observations ───────────────────────────────────────────────────
 
     async def upsert_observation(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         subject_entity_id: UUID,
         observation_type: str,
@@ -2432,7 +2429,7 @@ class SurrealGraphBackend(GraphBackend):
 
         Uses the ``LET + IF/THEN/ELSE`` pattern for atomic upsert on the
         ``observation`` table.  Dedup is by
-        ``(organization_id, project_id, subject_entity_id, observation_type,
+        ``(user_id, project_id, subject_entity_id, observation_type,
         related_entity_id)`` — matching the Postgres backend's functional
         unique index pattern.
 
@@ -2455,7 +2452,7 @@ class SurrealGraphBackend(GraphBackend):
 
         query = """
         LET $existing = (SELECT * FROM observation
-            WHERE organization_id = $org_id
+            WHERE user_id = $user_id
               AND project_id = $project_id
               AND subject_entity_id = $subject_id
               AND observation_type = $obs_type
@@ -2473,7 +2470,7 @@ class SurrealGraphBackend(GraphBackend):
             RETURN AFTER)
         ELSE
             (CREATE observation SET
-                organization_id = $org_id,
+                user_id = $user_id,
                 project_id = $project_id,
                 subject_entity_id = $subject_id,
                 observation_type = $obs_type,
@@ -2492,7 +2489,7 @@ class SurrealGraphBackend(GraphBackend):
         """
 
         params: dict[str, Any] = {
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
             "subject_id": subject_id_str,
             "obs_type": observation_type,
@@ -2514,7 +2511,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.info(
                 "surreal_graph.observation_upserted",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "subject_entity_id": subject_id_str,
                     "observation_type": observation_type,
@@ -2527,7 +2524,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.upsert_observation_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "subject_entity_id": subject_id_str,
                     "observation_type": observation_type,
@@ -2537,14 +2534,14 @@ class SurrealGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to upsert observation: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "subject_entity_id": subject_id_str,
                 },
             ) from exc
 
     async def get_observations(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         *,
         subject_entity_id: UUID | None = None,
@@ -2580,12 +2577,12 @@ class SurrealGraphBackend(GraphBackend):
         )
 
         params: dict[str, Any] = {
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
         }
 
         where_clause = (
-            "organization_id = $org_id AND project_id = $project_id"
+            "user_id = $user_id AND project_id = $project_id"
         )
 
         if subject_entity_id is not None:
@@ -2618,7 +2615,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.get_observations_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "subject_entity_id": str(subject_entity_id) if subject_entity_id else None,
                     "observation_type": observation_type,
@@ -2627,12 +2624,12 @@ class SurrealGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message="Failed to get observations",
-                detail={"org_id": str(org_id)},
+                detail={"user_id": str(user_id)},
             ) from exc
 
     async def get_entity_appearance_timestamps(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_id: UUID,
     ) -> list[datetime]:
@@ -2652,7 +2649,7 @@ class SurrealGraphBackend(GraphBackend):
 
         params: dict[str, Any] = {
             "entity_id": RecordID("entity", str(entity_id)),
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
         }
 
@@ -2662,7 +2659,7 @@ class SurrealGraphBackend(GraphBackend):
                 SELECT created_at FROM episode
                 WHERE id IN (SELECT VALUE <-has_entity.id
                              FROM entity:$entity_id)
-                  AND organization_id = $org_id
+                  AND user_id = $user_id
                   AND project_id = $project_id
                 ORDER BY created_at ASC;
                 """,
@@ -2679,7 +2676,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.get_entity_appearance_timestamps_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
@@ -2688,14 +2685,14 @@ class SurrealGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to get appearance timestamps for entity {entity_id}: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "entity_id": str(entity_id),
                 },
             ) from exc
 
     async def get_relationship_ids_between(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_a_id: UUID,
         entity_b_id: UUID,
@@ -2721,14 +2718,14 @@ class SurrealGraphBackend(GraphBackend):
                 SELECT id
                 FROM (SELECT VALUE ->? FROM entity:$a_id)
                 WHERE out = $b_rid
-                  AND organization_id = $org_id
+                  AND user_id = $user_id
                   AND project_id = $project_id
                   AND (invalid_at IS NONE);
                 """,
                 {
                     "a_id": a_rid,
                     "b_rid": b_rid,
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                 },
             )
@@ -2747,14 +2744,14 @@ class SurrealGraphBackend(GraphBackend):
                 SELECT id
                 FROM (SELECT VALUE ->? FROM entity:$b_id)
                 WHERE out = $a_rid
-                  AND organization_id = $org_id
+                  AND user_id = $user_id
                   AND project_id = $project_id
                   AND (invalid_at IS NONE);
                 """,
                 {
                     "b_id": b_rid,
                     "a_rid": a_rid,
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                 },
             )
@@ -2771,7 +2768,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.get_relationship_ids_between_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_a_id": str(entity_a_id),
                     "entity_b_id": str(entity_b_id),
@@ -2781,7 +2778,7 @@ class SurrealGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to get relationship IDs between entities: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "entity_a_id": str(entity_a_id),
                     "entity_b_id": str(entity_b_id),
                 },
@@ -2791,7 +2788,7 @@ class SurrealGraphBackend(GraphBackend):
 
     async def get_total_entity_linked_episode_count(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
     ) -> int:
         """Get total distinct episodes that have at least one linked entity.
@@ -2800,7 +2797,7 @@ class SurrealGraphBackend(GraphBackend):
         RecordID.  ``out`` is the entity RecordID.
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
 
         Returns:
@@ -2813,12 +2810,12 @@ class SurrealGraphBackend(GraphBackend):
             """
             SELECT count(DISTINCT in) AS total
             FROM has_entity
-            WHERE organization_id = $org_id
+            WHERE user_id = $user_id
               AND project_id = $project_id
             GROUP ALL
             """,
             {
-                "org_id": str(org_id),
+                "user_id": str(user_id),
                 "project_id": str(project_id),
             },
         )
@@ -2827,14 +2824,14 @@ class SurrealGraphBackend(GraphBackend):
 
     async def resolve_entity_names(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_ids: list[UUID],
     ) -> dict[str, dict]:
         """Resolve entity IDs to their names and types.
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
             entity_ids: List of entity UUIDs to resolve.
 
@@ -2854,12 +2851,12 @@ class SurrealGraphBackend(GraphBackend):
             SELECT id, name, entity_type
             FROM entity
             WHERE id INSIDE $entity_ids
-              AND organization_id = $org_id
+              AND user_id = $user_id
               AND project_id = $project_id
             """,
             {
                 "entity_ids": rids,
-                "org_id": str(org_id),
+                "user_id": str(user_id),
                 "project_id": str(project_id),
             },
         )
@@ -2876,7 +2873,7 @@ class SurrealGraphBackend(GraphBackend):
 
     async def expire_relationship(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         relationship_id: UUID,
     ) -> bool:
@@ -2902,15 +2899,15 @@ class SurrealGraphBackend(GraphBackend):
                 SELECT id
                 FROM (SELECT VALUE ->?
                       FROM (SELECT * FROM entity
-                            WHERE organization_id = $org_id
+                            WHERE user_id = $user_id
                               AND project_id = $project_id))
-                WHERE organization_id = $org_id
+                WHERE user_id = $user_id
                   AND project_id = $project_id
                   AND meta::id(id) = $rel_id_str
                 LIMIT 1;
                 """,
                 {
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "rel_id_str": str(relationship_id),
                 },
@@ -2920,7 +2917,7 @@ class SurrealGraphBackend(GraphBackend):
                 logger.info(
                     "surreal_graph.expire_relationship.not_found",
                     extra={
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                         "relationship_id": str(relationship_id),
                     },
@@ -2946,7 +2943,7 @@ class SurrealGraphBackend(GraphBackend):
                 logger.info(
                     "surreal_graph.relationship_expired",
                     extra={
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                         "relationship_id": str(relationship_id),
                     },
@@ -2959,7 +2956,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.expire_relationship_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "relationship_id": str(relationship_id),
                     "error": str(exc),
@@ -2968,14 +2965,14 @@ class SurrealGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to expire relationship {relationship_id}: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "relationship_id": str(relationship_id),
                 },
             ) from exc
 
     async def expire_relationships_matching(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         *,
         source_id: UUID,
@@ -2993,7 +2990,7 @@ class SurrealGraphBackend(GraphBackend):
         means a replay matches zero records and returns 0.
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
             source_id: UUID of the edge source (fact subject entity).
             target_id: UUID of the edge target (fact object entity).
@@ -3013,7 +3010,7 @@ class SurrealGraphBackend(GraphBackend):
 
         safe_type = self._sanitize_edge_type(relationship_type)
         params: dict[str, Any] = {
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
             "source_id": RecordID("entity", str(source_id)),
             "target_id": RecordID("entity", str(target_id)),
@@ -3031,7 +3028,7 @@ class SurrealGraphBackend(GraphBackend):
                 SET invalid_at = $at_time, updated_at = time::now()
                 WHERE in = $source_id
                   AND out = $target_id
-                  AND organization_id = $org_id
+                  AND user_id = $user_id
                   AND project_id = $project_id
                   AND invalid_at IS NONE
                 RETURN BEFORE;
@@ -3044,7 +3041,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.info(
                 "surreal_graph.relationships_expired_matching",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
@@ -3059,7 +3056,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.info(
                 "surreal_graph.expire_relationships_matching.no_such_table",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "relationship_type": relationship_type,
                     "error": str(exc),
@@ -3070,7 +3067,7 @@ class SurrealGraphBackend(GraphBackend):
             logger.error(
                 "surreal_graph.expire_relationships_matching_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
@@ -3085,7 +3082,7 @@ class SurrealGraphBackend(GraphBackend):
                     f"({source_id}, {target_id}, {relationship_type}): {exc}"
                 ),
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
                 },

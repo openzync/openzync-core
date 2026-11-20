@@ -30,7 +30,7 @@ router = APIRouter(
     summary="Get own effective config",
     description=(
         "Returns the caller's stored override plus the merged "
-        "``user ⊕ org ⊕ system`` effective config.  Requires JWT."
+        "``user ⊕ system`` effective config.  Requires JWT."
     ),
 )
 async def get_my_config(

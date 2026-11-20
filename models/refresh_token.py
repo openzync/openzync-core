@@ -19,8 +19,7 @@ class RefreshToken(TimestampMixin, Base):
 
     Attributes:
         id: UUID primary key.
-        user_id: Admin user identifier (external — caller-chosen).
-        organization_id: Foreign key to the owning organization.
+        user_id: Owner — FK to the user that holds this refresh token.
         token_hash: Hashed refresh token value. Unique.
         expires_at: Expiration timestamp — tokens past this date are rejected.
         is_revoked: Soft revocation flag.
@@ -35,9 +34,8 @@ class RefreshToken(TimestampMixin, Base):
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
     )
-    user_id: Mapped[str] = mapped_column(Text, nullable=False)
-    organization_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="CASCADE"),
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
     token_hash: Mapped[str] = mapped_column(

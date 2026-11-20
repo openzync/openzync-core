@@ -48,7 +48,7 @@ class SystemMemberListItem(BaseModel):
 
 
 class SystemOrgMembersResponse(BaseModel):
-    """Paginated response for ``GET /admin/system/orgs/{org_id}/members``."""
+    """Paginated response for ``GET /admin/system/orgs/{user_id}/members``."""
 
     data: list[SystemMemberListItem] = Field(
         ..., description="Member rows on this page."
@@ -59,7 +59,7 @@ class SystemOrgMembersResponse(BaseModel):
 
 
 class UpdateMemberRoleRequest(BaseModel):
-    """Request body for ``PATCH /admin/system/orgs/{org_id}/members/{user_id}/role``.
+    """Request body for ``PATCH /admin/system/orgs/{user_id}/members/{user_id}/role``.
 
     Only the two tenant roles are assignable — anything else fails with
     422 at the schema boundary.
@@ -75,7 +75,7 @@ class MemberRoleResponse(BaseModel):
     """Response body for the member-role change endpoint."""
 
     id: UUID = Field(..., description="The member's user UUID.")
-    organization_id: UUID = Field(..., description="Owning organization UUID.")
+    user_id: UUID = Field(..., description="Owning organization UUID.")
     role: str = Field(..., description="The updated role.")
 
 

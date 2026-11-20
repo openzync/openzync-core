@@ -51,7 +51,7 @@ async def reconcile_temporal(ctx: dict[str, Any]) -> str:
 
     async with session_factory() as db:
         # Cross-org cron scan: bypass RLS so every org is visible.  The
-        # policies read NULLIF(current_setting('app.org_id', true), ''),
+        # policies read NULLIF(current_setting('app.user_id', true), ''),
         # so an unset context matches no rows — the bypass is what makes
         # the platform-wide scan possible.  The bypass is bound on the
         # session, so it survives a commit instead of silently vanishing.
@@ -64,13 +64,13 @@ async def reconcile_temporal(ctx: dict[str, Any]) -> str:
             total_warnings += len(
                 await service.check_project_temporal_consistency(
                     project_id=project.id,
-                    organization_id=project.organization_id,
+
                 )
             )
             total_warnings += len(
                 await service.check_fact_ranges(
                     project_id=project.id,
-                    organization_id=project.organization_id,
+
                 )
             )
 

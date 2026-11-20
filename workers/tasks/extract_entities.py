@@ -34,7 +34,7 @@ async def process_entities_output(
     graph_backend: GraphBackend,
     entity_repo: EntityRepository,
     episode_repo: EpisodeRepository | None,
-    org_id: str,
+    user_id: str,
     episode_id: str,
     project_id: str,
     parsed: EntityExtractionOutput,
@@ -52,7 +52,7 @@ async def process_entities_output(
         entity_repo: Entity repository for upsert operations.
         episode_repo: Optional episode repository for setting enrichment bits.
             If None, bits are not set (caller manages this).
-        org_id: Organization UUID string.
+        user_id: Organization UUID string.
         episode_id: Episode UUID string.
         project_id: Project UUID string.
         parsed: The validated EntityExtractionOutput from the LLM.
@@ -236,7 +236,7 @@ async def process_entities_output(
         )
 
         node = await entity_repo.upsert_entity(
-            org_id=uuid.UUID(org_id),
+            user_id=uuid.UUID(user_id),
             project_id=uuid.UUID(project_id),
             name=normalized_name,
             entity_type=entity_type,
@@ -264,7 +264,7 @@ async def process_entities_output(
         for name in (subject, obj):
             if name not in name_to_node:
                 fallback_node = await entity_repo.upsert_entity(
-                    org_id=uuid.UUID(org_id),
+                    user_id=uuid.UUID(user_id),
                     project_id=uuid.UUID(project_id),
                     name=name,
                     entity_type="Custom",
@@ -286,7 +286,7 @@ async def process_entities_output(
                 subject=subject,
                 predicate=predicate,
                 obj=obj,
-                org_id=uuid.UUID(org_id),
+                user_id=uuid.UUID(user_id),
                 project_id=uuid.UUID(project_id),
             )
             if result is None:
@@ -307,7 +307,7 @@ async def process_entities_output(
     episode_uuid = uuid.UUID(episode_id)
     for entity_node in name_to_node.values():
         await graph_backend.link_entity_to_episode(
-            org_id=uuid.UUID(org_id),
+            user_id=uuid.UUID(user_id),
             project_id=uuid.UUID(project_id),
             episode_id=episode_uuid,
             entity_id=uuid.UUID(entity_node["id"]),
@@ -324,7 +324,7 @@ async def process_entities_output(
     logger.info(
         "entity_extraction.persisted",
         episode_id=episode_id,
-        org_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         entity_count=len(name_to_node),
         relationship_failure_count=relationship_failure_count,

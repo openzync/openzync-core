@@ -11,6 +11,7 @@ from typing import Any
 from core.exceptions import (
     AuthenticationError,
 )
+from core.rls import set_user_context
 from schemas.auth import (
     TokenResponse,
 )
@@ -39,7 +40,6 @@ class TokenMixin:
     _repo: Any
     _otp_service: Any
     _redis: Any
-    _org_repo: Any
     _email_service: Any
     _bao_client: Any
 
@@ -79,12 +79,12 @@ class TokenMixin:
             # Unreachable: the conditional UPDATE only matches existing rows.
             raise AuthenticationError("Refresh token is invalid or has expired.")
 
-        # The token row is the only thing that knows the tenant \u2014 bind the
-        # session to it now, so the rotation writes below are org-scoped.
-        await self._org_repo.set_tenant_context(stored.organization_id)
+        # The token row is the only thing that knows the owner \u2014 bind the
+        # session to it now, so the rotation writes below are user-scoped.
+        await set_user_context(self._repo.session, stored.user_id)
 
         # Look up the user to get the actual role
-        user_id = uuid.UUID(stored.user_id)
+        user_id = stored.user_id
         user = await self._repo.get_user_by_id(user_id)
         if user is None:
             raise AuthenticationError("User no longer exists.")
@@ -94,7 +94,7 @@ class TokenMixin:
 
         new_tokens = await self.issue_tokens(
             user_id=user_id,
-            organization_id=stored.organization_id,
+
             role=role,
         )
 
@@ -159,7 +159,7 @@ class TokenMixin:
     async def issue_tokens(
         self,
         user_id: uuid.UUID,
-        organization_id: uuid.UUID,
+
         role: str,
     ) -> TokenResponse:
         """Generate and persist an access + refresh token pair.
@@ -177,16 +177,16 @@ class TokenMixin:
 
         Args:
             user_id: The authenticated user's UUID.
-            organization_id: The user's organization UUID.
+
             role: User role for JWT claims.
 
         Returns:
             A ``TokenResponse`` with fresh tokens.
         """
-        # Bind the session to the token's tenant — the refresh-token insert
-        # below is org-scoped, and every issuance path (login, refresh,
+        # Bind the session to the token's owner — the refresh-token insert
+        # below is user-scoped, and every issuance path (login, refresh,
         # verify-email, invite-accept, passwordless login) lands here.
-        await self._org_repo.set_tenant_context(organization_id)
+        await set_user_context(self._repo.session, user_id)
 
         # Must-change-password flag — read from the source of truth at
         # issue time so a rotated/stale token can never outlive the flag.
@@ -204,7 +204,6 @@ class TokenMixin:
         access_token = _facade.create_jwt_token(
             data={
                 "sub": str(user_id),
-                "org_id": str(organization_id),
                 "role": role,
                 "mcp": must_change_password,
                 "type": "access",
@@ -220,7 +219,7 @@ class TokenMixin:
 
         await self._repo.create_refresh_token(
             user_id=user_id,
-            organization_id=organization_id,
+
             token_hash=refresh_hash,
             expires_at=refresh_expires,
         )

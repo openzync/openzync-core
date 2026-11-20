@@ -80,7 +80,7 @@ class ConflictMatchingMixin:
 
     @staticmethod
     def _lock_key_for_identity(
-        org_id: UUID, project_id: UUID, name_identity: NameIdentity
+        user_id: UUID, project_id: UUID, name_identity: NameIdentity
     ) -> str:
         """Derive the advisory-lock key for one conflict identity.
 
@@ -92,7 +92,7 @@ class ConflictMatchingMixin:
         acceptable, locks are brief and per-transaction.
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: Project scope.
             name_identity: The normalized ``(subject, predicate, object)``
                 name-form identity of the triple.
@@ -101,7 +101,7 @@ class ConflictMatchingMixin:
             A stable lock key for ``pg_advisory_xact_lock(hashtext(...))``.
         """
         subject, predicate, obj = name_identity
-        return f"sup:{org_id}:{project_id}:{subject}:{predicate}:{obj}"
+        return f"sup:{user_id}:{project_id}:{subject}:{predicate}:{obj}"
     def _prepare_entry(
         self,
         fact: dict[str, Any],

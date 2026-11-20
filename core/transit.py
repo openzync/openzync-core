@@ -12,10 +12,10 @@ Usage::
         transit = TransitManager(bao)
 
         # Encrypt an org's LLM API key before storing in DB
-        encrypted = await transit.encrypt_org_api_key(org_id, "sk-...")
+        encrypted = await transit.encrypt_org_api_key(user_id, "sk-...")
 
         # Decrypt when needed
-        plaintext = await transit.decrypt_org_api_key(org_id, encrypted)
+        plaintext = await transit.decrypt_org_api_key(user_id, encrypted)
 """
 
 from __future__ import annotations
@@ -68,13 +68,13 @@ class TransitManager:
 
     async def encrypt_org_api_key(
         self,
-        org_id: UUID,
+        user_id: UUID,
         api_key: str,
     ) -> str:
         """Encrypt an organisation API key (LLM, embedding, etc.).
 
         Args:
-            org_id: Organisation UUID (used as AAD context).
+            user_id: Organisation UUID (used as AAD context).
             api_key: The plaintext API key.
 
         Returns:
@@ -83,18 +83,18 @@ class TransitManager:
         return await self._bao.encrypt_data(
             ORG_API_KEY_KEY,
             api_key,
-            context=str(org_id),
+            context=str(user_id),
         )
 
     async def decrypt_org_api_key(
         self,
-        org_id: UUID,
+        user_id: UUID,
         ciphertext: str,
     ) -> str:
         """Decrypt an organisation API key.
 
         Args:
-            org_id: Organisation UUID (must match the AAD used at encryption).
+            user_id: Organisation UUID (must match the AAD used at encryption).
             ciphertext: Ciphertext from :meth:`encrypt_org_api_key`.
 
         Returns:
@@ -103,7 +103,7 @@ class TransitManager:
         return await self._bao.decrypt_data(
             ORG_API_KEY_KEY,
             ciphertext,
-            context=str(org_id),
+            context=str(user_id),
         )
 
     # ── Webhook secrets ────────────────────────────────────────────────────

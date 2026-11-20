@@ -42,7 +42,7 @@ class ApiKeyRepository:
 
     async def list_by_org(
         self,
-        organization_id: uuid.UUID,
+        user_id: uuid.UUID,
         include_revoked: bool = False,
         project_id: uuid.UUID | None = None,
         sort: SortSpec | None = None,
@@ -53,7 +53,7 @@ class ApiKeyRepository:
         ``last_used_at``.
 
         Args:
-            organization_id: Tenant scope.
+            user_id: Tenant scope.
             include_revoked: If ``True``, include revoked keys.
             project_id: When provided, only keys scoped to this exact
                 project are returned.
@@ -64,7 +64,7 @@ class ApiKeyRepository:
             by default.
         """
         query = select(ApiKey).where(
-            ApiKey.organization_id == organization_id,
+            ApiKey.user_id == user_id,
         )
         if project_id is not None:
             query = query.where(ApiKey.project_id == project_id)
@@ -88,14 +88,14 @@ class ApiKeyRepository:
 
     async def get_by_id(
         self,
-        organization_id: uuid.UUID,
+        user_id: uuid.UUID,
         key_id: uuid.UUID,
         project_id: uuid.UUID | None = None,
     ) -> ApiKey | None:
         """Get a single API key by ID, scoped to the organization and optionally project.
 
         Args:
-            organization_id: Tenant scope.
+            user_id: Tenant scope.
             key_id: The API key UUID.
             project_id: Optional project scope for additional filtering.
 
@@ -104,7 +104,7 @@ class ApiKeyRepository:
         """
         query = select(ApiKey).where(
             ApiKey.id == key_id,
-            ApiKey.organization_id == organization_id,
+            ApiKey.user_id == user_id,
         )
         if project_id is not None:
             query = query.where(ApiKey.project_id == project_id)
@@ -113,7 +113,7 @@ class ApiKeyRepository:
 
     async def create(
         self,
-        organization_id: uuid.UUID,
+        user_id: uuid.UUID,
         lookup_hash: str,
         key_hash: str,
         salt: str,
@@ -126,7 +126,7 @@ class ApiKeyRepository:
         """Create a new API key record.
 
         Args:
-            organization_id: Owning organization.
+            user_id: Owning organization.
             lookup_hash: Unsalted SHA-256 of the raw key (for fast lookup).
             key_hash: Salted SHA-256 hash of the raw key (for verification).
             salt: Hex-encoded 16-byte salt.
@@ -142,7 +142,7 @@ class ApiKeyRepository:
             The newly created ApiKey.
         """
         api_key = ApiKey(
-            organization_id=organization_id,
+            user_id=user_id,
             project_id=project_id,
             lookup_hash=lookup_hash,
             key_hash=key_hash,
@@ -159,14 +159,14 @@ class ApiKeyRepository:
 
     async def revoke(
         self,
-        organization_id: uuid.UUID,
+        user_id: uuid.UUID,
         key_id: uuid.UUID,
         project_id: uuid.UUID | None = None,
     ) -> ApiKey | None:
         """Revoke an API key (soft delete), scoped to project.
 
         Args:
-            organization_id: Tenant scope.
+            user_id: Tenant scope.
             key_id: The API key UUID to revoke.
             project_id: Optional project scope for additional access
                 control filtering.
@@ -176,7 +176,7 @@ class ApiKeyRepository:
         """
         query = select(ApiKey).where(
             ApiKey.id == key_id,
-            ApiKey.organization_id == organization_id,
+            ApiKey.user_id == user_id,
         )
         if project_id is not None:
             query = query.where(ApiKey.project_id == project_id)

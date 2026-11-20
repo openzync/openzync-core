@@ -34,7 +34,7 @@ class AuditLogService:
     async def log_action(
         self,
         *,
-        organization_id: UUID | None = None,
+        user_id: UUID | None = None,
         actor_id: str | None = None,
         actor_type: str | None = None,
         action: str,
@@ -46,7 +46,7 @@ class AuditLogService:
         """Record an audit log entry.
 
         Args:
-            organization_id: Organization UUID (nullable for unauthenticated actions).
+            user_id: Organization UUID (nullable for unauthenticated actions).
             actor_id: Identifier of the acting entity.
             actor_type: ``user``, ``api_key``, or ``system``.
             action: The action performed (e.g. ``session.create``).
@@ -69,7 +69,7 @@ class AuditLogService:
             )
 
         await self._repo.create(
-            organization_id=organization_id,
+
             actor_id=actor_id,
             actor_type=actor_type,
             action=action,
@@ -81,7 +81,7 @@ class AuditLogService:
 
     async def query_logs(
         self,
-        organization_id: UUID | None,
+        user_id: UUID | None,
         *,
         action: str | None = None,
         actor_id: str | None = None,
@@ -102,7 +102,7 @@ class AuditLogService:
         ``status_code``, ``actor_id``.
 
         Args:
-            organization_id: Filter by organization.  ``None`` means
+            user_id: Filter by organization.  ``None`` means
                 *platform-wide* — the caller's own isolation decides what is
                 visible (an RLS-bypass session sees every row, including the
                 platform-level rows that carry no organization).  A concrete
@@ -124,7 +124,7 @@ class AuditLogService:
             Tuple of (list of AuditLog ORM objects, total_count).
         """
         return await self._repo.list(
-            organization_id=organization_id,
+
             action=action,
             actor_id=actor_id,
             actor_type=actor_type,

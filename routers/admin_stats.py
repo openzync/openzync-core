@@ -93,7 +93,7 @@ async def get_org_stats(
     from_date: date | None = Query(default=None, alias="from"),
     to_date: date | None = Query(default=None, alias="to"),
     project_id: UUID | None = Query(default=None),
-    org_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_permission("members:read")),
     service: AdminStatsService = Depends(_get_admin_stats_service),
 ) -> OrgStatsResponse:
     """Get aggregate statistics for the authenticated organization.
@@ -106,15 +106,15 @@ async def get_org_stats(
         from_date: Inclusive start date (YYYY-MM-DD).
         to_date: Inclusive end date (YYYY-MM-DD).
         project_id: Optional project scope — when provided, all counts are
-            filtered to that project (AND with organization_id for RLS).
-        org_id: Authenticated organization ID (from JWT or API key).
+            filtered to that project (AND with user_id for RLS).
+        user_id: Authenticated organization ID (from JWT or API key).
         service: Admin stats service.
 
     Returns:
         OrgStatsResponse with windowed aggregate counts.
     """
     start, end_exclusive = _resolve_window(days, from_date, to_date)
-    return await service.get_org_stats(UUID(org_id), start, end_exclusive, project_id)
+    return await service.get_org_stats(UUID(user_id), start, end_exclusive, project_id)
 
 
 @router.get(
@@ -133,7 +133,7 @@ async def get_usage_stats(
     from_date: date | None = Query(default=None, alias="from"),
     to_date: date | None = Query(default=None, alias="to"),
     project_id: UUID | None = Query(default=None),
-    org_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_permission("members:read")),
     org_config: OrgConfigBase = Depends(get_org_config),
     service: AdminStatsService = Depends(_get_admin_stats_service),
 ) -> list[UsageStatsResponse]:
@@ -149,7 +149,7 @@ async def get_usage_stats(
         from_date: Inclusive start date (YYYY-MM-DD).
         to_date: Inclusive end date (YYYY-MM-DD).
         project_id: Optional project scope.
-        org_id: Authenticated organization ID.
+        user_id: Authenticated organization ID.
         org_config: Org config (graph backend selection).
         service: Admin stats service.
 
@@ -158,5 +158,5 @@ async def get_usage_stats(
     """
     start, end_exclusive = _resolve_window(days, from_date, to_date)
     return await service.get_usage_stats(
-        request, org_config, UUID(org_id), start, end_exclusive, project_id
+        request, org_config, UUID(user_id), start, end_exclusive, project_id
     )

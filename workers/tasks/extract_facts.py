@@ -351,11 +351,10 @@ async def process_facts_output(
     entity_repo: EntityRepository | None,
     fact_repo: FactRepository,
     episode_repo: EpisodeRepository | None,
-    org_id: str,
+    user_id: str,
     episode_id: str,
     project_id: str,
     session_id: str,
-    user_id: str,
     trace_id: str,
     parsed: FactExtractionOutput,
     known_entities: list[dict],
@@ -382,7 +381,7 @@ async def process_facts_output(
         fact_repo: Fact repository for batch_create_or_skip.
         episode_repo: Optional episode repository.  If provided, sets
             ``ENRICHMENT_FACTS`` bit on the episode inside the transaction.
-        org_id: Organization UUID string.
+        user_id: Organization UUID string.
         episode_id: Episode UUID string.
         project_id: Project UUID string.
         session_id: Session UUID string.
@@ -448,9 +447,8 @@ async def process_facts_output(
             ),
         )
         result = await invalidation.ingest_with_supersession(
-            org_id=uuid.UUID(org_id),
-            project_id=uuid.UUID(project_id),
             user_id=uuid.UUID(user_id),
+            project_id=uuid.UUID(project_id),
             facts=resolved_facts,
             source_episode_id=uuid.UUID(episode_id),
             insert_mode="batch_create_or_skip",
@@ -503,7 +501,7 @@ async def process_facts_output(
             if subj_id is None and entity_repo is not None:
                 try:
                     subj_node = await entity_repo.get_entity_by_name(
-                        org_id=uuid.UUID(org_id),
+                        user_id=uuid.UUID(user_id),
                         project_id=uuid.UUID(project_id),
                         name=input_fact["subject"],
                     )
@@ -530,7 +528,7 @@ async def process_facts_output(
             if obj_id is None and entity_repo is not None:
                 try:
                     obj_node = await entity_repo.get_entity_by_name(
-                        org_id=uuid.UUID(org_id),
+                        user_id=uuid.UUID(user_id),
                         project_id=uuid.UUID(project_id),
                         name=input_fact["object"],
                     )
@@ -563,7 +561,7 @@ async def process_facts_output(
                         subject=input_fact["subject"],
                         predicate=input_fact["predicate"],
                         obj=input_fact["object"],
-                        org_id=uuid.UUID(org_id),
+                        user_id=uuid.UUID(user_id),
                         project_id=uuid.UUID(project_id),
                     )
                 except GraphBackendUnavailableError:
@@ -609,7 +607,7 @@ async def process_facts_output(
                 await arq_redis.enqueue_job(
                     "embed_fact",
                     fact_id=str(fact_obj.id),
-                    org_id=org_id,
+                    user_id=user_id,
                     content=fact_obj.content,
                     trace_id=trace_id,
                     _queue_name=get_queue_name(w_settings.ENV, "high"),
@@ -623,7 +621,7 @@ async def process_facts_output(
             logger.warning(
                 "fact_extraction.embed_enqueue_failed",
                 episode_id=episode_id,
-                org_id=org_id,
+                user_id=user_id,
                 count=len(persisted_ids),
                 exc_info=True,
             )

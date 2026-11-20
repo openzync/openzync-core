@@ -4,7 +4,7 @@ This service wraps a ``GraphBackend`` implementation (typically
 ``PostgresGraphBackend``) to provide a clean service-layer interface
 for the graph query endpoints.
 
-Every method enforces org_id isolation. All methods raise
+Every method enforces user_id isolation. All methods raise
 ``GraphBackendUnavailableError`` when no graph backend is available.
 """
 
@@ -64,11 +64,11 @@ class GraphService:
 
     # ── User validation (moved from router layer) ───────────────────────────────
 
-    async def ensure_user_exists(self, org_id: UUID, user_id: UUID) -> None:
+    async def ensure_user_exists(self, user_id: UUID) -> None:
         """Verify the user exists in the organization.
 
         Args:
-            org_id: The authenticated organization UUID.
+            user_id: The authenticated organization UUID.
             user_id: The requested user UUID.
 
         Raises:
@@ -80,18 +80,18 @@ class GraphService:
                 message=f"User {user_id} not found — user repo not configured.",
                 detail={"user_id": str(user_id)},
             )
-        user = await self._user_repo.get_by_uuid(org_id, user_id)
+        user = await self._user_repo.get_by_uuid(user_id)
         if user is None:
             raise NotFoundError(
-                message=f"User {user_id} not found in organization {org_id}",
-                detail={"user_id": str(user_id), "org_id": str(org_id)},
+                message=f"User {user_id} not found in organization {user_id}",
+                detail={"user_id": str(user_id)},
             )
 
     # ── Public API ──────────────────────────────────────────────────────────────
 
     async def get_entities(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         *,
         entity_type: str | None = None,
@@ -111,7 +111,7 @@ class GraphService:
         ``entity_type``.
 
         Args:
-            org_id: The authenticated organization UUID.
+            user_id: The authenticated organization UUID.
             project_id: The project UUID for intra-org isolation.
             entity_type: Optional filter by entity type.
             limit: Maximum results per page (max 200).
@@ -153,12 +153,12 @@ class GraphService:
                 logger.warning(
                     "graph_service.session_episodes_truncated",
                     extra={
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "session_id": str(session_id),
                     },
                 )
             entities = await self._backend.get_entities_for_episodes(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=project_id,
                 episode_ids=[ep.id for ep in episodes],
                 limit=200,
@@ -185,7 +185,7 @@ class GraphService:
             }
 
         return await self._backend.list_entities(
-            org_id=org_id,
+            user_id=user_id,
             project_id=project_id,
             entity_type=entity_type,
             limit=min(limit, 200),
@@ -195,14 +195,14 @@ class GraphService:
 
     async def get_entity(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_id: UUID,
     ) -> dict[str, Any]:
         """Get a single entity node with all its incident edges.
 
         Args:
-            org_id: The authenticated organization UUID.
+            user_id: The authenticated organization UUID.
             project_id: The project UUID for intra-org isolation.
             entity_id: The UUID of the entity to fetch.
 
@@ -222,26 +222,26 @@ class GraphService:
             )
 
         result = await self._backend.get_entity_with_edges(
-            org_id=org_id, project_id=project_id, entity_id=entity_id
+            user_id=user_id, project_id=project_id, entity_id=entity_id
         )
         if result is None:
             raise EntityNotFoundError(
                 message=f"Entity {entity_id} not found in the knowledge graph.",
-                detail={"entity_id": str(entity_id), "org_id": str(org_id)},
+                detail={"entity_id": str(entity_id), "user_id": str(user_id)},
             )
 
         return result
 
     async def delete_entity(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_id: UUID,
     ) -> bool:
         """Delete an entity node from the knowledge graph.
 
         Args:
-            org_id: The authenticated organization UUID.
+            user_id: The authenticated organization UUID.
             project_id: The project UUID for intra-org isolation.
             entity_id: The UUID of the entity to delete.
 
@@ -260,12 +260,12 @@ class GraphService:
             )
 
         return await self._backend.delete_entity(
-            org_id=org_id, project_id=project_id, entity_id=entity_id
+            user_id=user_id, project_id=project_id, entity_id=entity_id
         )
 
     async def get_edges(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         *,
         subject_id: UUID | None = None,
@@ -286,7 +286,7 @@ class GraphService:
         ``predicate``.
 
         Args:
-            org_id: The authenticated organization UUID.
+            user_id: The authenticated organization UUID.
             project_id: The project UUID for intra-org isolation.
             subject_id: Optional filter by source entity UUID.
             subject_ids: Batch of entity UUIDs to fetch edges for.
@@ -316,7 +316,7 @@ class GraphService:
             results = await asyncio.gather(
                 *[
                     self._backend.list_entity_edges(
-                        org_id=org_id,
+                        user_id=user_id,
                         project_id=project_id,
                         entity_id=eid,
                         predicate=predicate,
@@ -340,7 +340,7 @@ class GraphService:
 
         if subject_id is not None:
             return await self._backend.list_entity_edges(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=project_id,
                 entity_id=subject_id,
                 predicate=predicate,
@@ -352,13 +352,13 @@ class GraphService:
         # no subject provided — warn and return empty
         logger.warning(
             "graph_service.get_edges_without_subject",
-            extra={"org_id": str(org_id)},
+            extra={"user_id": str(user_id)},
         )
         return {"items": [], "next_cursor": None, "has_more": False}
 
     async def get_communities(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         sort: SortSpec | None = None,
     ) -> list[dict[str, Any]]:
@@ -375,7 +375,7 @@ class GraphService:
         community list fits one page).
 
         Args:
-            org_id: The authenticated organization UUID.
+            user_id: The authenticated organization UUID.
             project_id: The project UUID for intra-org isolation.
             sort: Validated sort spec (forwarded opaque; ``member_count``
                 sorts in Python post-fetch).
@@ -415,7 +415,7 @@ class GraphService:
             else None
         )
         result = await self._backend.list_entities(
-            org_id=org_id,
+            user_id=user_id,
             project_id=project_id,
             entity_type="community",
             limit=200,
@@ -425,7 +425,7 @@ class GraphService:
         # member_count is computed at read time from MEMBER_OF edges so
         # reruns and manual edits stay consistent without a stored counter.
         # Cross-backend contract: relationship dicts carry "type".
-        relationships = await self._backend.get_all_relationships(org_id, project_id)
+        relationships = await self._backend.get_all_relationships(user_id, project_id)
         member_counts: dict[str, int] = {}
         for rel in relationships:
             if rel.get("type", rel.get("relationship_type", "")) != "member_of":

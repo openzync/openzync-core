@@ -31,7 +31,7 @@ class ObservationQueryService:
 
     async def get_observations(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         *,
         subject_entity_id: UUID | None = None,
@@ -46,7 +46,7 @@ class ObservationQueryService:
         (maps to ``content``), ``created_at``.
 
         Args:
-            org_id: Organisational scope for RLS enforcement.
+            user_id: Organisational scope for RLS enforcement.
             project_id: Project scope for isolation.
             subject_entity_id: Optional — only observations about this entity.
             observation_type: Optional — only observations of this type
@@ -65,7 +65,7 @@ class ObservationQueryService:
             GraphBackendUnavailableError: If the graph backend is unreachable.
         """
         result = await self._graph_backend.get_observations(
-            org_id=org_id,
+            user_id=user_id,
             project_id=project_id,
             subject_entity_id=subject_entity_id,
             observation_type=observation_type,
@@ -86,7 +86,7 @@ class ObservationQueryService:
         if entity_ids:
             try:
                 name_map = await self._graph_backend.resolve_entity_names(
-                    org_id, project_id, list(entity_ids)
+                    user_id, project_id, list(entity_ids)
                 )
             except Exception:
                 # Non-critical — observations returned without names

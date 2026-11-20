@@ -86,10 +86,10 @@ async def list_classifications(
     Returns an empty list if no episodes in the session have been classified
     yet (the ``classify_dialog`` worker may not have run yet).
     """
-    org_id = UUID(request.state.org_id)
+    user_id = UUID(request.state.user_id)
     project_id = UUID(request.path_params["project_id"])
     classifications, next_cursor = await service.get_classifications_for_session(
-        org_id=org_id,
+        user_id=user_id,
         session_id=session_id,
         project_id=project_id,
         sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
@@ -97,7 +97,7 @@ async def list_classifications(
         cursor=cursor,
     )
     total = await service.count_classifications_for_session(
-        org_id=org_id,
+        user_id=user_id,
         session_id=session_id,
         project_id=project_id,
     )
@@ -127,9 +127,9 @@ async def get_episode_classification(
 
     Returns 404 if the episode has not been classified yet.
     """
-    org_id = UUID(request.state.org_id)
+    user_id = UUID(request.state.user_id)
     result = await service.get_classification_for_episode(
-        org_id=org_id,
+        user_id=user_id,
         episode_id=episode_id,
     )
     if result is None:

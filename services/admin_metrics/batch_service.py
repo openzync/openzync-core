@@ -85,7 +85,7 @@ class AdminMetricsBatchService:
     async def _invoke_concurrent(
         self,
         factory: async_sessionmaker[AsyncSession],
-        org_id: UUID,
+        user_id: UUID,
         name: str,
         call: Callable[[DbMetricsQueriesService], Awaitable[dict]],
     ) -> dict:
@@ -93,12 +93,12 @@ class AdminMetricsBatchService:
 
         Args:
             factory: ``app.state.db_session_factory`` — one session per leg.
-            org_id: Tenant bound on the sibling session (RLS).
+            user_id: Tenant bound on the sibling session (RLS).
             name: Query name (timeout budget + log context).
             call: Takes the leg-scoped service, returns the leg result.
         """
         async with factory() as leg_db:
-            await set_tenant_context(leg_db, org_id)
+            await set_tenant_context(leg_db, user_id)
             try:
                 return await self._guarded(name, call(DbMetricsQueriesService(leg_db)))
             except Exception:
@@ -110,7 +110,7 @@ class AdminMetricsBatchService:
     async def _run_legs(
         self,
         request: Request,
-        org_id: UUID,
+        user_id: UUID,
         backend: GraphBackend | None,
         db_calls: dict[str, Callable[[DbMetricsQueriesService], Awaitable[dict]]],
         prom_calls: dict[str, Callable[[], Awaitable[dict]]],
@@ -152,7 +152,7 @@ class AdminMetricsBatchService:
             *(
                 self._guarded(name, prom_calls[name]())
                 if name in prom_calls
-                else self._invoke_concurrent(factory, org_id, name, db_calls[name])
+                else self._invoke_concurrent(factory, user_id, name, db_calls[name])
                 for name in names
             ),
             return_exceptions=True,
@@ -162,7 +162,7 @@ class AdminMetricsBatchService:
         self,
         request: Request,
         org_config: OrgConfigBase,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
         limit: int,
@@ -179,47 +179,47 @@ class AdminMetricsBatchService:
         """
         started = time.perf_counter()
         backend = await resolve_graph_backend_fail_soft(
-            request, org_config, org_id, self._db, "admin_metrics"
+            request, org_config, user_id, self._db, "admin_metrics"
         )
 
         db_calls: dict[str, Callable[[DbMetricsQueriesService], Awaitable[dict]]] = {
             "episodes_per_day": lambda svc: svc.episodes_per_day(
-                org_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id
             ),
             "messages_per_day": lambda svc: svc.messages_per_day(
-                org_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id
             ),
             "activity_per_day": lambda svc: svc.activity_per_day(
-                org_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id
             ),
             "entities_per_day": lambda svc: svc.entities_per_day(
-                org_id, start, end, limit, project_id, backend
+                user_id, start, end, limit, project_id, backend
             ),
             "facts_per_day": lambda svc: svc.facts_per_day(
-                org_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id
             ),
             "enrichment_progress": lambda svc: svc.enrichment_progress(
-                org_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id
             ),
             "top_projects_by_episodes": lambda svc: svc.top_projects_by_episodes(
-                org_id, start, end, limit, project_id, include_archived
+                user_id, start, end, limit, project_id, include_archived
             ),
             "top_users_by_messages": lambda svc: svc.top_users_by_messages(
-                org_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id
             ),
             "queue_depth_over_time": lambda svc: svc.queue_depth_over_time(
-                org_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id
             ),
         }
         prom_calls: dict[str, Callable[[], Awaitable[dict]]] = {
             "error_rate_by_day": lambda: self._prom.error_rate_by_day(
-                org_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id
             ),
             "latency_percentiles": lambda: self._prom.latency_percentiles(
-                org_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id
             ),
             "context_retrieval_rate": lambda: self._prom.context_retrieval_rate(
-                org_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id
             ),
         }
         names = [
@@ -242,7 +242,7 @@ class AdminMetricsBatchService:
             # budget below rarely fires — it bounds pathological scheduling, not
             # the common case.
             outcomes = await asyncio.wait_for(
-                self._run_legs(request, org_id, backend, db_calls, prom_calls, names),
+                self._run_legs(request, user_id, backend, db_calls, prom_calls, names),
                 timeout=_OVERALL_TIMEOUT,
             )
         except TimeoutError as exc:

@@ -55,7 +55,7 @@ def _is_retryable(exc: Exception) -> bool:
 async def link_entities_to_episode(
     ctx: object,
     episode_id: str,
-    org_id: str,
+    user_id: str,
     project_id: str,
     role: str,
     content: str | None = None,
@@ -79,7 +79,7 @@ async def link_entities_to_episode(
     Args:
         ctx: ARQ worker context (unused, required by ARQ contract).
         episode_id: UUID of the episode to sync.
-        org_id: UUID of the owning organization.
+        user_id: UUID of the owning organization.
         project_id: UUID of the project for project scoping.
         role: Message role (user/assistant/system/tool).
         content: Legacy payload from older enqueues.  ``None`` (the new
@@ -119,7 +119,7 @@ async def link_entities_to_episode(
     try:
         async with session_factory() as db:
             try:
-                await rls.set_tenant_context(db, org_id)
+                await rls.set_tenant_context(db, user_id)
                 # ── 1. Get the episode ──────────────────────────────────────────
                 result = await db.execute(
                     select(Episode).where(Episode.id == episode_id)
@@ -129,7 +129,7 @@ async def link_entities_to_episode(
                     logger.warning(
                         "link_entities_to_episode.episode_not_found",
                         episode_id=episode_id,
-                        org_id=org_id,
+                        user_id=user_id,
                         project_id=project_id,
                     )
                     raise EpisodeNotFoundError(
@@ -142,7 +142,7 @@ async def link_entities_to_episode(
                 try:
                     ctx_dict: dict = ctx if isinstance(ctx, dict) else {}
                     backend = await resolve_graph_backend(
-                        ctx_dict, UUID(org_id), db,
+                        ctx_dict, UUID(user_id), db,
                     )
                 except GraphBackendUnavailableError:
                     # Backend is explicitly configured but unreachable — this is
@@ -150,7 +150,7 @@ async def link_entities_to_episode(
                     # here silently drops entity links for this episode.
                     logger.warning(
                         "link_entities_to_episode.backend_unavailable",
-                        org_id=org_id,
+                        user_id=user_id,
                         exc_info=True,
                     )
                     raise
@@ -159,7 +159,7 @@ async def link_entities_to_episode(
                     # ARQ retries rather than silently unlinking the episode.
                     logger.warning(
                         "link_entities_to_episode.backend_resolution_failed",
-                        org_id=org_id,
+                        user_id=user_id,
                         episode_id=episode_id,
                     )
                     raise
@@ -178,7 +178,7 @@ async def link_entities_to_episode(
                 if backend is None:
                     logger.info(
                         "link_entities_to_episode.graph_disabled_skipping",
-                        org_id=org_id,
+                        user_id=user_id,
                         episode_id=episode_id,
                     )
                     # Skip entity linking — not critical for enrichment pipeline.
@@ -198,7 +198,7 @@ async def link_entities_to_episode(
                         cursor: str | None = None
                         while True:
                             entity_page = await backend.list_entities(
-                                org_id=UUID(org_id),
+                                user_id=UUID(user_id),
                                 project_id=UUID(project_id),
                                 limit=200,
                                 cursor=cursor,
@@ -214,7 +214,7 @@ async def link_entities_to_episode(
                     except GraphBackendUnavailableError:
                         logger.warning(
                             "link_entities_to_episode.entity_list_failed",
-                            org_id=org_id,
+                            user_id=user_id,
                             exc_info=True,
                         )
                         raise
@@ -232,7 +232,7 @@ async def link_entities_to_episode(
                     async def _search_one(word: str) -> list[dict]:
                         async with _search_semaphore:
                             return await backend.bulk_search_entities(
-                                org_id=UUID(org_id),
+                                user_id=UUID(user_id),
                                 project_id=UUID(project_id),
                                 query=word,
                                 limit=5,
@@ -267,7 +267,7 @@ async def link_entities_to_episode(
                         for entity in entities:
                             try:
                                 await backend.link_entity_to_episode(
-                                    org_id=UUID(org_id),
+                                    user_id=UUID(user_id),
                                     project_id=UUID(project_id),
                                     episode_id=UUID(episode_id),
                                     entity_id=UUID(entity["id"]),
@@ -310,12 +310,12 @@ async def link_entities_to_episode(
                         # marker.  No TTL would leak one key per project
                         # forever in the 128MB noeviction Redis; 1h bounds
                         # the leak if the deleter ever misses.
-                        marker_key = f"observations:pending:{org_id}:{project_id}"
+                        marker_key = f"observations:pending:{user_id}:{project_id}"
                         if not await arq_redis.get(marker_key):
                             await arq_redis.enqueue_job(
                                 "compute_observations",
                                 episode_id=episode_id,
-                                org_id=org_id,
+                                user_id=user_id,
                                 project_id=project_id,
                                 trace_id=trace_id,
                                 _queue_name=w_settings.low_queue_full,
@@ -344,30 +344,30 @@ async def link_entities_to_episode(
                         if isinstance(ctx, dict):
                             arq_redis = ctx.get("redis")
                         if arq_redis is not None:
-                            dedup_key = f"community:recently_enqueued:{org_id}"
+                            dedup_key = f"community:recently_enqueued:{user_id}"
                             if not await arq_redis.get(dedup_key):
                                 await arq_redis.enqueue_job(
                                     "summarise_community",
-                                    org_id=org_id,
+                                    user_id=user_id,
                                     _queue_name=worker_settings.low_queue_full,
                                 )
                                 # Prevent re-enqueueing within 1 hour per org
                                 await arq_redis.set(dedup_key, "1", ex=3600)
                                 logger.info(
                                     "link_entities_to_episode.scheduled_community_detection",
-                                    org_id=org_id,
+                                    user_id=user_id,
                                 )
                     except Exception as exc:
                         logger.warning(
                             "link_entities_to_episode.community_enqueue_failed",
-                            extra={"org_id": org_id, "error": str(exc)},
+                            extra={"user_id": user_id, "error": str(exc)},
                         )
                         raise  # Propagate so ARQ retry mechanism handles it
 
                 logger.info(
                     "link_entities_to_episode.completed",
                     episode_id=episode_id,
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=project_id,
                     entities_linked=linked,
                     words_analyzed=len(words),

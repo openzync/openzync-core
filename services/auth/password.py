@@ -12,11 +12,14 @@ from core.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from core.rls import set_user_context
+from core.rbac import invalidate_must_change_password
 from schemas.auth import (
     ChangePasswordRequest,
     TokenResponse,
 )
 from schemas.email import OtpResponse, ResetPasswordRequest
+from utils.password import hash_password, verify_password
 from utils.pii import mask_email
 
 logger = logging.getLogger(__name__)
@@ -65,16 +68,15 @@ class PasswordMixin:
             raise ValidationError(
                 "This account does not have a password set."
             )
-        from services import auth_service as _facade  # via facade (patchable)
         # bcrypt blocks the event loop — offload to a worker thread.
         if not await asyncio.to_thread(
-            _facade.verify_password, payload.old_password, user.password_hash
+            verify_password, payload.old_password, user.password_hash
         ):
             raise AuthenticationError("Current password is incorrect.")
 
         self._validate_password(payload.new_password)
         new_hash = await asyncio.to_thread(
-            _facade.hash_password, payload.new_password
+            hash_password, payload.new_password
         )
 
         await self._repo.update_dashboard_user(
@@ -85,17 +87,14 @@ class PasswordMixin:
         # Rotate the refresh-token family — every prior session is dead,
         # including the one that logged the default credential in.
         await self._repo.revoke_all_refresh_tokens(user_id)
-        await _facade.invalidate_must_change_password(
-            self._redis, user.organization_id, user_id
-        )
+        await invalidate_must_change_password(self._redis, user.id)
 
         logger.info(
             "auth.password_changed",
             extra={"user_id": str(user_id)},
         )
         return await self.issue_tokens(
-            user_id=user_id,
-            organization_id=user.organization_id,
+            user_id=user.id,
             role=user.role if user.role is not None else "member",
         )
     # ── Password reset ─────────────────────────────────────────────────────
@@ -163,9 +162,9 @@ class PasswordMixin:
                 "Please request a new code.",
             )
 
-        # Bind the session to the caller's tenant — the password update and
-        # the refresh-token revocation below are org-scoped.
-        await self._org_repo.set_tenant_context(user.organization_id)
+        # Bind the session to the caller's user — the password update and
+        # the refresh-token revocation below are user-scoped.
+        await set_user_context(self._repo.session, user.id)
 
         # Verify OTP
         verified = await self._otp_service.verify(
@@ -180,11 +179,10 @@ class PasswordMixin:
             )
 
         # Validate and hash new password
-        from services import auth_service as _facade  # via facade (patchable)
         self._validate_password(payload.new_password)
         # bcrypt blocks the event loop — offload to a worker thread.
         new_hash = await asyncio.to_thread(
-            _facade.hash_password, payload.new_password
+            hash_password, payload.new_password
         )
 
         # Update password hash

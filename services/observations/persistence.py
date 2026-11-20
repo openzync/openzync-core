@@ -33,7 +33,7 @@ class PersistenceMixin:
         self,
         patterns: list[CoOccurrencePattern],
         project_id: UUID,
-        organization_id: UUID,
+        user_id: UUID,
         llm_backend: Any | None,
     ) -> int:
         """Persist co-occurrence observations — two per pair (one per direction).
@@ -45,7 +45,7 @@ class PersistenceMixin:
         Args:
             patterns: Detected co-occurrence patterns.
             project_id: Project scope.
-            organization_id: Organization scope.
+            user_id: Organization scope.
             llm_backend: Optional LLM backend.
 
         Returns:
@@ -59,7 +59,7 @@ class PersistenceMixin:
             # Direction A → B
             desc_a = self.build_co_occurrence_description(pair)
             await self._backend.upsert_observation(
-                org_id=organization_id,
+                user_id=user_id,
                 project_id=project_id,
                 subject_entity_id=pair.entity_a_id,
                 related_entity_id=pair.entity_b_id,
@@ -84,7 +84,7 @@ class PersistenceMixin:
             )
             desc_b = self.build_co_occurrence_description(swapped_pair)
             await self._backend.upsert_observation(
-                org_id=organization_id,
+                user_id=user_id,
                 project_id=project_id,
                 subject_entity_id=pair.entity_b_id,
                 related_entity_id=pair.entity_a_id,
@@ -102,7 +102,7 @@ class PersistenceMixin:
         self,
         patterns: list[TemporalGapPattern],
         project_id: UUID,
-        organization_id: UUID,
+        user_id: UUID,
         llm_backend: Any | None,
     ) -> int:
         """Persist temporal pattern observations.
@@ -113,7 +113,7 @@ class PersistenceMixin:
         Args:
             patterns: Detected temporal gap patterns.
             project_id: Project scope.
-            organization_id: Organization scope.
+            user_id: Organization scope.
             llm_backend: Optional LLM backend.
 
         Returns:
@@ -133,7 +133,7 @@ class PersistenceMixin:
             confidence = confidence_map.get(pattern.pattern_type, 0.5)
 
             await self._backend.upsert_observation(
-                org_id=organization_id,
+                user_id=user_id,
                 project_id=project_id,
                 subject_entity_id=pattern.entity_id,
                 related_entity_id=None,  # entity-level observation
@@ -150,7 +150,7 @@ class PersistenceMixin:
         self,
         patterns: list[BehavioralPattern],
         project_id: UUID,
-        organization_id: UUID,
+        user_id: UUID,
         llm_backend: Any | None,
     ) -> int:
         """Persist behavioral pattern observations.
@@ -161,7 +161,7 @@ class PersistenceMixin:
         Args:
             patterns: Detected behavioral patterns.
             project_id: Project scope.
-            organization_id: Organization scope.
+            user_id: Organization scope.
             llm_backend: Optional LLM backend.
 
         Returns:
@@ -181,7 +181,7 @@ class PersistenceMixin:
                 confidence = 0.2
 
             await self._backend.upsert_observation(
-                org_id=organization_id,
+                user_id=user_id,
                 project_id=project_id,
                 subject_entity_id=pattern.entity_id,
                 related_entity_id=None,  # entity-level observation
@@ -211,7 +211,7 @@ class PersistenceMixin:
     async def _get_fact_predicate_counts(
         self,
         project_id: UUID,
-        organization_id: UUID | None = None,
+        user_id: UUID | None = None,
     ) -> list[dict[str, Any]]:
         """Get predicate frequency for each entity (as subject).
 
@@ -220,7 +220,7 @@ class PersistenceMixin:
 
         Args:
             project_id: Project scope.
-            organization_id: Organisation scope — required for graph backend
+            user_id: Organisation scope — required for graph backend
                 entity-name resolution.
 
         Returns:
@@ -239,9 +239,9 @@ class PersistenceMixin:
             raise GraphBackendUnavailableError(
                 "An AsyncSession is required for fact predicate queries."
             )
-        if organization_id is None:
+        if user_id is None:
             raise ValueError(
-                "organization_id is required when using GraphBackend for "
+                "user_id is required when using GraphBackend for "
                 "entity name resolution."
             )
 
@@ -250,7 +250,7 @@ class PersistenceMixin:
         from repositories.fact_repository import FactRepository  # noqa: PLC0415
 
         rows = await FactRepository(self._db).get_fact_predicate_counts(
-            project_id, organization_id, datetime.now(UTC)
+            project_id, user_id, datetime.now(UTC)
         )
 
         if not rows:
@@ -264,7 +264,7 @@ class PersistenceMixin:
 
         # Resolve entity names via graph backend ABC
         entity_names = await self._backend.resolve_entity_names(
-            org_id=organization_id,
+            user_id=user_id,
             project_id=project_id,
             entity_ids=unique_entity_ids,
         )

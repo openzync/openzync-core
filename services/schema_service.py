@@ -56,13 +56,13 @@ class SchemaService:
 
     async def create_schema(
         self,
-        org_id: UUID,
+        user_id: UUID,
         payload: CreateExtractionSchemaRequest,
     ) -> ExtractionSchemaResponse:
         """Create a new extraction schema for an organization.
 
         Args:
-            org_id: The authenticated organization UUID.
+            user_id: The authenticated organization UUID.
             payload: Validated creation request.
 
         Returns:
@@ -81,7 +81,7 @@ class SchemaService:
             self._validate_json_schema(payload.json_schema)
 
         # Check uniqueness before insert
-        existing = await self._repo.get_by_name(org_id, payload.name)
+        existing = await self._repo.get_by_name(user_id, payload.name)
         if existing is not None:
             raise ConflictError(
                 f"Schema '{payload.name}' already exists in this organization"
@@ -89,7 +89,7 @@ class SchemaService:
 
         try:
             schema = await self._repo.create(
-                org_id=org_id,
+                user_id=user_id,
                 name=payload.name,
                 json_schema=payload.json_schema,
                 type=payload.type,
@@ -104,7 +104,7 @@ class SchemaService:
 
     async def list_schemas(
         self,
-        org_id: UUID,
+        user_id: UUID,
         schema_type: str | None = None,
         is_active: bool | None = None,
         sort: SortSpec | None = None,
@@ -115,7 +115,7 @@ class SchemaService:
         ``type``.
         """
         schemas = await self._repo.get_all(
-            org_id=org_id,
+            user_id=user_id,
             schema_type=schema_type,
             is_active=is_active,
             sort=sort,
@@ -124,7 +124,7 @@ class SchemaService:
 
     async def get_schema(
         self,
-        org_id: UUID,
+        user_id: UUID,
         schema_id: UUID,
     ) -> ExtractionSchemaResponse:
         """Get a single schema by ID.
@@ -132,14 +132,14 @@ class SchemaService:
         Raises:
             NotFoundError: If the schema does not exist or belongs to another org.
         """
-        schema = await self._repo.get_by_id(org_id, schema_id)
+        schema = await self._repo.get_by_id(user_id, schema_id)
         if schema is None:
             raise NotFoundError(f"Schema '{schema_id}' not found in this organization")
         return ExtractionSchemaResponse.model_validate(schema)
 
     async def update_schema(
         self,
-        org_id: UUID,
+        user_id: UUID,
         schema_id: UUID,
         payload: UpdateExtractionSchemaRequest,
     ) -> ExtractionSchemaResponse:
@@ -152,7 +152,7 @@ class SchemaService:
             NotFoundError: If the schema does not exist.
             ConflictError: If the new name conflicts with an existing schema.
         """
-        schema = await self._repo.get_by_id(org_id, schema_id)
+        schema = await self._repo.get_by_id(user_id, schema_id)
         if schema is None:
             raise NotFoundError(f"Schema '{schema_id}' not found in this organization")
 
@@ -169,7 +169,7 @@ class SchemaService:
 
         # If renaming, check uniqueness
         if "name" in update_kwargs and update_kwargs["name"] != schema.name:
-            existing = await self._repo.get_by_name(org_id, update_kwargs["name"])
+            existing = await self._repo.get_by_name(user_id, update_kwargs["name"])
             if existing is not None:
                 raise ConflictError(
                     f"Schema name '{update_kwargs['name']}' already exists "
@@ -209,7 +209,7 @@ class SchemaService:
         sample_text: str,
         prompt_template: str | None = None,
         llm_config: dict | None = None,
-        org_id: UUID | None = None,
+        user_id: UUID | None = None,
         session_factory: Callable[[], AsyncSession] | None = None,
     ) -> PreviewExtractionResponse:
         """Run a no-persist extraction preview against a candidate schema.
@@ -226,7 +226,7 @@ class SchemaService:
             llm_config: Org LLM config dict (from
                 ``OrgConfigBase.to_llm_config_dict()``); required to
                 resolve the backend.
-            org_id: Authenticated org — enables metering when
+            user_id: Authenticated org — enables metering when
                 ``session_factory`` is also given.
             session_factory: Isolated-session factory for the metering
                 sink (the preview itself writes nothing).
@@ -264,8 +264,8 @@ class SchemaService:
         )
 
         sink = (
-            make_sink(session_factory, org_id=org_id, worker="schema_preview")
-            if org_id is not None and session_factory is not None
+            make_sink(session_factory, user_id=user_id, worker="schema_preview")
+            if user_id is not None and session_factory is not None
             else None
         )
         backend = await resolve_backend(org_config=llm_config, sink=sink)
@@ -300,7 +300,7 @@ class SchemaService:
 
     async def delete_schema(
         self,
-        org_id: UUID,
+        user_id: UUID,
         schema_id: UUID,
     ) -> None:
         """Soft-delete a schema (set ``is_active=false``).
@@ -308,7 +308,7 @@ class SchemaService:
         Raises:
             NotFoundError: If the schema does not exist.
         """
-        schema = await self._repo.get_by_id(org_id, schema_id)
+        schema = await self._repo.get_by_id(user_id, schema_id)
         if schema is None:
             raise NotFoundError(f"Schema '{schema_id}' not found in this organization")
         await self._repo.soft_delete(schema)

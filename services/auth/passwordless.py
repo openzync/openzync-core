@@ -8,6 +8,7 @@ from typing import Any
 from core.exceptions import (
     AuthenticationError,
 )
+from core.rls import set_user_context
 from schemas.auth import (
     TokenResponse,
 )
@@ -91,9 +92,9 @@ class PasswordlessMixin:
                 "Please request a new code."
             )
 
-        # Bind the session to the caller's tenant — the auto-verification
-        # update and the refresh-token insert below are org-scoped.
-        await self._org_repo.set_tenant_context(user.organization_id)
+        # Bind the session to the caller's user — the auto-verification
+        # update and the refresh-token insert below are user-scoped.
+        await set_user_context(self._repo.session, user.id)
 
         verified = await self._otp_service.verify(
             email=payload.email,
@@ -118,6 +119,6 @@ class PasswordlessMixin:
 
         return await self.issue_tokens(
             user_id=user.id,
-            organization_id=user.organization_id,
+
             role=user.role if user.role is not None else "member",
         )

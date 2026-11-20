@@ -16,7 +16,7 @@ Runtime order (outermost → innermost):
 2. ``CORSMiddleware`` — intercepts OPTIONS preflight before auth can reject it.
 3. ``LoggingMiddleware`` — logs the request/response lifecycle.
 4. ``TracingMiddleware`` — manages OpenTelemetry spans for the request.
-5. ``AuthMiddleware`` — extracts/validates JWT & API key, sets ``org_id`` state.
+5. ``AuthMiddleware`` — extracts/validates JWT & API key, sets ``user_id`` state.
 6. ``RateLimitMiddleware`` — enforces per-IP / per-org sliding-window limits.
 7. ``AuditMiddleware`` — records every request to audit_logs (post-response).
 8. ``GZipMiddleware`` — compresses responses >= 1 KB.

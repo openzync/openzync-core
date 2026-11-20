@@ -11,9 +11,9 @@ Usage:
 
     from workers.backend import resolve_graph_backend
 
-    async def my_worker(ctx, org_id, ...):
+    async def my_worker(ctx, user_id, ...):
         async with db_session_factory() as db:
-            backend = await resolve_graph_backend(ctx, org_id, db)
+            backend = await resolve_graph_backend(ctx, user_id, db)
             if backend is None:
                 # Graph explicitly disabled for this org — skip graph work
                 ...
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 async def resolve_graph_backend(
     ctx: dict[str, Any],
-    org_id: UUID,
+    user_id: UUID,
     db: AsyncSession,
 ) -> GraphBackend | None:
     """Resolve the per-organization graph backend inside an ARQ worker.
@@ -60,7 +60,7 @@ async def resolve_graph_backend(
         ctx: ARQ worker context dict — must contain
             ``graph_backend_dispatcher`` and may contain
             ``surreal_connection_pool`` and ``falkordb_client``.
-        org_id: The organization UUID to resolve the backend for.
+        user_id: The organization UUID to resolve the backend for.
         db: An async SQLAlchemy session (for org config queries).
 
     Returns:
@@ -77,14 +77,14 @@ async def resolve_graph_backend(
     if dispatcher is None:
         logger.error(
             "worker.no_graph_dispatcher",
-            extra={"org_id": str(org_id)},
+            extra={"user_id": str(user_id)},
         )
         raise GraphBackendUnavailableError(
-            f"Worker context missing 'graph_backend_dispatcher' for org {org_id}"
+            f"Worker context missing 'graph_backend_dispatcher' for org {user_id}"
         )
 
     # Fetch per-org config (cache-first via Redis, DB-authoritative)
-    org_config = await _resolve_org_config(ctx, org_id, db)
+    org_config = await _resolve_org_config(ctx, user_id, db)
 
     if org_config is None:
         # Defensive: get_org_config never returns None and the DB fallback
@@ -92,10 +92,10 @@ async def resolve_graph_backend(
         # Fail loud rather than run enrichment as if graph were disabled.
         logger.error(
             "worker.org_config_unresolved",
-            extra={"org_id": str(org_id)},
+            extra={"user_id": str(user_id)},
         )
         raise GraphBackendUnavailableError(
-            f"Org config for org {org_id} resolved to None — cannot run "
+            f"Org config for org {user_id} resolved to None — cannot run "
             "enrichment under unknown defaults."
         )
 
@@ -103,7 +103,7 @@ async def resolve_graph_backend(
     if not backend_name or backend_name == "none":
         logger.info(
             "worker.graph_disabled.config",
-            extra={"org_id": str(org_id), "backend": backend_name},
+            extra={"user_id": str(user_id), "backend": backend_name},
         )
         return None
 
@@ -117,16 +117,16 @@ async def resolve_graph_backend(
         surreal_pool = ctx.get("surreal_connection_pool")
         if surreal_pool is not None:
             try:
-                surreal = await surreal_pool.get_or_create(org_id, org_config)
+                surreal = await surreal_pool.get_or_create(user_id, org_config)
                 logger.debug(
                     "worker.surreal_connection_acquired",
-                    extra={"org_id": str(org_id)},
+                    extra={"user_id": str(user_id)},
                 )
             except GraphBackendUnavailableError:
                 raise
             except Exception as exc:
                 raise GraphBackendUnavailableError(
-                    f"SurrealDB connection failed for org {org_id} "
+                    f"SurrealDB connection failed for org {user_id} "
                     f"with graph_backend='surrealdb': {exc}"
                 ) from exc
 
@@ -135,7 +135,7 @@ async def resolve_graph_backend(
     # fail at runtime inside callers that may swallow the error.
     if backend_name == "surrealdb" and surreal is None:
         raise GraphBackendUnavailableError(
-            f"SurrealDB configured for org {org_id} (graph_backend="
+            f"SurrealDB configured for org {user_id} (graph_backend="
             f"'surrealdb') but no connection is available — the "
             "surreal_connection_pool is missing or unreachable. "
             "Refusing to fall back to Postgres."
@@ -149,7 +149,7 @@ async def resolve_graph_backend(
     # and only fails per-op, which callers may swallow.
     if backend_name == "falkordb" and falkordb_client is None:
         raise GraphBackendUnavailableError(
-            f"FalkorDB configured for org {org_id} (graph_backend="
+            f"FalkorDB configured for org {user_id} (graph_backend="
             f"'falkordb') but no client is available in the worker "
             "context. Refusing to fall back to Postgres."
         )
@@ -164,7 +164,7 @@ async def resolve_graph_backend(
     except GraphBackendUnavailableError:
         logger.error(
             "worker.backend_unavailable",
-            extra={"org_id": str(org_id), "backend": backend_name},
+            extra={"user_id": str(user_id), "backend": backend_name},
             exc_info=True,
         )
         raise
@@ -173,22 +173,22 @@ async def resolve_graph_backend(
         # not "disabled".  Fail loud instead of silently using Postgres.
         logger.error(
             "worker.backend_unknown",
-            extra={"org_id": str(org_id), "backend": backend_name},
+            extra={"user_id": str(user_id), "backend": backend_name},
         )
         raise GraphBackendUnavailableError(
-            f"Unknown graph backend '{backend_name}' for org {org_id}: {exc}"
+            f"Unknown graph backend '{backend_name}' for org {user_id}: {exc}"
         ) from exc
     except Exception as exc:
         logger.error(
             "worker.backend_resolution_failed",
             extra={
-                "org_id": str(org_id),
+                "user_id": str(user_id),
                 "backend": backend_name,
                 "error": str(exc),
             },
         )
         raise GraphBackendUnavailableError(
-            f"Failed to resolve graph backend '{backend_name}' for org {org_id}"
+            f"Failed to resolve graph backend '{backend_name}' for org {user_id}"
         ) from exc
 
     if backend is None:
@@ -196,23 +196,23 @@ async def resolve_graph_backend(
         # instance or raises) — fail loud rather than silently degrading.
         logger.error(
             "worker.backend_resolved_to_none",
-            extra={"org_id": str(org_id), "backend": backend_name},
+            extra={"user_id": str(user_id), "backend": backend_name},
         )
         raise GraphBackendUnavailableError(
-            f"Graph backend '{backend_name}' for org {org_id} resolved to "
+            f"Graph backend '{backend_name}' for org {user_id} resolved to "
             "None but graph is configured — refusing to fall back to Postgres."
         )
 
     logger.info(
         "worker.graph_backend_resolved",
-        extra={"org_id": str(org_id), "backend": backend_name},
+        extra={"user_id": str(user_id), "backend": backend_name},
     )
     return backend
 
 
 async def _resolve_org_config(
     ctx: dict[str, Any],
-    org_id: UUID,
+    user_id: UUID,
     db: AsyncSession,
 ) -> Any | None:
     """Fetch the per-org config, cache-first via ``core.org_config``, DB-authoritative.
@@ -223,7 +223,7 @@ async def _resolve_org_config(
 
     Args:
         ctx: ARQ worker context dict (may contain ``"redis"`` for caching).
-        org_id: The organization UUID.
+        user_id: The organization UUID.
         db: An async SQLAlchemy session.
 
     Returns:
@@ -247,15 +247,15 @@ async def _resolve_org_config(
                 timeout=10.0,
             ) as bao_client:
                 return await get_org_config(
-                    org_id, redis=redis, bao_client=bao_client
+                    user_id, redis=redis, bao_client=bao_client
                 )
-        return await get_org_config(org_id, redis=redis, bao_client=bao_client)
+        return await get_org_config(user_id, redis=redis, bao_client=bao_client)
     except ImportError:
         logger.debug("worker.org_config_module_not_available")
     except Exception:
         logger.warning(
             "worker.org_config_resolution_failed",
-            extra={"org_id": str(org_id)},
+            extra={"user_id": str(user_id)},
             exc_info=True,
         )
 
@@ -265,7 +265,7 @@ async def _resolve_org_config(
         from schemas.organization_config import OrgConfigBase
 
         repo = OrganizationRepository(db)
-        raw_config = await repo.get_config(org_id)
+        raw_config = await repo.get_config(user_id)
 
         # Match core.org_config behavior: empty config → all fields None
         if not raw_config:
@@ -276,11 +276,11 @@ async def _resolve_org_config(
     except Exception:
         logger.error(
             "worker.org_config_fallback_failed",
-            extra={"org_id": str(org_id)},
+            extra={"user_id": str(user_id)},
             exc_info=True,
         )
         raise GraphBackendUnavailableError(
-            f"Failed to resolve org config for org {org_id}: OpenBao and "
+            f"Failed to resolve org config for org {user_id}: OpenBao and "
             "the DB fallback both failed — cannot run enrichment under "
             "unknown defaults."
         ) from None

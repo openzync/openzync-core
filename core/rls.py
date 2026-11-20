@@ -1,25 +1,21 @@
 """PostgreSQL row-level-security context helpers.
 
-The tenant tables in this schema are protected by ``org_isolation_*``
-policies (migration 0059).  Those policies read three GUCs:
+Every user-owned table is protected by ``user_isolation`` policies
+(migration 0069; ``users`` has per-command ``user_isolation_*``).  Those
+policies read two GUCs:
 
-``app.org_id``
-    The tenant (organization) the current statement may touch.  Set for
+``app.user_id``
+    The owner whose rows the current statement may touch.  Set for
     every authenticated request by :func:`dependencies.db.get_db` from the
-    middleware-provided ``request.state.org_id``, and by
-    :meth:`repositories.organization_repository.OrganizationRepository.set_tenant_context`
-    for the public flows that only learn their tenant mid-request.
+    middleware-provided ``request.state.user_id`` (JWT ``sub``).
 
 ``app.bypass_rls``
-    ``'true'`` disables the policies.  Reserved for the platform
-    super-admin session (:func:`dependencies.db.get_db_superadmin`) and for
+    ``'true'`` disables the policies.  Reserved for the superadmin
+    session (:func:`dependencies.db.get_db_superadmin`) and for
     the narrowly scoped pre-authentication lookups (see
     :func:`rls_bypass`).
 
-``app.lookup_code``
-    The join code presented by an anonymous joiner.  It grants a
-    single-row read of ``organizations`` — the code *is* the credential —
-    and nothing else.
+``app.lookup_code`` is legacy (org-code join removed) and unused.
 
 **Scope: transaction-local.**  Every binding below uses
 ``set_config(..., is_local => true)`` — i.e. ``SET LOCAL``.  PostgreSQL
@@ -27,8 +23,8 @@ discards a transaction-local GUC when the transaction ends, so the tenant
 context can never outlive its transaction and can never be carried onto a
 pooled connection that a later request will use.  A statement that runs
 without a bound context matches **no rows**: the policy expression
-``NULLIF(current_setting('app.org_id', true), '')::UUID`` is NULL, and
-``organization_id = NULL`` is never true.  A missing context is therefore
+``NULLIF(current_setting('app.user_id', true), '')::UUID`` is NULL, and
+``user_id = NULL`` is never true.  A missing context is therefore
 fail-closed *by construction* — an empty result, never another tenant's
 rows.
 
@@ -47,7 +43,7 @@ transaction on whatever connection the pool hands out next.  The
 session-creation paths that establish it:
 
 * ``dependencies.db.get_db`` — :func:`init_context` with the request's
-  ``request.state.org_id`` (empty for public endpoints).
+  ``request.state.user_id`` (empty for public endpoints).
 * ``dependencies.db.get_db_superadmin`` — :func:`init_context` on the
   verification session; the bypass session then binds the platform org
   and ``app.bypass_rls='true'`` explicitly.
@@ -86,7 +82,7 @@ logger = logging.getLogger(__name__)
 
 
 _APPLY_CONTEXT_SQL = text(
-    "SELECT set_config('app.org_id', :org_id, true), "
+    "SELECT set_config('app.user_id', :user_id, true), "
     "set_config('app.bypass_rls', :bypass_rls, true), "
     "set_config('app.lookup_code', :lookup_code, true)"
 )
@@ -102,20 +98,21 @@ class RlsContext:
     """The isolation context a session is bound to for the current transaction.
 
     Attributes:
-        org_id: The tenant (organization) UUID, or ``''`` for no tenant.
+        user_id: The owner UUID, or ``''`` for no user.
         bypass_rls: Whether the row-level-security policies are disabled.
-        lookup_code: The organization join code presented by an anonymous
-            joiner.
+        lookup_code: Legacy, always ``""`` (org-code join removed).
+        TODO(0070): drop the column with the ``organizations`` table and
+        remove ``set_lookup_code`` / the ``app.lookup_code`` binding.
     """
 
-    org_id: str = ""
+    user_id: str = ""
     bypass_rls: bool = False
     lookup_code: str = ""
 
     @property
     def is_empty(self) -> bool:
-        """Whether the context binds no tenant, no bypass and no lookup code."""
-        return not (self.org_id or self.bypass_rls or self.lookup_code)
+        """Whether the context binds no user, no bypass and no lookup code."""
+        return not (self.user_id or self.bypass_rls or self.lookup_code)
 
     def as_params(self) -> dict[str, str]:
         """Render the context as ``set_config`` bind parameters.
@@ -124,7 +121,7 @@ class RlsContext:
             The bind parameters for :data:`_APPLY_CONTEXT_SQL`.
         """
         return {
-            "org_id": self.org_id,
+            "user_id": self.user_id,
             "bypass_rls": "true" if self.bypass_rls else "false",
             "lookup_code": self.lookup_code,
         }
@@ -229,20 +226,29 @@ async def _apply_context(db: AsyncSession, ctx: RlsContext) -> None:
     db.rls_context = ctx  # type: ignore[attr-defined]
 
 
-async def set_tenant_context(db: AsyncSession, org_id: UUID | str) -> None:
-    """Bind the current session to one tenant (organization).
+async def set_user_context(db: AsyncSession, user_id: UUID | str) -> None:
+    """Bind the current session to one owner (user).
 
-    Transaction-local, so the tenant is bound for the session's current
+    Transaction-local, so the owner is bound for the session's current
     transaction only.  :class:`RlsAsyncSession` re-applies it to the
     session's next transaction, so a mid-request commit does not leave
-    the session un-tenanted.
+    the session un-owned.
 
     Args:
         db: The session to bind.
-        org_id: The organization UUID the session may act on.
+        user_id: The user UUID the session may act on.
     """
     ctx = _remembered_context(db)
-    await _apply_context(db, replace(ctx, org_id=str(org_id)))
+    await _apply_context(db, replace(ctx, user_id=str(user_id)))
+
+
+async def set_tenant_context(db: AsyncSession, user_id: UUID | str) -> None:
+    """Legacy alias of :func:`set_user_context` (org scoping removed).
+
+    TODO(0070): remove this alias together with the ``organizations`` table
+    drop — all callers should use :func:`set_user_context` directly.
+    """
+    await set_user_context(db, user_id)
 
 
 def _deny_addon_bypass(db: AsyncSession) -> None:
@@ -298,7 +304,7 @@ async def set_lookup_code(db: AsyncSession, code: str) -> None:
     Legacy — org-code join is removed (single platform org).  Retained
     because the ``org_join_code_lookup`` RLS policy still references the
     ``app.lookup_code`` setting; removing the plumbing requires a policy
-    migration (deferred).
+    migration (deferred to 0070 DROP organizations).
 
     Args:
         db: The session to bind.
@@ -308,11 +314,11 @@ async def set_lookup_code(db: AsyncSession, code: str) -> None:
     await _apply_context(db, replace(ctx, lookup_code=code))
 
 
-async def init_context(db: AsyncSession, org_id: str | None) -> None:
+async def init_context(db: AsyncSession, user_id: str | None) -> None:
     """Initialise the RLS context for a request.
 
-    Binds the tenant (empty when the request is unauthenticated — an empty
-    context yields no rows and no successful org-scoped write), pins the
+    Binds the owner (empty when the request is unauthenticated — an empty
+    context yields no rows and no successful user-scoped write), pins the
     bypass to ``'false'`` and clears any lookup code.
 
     This must be the **first statement of the session**.  See the module
@@ -320,9 +326,9 @@ async def init_context(db: AsyncSession, org_id: str | None) -> None:
 
     Args:
         db: The session to initialise.
-        org_id: The authenticated organization UUID, or ``None``.
+        user_id: The authenticated user UUID, or ``None``.
     """
-    await _apply_context(db, RlsContext(org_id=(org_id or "").strip()))
+    await _apply_context(db, RlsContext(user_id=(user_id or "").strip()))
 
 
 async def release_tenant_context(db: AsyncSession) -> None:

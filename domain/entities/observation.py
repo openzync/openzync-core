@@ -14,7 +14,7 @@ class Observation:
     Attributes:
         id: Observation primary key.
         project_id: Owning project (tenant scope).
-        organization_id: Owning organization (tenant scope).
+        user_id: Owning organization (tenant scope).
         subject_entity_id: Entity the observation is about.
         related_entity_id: Other entity for pair-level observations.
         observation_type: ``co_occurrence`` / ``temporal_pattern`` /
@@ -26,7 +26,7 @@ class Observation:
 
     id: UUID
     project_id: UUID
-    organization_id: UUID
+    user_id: UUID
     subject_entity_id: UUID
     observation_type: str
     content: str

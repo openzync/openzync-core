@@ -1,9 +1,9 @@
 """User config service — per-user overrides over platform config.
 
-Resolution order: ``user override ⊕ org config ⊕ system defaults ⊕
+Resolution order: ``user override ⊕ system defaults ⊕
 OpenBao``, later layers only filling keys the earlier ones leave unset.
-System and org layers come from OpenBao; the user layer is the
-``users.config_override`` JSONB column.  No secrets are logged.
+System layer comes from OpenBao; the user layer is the
+``users.config_override`` JSONB column. No secrets are logged.
 """
 
 from __future__ import annotations
@@ -38,10 +38,14 @@ class UserConfigService:
         user_repo: UserRepository,
         bao_client: Any | None = None,
         redis: Any | None = None,
+        auth_repo: AuthRepository | None = None,
     ) -> None:
         self._user_repo = user_repo
         self._bao_client = bao_client
         self._redis = redis
+        # Injected (not constructed inline) so callers share the request
+        # session and tests can substitute a fake.
+        self._auth_repo = auth_repo or AuthRepository(user_repo.session)
 
     def _bao(self) -> Any:
         """Return the OpenBao client or fail loud (no silent degraded config)."""
@@ -65,7 +69,11 @@ class UserConfigService:
     async def update_override(
         self, user_id: UUID, patch: dict[str, Any]
     ) -> dict[str, Any]:
-        """Deep-merge ``patch`` onto the user's override (``None`` removes).
+        """Deep-merge ``patch`` onto the user's override (``None`` removes a top-level key).
+
+        Nested dicts merge recursively; removal is top-level only by
+        design (a ``None`` nested value removes that nested key's parent
+        entry at the top level, never a deep path).
 
         Args:
             user_id: The internal OpenZync user UUID.
@@ -77,9 +85,9 @@ class UserConfigService:
         return await self._user_repo.merge_config_override(user_id, patch)
 
     async def get_effective_config(self, user_id: UUID) -> dict[str, Any]:
-        """Resolve ``user ⊕ org ⊕ system`` for a dashboard user.
+        """Resolve ``user ⊕ system`` for a dashboard user.
 
-        Every layer failure propagates — a silently dropped org layer
+        Every layer failure propagates — a silently dropped user layer
         would apply the wrong config, so the error is loud, not logged
         and swallowed.
 
@@ -93,18 +101,22 @@ class UserConfigService:
             NotFoundError: If the user does not exist.
             OpenBaoConnectionError: If no OpenBao client is wired.
         """
-        user = await AuthRepository(self._user_repo.session).get_user_by_id(user_id)
+        user = await self._auth_repo.get_user_by_id(user_id)
         if user is None:
             raise NotFoundError("Dashboard user not found.")
 
         bao = self._bao()
+        # OpenBao layout: system-wide defaults live under the ``system/``
+        # namespace; per-user settings under ``org_<uuid>/config/`` keyed by
+        # the owner's own UUID (legacy namespace name, user scope).  No
+        # env-var fallback — unset keys stay ``None`` and callers decide.
         system = await get_system_config(self._redis, bao)
         effective: dict[str, Any] = deep_merge(
             {}, system.model_dump(exclude_none=True)
         )
         try:
             org = await get_org_config(
-                user.organization_id,
+                user.id,
                 redis=self._redis,
                 bao_client=bao,
             )

@@ -126,11 +126,11 @@ class UsageRecord:
 
     Built by :meth:`LLMBackend.chat` / :meth:`LLMBackend.embed` from the
     provider response and handed to the attached :class:`UsageSink`.
-    The sink fills ``org_id``/``worker``/entity ids from its baked scope
+    The sink fills ``user_id``/``worker``/entity ids from its baked scope
     when the record leaves them empty — callers never set them directly.
     """
 
-    org_id: UUID | None = None
+    user_id: UUID | None = None
     provider: str = ""
     model: str = ""
     worker: str = ""

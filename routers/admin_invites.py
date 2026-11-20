@@ -42,8 +42,7 @@ router = APIRouter(
 @audit_action("admin.user_invite", "user", "Admin invited user")
 async def invite_user(
     payload: InviteRequest,
-    org_id: str = Depends(require_permission("members:write")),  # noqa: B008
-    user_id: str = Depends(get_dashboard_user),  # noqa: B008
+    user_id: str = Depends(require_permission("members:write")),  # noqa: B008
     service: InviteService = Depends(get_invite_service),  # noqa: B008
 ) -> InviteResponse:
     """Invite a user by email (admin-gated).
@@ -51,7 +50,7 @@ async def invite_user(
     Args:
         payload: Invitee email + name.
         service: Invite service (injected).
-        org_id: Authenticated organization ID (admin-gated).
+        user_id: Authenticated organization ID (admin-gated).
         user_id: Authenticated admin user ID (for inviter attribution).
 
     Returns:
@@ -63,7 +62,7 @@ async def invite_user(
     """
     return await service.invite_user(
         admin_user_id=UUID(user_id),
-        org_id=UUID(org_id),
+        user_id=UUID(user_id),
         payload=payload,
     )
 
@@ -81,7 +80,6 @@ async def invite_user(
 @audit_action("admin.user_invite_revoke", "user", "Admin revoked user invite")
 async def revoke_invite(
     user_id: UUID,
-    org_id: str = Depends(require_permission("members:write")),  # noqa: B008
     service: InviteService = Depends(get_invite_service),  # noqa: B008
 ) -> Response:
     """Revoke a pending invite (admin-gated).
@@ -94,11 +92,11 @@ async def revoke_invite(
     Args:
         user_id: The pending user's UUID (path param).
         service: Invite service (injected).
-        org_id: Authenticated organization ID (admin-gated).
+        user_id: Authenticated organization ID (admin-gated).
 
     Raises:
         NotFoundError: If there is no pending invite for this user in this
             org (→ 404).
     """
-    await service.revoke_invite(org_id=UUID(org_id), user_id=user_id)
+    await service.revoke_invite(user_id=UUID(user_id))
     return Response(status_code=204)

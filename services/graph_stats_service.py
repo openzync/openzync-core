@@ -59,7 +59,7 @@ class GraphStatsService:
 
     async def resolve_project_ids(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID | None,
         *,
         include_archived: bool = False,
@@ -75,7 +75,7 @@ class GraphStatsService:
         project is archived. Progress aggregates should keep the default.
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: Explicit project scope, or ``None`` for org-wide.
             include_archived: If ``True``, fan out to archived projects too.
                 Has no effect when ``project_id`` is given — an explicit scope
@@ -91,7 +91,7 @@ class GraphStatsService:
         offset = 0
         while True:
             page = await repo.list(
-                organization_id=org_id,
+
                 user_id=None,
                 limit=_PROJECT_PAGE_SIZE,
                 offset=offset,
@@ -106,7 +106,7 @@ class GraphStatsService:
         return ids
 
     async def entity_totals(
-        self, org_id: UUID, project_ids: list[UUID]
+        self, user_id: UUID, project_ids: list[UUID]
     ) -> tuple[int, int]:
         """Return ``(entities_total, entities_24h)`` across projects.
 
@@ -117,14 +117,14 @@ class GraphStatsService:
         if self._backend is None:
             logger.warning(
                 "graph_stats.no_backend_totals_zero",
-                org_id=str(org_id),
+                user_id=str(user_id),
             )
             return 0, 0
         cutoff = datetime.now(UTC) - timedelta(hours=24)
         total = 0
         recent = 0
         for pid in project_ids:
-            entities = await self._backend.get_all_entities(org_id, pid)
+            entities = await self._backend.get_all_entities(user_id, pid)
             total += len(entities)
             recent += sum(
                 1
@@ -135,7 +135,7 @@ class GraphStatsService:
 
     async def entity_counts_per_day(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_ids: list[UUID],
         start: datetime,
         end_exclusive: datetime | None,
@@ -149,13 +149,13 @@ class GraphStatsService:
         if self._backend is None:
             logger.warning(
                 "graph_stats.no_backend_per_day_empty",
-                org_id=str(org_id),
+                user_id=str(user_id),
             )
             return {}
         per_day: dict[str, int] = {}
         skipped = 0
         for pid in project_ids:
-            entities = await self._backend.get_all_entities(org_id, pid)
+            entities = await self._backend.get_all_entities(user_id, pid)
             for entity in entities:
                 ts = _parse_ts(entity.get("created_at"))
                 if ts is None:
@@ -170,7 +170,7 @@ class GraphStatsService:
         if skipped:
             logger.debug(
                 "graph_stats.per_day_skipped_unparseable",
-                org_id=str(org_id),
+                user_id=str(user_id),
                 skipped=skipped,
             )
         return per_day

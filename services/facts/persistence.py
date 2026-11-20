@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class _BatchCtx:
     """Immutable per-batch scope for the supersession writes."""
 
-    org_id: UUID
+    user_id: UUID
     project_id: UUID
     user_id: UUID
     source_episode_id: UUID | None
@@ -52,7 +52,7 @@ class FactPersistenceMixin:
 
     async def _scan_tombstones(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entries: list[dict[str, Any]],
     ) -> dict[NameIdentity, list[Fact]]:
@@ -62,7 +62,7 @@ class FactPersistenceMixin:
         re-assertion after supersession still inserts.
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: Project scope.
             entries: Prepared batch entries (match keys scanned).
 
@@ -76,7 +76,7 @@ class FactPersistenceMixin:
         if not tombstone_keys:
             return tombstones_by_identity
         for tombstone in await self._fact_repo.find_retracted_by_match_keys(
-            org_id=org_id,
+            user_id=user_id,
             project_id=project_id,
             match_keys=tombstone_keys,
         ):
@@ -126,7 +126,7 @@ class FactPersistenceMixin:
                 logger.info(
                     "fact_invalidation.tombstone_skip",
                     extra={
-                        "org_id": str(ctx.org_id),
+                        "user_id": str(ctx.user_id),
                         "project_id": str(ctx.project_id),
                         "subject": entry["row"]["subject"],
                         "predicate": entry["row"]["predicate"],
@@ -144,9 +144,8 @@ class FactPersistenceMixin:
         if batch_rows:
             state.created.extend(
                 await self._insert_rows(
-                    ctx.org_id,
-                    ctx.project_id,
                     ctx.user_id,
+                    ctx.project_id,
                     ctx.source_episode_id,
                     batch_rows,
                     ctx.insert_mode,
@@ -211,7 +210,7 @@ class FactPersistenceMixin:
                 logger.info(
                     "fact_invalidation.tombstone_skip",
                     extra={
-                        "org_id": str(ctx.org_id),
+                        "user_id": str(ctx.user_id),
                         "project_id": str(ctx.project_id),
                         "subject": entry["row"]["subject"],
                         "predicate": entry["row"]["predicate"],
@@ -229,9 +228,8 @@ class FactPersistenceMixin:
                 else:
                     state.closed_ids.add(c.id)
             inserted = await self._insert_rows(
-                ctx.org_id,
-                ctx.project_id,
                 ctx.user_id,
+                ctx.project_id,
                 ctx.source_episode_id,
                 [entry["row"]],
                 ctx.insert_mode,
@@ -251,7 +249,7 @@ class FactPersistenceMixin:
 
     async def _record_lineage(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         now: datetime,
         state: _BatchState,
@@ -263,7 +261,7 @@ class FactPersistenceMixin:
         prevents repeats, so no dedup is needed here.
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: Project scope.
             now: Supersession instant.
             state: Mutable accumulators (read-only here).
@@ -275,7 +273,7 @@ class FactPersistenceMixin:
                 transition.old_fact_id, transition.new_fact_id
             )
             await self._fact_repo.record_invalidation_event(
-                organization_id=org_id,
+                user_id=ctx.user_id,
                 project_id=project_id,
                 old_fact_id=transition.old_fact_id,
                 new_fact_id=transition.new_fact_id,
@@ -311,9 +309,8 @@ class FactPersistenceMixin:
 
     async def _insert_rows(
         self,
-        org_id: UUID,
-        project_id: UUID,
         user_id: UUID,
+        project_id: UUID,
         source_episode_id: UUID | None,
         rows: list[dict[str, Any]],
         insert_mode: Literal["batch_create", "batch_create_or_skip"],
@@ -321,14 +318,14 @@ class FactPersistenceMixin:
         """Insert rows via the configured repository primitive."""
         if insert_mode == "batch_create_or_skip":
             return await self._fact_repo.batch_create_or_skip(
-                organization_id=org_id,
+
                 project_id=project_id,
                 user_id=user_id,
                 source_episode_id=source_episode_id,  # type: ignore[arg-type]
                 facts=rows,
             )
         return await self._fact_repo.batch_create(
-            organization_id=org_id,
+
             project_id=project_id,
             user_id=user_id,
             facts=rows,

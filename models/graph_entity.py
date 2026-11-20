@@ -34,7 +34,7 @@ class GraphEntity(Base):
         primary_key=True,
         server_default=func.gen_random_uuid(),
     )
-    organization_id: Mapped[uuid.UUID] = mapped_column(
+    user_id: Mapped[uuid.UUID] = mapped_column(
         nullable=False,
     )
     project_id: Mapped[uuid.UUID] = mapped_column(

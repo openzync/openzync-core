@@ -7,7 +7,7 @@ layer. This model intentionally omits ``updated_at``.
 
 import uuid
 
-from sqlalchemy import CheckConstraint, Text, func
+from sqlalchemy import CheckConstraint, ForeignKey, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,7 +19,7 @@ class AuditLog(CreatedAtMixin, Base):
 
     Attributes:
         id: UUID primary key.
-        organization_id: Optional — may be null for unauthenticated actions.
+        user_id: Optional — may be null for unauthenticated actions.
         actor_id: Identifier of the acting entity (user ID, API key prefix,
             or system name).
         actor_type: Type of actor — one of ``user``, ``api_key``, ``system``.
@@ -41,7 +41,13 @@ class AuditLog(CreatedAtMixin, Base):
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
     )
-    organization_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    # Nullable: unauthenticated actions (failed login) have no user.
+    # ⚠️ DEVIATION from 0069 spec (NOT NULL everywhere): audit_logs keeps
+    # NULL for logged-out rows; the 0069 migration matches (nullable + FK).
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+    )
     actor_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     actor_type: Mapped[str | None] = mapped_column(
         Text,

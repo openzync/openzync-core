@@ -34,7 +34,6 @@ logger = structlog.get_logger()
 @with_retry(max_retries=2, base_delay_s=5.0)
 async def generate_user_summary(
     ctx: object,
-    org_id: str,
     user_id: str,
     project_id: str | None = None,
     trace_id: str = "",
@@ -55,7 +54,7 @@ async def generate_user_summary(
 
     Args:
         ctx: ARQ worker context (unused — required by ARQ contract).
-        org_id: UUID of the owning organization (string, from ARQ).
+        user_id: UUID of the owning organization (string, from ARQ).
         user_id: UUID of the user to summarise.
         project_id: Optional project UUID to scope data fetching.
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
@@ -74,7 +73,6 @@ async def generate_user_summary(
 
     logger.info(
         "user_summary.started",
-        org_id=org_id,
         user_id=user_id,
         trace_id=trace_id,
     )
@@ -112,10 +110,10 @@ async def generate_user_summary(
             try:
                 # The org-config lookup behind the graph backend is an
                 # org-scoped read — bind the tenant first.
-                await rls.set_tenant_context(_backend_db, org_id)
+                await rls.set_tenant_context(_backend_db, user_id)
                 graph_backend = await resolve_graph_backend(
                     ctx if isinstance(ctx, dict) else {},
-                    uuid.UUID(org_id),
+                    uuid.UUID(user_id),
                     _backend_db,
                 )
             finally:
@@ -123,25 +121,22 @@ async def generate_user_summary(
     except GraphBackendUnavailableError:
         logger.error(
             "user_summary.graph_backend_unavailable",
-            org_id=org_id,
             user_id=user_id,
         )
         raise
     if graph_backend is None:
         logger.warning(
             "user_summary.graph_disabled_entities_skipped",
-            org_id=org_id,
             user_id=user_id,
         )
         raise GraphBackendUnavailableError(
-            f"Graph disabled for org {org_id} — user summary requires "
+            f"Graph disabled for org {user_id} — user summary requires "
             "entity context; refusing to render without it."
         )
 
     try:
         prompt_text = await render_prompt(
             "user_summary",
-            org_id=org_id,
             user_id=user_id,
             project_id=project_id,
             graph_backend=graph_backend,
@@ -150,7 +145,6 @@ async def generate_user_summary(
     except Exception:
         logger.error(
             "user_summary.prompt_failed",
-            org_id=org_id,
             user_id=user_id,
             exc_info=True,
         )
@@ -162,7 +156,7 @@ async def generate_user_summary(
         bao_client = ctx.get("openbao_client") if isinstance(ctx, dict) else None
         if bao_client is not None:
             org_cfg = await get_org_config(
-                uuid.UUID(org_id), redis=None, bao_client=bao_client
+                uuid.UUID(user_id), redis=None, bao_client=bao_client
             )
         else:
             from core.config import BootstrapSettings
@@ -176,13 +170,12 @@ async def generate_user_summary(
                 timeout=10.0,
             ) as _tmp_bao:
                 org_cfg = await get_org_config(
-                    uuid.UUID(org_id), redis=None, bao_client=_tmp_bao
+                    uuid.UUID(user_id), redis=None, bao_client=_tmp_bao
                 )
         llm_config_dict = org_cfg.to_llm_config_dict()
     except Exception:
         logger.warning(
             "user_summary.org_config_fetch_failed",
-            org_id=org_id,
             user_id=user_id,
             exc_info=True,
         )
@@ -190,7 +183,7 @@ async def generate_user_summary(
     try:
         sink = make_sink(
             session_factory,
-            org_id=uuid.UUID(org_id),
+            user_id=uuid.UUID(user_id),
             worker="user_summary",
             project_id=uuid.UUID(project_id) if project_id else None,
         )
@@ -212,7 +205,6 @@ async def generate_user_summary(
     except Exception as exc:
         logger.error(
             "user_summary.llm_failed",
-            org_id=org_id,
             user_id=user_id,
             error=str(exc),
         )
@@ -224,7 +216,7 @@ async def generate_user_summary(
     try:
         async with session_factory() as db:
             try:
-                await rls.set_tenant_context(db, org_id)
+                await rls.set_tenant_context(db, user_id)
                 await UserRepository(db).update_summary(
                     user_id=uuid.UUID(user_id),
                     summary=response.content,
@@ -235,7 +227,6 @@ async def generate_user_summary(
     except Exception as exc:
         logger.error(
             "user_summary.persist_failed",
-            org_id=org_id,
             user_id=user_id,
             error=str(exc),
         )
@@ -246,7 +237,6 @@ async def generate_user_summary(
 
     logger.info(
         "user_summary.completed",
-        org_id=org_id,
         user_id=user_id,
         summary_length=len(response.content),
     )

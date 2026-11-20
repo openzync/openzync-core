@@ -35,7 +35,7 @@ class StructuredExtractionService:
 
     async def get_session_extractions(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         project_id: UUID | None = None,
         sort: SortSpec | None = None,
@@ -48,7 +48,7 @@ class StructuredExtractionService:
         offered without breaking the default.
 
         Args:
-            org_id: The authenticated organization UUID.
+            user_id: The authenticated organization UUID.
             session_id: The session UUID.
             project_id: Optional project UUID for intra-org isolation
                 of the session ownership check.
@@ -67,7 +67,7 @@ class StructuredExtractionService:
         """
         # Verify session exists (optionally scoped to project)
         session = await self._session_repo.get_by_uuid(
-            org_id=org_id, session_id=session_id, project_id=project_id
+            user_id=user_id, session_id=session_id, project_id=project_id
         )
         if session is None:
             raise NotFoundError(f"Session '{session_id}' not found")
@@ -104,7 +104,7 @@ class StructuredExtractionService:
             cursor_value, cursor_id = c_val, c_id
 
         extractions, next_cursor = await self._repo.get_by_session(
-            org_id,
+            user_id,
             session_id,
             sort_by=req_sort,
             sort_dir=req_dir,
@@ -122,7 +122,7 @@ class StructuredExtractionService:
 
     async def get_episode_extraction(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         episode_id: UUID,
         project_id: UUID | None = None,
@@ -130,7 +130,7 @@ class StructuredExtractionService:
         """Return the extraction for a specific episode, or ``None``.
 
         Args:
-            org_id: The authenticated organization UUID.
+            user_id: The authenticated organization UUID.
             session_id: The session UUID.
             episode_id: The episode UUID.
             project_id: Optional project UUID for intra-org isolation
@@ -143,30 +143,30 @@ class StructuredExtractionService:
             NotFoundError: If the session does not exist.
         """
         session = await self._session_repo.get_by_uuid(
-            org_id=org_id, session_id=session_id, project_id=project_id
+            user_id=user_id, session_id=session_id, project_id=project_id
         )
         if session is None:
             raise NotFoundError(f"Session '{session_id}' not found")
 
-        extraction = await self._repo.get_by_episode(org_id, episode_id)
+        extraction = await self._repo.get_by_episode(user_id, episode_id)
         if extraction is None:
             return None
         return StructuredExtractionResponse.model_validate(extraction)
 
     async def count_extractions_for_session(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         project_id: UUID | None = None,
     ) -> int:
         """Count how many extracted episodes exist in a session.
 
         Args:
-            org_id: The authenticated organization UUID.
+            user_id: The authenticated organization UUID.
             session_id: The session UUID.
             project_id: Optional project UUID for intra-org isolation —
                 forwarded to the repository filter when set.
         """
         return await self._repo.count_for_session(
-            org_id, session_id, project_id=project_id
+            user_id, session_id, project_id=project_id
         )

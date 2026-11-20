@@ -37,14 +37,14 @@ class AdminMetricsRepository:
 
     async def episodes_per_day(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
         project_id: UUID | None,
     ) -> list[tuple[datetime, int]]:
         """Return ``(day, count)`` episode rows in ``[start, end)``."""
         conditions = [
-            Episode.organization_id == org_id,
+            Episode.user_id == user_id,
             Episode.is_deleted.is_(False),
             Episode.created_at >= start,
             Episode.created_at < end,
@@ -68,7 +68,7 @@ class AdminMetricsRepository:
 
     async def activity_per_day(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
     ) -> list[tuple[datetime, int]]:
@@ -82,7 +82,7 @@ class AdminMetricsRepository:
             )
             .select_from(AuditLog)
             .where(
-                AuditLog.organization_id == org_id,
+                AuditLog.user_id == user_id,
                 AuditLog.created_at >= start,
                 AuditLog.created_at < end,
             )
@@ -94,14 +94,14 @@ class AdminMetricsRepository:
 
     async def facts_per_day(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
         project_id: UUID | None,
     ) -> list[tuple[datetime, int]]:
         """Return ``(day, count)`` fact rows in ``[start, end)``."""
         conditions = [
-            Fact.organization_id == org_id,
+            Fact.user_id == user_id,
             Fact.created_at >= start,
             Fact.created_at < end,
         ]
@@ -124,12 +124,12 @@ class AdminMetricsRepository:
 
     async def enrichment_progress(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID | None,
     ) -> list[tuple[int, int]]:
         """Return ``(enrichment_status, count)`` rows (snapshot, no window)."""
         conditions = [
-            Episode.organization_id == org_id,
+            Episode.user_id == user_id,
             Episode.is_deleted.is_(False),
             Episode.project_id.not_in(archived_project_ids()),
         ]
@@ -150,14 +150,14 @@ class AdminMetricsRepository:
 
     async def top_projects_by_episodes(
         self,
-        org_id: UUID,
+        user_id: UUID,
         limit: int,
         project_id: UUID | None,
         include_archived: bool,
     ) -> list[tuple[str, int, bool]]:
         """Return ``(project_name, episode_count, is_archived)`` ranking."""
         conditions = [
-            Episode.organization_id == org_id,
+            Episode.user_id == user_id,
             Episode.is_deleted.is_(False),
         ]
         if project_id:
@@ -184,13 +184,13 @@ class AdminMetricsRepository:
 
     async def top_users_by_messages(
         self,
-        org_id: UUID,
+        user_id: UUID,
         limit: int,
         project_id: UUID | None,
     ) -> list[tuple[str | None, UUID, int]]:
         """Return ``(display_name_or_none, user_id, message_count)`` ranking."""
         conditions = [
-            Episode.organization_id == org_id,
+            Episode.user_id == user_id,
             Episode.is_deleted.is_(False),
         ]
         if project_id:
@@ -206,7 +206,7 @@ class AdminMetricsRepository:
             )
             .select_from(Episode)
             .join(User, User.id == Episode.user_id)
-            .where(User.organization_id == org_id, *conditions)
+            .where(*conditions)
             .group_by(User.id, User.name, User.email)
             .order_by(text("message_count DESC"))
             .limit(limit)
@@ -216,14 +216,14 @@ class AdminMetricsRepository:
 
     async def queue_depth_over_time(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
         project_id: UUID | None,
     ) -> list[tuple[datetime, int]]:
         """Return ``(day, count)`` pending-enrichment rows in ``[start, end)``."""
         conditions = [
-            Episode.organization_id == org_id,
+            Episode.user_id == user_id,
             Episode.is_deleted.is_(False),
             (Episode.enrichment_status.op("&")(ENRICHMENT_ALL)) != ENRICHMENT_ALL,
             Episode.project_id.not_in(archived_project_ids()),
@@ -247,94 +247,93 @@ class AdminMetricsRepository:
         result = await self._db.execute(stmt)
         return [(row.date, row.count) for row in result]
 
-    async def count_episodes_total(self, org_id: UUID) -> int:
+    async def count_episodes_total(self, user_id: UUID) -> int:
         """Return total non-deleted episode count."""
         return await self._scalar_count(
             select(func.count(Episode.id)).where(
-                Episode.organization_id == org_id,
+                Episode.user_id == user_id,
                 Episode.is_deleted.is_(False),
             )
         )
 
-    async def count_episodes_24h(self, org_id: UUID) -> int:
+    async def count_episodes_24h(self, user_id: UUID) -> int:
         """Return non-deleted episode count from the last 24 hours."""
         return await self._scalar_count(
             select(func.count(Episode.id)).where(
-                Episode.organization_id == org_id,
+                Episode.user_id == user_id,
                 Episode.is_deleted.is_(False),
                 Episode.created_at >= func.now() - text("interval '24 hours'"),
             )
         )
 
-    async def count_episodes_archived(self, org_id: UUID) -> int:
+    async def count_episodes_archived(self, user_id: UUID) -> int:
         """Return non-deleted episode count in archived projects."""
         return await self._scalar_count(
             select(func.count(Episode.id)).where(
-                Episode.organization_id == org_id,
+                Episode.user_id == user_id,
                 Episode.is_deleted.is_(False),
                 Episode.project_id.in_(archived_project_ids()),
             )
         )
 
-    async def count_episodes_enrichable(self, org_id: UUID) -> int:
+    async def count_episodes_enrichable(self, user_id: UUID) -> int:
         """Return non-deleted episode count in non-archived projects."""
         return await self._scalar_count(
             select(func.count(Episode.id)).where(
-                Episode.organization_id == org_id,
+                Episode.user_id == user_id,
                 Episode.is_deleted.is_(False),
                 Episode.project_id.not_in(archived_project_ids()),
             )
         )
 
-    async def count_episodes_in_progress(self, org_id: UUID) -> int:
+    async def count_episodes_in_progress(self, user_id: UUID) -> int:
         """Return enrichable episode count with incomplete enrichment."""
         return await self._scalar_count(
             select(func.count(Episode.id)).where(
-                Episode.organization_id == org_id,
+                Episode.user_id == user_id,
                 Episode.is_deleted.is_(False),
                 (Episode.enrichment_status.op("&")(ENRICHMENT_ALL)) != ENRICHMENT_ALL,
                 Episode.project_id.not_in(archived_project_ids()),
             )
         )
 
-    async def count_episodes_pending(self, org_id: UUID) -> int:
+    async def count_episodes_pending(self, user_id: UUID) -> int:
         """Return enrichable episode count with no enrichment started."""
         return await self._scalar_count(
             select(func.count(Episode.id)).where(
-                Episode.organization_id == org_id,
+                Episode.user_id == user_id,
                 Episode.is_deleted.is_(False),
                 Episode.enrichment_status == 0,
                 Episode.project_id.not_in(archived_project_ids()),
             )
         )
 
-    async def count_episodes_fully_enriched(self, org_id: UUID) -> int:
+    async def count_episodes_fully_enriched(self, user_id: UUID) -> int:
         """Return enrichable episode count with all enrichment bits set."""
         return await self._scalar_count(
             select(func.count(Episode.id)).where(
-                Episode.organization_id == org_id,
+                Episode.user_id == user_id,
                 Episode.is_deleted.is_(False),
                 (Episode.enrichment_status.op("&")(ENRICHMENT_ALL)) == ENRICHMENT_ALL,
                 Episode.project_id.not_in(archived_project_ids()),
             )
         )
 
-    async def count_episodes_with_embeddings(self, org_id: UUID) -> int:
+    async def count_episodes_with_embeddings(self, user_id: UUID) -> int:
         """Return enrichable episode count with a stored embedding."""
         return await self._scalar_count(
             select(func.count(Episode.id)).where(
-                Episode.organization_id == org_id,
+                Episode.user_id == user_id,
                 Episode.is_deleted.is_(False),
                 Episode.embedding.isnot(None),
                 Episode.project_id.not_in(archived_project_ids()),
             )
         )
 
-    async def count_users_total(self, org_id: UUID) -> int:
+    async def count_users_total(self, user_id: UUID) -> int:
         """Return total non-deleted user count."""
         return await self._scalar_count(
             select(func.count(User.id)).where(
-                User.organization_id == org_id,
                 User.is_deleted.is_(False),
             )
         )

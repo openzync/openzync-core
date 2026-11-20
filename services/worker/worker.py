@@ -66,7 +66,7 @@ def setup_logging() -> None:
     * ``timestamp`` (ISO-8601)
     * ``level``
     * ``logger`` (``OpenZync.worker``)
-    * ``trace_id``, ``org_id``, ``task_type``, ``job_id`` — bound per-task
+    * ``trace_id``, ``user_id``, ``task_type``, ``job_id`` — bound per-task
       via :func:`structlog.contextvars.bind_contextvars`.
     """
     # Set root logger level so structlog's filter_by_level has something to read
@@ -191,7 +191,7 @@ worker_queue_depth = Gauge(
 worker_tasks_per_org = Counter(
     "openzync_worker_tasks_per_org_total",
     "Tasks by org, type, and status for cost tracking",
-    labelnames=["org_id", "task_type", "status"],
+    labelnames=["user_id", "task_type", "status"],
 )
 
 
@@ -244,7 +244,7 @@ def rls_scoped_session_factory(
     """Wrap a session factory so every worker session starts tenant-free.
 
     The worker shares one connection pool across every task, and a
-    session-scoped ``app.org_id`` outlives the transaction on the pooled
+    session-scoped ``app.user_id`` outlives the transaction on the pooled
     connection.  Initialising the context to an **empty** tenant when the
     session is opened makes the pool fail closed: a task that forgets to
     bind its tenant sees no rows at all instead of another org's rows.
@@ -333,20 +333,20 @@ async def on_job_end(ctx: dict[str, Any]) -> None:
 
     Called by ARQ after a job completes — for failed jobs too.  The task
     function and this callback share the same ``ctx`` dict, so the
-    ``task_type`` / ``org_id`` / ``trace_id`` / ``runtime`` / ``status``
+    ``task_type`` / ``user_id`` / ``trace_id`` / ``runtime`` / ``status``
     keys written by the :func:`with_task_metrics` decorator are visible
     here.  Failed results are re-expired to the short failure TTL —
     ARQ keeps one TTL for both outcomes, so without this every failure
     would sit in the 128MB noeviction Redis for the full success window.
 
     Args:
-        ctx: ARQ worker context dict (includes ``task_type``, ``org_id``,
+        ctx: ARQ worker context dict (includes ``task_type``, ``user_id``,
             ``trace_id``, ``runtime`` and ``status`` — populated by each
             task function).
     """
     job_id = ctx.get("job_id", "unknown")
     task_type = ctx.get("task_type", "unknown")
-    org_id = ctx.get("org_id", "unknown")
+    user_id = ctx.get("user_id", "unknown")
     trace_id = ctx.get("trace_id", "unknown")
     duration_s: float = ctx.get("runtime", 0.0)
     status: str = ctx.get("status", "success")
@@ -354,7 +354,7 @@ async def on_job_end(ctx: dict[str, Any]) -> None:
     logger.info(
         "job.completed",
         trace_id=trace_id,
-        org_id=org_id,
+        user_id=user_id,
         task_type=task_type,
         job_id=job_id,
         status=status,
@@ -364,7 +364,7 @@ async def on_job_end(ctx: dict[str, Any]) -> None:
     worker_tasks_total.labels(task_type=task_type, status=status).inc()
     worker_task_duration_seconds.labels(task_type=task_type).observe(duration_s)
     worker_tasks_per_org.labels(
-        org_id=org_id,
+        user_id=user_id,
         task_type=task_type,
         status=status,
     ).inc()

@@ -24,6 +24,7 @@ from schemas.auth import (
     SignupRequest,
     SignupResponse,
 )
+from utils.password import hash_password
 from utils.pii import mask_email
 
 logger = logging.getLogger(__name__)
@@ -84,8 +85,6 @@ class RegistrationMixin:
         """
         from core.exceptions import AuthorizationError
 
-        from services import auth_service as _facade  # via facade (patchable)
-
         mode = await self._registration_mode()
         if mode == "invite_only":
             raise AuthorizationError("Registration is invite-only")
@@ -104,18 +103,15 @@ class RegistrationMixin:
             )
             return self._signup_success_response(payload.email)
 
-        org = await self._org_repo.get_platform_org()
-        if org is None:
-            raise AuthorizationError("Registration is disabled")
-        await self._org_repo.set_tenant_context(org.id)
-
+        # No org gate — the single-user model has no platform org.
+        # The users INSERT policy is open (signup is public); bind the new
+        # user's own context right after creation for the reads below.
         try:
             # bcrypt blocks the event loop — offload to a worker thread.
             pw_hash = await asyncio.to_thread(
-                _facade.hash_password, payload.password
+                hash_password, payload.password
             )
-            await self._repo.create_dashboard_user(
-                organization_id=org.id,
+            created = await self._repo.create_dashboard_user(
                 email=payload.email,
                 password_hash=pw_hash,
                 name=payload.email.split("@")[0],
@@ -125,6 +121,7 @@ class RegistrationMixin:
                 # live-then-deactivate window where the user could log in.
                 is_active=mode != "approval",
             )
+            await self._org_repo.set_tenant_context(created.id)
         except IntegrityError:
             # Concurrent duplicate signup — the unique email index won.
             # Same generic response as a fresh signup; roll back the aborted

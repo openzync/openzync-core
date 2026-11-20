@@ -22,7 +22,7 @@ Usage::
     await surreal.use("openzync", "openzync")
 
     backend = SurrealGraphBackend(surreal=surreal)
-    entity = await backend.create_entity(org_id=..., name="Acme", entity_type="company")
+    entity = await backend.create_entity(user_id=..., name="Acme", entity_type="company")
 """
 
 from __future__ import annotations

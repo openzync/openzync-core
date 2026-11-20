@@ -146,7 +146,7 @@ async def ingest_messages(
     row — returns 202 with the ingest committed but no ``Location``; the
     next identical ingest replays normally with a header.)
     """
-    org_id = UUID(request.state.org_id)
+    user_id = UUID(request.state.user_id)
     project_id = UUID(request.path_params["project_id"])
 
     # Idempotency-Key is client-supplied — enforce the 255-char ceiling at
@@ -243,7 +243,7 @@ async def ingest_messages(
     )
 
     result = await service.ingest(
-        org_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         created_by=created_by,
         session_external_id=payload.session_id,
@@ -300,10 +300,10 @@ async def delete_project_memory(
     # note: explicit empty Response — implicit None makes FastAPI serialize
     # a JSON `null` body on the 204, which uvicorn rejects and rolls back
     # the wipe in get_db teardown after 204 headers flush.
-    org_id = UUID(request.state.org_id)
+    user_id = UUID(request.state.user_id)
     project_id = UUID(request.path_params["project_id"])
     await service.delete_project_memory(
-        org_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         confirm=body.confirm,
         actor_id=actor,

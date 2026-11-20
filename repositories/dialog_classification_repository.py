@@ -33,7 +33,7 @@ class DialogClassificationRepository:
 
     async def get_by_session(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         sort: SortSpec | None = None,
         limit: int = 100,
@@ -48,7 +48,7 @@ class DialogClassificationRepository:
         keyset pattern as ``SessionRepository.list``.
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             session_id: The session UUID.
             sort: Validated sort spec.
             limit: Maximum results per page (capped at 500).
@@ -73,7 +73,7 @@ class DialogClassificationRepository:
             .join(Episode, Episode.id == DialogClassification.episode_id)
             .where(
                 Episode.session_id == session_id,
-                DialogClassification.organization_id == org_id,
+                DialogClassification.user_id == user_id,
                 Episode.is_deleted == False,
                 DialogClassification.project_id.not_in(archived_project_ids()),
             )
@@ -135,19 +135,19 @@ class DialogClassificationRepository:
         return [dc for dc, _ in page], next_cursor
 
     async def get_by_episode(
-        self, org_id: UUID, episode_id: UUID
+        self, user_id: UUID, episode_id: UUID
     ) -> DialogClassification | None:
         """Return the classification for a specific episode, if one exists."""
         result = await self._db.execute(
             select(DialogClassification).where(
                 DialogClassification.episode_id == episode_id,
-                DialogClassification.organization_id == org_id,
+                DialogClassification.user_id == user_id,
             )
         )
         return result.scalar_one_or_none()
 
     async def count_for_session(
-        self, org_id: UUID, session_id: UUID
+        self, user_id: UUID, session_id: UUID
     ) -> int:
         """Count classifications for a session.
 
@@ -162,7 +162,7 @@ class DialogClassificationRepository:
             .join(Episode, Episode.id == DialogClassification.episode_id)
             .where(
                 Episode.session_id == session_id,
-                DialogClassification.organization_id == org_id,
+                DialogClassification.user_id == user_id,
                 Episode.is_deleted == False,
                 DialogClassification.project_id.not_in(archived_project_ids()),
             )

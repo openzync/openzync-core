@@ -215,6 +215,11 @@ async def signup(
         # Invite path: claim the magic-link invite (same semantics as
         # POST /v1/auth/invites/accept) — the token is the credential, so
         # no OTP round-trip is needed.
+        await throttle.check_sensitive_attempt(
+            "invite_accept",
+            _token_fingerprint(payload.invite_token),
+            _client_ip(request),
+        )
         return await invites.accept_invite(
             token=payload.invite_token,
             password=payload.password,
@@ -731,7 +736,7 @@ async def update_profile(
     response_model=InviteInfoResponse,
     summary="Resolve pending-invite details",
     description=(
-        "Returns the organization name and invitee identity for a valid "
+        "Returns the invitee identity (email, name) for a valid "
         "magic-link token, shown on the invite landing page.  Unknown, "
         "expired, and used tokens all return the same generic 404.  "
         "PUBLIC ENDPOINT — no auth required (the token IS the credential)."
@@ -756,7 +761,7 @@ async def invite_info(
         throttle: Injected auth throttle.
 
     Returns:
-        The invitee's org name, email, and name.
+        The invitee's email and name.
 
     Raises:
         NotFoundError: Generic 404 for unknown/expired/used tokens.

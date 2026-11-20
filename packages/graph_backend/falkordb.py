@@ -2,8 +2,8 @@
 
 Implements the ``GraphBackend`` ABC using FalkorDB (a Redis-graph module):
 
-- **Per-tenant graph keys** (``openzync_{org_id}_{project_id}``) guarantee
-  tenant isolation at the database level — no ``WHERE org_id`` filters needed.
+- **Per-tenant graph keys** (``openzync_{user_id}_{project_id}``) guarantee
+  tenant isolation at the database level — no ``WHERE user_id`` filters needed.
 - **``MERGE``** for atomic entity and relationship upserts.
 - **``CALL algo.bfs()``** for single-type/all-types BFS at GraphBLAS speed.
 - **Cypher variable-length paths** (``:type1|type2*1..n``) for multi-type
@@ -20,9 +20,9 @@ Usage::
     client = FalkorDB(host="localhost", port=6379)
     backend = FalkorGraphBackend(client=client)
     entity = await backend.create_entity(
-        org_id, project_id, name="Acme", entity_type="company",
+        user_id, project_id, name="Acme", entity_type="company",
     )
-    results = await backend.traverse(org_id, project_id, entity["id"], max_depth=2)
+    results = await backend.traverse(user_id, project_id, entity["id"], max_depth=2)
 """
 
 from __future__ import annotations
@@ -238,7 +238,7 @@ class FalkorGraphBackend(GraphBackend):
     """FalkorDB-native graph backend.
 
     Each org+project pair gets its own isolated FalkorDB graph key
-    (``openzync_{org_id}_{project_id}``).  This guarantees tenant isolation
+    (``openzync_{user_id}_{project_id}``).  This guarantees tenant isolation
     at the database level — ``algo.bfs()`` and ``queryNodes()`` never
     traverse into another tenant's data.
 
@@ -261,7 +261,7 @@ class FalkorGraphBackend(GraphBackend):
 
     # ── Internal Helpers ──────────────────────────────────────────────────
 
-    def _get_graph(self, org_id: UUID, project_id: UUID):
+    def _get_graph(self, user_id: UUID, project_id: UUID):
         """Resolve the per-tenant graph by org+project.
 
         ``select_graph()`` is a local operation that instantiates a Python
@@ -269,7 +269,7 @@ class FalkorGraphBackend(GraphBackend):
         """
         if self._client is None:
             return None
-        key = f"openzync_{org_id}_{project_id}"
+        key = f"openzync_{user_id}_{project_id}"
         return self._client.select_graph(key)
 
     async def _ensure_schema(self, graph: Any, key: str) -> None:
@@ -287,7 +287,7 @@ class FalkorGraphBackend(GraphBackend):
 
         Args:
             graph: The per-tenant FalkorDB graph handle.
-            key: Tenant graph key (``openzync_{org_id}_{project_id}``).
+            key: Tenant graph key (``openzync_{user_id}_{project_id}``).
 
         Raises:
             ExternalServiceError: If any index statement fails for a reason
@@ -362,7 +362,7 @@ class FalkorGraphBackend(GraphBackend):
         self,
         graph: Any,
         episode_id: UUID,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
     ) -> None:
         """Idempotently create a lightweight ``:Episode`` stub node.
@@ -371,7 +371,7 @@ class FalkorGraphBackend(GraphBackend):
         PostgreSQL.  This stub provides a Cypher-traversable node that
         links entities to episodes via ``(:Episode)-[:MENTIONS]->(:Entity)``.
 
-        The stub carries ``id``, ``organization_id``, ``project_id``, and
+        The stub carries ``id``, ``user_id``, ``project_id``, and
         ``created_at`` so it can be used as a traversal hop for session-
         scoped and co-occurrence queries.
         """
@@ -380,13 +380,13 @@ class FalkorGraphBackend(GraphBackend):
                 """
                 MERGE (ep:Episode {id: $episode_id})
                 ON CREATE SET
-                    ep.organization_id = $org_id,
+                    ep.user_id = $user_id,
                     ep.project_id = $project_id,
                     ep.created_at = $now
                 """,
                 {
                     "episode_id": str(episode_id),
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "now": datetime.now(UTC).isoformat(),
                 },
@@ -396,7 +396,7 @@ class FalkorGraphBackend(GraphBackend):
                 "falkordb_graph.ensure_episode_failed",
                 extra={
                     "episode_id": str(episode_id),
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "error": str(exc),
                 },
@@ -404,7 +404,7 @@ class FalkorGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to ensure episode node {episode_id}: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "episode_id": str(episode_id),
                 },
             ) from exc
@@ -413,7 +413,7 @@ class FalkorGraphBackend(GraphBackend):
         self,
         graph: Any,
         session_id: UUID,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
     ) -> None:
         """Idempotently create a lightweight ``:Session`` stub node.
@@ -428,13 +428,13 @@ class FalkorGraphBackend(GraphBackend):
                 """
                 MERGE (s:Session {id: $session_id})
                 ON CREATE SET
-                    s.organization_id = $org_id,
+                    s.user_id = $user_id,
                     s.project_id = $project_id,
                     s.created_at = $now
                 """,
                 {
                     "session_id": str(session_id),
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "now": datetime.now(UTC).isoformat(),
                 },
@@ -444,7 +444,7 @@ class FalkorGraphBackend(GraphBackend):
                 "falkordb_graph.ensure_session_failed",
                 extra={
                     "session_id": str(session_id),
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "error": str(exc),
                 },
@@ -452,7 +452,7 @@ class FalkorGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to ensure session node {session_id}: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "session_id": str(session_id),
                 },
             ) from exc
@@ -467,7 +467,7 @@ class FalkorGraphBackend(GraphBackend):
         """
         return {
             "id": str(row[_O_ID]) if row[_O_ID] else "",
-            "organization_id": str(row[_O_ORG_ID])
+            "user_id": str(row[_O_ORG_ID])
             if len(row) > _O_ORG_ID and row[_O_ORG_ID]
             else "",
             "project_id": str(row[_O_PROJECT_ID])
@@ -601,7 +601,7 @@ class FalkorGraphBackend(GraphBackend):
 
     async def create_entity(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         name: str,
         entity_type: str,
@@ -621,14 +621,14 @@ class FalkorGraphBackend(GraphBackend):
         Raises:
             ExternalServiceError: If the query fails.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             raise ExternalServiceError(
                 message="FalkorDB not connected",
                 detail={"reason": "client is None"},
             )
 
-        key = f"openzync_{org_id}_{project_id}"
+        key = f"openzync_{user_id}_{project_id}"
         if self._schema_ensured.get(key) != _SCHEMA_VERSION:
             await self._ensure_schema(graph, key)
 
@@ -643,7 +643,7 @@ class FalkorGraphBackend(GraphBackend):
                 MERGE (n:Entity {name: $name})
                 ON CREATE SET
                     n.id = $id,
-                    n.organization_id = $org_id,
+                    n.user_id = $user_id,
                     n.project_id = $project_id,
                     n.entity_type = $type,
                     n.summary = $summary,
@@ -662,7 +662,7 @@ class FalkorGraphBackend(GraphBackend):
                 {
                     "name": name_lower,
                     "id": entity_id,
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "type": entity_type,
                     "summary": summary_val,
@@ -676,7 +676,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.info(
                 "falkordb_graph.entity_upserted",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": entity["id"],
                     "entity_type": entity_type,
@@ -688,7 +688,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.create_entity_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "name": name_lower,
                     "error": str(exc),
@@ -696,23 +696,23 @@ class FalkorGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Failed to create entity '{name_lower}': {exc}",
-                detail={"org_id": str(org_id), "name": name_lower},
+                detail={"user_id": str(user_id), "name": name_lower},
             ) from exc
 
     async def get_entity(
-        self, org_id: UUID, project_id: UUID, entity_id: UUID
+        self, user_id: UUID, project_id: UUID, entity_id: UUID
     ) -> dict | None:
         """Retrieve an entity node by its ID.
 
         Args:
-            org_id: Organisational scope (used to derive the tenant graph).
+            user_id: Organisational scope (used to derive the tenant graph).
             project_id: Project scope (used to derive the tenant graph).
             entity_id: The UUID of the entity to fetch.
 
         Returns:
             The entity dict, or ``None`` if not found.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return None
 
@@ -731,7 +731,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.get_entity_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
@@ -739,11 +739,11 @@ class FalkorGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Failed to retrieve entity {entity_id}: {exc}",
-                detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                detail={"user_id": str(user_id), "entity_id": str(entity_id)},
             ) from exc
 
     async def delete_entity(
-        self, org_id: UUID, project_id: UUID, entity_id: UUID
+        self, user_id: UUID, project_id: UUID, entity_id: UUID
     ) -> bool:
         """Remove an entity node from the graph.
 
@@ -752,7 +752,7 @@ class FalkorGraphBackend(GraphBackend):
         Returns:
             ``True`` if the entity was deleted, ``False`` if it did not exist.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return False
 
@@ -771,7 +771,7 @@ class FalkorGraphBackend(GraphBackend):
                 logger.info(
                     "falkordb_graph.entity_deleted",
                     extra={
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                         "entity_id": str(entity_id),
                     },
@@ -781,7 +781,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.delete_entity_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
@@ -789,12 +789,12 @@ class FalkorGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Failed to delete entity {entity_id}: {exc}",
-                detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                detail={"user_id": str(user_id), "entity_id": str(entity_id)},
             ) from exc
 
     async def update_entity(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_id: UUID,
         *,
@@ -808,7 +808,7 @@ class FalkorGraphBackend(GraphBackend):
         Raises ``NotFoundError`` if the entity does not exist.
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
             entity_id: UUID of the entity to update.
             name: New name, or ``None`` to leave unchanged.
@@ -823,7 +823,7 @@ class FalkorGraphBackend(GraphBackend):
             NotFoundError: If no entity with the given ID exists.
             ExternalServiceError: If the query fails.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             raise ExternalServiceError(
                 message="FalkorDB not connected",
@@ -844,11 +844,11 @@ class FalkorGraphBackend(GraphBackend):
             set_parts.append("n.summary = $summary")
 
         if not set_parts:
-            existing = await self.get_entity(org_id, project_id, entity_id)
+            existing = await self.get_entity(user_id, project_id, entity_id)
             if existing is None:
                 raise NotFoundError(
                     message=f"Entity {entity_id} not found for update",
-                    detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                    detail={"user_id": str(user_id), "entity_id": str(entity_id)},
                 )
             return existing
 
@@ -867,7 +867,7 @@ class FalkorGraphBackend(GraphBackend):
             if not result.result_set:
                 raise NotFoundError(
                     message=f"Entity {entity_id} not found for update",
-                    detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                    detail={"user_id": str(user_id), "entity_id": str(entity_id)},
                 )
             return self._row_to_entity(result.result_set[0])
         except NotFoundError:
@@ -876,7 +876,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.update_entity_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
@@ -884,14 +884,14 @@ class FalkorGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Failed to update entity {entity_id}: {exc}",
-                detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                detail={"user_id": str(user_id), "entity_id": str(entity_id)},
             ) from exc
 
     # ── Relationship CRUD ──────────────────────────────────────────────────
 
     async def create_relationship(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         source_id: UUID,
         target_id: UUID,
@@ -918,7 +918,7 @@ class FalkorGraphBackend(GraphBackend):
         integer node IDs are not usable for our UUID-based references).
 
         Args:
-            org_id: Tenant scope (used to derive the graph key).
+            user_id: Tenant scope (used to derive the graph key).
             project_id: Project scope (used to derive the graph key).
             source_id: UUID of the source entity.
             target_id: UUID of the target entity.
@@ -936,7 +936,7 @@ class FalkorGraphBackend(GraphBackend):
             NotFoundError: If either endpoint entity does not exist.
             ExternalServiceError: If the query fails.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             raise ExternalServiceError(
                 message="FalkorDB not connected",
@@ -951,7 +951,7 @@ class FalkorGraphBackend(GraphBackend):
             "source_id": str(source_id),
             "target_id": str(target_id),
             "rel_id": rel_id,
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
             "properties": orjson.dumps(
                 properties if properties is not None else {}
@@ -969,7 +969,7 @@ class FalkorGraphBackend(GraphBackend):
                 MERGE (s)-[r:{safe_type}]->(t)
                 ON CREATE SET
                     r.id = $rel_id,
-                    r.organization_id = $org_id,
+                    r.user_id = $user_id,
                     r.project_id = $project_id,
                     r.source_id = $source_id,
                     r.target_id = $target_id,
@@ -1004,7 +1004,7 @@ class FalkorGraphBackend(GraphBackend):
                         f"source {source_id} or target {target_id} not found"
                     ),
                     detail={
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                         "source_id": str(source_id),
                         "target_id": str(target_id),
@@ -1016,7 +1016,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.info(
                 "falkordb_graph.relationship_upserted",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
@@ -1031,7 +1031,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.create_relationship_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
@@ -1042,7 +1042,7 @@ class FalkorGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to create relationship '{relationship_type}': {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
                 },
@@ -1050,7 +1050,7 @@ class FalkorGraphBackend(GraphBackend):
 
     async def get_relationships(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_id: UUID,
         relationship_type: str | None = None,
@@ -1063,7 +1063,7 @@ class FalkorGraphBackend(GraphBackend):
         node IDs are integers, not our UUID-based references.
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: Project scope.
             entity_id: The entity whose relationships to fetch.
             relationship_type: Optional filter by type.
@@ -1073,7 +1073,7 @@ class FalkorGraphBackend(GraphBackend):
         Returns:
             List of relationship dicts (limited to 201).
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return []
 
@@ -1109,21 +1109,21 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.get_relationships_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
                 },
             )
             raise ExternalServiceError(
                 message=f"Failed to get relationships for entity {entity_id}: {exc}",
-                detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                detail={"user_id": str(user_id), "entity_id": str(entity_id)},
             ) from exc
 
     # ── Group C2: Aggregate Queries (for observation service) ────────────────────
 
     async def get_total_entity_linked_episode_count(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
     ) -> int:
         """Get total distinct episodes that have at least one linked entity.
@@ -1132,13 +1132,13 @@ class FalkorGraphBackend(GraphBackend):
         episodes.
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
 
         Returns:
             Number of distinct episodes with linked entities.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             raise GraphBackendUnavailableError(
                 "FalkorDB not connected — cannot count entity-linked episodes."
@@ -1147,12 +1147,12 @@ class FalkorGraphBackend(GraphBackend):
         try:
             result = await graph.query(
                 """
-                MATCH (ep:Episode {organization_id: $org_id, project_id: $project_id})
+                MATCH (ep:Episode {user_id: $user_id, project_id: $project_id})
                   -[:MENTIONS]->(en:Entity)
                 RETURN count(DISTINCT ep) AS total
                 """,
                 {
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                 },
             )
@@ -1163,26 +1163,26 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.get_total_entity_linked_episode_count_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "error": str(exc),
                 },
             )
             raise ExternalServiceError(
                 message="Failed to count entity-linked episodes",
-                detail={"org_id": str(org_id), "project_id": str(project_id)},
+                detail={"user_id": str(user_id), "project_id": str(project_id)},
             ) from exc
 
     async def resolve_entity_names(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_ids: list[UUID],
     ) -> dict[str, dict]:
         """Resolve entity IDs to their names and types.
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
             entity_ids: List of entity UUIDs to resolve.
 
@@ -1192,7 +1192,7 @@ class FalkorGraphBackend(GraphBackend):
         if not entity_ids:
             return {}
 
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             raise GraphBackendUnavailableError(
                 "FalkorDB not connected — cannot resolve entity names."
@@ -1205,13 +1205,13 @@ class FalkorGraphBackend(GraphBackend):
                 """
                 MATCH (e:Entity)
                 WHERE e.id IN $entity_ids
-                  AND e.organization_id = $org_id
+                  AND e.user_id = $user_id
                   AND e.project_id = $project_id
                 RETURN e.id AS id, e.name AS name, e.entity_type AS entity_type
                 """,
                 {
                     "entity_ids": str_ids,
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                 },
             )
@@ -1228,7 +1228,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.resolve_entity_names_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id_count": len(str_ids),
                     "error": str(exc),
@@ -1236,12 +1236,12 @@ class FalkorGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message="Failed to resolve entity names",
-                detail={"org_id": str(org_id), "project_id": str(project_id)},
+                detail={"user_id": str(user_id), "project_id": str(project_id)},
             ) from exc
 
     async def expire_relationship(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         relationship_id: UUID,
     ) -> bool:
@@ -1250,7 +1250,7 @@ class FalkorGraphBackend(GraphBackend):
         Sets ``invalid_at`` to the current timestamp.  Returns ``True`` if
         the relationship was found and expired.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return False
 
@@ -1271,7 +1271,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.expire_relationship_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "relationship_id": str(relationship_id),
                     "error": str(exc),
@@ -1280,14 +1280,14 @@ class FalkorGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to expire relationship {relationship_id}: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "relationship_id": str(relationship_id),
                 },
             ) from exc
 
     async def expire_relationships_matching(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         *,
         source_id: UUID,
@@ -1305,7 +1305,7 @@ class FalkorGraphBackend(GraphBackend):
         and returns 0.
 
         Args:
-            org_id: Tenant scope (derives the isolated graph key).
+            user_id: Tenant scope (derives the isolated graph key).
             project_id: Project scope (derives the isolated graph key).
             source_id: UUID of the edge source (fact subject entity).
             target_id: UUID of the edge target (fact object entity).
@@ -1321,7 +1321,7 @@ class FalkorGraphBackend(GraphBackend):
             ValueError: If ``relationship_type`` contains unsafe characters.
             ExternalServiceError: If the query fails.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             raise ExternalServiceError(
                 message="FalkorDB not connected",
@@ -1353,7 +1353,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.info(
                 "falkordb_graph.relationships_expired_matching",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
@@ -1366,7 +1366,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.expire_relationships_matching_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
@@ -1381,7 +1381,7 @@ class FalkorGraphBackend(GraphBackend):
                     f"({source_id}, {target_id}, {relationship_type}): {exc}"
                 ),
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
                 },
@@ -1391,7 +1391,7 @@ class FalkorGraphBackend(GraphBackend):
 
     async def traverse(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         start_node_id: UUID,
         max_depth: int = 2,
@@ -1417,7 +1417,7 @@ class FalkorGraphBackend(GraphBackend):
         - Empty list: returns just the start node.
 
         Args:
-            org_id: Tenant scope (derives the isolated graph key).
+            user_id: Tenant scope (derives the isolated graph key).
             project_id: Project scope (derives the isolated graph key).
             start_node_id: UUID of the node to start from.
             max_depth: Maximum hops (capped at MAX_TRAVERSAL_DEPTH).
@@ -1428,13 +1428,13 @@ class FalkorGraphBackend(GraphBackend):
         Returns:
             List of node dicts with ``depth`` key (0 = start node).
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return []
 
         # Empty edge_types — return just the start node
         if edge_types is not None and len(edge_types) == 0:
-            start = await self.get_entity(org_id, project_id, start_node_id)
+            start = await self.get_entity(user_id, project_id, start_node_id)
             if start is None:
                 return []
             start["depth"] = 0
@@ -1458,7 +1458,7 @@ class FalkorGraphBackend(GraphBackend):
             visited.add(current_id)
 
             # Fetch the current node and tag it with its BFS depth
-            entity = await self.get_entity(org_id, project_id, UUID(current_id))
+            entity = await self.get_entity(user_id, project_id, UUID(current_id))
             if entity:
                 entity["depth"] = depth
                 nodes.append(entity)
@@ -1537,7 +1537,7 @@ class FalkorGraphBackend(GraphBackend):
 
     async def search_entities(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         query: str,
         types: list[str] | None = None,
@@ -1551,7 +1551,7 @@ class FalkorGraphBackend(GraphBackend):
         relevance score descending.
 
         Args:
-            org_id: Tenant scope (derives the isolated graph key).
+            user_id: Tenant scope (derives the isolated graph key).
             project_id: Project scope (derives the isolated graph key).
             query: Free-text search string.
             types: Optional filter — only return entities with these
@@ -1562,7 +1562,7 @@ class FalkorGraphBackend(GraphBackend):
         Returns:
             A list of matching entity dicts with a ``score`` key.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return []
 
@@ -1598,7 +1598,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.search_entities_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "query": query,
                     "error": str(exc),
@@ -1606,14 +1606,14 @@ class FalkorGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Entity search failed: {exc}",
-                detail={"org_id": str(org_id), "query": query},
+                detail={"user_id": str(user_id), "query": query},
             ) from exc
 
     # ── Entity Listing ─────────────────────────────────────────────────────
 
     async def list_entities(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         *,
         entity_type: str | None = None,
@@ -1630,7 +1630,7 @@ class FalkorGraphBackend(GraphBackend):
             A dict with ``items`` (list of entity dicts), ``next_cursor``
             (str or ``None``), and ``has_more`` (bool).
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return {"items": [], "next_cursor": None, "has_more": False}
 
@@ -1673,7 +1673,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.list_entities_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_type": entity_type,
                     "error": str(exc),
@@ -1681,12 +1681,12 @@ class FalkorGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message="Failed to list entities",
-                detail={"org_id": str(org_id)},
+                detail={"user_id": str(user_id)},
             ) from exc
 
     async def list_entity_edges(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_id: UUID,
         *,
@@ -1715,7 +1715,7 @@ class FalkorGraphBackend(GraphBackend):
                 ) from err
             type_filter = f"AND type(r) = '{safe_pred}'"
 
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return {"items": [], "next_cursor": None, "has_more": False}
 
@@ -1759,7 +1759,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.list_entity_edges_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
@@ -1767,12 +1767,12 @@ class FalkorGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Failed to list edges for entity {entity_id}",
-                detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                detail={"user_id": str(user_id), "entity_id": str(entity_id)},
             ) from exc
 
     async def get_entity_with_edges(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_id: UUID,
     ) -> dict | None:
@@ -1782,15 +1782,15 @@ class FalkorGraphBackend(GraphBackend):
             A dict with ``node`` (entity dict) and ``edges`` (list of edge
             dicts), or ``None`` if the entity does not exist.
         """
-        entity = await self.get_entity(org_id, project_id, entity_id)
+        entity = await self.get_entity(user_id, project_id, entity_id)
         if entity is None:
             return None
-        edges_result = await self.list_entity_edges(org_id, project_id, entity_id)
+        edges_result = await self.list_entity_edges(user_id, project_id, entity_id)
         return {"node": entity, "edges": edges_result["items"]}
 
     async def retrieve_graph(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         query: str,
         *,
@@ -1815,14 +1815,14 @@ class FalkorGraphBackend(GraphBackend):
             Entity dicts with ``id``, ``name``, ``type``, ``summary``, and
             ``distance`` keys.  Distance 0 = directly matched.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return []
 
         try:
             # Step 1: Search for entities matching the query
             matched_entities = await self.search_entities(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=project_id,
                 query=query,
                 limit=match_limit,
@@ -1863,7 +1863,7 @@ class FalkorGraphBackend(GraphBackend):
                         {"as_of": as_of} if as_of is not None else {}
                     )
                     related = await self.traverse(
-                        org_id=org_id,
+                        user_id=user_id,
                         project_id=project_id,
                         start_node_id=eid,
                         max_depth=max_depth,
@@ -1925,7 +1925,7 @@ class FalkorGraphBackend(GraphBackend):
 
     async def link_entity_to_episode(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         episode_id: UUID,
         entity_id: UUID,
@@ -1939,7 +1939,7 @@ class FalkorGraphBackend(GraphBackend):
             NotFoundError: If the entity does not exist in the graph.
             ExternalServiceError: If the query fails.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             raise ExternalServiceError(
                 message="FalkorDB not connected",
@@ -1947,18 +1947,18 @@ class FalkorGraphBackend(GraphBackend):
             )
 
         # Verify entity exists first
-        entity = await self.get_entity(org_id, project_id, entity_id)
+        entity = await self.get_entity(user_id, project_id, entity_id)
         if entity is None:
             raise NotFoundError(
                 message=f"Entity {entity_id} not found for episode linking",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": str(entity_id),
                 },
             )
 
-        await self._ensure_episode_node(graph, episode_id, org_id, project_id)
+        await self._ensure_episode_node(graph, episode_id, user_id, project_id)
 
         try:
             await graph.query(
@@ -1976,7 +1976,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.info(
                 "falkordb_graph.entity_linked_to_episode",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "episode_id": str(episode_id),
                     "entity_id": str(entity_id),
@@ -1988,7 +1988,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.link_entity_to_episode_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "episode_id": str(episode_id),
                     "entity_id": str(entity_id),
@@ -1998,7 +1998,7 @@ class FalkorGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to link entity {entity_id} to episode {episode_id}: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "episode_id": str(episode_id),
                     "entity_id": str(entity_id),
                 },
@@ -2006,7 +2006,7 @@ class FalkorGraphBackend(GraphBackend):
 
     async def get_entities_for_session(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         session_id: UUID,
     ) -> list[dict[str, Any]]:
@@ -2021,7 +2021,7 @@ class FalkorGraphBackend(GraphBackend):
             List of entity dicts with ``id``, ``name``, ``entity_type``,
             ``summary`` keys.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return []
 
@@ -2042,7 +2042,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.get_entities_for_session_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "session_id": str(session_id),
                     "error": str(exc),
@@ -2051,16 +2051,15 @@ class FalkorGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to get entities for session {session_id}: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "session_id": str(session_id),
                 },
             ) from exc
 
     async def get_entities_for_user(
         self,
-        org_id: UUID,
-        project_id: UUID,
         user_id: UUID,
+        project_id: UUID,
         episode_ids: list[UUID],
         *,
         limit: int = 50,
@@ -2075,7 +2074,7 @@ class FalkorGraphBackend(GraphBackend):
         making episode-id filtering the only traversal that sees prod data.
 
         Args:
-            org_id: Organisational scope (log scope — tenant isolation
+            user_id: Organisational scope (log scope — tenant isolation
                 comes from the per-project graph key).
             project_id: Project scope (selects the tenant graph key).
             user_id: User UUID — log scope only; episode scoping comes
@@ -2087,7 +2086,7 @@ class FalkorGraphBackend(GraphBackend):
             List of entity dicts with ``id``, ``name``, ``entity_type``,
             ``summary`` keys.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return []
         if not episode_ids:
@@ -2117,9 +2116,8 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.get_entities_for_user_failed",
                 extra={
-                    "org_id": str(org_id),
-                    "project_id": str(project_id),
                     "user_id": str(user_id),
+                    "project_id": str(project_id),
                     "episode_count": len(episode_ids),
                     "error": str(exc),
                 },
@@ -2127,14 +2125,13 @@ class FalkorGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to get entities for user {user_id}: {exc}",
                 detail={
-                    "org_id": str(org_id),
                     "user_id": str(user_id),
                 },
             ) from exc
 
     async def get_entities_for_episodes(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         episode_ids: list[UUID],
         *,
@@ -2149,7 +2146,7 @@ class FalkorGraphBackend(GraphBackend):
         does not apply.
 
         Args:
-            org_id: Organisational scope (log scope — tenant isolation
+            user_id: Organisational scope (log scope — tenant isolation
                 comes from the per-project graph key).
             project_id: Project scope (selects the tenant graph key).
             episode_ids: Episode UUIDs to scope the lookup to.
@@ -2159,7 +2156,7 @@ class FalkorGraphBackend(GraphBackend):
             List of entity dicts with ``id``, ``name``, ``entity_type``,
             ``summary`` keys.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return []
         if not episode_ids:
@@ -2189,7 +2186,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.get_entities_for_episodes_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "episode_count": len(episode_ids),
                     "error": str(exc),
@@ -2198,14 +2195,14 @@ class FalkorGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to get entities for episodes: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "episode_count": len(episode_ids),
                 },
             ) from exc
 
     async def get_co_occurring_entity_pairs(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         min_co_count: int = 2,
     ) -> list[dict[str, Any]]:
@@ -2218,7 +2215,7 @@ class FalkorGraphBackend(GraphBackend):
         ``_CO_OCCURRENCE_QUERY_TIMEOUT_MS`` ms.
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
             min_co_count: Minimum number of shared episodes. Defaults to 2.
 
@@ -2226,7 +2223,7 @@ class FalkorGraphBackend(GraphBackend):
             List of dicts with ``entity_a_id``, ``entity_a_name``,
             ``entity_b_id``, ``entity_b_name``, ``co_count``.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return []
 
@@ -2235,9 +2232,9 @@ class FalkorGraphBackend(GraphBackend):
                 f"""
                 MATCH (a:Entity)<-[:MENTIONS]-(ep:Episode)-[:MENTIONS]->(b:Entity)
                 WHERE a.id < b.id
-                  AND a.organization_id = $org_id
+                  AND a.user_id = $user_id
                   AND a.project_id = $project_id
-                  AND b.organization_id = $org_id
+                  AND b.user_id = $user_id
                   AND b.project_id = $project_id
                 WITH a, b, count(ep) AS co_count
                 WHERE co_count >= $min_co_count
@@ -2248,7 +2245,7 @@ class FalkorGraphBackend(GraphBackend):
                 LIMIT {_CO_OCCURRENCE_MAX_PAIRS}
                 """,
                 {
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "min_co_count": min_co_count,
                 },
@@ -2272,7 +2269,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.get_co_occurring_entity_pairs_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "min_co_count": min_co_count,
                     "error": str(exc),
@@ -2280,14 +2277,14 @@ class FalkorGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message="Failed to get co-occurring entity pairs",
-                detail={"org_id": str(org_id)},
+                detail={"user_id": str(user_id)},
             ) from exc
 
     # ── Group B: Bulk / Merge Operations ────────────────────────────────────
 
     async def get_all_entities(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         *,
         include_merged: bool = False,
@@ -2299,7 +2296,7 @@ class FalkorGraphBackend(GraphBackend):
         millions of rows.
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
             include_merged: If ``True``, include soft-deleted (merged)
                 entities.  Defaults to ``False``.
@@ -2309,14 +2306,14 @@ class FalkorGraphBackend(GraphBackend):
             includes ``id``, ``name``, ``entity_type``, ``summary``,
             ``is_merged``, and ``created_at``.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return []
 
         try:
             result = await graph.query(
                 """
-                MATCH (n:Entity {organization_id: $org_id, project_id: $project_id})
+                MATCH (n:Entity {user_id: $user_id, project_id: $project_id})
                 WHERE $include_merged = true
                    OR n.is_merged IS NULL
                    OR n.is_merged = false
@@ -2325,7 +2322,7 @@ class FalkorGraphBackend(GraphBackend):
                 ORDER BY n.name
                 """,
                 {
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "include_merged": include_merged,
                 },
@@ -2342,19 +2339,19 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.get_all_entities_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "error": str(exc),
                 },
             )
             raise ExternalServiceError(
                 message="Failed to get all entities",
-                detail={"org_id": str(org_id)},
+                detail={"user_id": str(user_id)},
             ) from exc
 
     async def get_all_relationships(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
     ) -> list[dict[str, Any]]:
         """Return ALL active relationships for a project (no pagination).
@@ -2367,14 +2364,14 @@ class FalkorGraphBackend(GraphBackend):
             ``id``, ``source_id``, ``target_id``, ``relationship_type``,
             ``confidence``, and ``created_at``.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return []
 
         try:
             result = await graph.query(
                 """
-                MATCH (s:Entity {organization_id: $org_id, project_id: $project_id})
+                MATCH (s:Entity {user_id: $user_id, project_id: $project_id})
                   -[r]->(t:Entity)
                 WHERE (s.is_merged IS NULL OR s.is_merged = false)
                   AND r.invalid_at IS NULL
@@ -2383,7 +2380,7 @@ class FalkorGraphBackend(GraphBackend):
                        r.valid_from, r.valid_to, r.created_at
                 """,
                 {
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                 },
             )
@@ -2398,19 +2395,19 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.get_all_relationships_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "error": str(exc),
                 },
             )
             raise ExternalServiceError(
                 message="Failed to get all relationships",
-                detail={"org_id": str(org_id)},
+                detail={"user_id": str(user_id)},
             ) from exc
 
     async def bulk_search_entities(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         query: str,
         *,
@@ -2423,7 +2420,7 @@ class FalkorGraphBackend(GraphBackend):
         The ``fuzzy_threshold`` is applied as a minimum score filter.
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
             query: Search string to match against entity names/summaries.
             fuzzy_threshold: Minimum BM25 score threshold (0.0–1.0).  Note
@@ -2436,7 +2433,7 @@ class FalkorGraphBackend(GraphBackend):
             List of entity dicts with an added ``score`` key (float).
             Sorted by descending score.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return []
 
@@ -2445,7 +2442,7 @@ class FalkorGraphBackend(GraphBackend):
                 """
                 CALL db.idx.fulltext.queryNodes('Entity', $query) YIELD node, score
                 WHERE score >= $threshold
-                  AND node.organization_id = $org_id
+                  AND node.user_id = $user_id
                   AND node.project_id = $project_id
                 RETURN node.id, node.name, node.entity_type, node.summary,
                        node.attributes, node.created_at, score
@@ -2455,7 +2452,7 @@ class FalkorGraphBackend(GraphBackend):
                 {
                     "query": _escape_redisearch_query(query),
                     "threshold": fuzzy_threshold,
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "limit": limit,
                 },
@@ -2472,7 +2469,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.bulk_search_entities_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "query": query,
                     "error": str(exc),
@@ -2480,12 +2477,12 @@ class FalkorGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Bulk entity search failed: {exc}",
-                detail={"org_id": str(org_id), "query": query},
+                detail={"user_id": str(user_id), "query": query},
             ) from exc
 
     async def merge_entities(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         canonical_id: UUID,
         merged_ids: list[UUID],
@@ -2507,7 +2504,7 @@ class FalkorGraphBackend(GraphBackend):
         5. Soft-delete merged entities (``is_merged = true``).
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
             canonical_id: UUID of the surviving entity.
             merged_ids: UUIDs of entities being absorbed.
@@ -2520,7 +2517,7 @@ class FalkorGraphBackend(GraphBackend):
             NotFoundError: If canonical or any merged entity does not exist.
             ExternalServiceError: If a query fails.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             raise ExternalServiceError(
                 message="FalkorDB not connected",
@@ -2549,7 +2546,7 @@ class FalkorGraphBackend(GraphBackend):
                 raise NotFoundError(
                     message=f"Entities not found: {missing}",
                     detail={
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "canonical_id": canonical_str,
                         "missing_ids": missing,
                     },
@@ -2560,14 +2557,14 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.merge_entities.verification_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "canonical_id": canonical_str,
                     "error": str(exc),
                 },
             )
             raise ExternalServiceError(
                 message=f"Entity verification failed during merge: {exc}",
-                detail={"org_id": str(org_id)},
+                detail={"user_id": str(user_id)},
             ) from exc
 
         # Step 2: Collect distinct edge types connected to merged entities
@@ -2594,14 +2591,14 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.merge_entities.type_collection_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "canonical_id": canonical_str,
                     "error": str(exc),
                 },
             )
             raise ExternalServiceError(
                 message=f"Failed to collect relationship types during merge: {exc}",
-                detail={"org_id": str(org_id)},
+                detail={"user_id": str(user_id)},
             ) from exc
 
         now_str = datetime.now(UTC).isoformat()
@@ -2633,7 +2630,7 @@ class FalkorGraphBackend(GraphBackend):
                         nr.valid_to = r.valid_to,
                         nr.created_at = r.created_at,
                         nr.updated_at = $now,
-                        nr.organization_id = r.organization_id,
+                        nr.user_id = r.user_id,
                         nr.project_id = r.project_id,
                         nr.invalid_at = NULL
                     WITH r
@@ -2659,7 +2656,7 @@ class FalkorGraphBackend(GraphBackend):
                 )
                 raise ExternalServiceError(
                     message=f"Failed to rewire incoming '{rel_type}' edges during merge: {exc}",
-                    detail={"org_id": str(org_id), "rel_type": rel_type},
+                    detail={"user_id": str(user_id), "rel_type": rel_type},
                 ) from exc
 
             # Outgoing rewiring — edges FROM merged entities
@@ -2684,7 +2681,7 @@ class FalkorGraphBackend(GraphBackend):
                         nr.valid_to = r.valid_to,
                         nr.created_at = r.created_at,
                         nr.updated_at = $now,
-                        nr.organization_id = r.organization_id,
+                        nr.user_id = r.user_id,
                         nr.project_id = r.project_id,
                         nr.invalid_at = NULL
                     WITH r
@@ -2710,7 +2707,7 @@ class FalkorGraphBackend(GraphBackend):
                 )
                 raise ExternalServiceError(
                     message=f"Failed to rewire outgoing '{rel_type}' edges during merge: {exc}",
-                    detail={"org_id": str(org_id), "rel_type": rel_type},
+                    detail={"user_id": str(user_id), "rel_type": rel_type},
                 ) from exc
 
         # Step 5: Soft-delete merged entities
@@ -2735,20 +2732,20 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.merge_entities.soft_delete_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "canonical_id": canonical_str,
                     "error": str(exc),
                 },
             )
             raise ExternalServiceError(
                 message=f"Failed to soft-delete merged entities: {exc}",
-                detail={"org_id": str(org_id)},
+                detail={"user_id": str(user_id)},
             ) from exc
 
         logger.info(
             "falkordb_graph.entities_merged",
             extra={
-                "org_id": str(org_id),
+                "user_id": str(user_id),
                 "project_id": str(project_id),
                 "canonical_id": canonical_str,
                 "merged_ids": merged_strs,
@@ -2765,7 +2762,7 @@ class FalkorGraphBackend(GraphBackend):
 
     async def create_relationship_bulk(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         relationships: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
@@ -2780,7 +2777,7 @@ class FalkorGraphBackend(GraphBackend):
         not excessively large.
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
             relationships: List of relationship descriptor dicts.
 
@@ -2791,7 +2788,7 @@ class FalkorGraphBackend(GraphBackend):
             ValueError: If any input dict is missing required keys.
             ExternalServiceError: If any query fails.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             raise ExternalServiceError(
                 message="FalkorDB not connected",
@@ -2812,7 +2809,7 @@ class FalkorGraphBackend(GraphBackend):
                 )
 
             created = await self.create_relationship(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=project_id,
                 source_id=UUID(source_id) if isinstance(source_id, str) else source_id,
                 target_id=UUID(target_id) if isinstance(target_id, str) else target_id,
@@ -2830,7 +2827,7 @@ class FalkorGraphBackend(GraphBackend):
 
     async def upsert_observation(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         subject_entity_id: UUID,
         observation_type: str,
@@ -2853,7 +2850,7 @@ class FalkorGraphBackend(GraphBackend):
         discriminator.
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
             subject_entity_id: The entity this observation is about.
             observation_type: Semantic type label.
@@ -2870,7 +2867,7 @@ class FalkorGraphBackend(GraphBackend):
         Returns:
             The created or updated observation dict.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             raise ExternalServiceError(
                 message="FalkorDB not connected",
@@ -2906,7 +2903,7 @@ class FalkorGraphBackend(GraphBackend):
                 })
                 ON CREATE SET
                     o.id = $obs_id,
-                    o.organization_id = $org_id,
+                    o.user_id = $user_id,
                     o.project_id = $project_id,
                     o.content = $content,
                     o.confidence = $confidence,
@@ -2932,14 +2929,14 @@ class FalkorGraphBackend(GraphBackend):
                        o.content, o.confidence, o.related_entity_id,
                        o.observation_metadata, o.created_at,
                        o.valid_from, o.valid_to, o.updated_at,
-                       o.organization_id, o.project_id
+                       o.user_id, o.project_id
                 """,
                 {
                     "subject_id": str(subject_entity_id),
                     "type": observation_type,
                     "related_id": related_discriminator,
                     "obs_id": obs_id,
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "content": content,
                     "confidence": confidence,
@@ -2963,7 +2960,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.info(
                 "falkordb_graph.observation_upserted",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "observation_id": observation["id"],
                     "subject_entity_id": str(subject_entity_id),
@@ -2975,7 +2972,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.upsert_observation_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "subject_entity_id": str(subject_entity_id),
                     "observation_type": observation_type,
@@ -2985,14 +2982,14 @@ class FalkorGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to upsert observation for entity {subject_entity_id}: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "subject_entity_id": str(subject_entity_id),
                 },
             ) from exc
 
     async def get_observations(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         *,
         subject_entity_id: UUID | None = None,
@@ -3006,7 +3003,7 @@ class FalkorGraphBackend(GraphBackend):
         Default ``created_at/desc``; whitelist ``name`` (maps to
         ``content``), ``created_at``. Offset cursors are sort-safe.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return {"items": [], "next_cursor": None, "has_more": False}
 
@@ -3025,11 +3022,11 @@ class FalkorGraphBackend(GraphBackend):
         )
 
         params: dict[str, object] = {
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
         }
-        subject_filter = "$org_id = $org_id"
-        type_filter = "$org_id = $org_id"
+        subject_filter = "$user_id = $user_id"
+        type_filter = "$user_id = $user_id"
 
         if subject_entity_id is not None:
             subject_filter = "o.subject_entity_id = $subject_id"
@@ -3042,7 +3039,7 @@ class FalkorGraphBackend(GraphBackend):
             result = await graph.query(
                 f"""
                 MATCH (o:Observation)
-                WHERE o.organization_id = $org_id
+                WHERE o.user_id = $user_id
                   AND o.project_id = $project_id
                   AND {subject_filter}
                   AND {type_filter}
@@ -3050,7 +3047,7 @@ class FalkorGraphBackend(GraphBackend):
                        o.content, o.confidence, o.related_entity_id,
                        o.observation_metadata, o.created_at,
                        o.valid_from, o.valid_to, o.updated_at,
-                       o.organization_id, o.project_id
+                       o.user_id, o.project_id
                 ORDER BY {order_clause}, o.id ASC
                   SKIP {int(offset)}
                 LIMIT {limit + 1}
@@ -3070,7 +3067,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.get_observations_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "subject_entity_id": (
                         str(subject_entity_id) if subject_entity_id else None
@@ -3081,12 +3078,12 @@ class FalkorGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message="Failed to get observations",
-                detail={"org_id": str(org_id)},
+                detail={"user_id": str(user_id)},
             ) from exc
 
     async def get_entity_appearance_timestamps(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_id: UUID,
     ) -> list[datetime]:
@@ -3100,7 +3097,7 @@ class FalkorGraphBackend(GraphBackend):
             Sorted list of episode timestamps (oldest first).
             Empty list if the entity has no linked episodes.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return []
 
@@ -3135,7 +3132,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.get_entity_appearance_timestamps_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
@@ -3144,14 +3141,14 @@ class FalkorGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to get appearance timestamps for entity {entity_id}: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "entity_id": str(entity_id),
                 },
             ) from exc
 
     async def get_relationship_ids_between(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_a_id: UUID,
         entity_b_id: UUID,
@@ -3164,7 +3161,7 @@ class FalkorGraphBackend(GraphBackend):
             List of relationship UUIDs connecting the two entities.
             Empty list if no direct relationship exists.
         """
-        graph = self._get_graph(org_id, project_id)
+        graph = self._get_graph(user_id, project_id)
         if graph is None:
             return []
 
@@ -3196,7 +3193,7 @@ class FalkorGraphBackend(GraphBackend):
             logger.error(
                 "falkordb_graph.get_relationship_ids_between_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_a_id": str(entity_a_id),
                     "entity_b_id": str(entity_b_id),
@@ -3206,7 +3203,7 @@ class FalkorGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to get relationship IDs between {entity_a_id} and {entity_b_id}: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "entity_a_id": str(entity_a_id),
                     "entity_b_id": str(entity_b_id),
                 },

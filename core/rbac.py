@@ -1,7 +1,6 @@
-"""Org-level RBAC — role and permission lookup with fail-closed caching.
+"""User-level RBAC — role and permission lookup with fail-closed caching.
 
-``get_org_role`` is the single source of truth for a user's role within
-their organization.  Roles are cached in Redis for 60 seconds (cache-aside)
+``get_user_role`` is the single source of truth for a user's role.  Roles are cached in Redis for 60 seconds (cache-aside)
 and the lookup **fails closed**: any infrastructure error (Redis or DB)
 returns ``"member"`` so a transient outage can never elevate a user.
 
@@ -86,52 +85,40 @@ deterministic, canonical order.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _role_cache_key(org_id: UUID, user_id: UUID) -> str:
+def _role_cache_key(user_id: UUID) -> str:
     """Build the Redis key for a user's cached role.
 
-    Keyed on ``(org_id, user_id)`` — a user with roles in two orgs must
-    never read one org's role from the other's cache entry.
-
     Args:
-        org_id: The organization UUID.
         user_id: The user's UUID.
 
     Returns:
         The namespaced Redis key string.
     """
-    return f"{RBAC_ROLE_CACHE_PREFIX}{org_id}:{user_id}"
+    return f"{RBAC_ROLE_CACHE_PREFIX}{user_id}"
 
 
-def _perms_cache_key(org_id: UUID, user_id: UUID) -> str:
+def _perms_cache_key(user_id: UUID) -> str:
     """Build the Redis key for a user's cached permission set.
 
-    Keyed on ``(org_id, user_id)`` — same cross-org isolation rationale
-    as :func:`_role_cache_key`.
-
     Args:
-        org_id: The organization UUID.
         user_id: The user's UUID.
 
     Returns:
         The namespaced Redis key string.
     """
-    return f"{RBAC_PERMS_CACHE_PREFIX}{org_id}:{user_id}"
+    return f"{RBAC_PERMS_CACHE_PREFIX}{user_id}"
 
 
-def _pwd_flag_cache_key(org_id: UUID, user_id: UUID) -> str:
+def _pwd_flag_cache_key(user_id: UUID) -> str:
     """Build the Redis key for a user's cached must-change-password flag.
 
-    Keyed on ``(org_id, user_id)`` — same cross-org isolation rationale
-    as :func:`_role_cache_key`.
-
     Args:
-        org_id: The organization UUID.
         user_id: The user's UUID.
 
     Returns:
         The namespaced Redis key string.
     """
-    return f"{PWD_FLAG_CACHE_PREFIX}{org_id}:{user_id}"
+    return f"{PWD_FLAG_CACHE_PREFIX}{user_id}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -139,13 +126,12 @@ def _pwd_flag_cache_key(org_id: UUID, user_id: UUID) -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-async def get_org_role(
+async def get_user_role(
     redis: Redis,
     db: AsyncSession,
-    org_id: UUID,
     user_id: UUID,
 ) -> str:
-    """Return the user's role within their organization (fail-closed).
+    """Return the user's role (fail-closed).
 
     Cache-aside with a 60 s TTL.  On any Redis or DB error the function
     returns ``"member"`` — a deny, never a grant — and logs the error with
@@ -159,7 +145,6 @@ async def get_org_role(
     Args:
         redis: Async Redis client (from ``request.app.state.redis``).
         db: Request-scoped async DB session.
-        org_id: The organization UUID the user belongs to.
         user_id: The user's UUID.
 
     Returns:
@@ -167,7 +152,7 @@ async def get_org_role(
         inactive, or soft-deleted users, and on read-path infrastructure
         failures.
     """
-    cache_key = _role_cache_key(org_id, user_id)
+    cache_key = _role_cache_key(user_id)
     try:
         cached = await redis.get(cache_key)
         if cached is not None:
@@ -175,16 +160,16 @@ async def get_org_role(
     except Exception:
         logger.error(
             "rbac.role_cache_read_failed",
-            extra={"org_id": str(org_id), "user_id": str(user_id)},
+            extra={"user_id": str(user_id)},
             exc_info=True,
         )
 
     try:
-        user = await UserRepository(db).get_by_uuid(org_id, user_id)
+        user = await UserRepository(db).get_by_uuid(user_id)
     except Exception:
         logger.error(
             "rbac.role_db_lookup_failed",
-            extra={"org_id": str(org_id), "user_id": str(user_id)},
+            extra={"user_id": str(user_id)},
             exc_info=True,
         )
         return "member"
@@ -198,29 +183,28 @@ async def get_org_role(
     except Exception:
         logger.error(
             "rbac.role_cache_write_failed",
-            extra={"org_id": str(org_id), "user_id": str(user_id), "role": role},
+            extra={"user_id": str(user_id), "role": role},
             exc_info=True,
         )
     return role
 
 
-async def invalidate_role(redis: Redis, org_id: UUID, user_id: UUID) -> None:
-    """Delete the cached role for a user in an organization.
+async def invalidate_role(redis: Redis, user_id: UUID) -> None:
+    """Delete the cached role for a user.
 
     Called after a role change or user deletion so the next lookup
     re-reads the source of truth.  Failures are logged, never swallowed.
 
     Args:
         redis: Async Redis client.
-        org_id: The organization UUID scoping the cached entry.
         user_id: The user's UUID.
     """
     try:
-        await redis.delete(_role_cache_key(org_id, user_id))
+        await redis.delete(_role_cache_key(user_id))
     except Exception:
         logger.error(
             "rbac.role_cache_invalidate_failed",
-            extra={"org_id": str(org_id), "user_id": str(user_id)},
+            extra={"user_id": str(user_id)},
             exc_info=True,
         )
 
@@ -228,12 +212,11 @@ async def invalidate_role(redis: Redis, org_id: UUID, user_id: UUID) -> None:
 async def get_effective_permissions(
     redis: Redis,
     db: AsyncSession,
-    org_id: UUID,
     user_id: UUID,
 ) -> frozenset[str]:
     """Return the user's effective permission set (fail-closed).
 
-    Cache-aside with a 60 s TTL, mirroring :func:`get_org_role`.  The
+    Cache-aside with a 60 s TTL, mirroring :func:`get_user_role`.  The
     permission list is cached as a JSON array string (sorted) and decoded
     back into a frozenset on a cache hit.
 
@@ -246,7 +229,6 @@ async def get_effective_permissions(
     Args:
         redis: Async Redis client (from ``request.app.state.redis``).
         db: Request-scoped async DB session.
-        org_id: The organization UUID the user belongs to.
         user_id: The user's UUID.
 
     Returns:
@@ -254,7 +236,7 @@ async def get_effective_permissions(
         inactive, or soft-deleted users, and on read-path infrastructure
         failures.
     """
-    cache_key = _perms_cache_key(org_id, user_id)
+    cache_key = _perms_cache_key(user_id)
     try:
         cached = await redis.get(cache_key)
         if cached is not None:
@@ -263,16 +245,16 @@ async def get_effective_permissions(
     except Exception:
         logger.error(
             "rbac.perms_cache_read_failed",
-            extra={"org_id": str(org_id), "user_id": str(user_id)},
+            extra={"user_id": str(user_id)},
             exc_info=True,
         )
 
     try:
-        user = await UserRepository(db).get_by_uuid(org_id, user_id)
+        user = await UserRepository(db).get_by_uuid(user_id)
     except Exception:
         logger.error(
             "rbac.perms_db_lookup_failed",
-            extra={"org_id": str(org_id), "user_id": str(user_id)},
+            extra={"user_id": str(user_id)},
             exc_info=True,
         )
         return frozenset()
@@ -290,29 +272,28 @@ async def get_effective_permissions(
     except Exception:
         logger.error(
             "rbac.perms_cache_write_failed",
-            extra={"org_id": str(org_id), "user_id": str(user_id)},
+            extra={"user_id": str(user_id)},
             exc_info=True,
         )
     return permissions
 
 
-async def invalidate_permissions(redis: Redis, org_id: UUID, user_id: UUID) -> None:
-    """Delete the cached permission set for a user in an organization.
+async def invalidate_permissions(redis: Redis, user_id: UUID) -> None:
+    """Delete the cached permission set for a user.
 
     Called after a permission change or user deletion so the next lookup
     re-reads the source of truth.  Failures are logged, never swallowed.
 
     Args:
         redis: Async Redis client.
-        org_id: The organization UUID scoping the cached entry.
         user_id: The user's UUID.
     """
     try:
-        await redis.delete(_perms_cache_key(org_id, user_id))
+        await redis.delete(_perms_cache_key(user_id))
     except Exception:
         logger.error(
             "rbac.perms_cache_invalidate_failed",
-            extra={"org_id": str(org_id), "user_id": str(user_id)},
+            extra={"user_id": str(user_id)},
             exc_info=True,
         )
 
@@ -320,12 +301,11 @@ async def invalidate_permissions(redis: Redis, org_id: UUID, user_id: UUID) -> N
 async def get_must_change_password(
     redis: Redis,
     db: AsyncSession,
-    org_id: UUID,
     user_id: UUID,
 ) -> bool:
     """Return the user's must-change-password flag (fail-closed).
 
-    Cache-aside with a 60 s TTL, mirroring :func:`get_org_role`.  **Fails
+    Cache-aside with a 60 s TTL, mirroring :func:`get_user_role`.  **Fails
     closed**: any Redis or DB read error returns ``True`` — the user is
     treated as requiring a password change and denied — so an outage can
     never clear the gate.
@@ -333,14 +313,13 @@ async def get_must_change_password(
     Args:
         redis: Async Redis client (from ``request.app.state.redis``).
         db: Request-scoped async DB session.
-        org_id: The organization UUID the user belongs to.
         user_id: The user's UUID.
 
     Returns:
         ``True`` when the user must change their password before using
         dashboard routes, ``False`` otherwise.
     """
-    cache_key = _pwd_flag_cache_key(org_id, user_id)
+    cache_key = _pwd_flag_cache_key(user_id)
     try:
         cached = await redis.get(cache_key)
         if cached is not None:
@@ -348,16 +327,16 @@ async def get_must_change_password(
     except Exception:
         logger.error(
             "rbac.pwd_flag_cache_read_failed",
-            extra={"org_id": str(org_id), "user_id": str(user_id)},
+            extra={"user_id": str(user_id)},
             exc_info=True,
         )
 
     try:
-        user = await UserRepository(db).get_by_uuid(org_id, user_id)
+        user = await UserRepository(db).get_by_uuid(user_id)
     except Exception:
         logger.error(
             "rbac.pwd_flag_db_lookup_failed",
-            extra={"org_id": str(org_id), "user_id": str(user_id)},
+            extra={"user_id": str(user_id)},
             exc_info=True,
         )
         return True
@@ -374,30 +353,36 @@ async def get_must_change_password(
     except Exception:
         logger.error(
             "rbac.pwd_flag_cache_write_failed",
-            extra={"org_id": str(org_id), "user_id": str(user_id)},
+            extra={"user_id": str(user_id)},
             exc_info=True,
         )
     return bool(user.must_change_password)
 
 
 async def invalidate_must_change_password(
-    redis: Redis, org_id: UUID, user_id: UUID
+    redis: Redis, user_id: UUID
 ) -> None:
-    """Delete the cached must-change-password flag for a user in an organization.
+    """Delete the cached must-change-password flag for a user.
 
     Called after a password change clears the flag, so the next lookup
     re-reads the source of truth.  Failures are logged, never swallowed.
 
     Args:
         redis: Async Redis client.
-        org_id: The organization UUID scoping the cached entry.
         user_id: The user's UUID.
     """
     try:
-        await redis.delete(_pwd_flag_cache_key(org_id, user_id))
+        await redis.delete(_pwd_flag_cache_key(user_id))
     except Exception:
         logger.error(
             "rbac.pwd_flag_cache_invalidate_failed",
-            extra={"org_id": str(org_id), "user_id": str(user_id)},
+            extra={"user_id": str(user_id)},
             exc_info=True,
         )
+
+
+get_org_role = get_user_role
+"""Legacy alias of :func:`get_user_role` (org scoping removed).
+
+TODO(0070): remove with the ``organizations`` table drop.
+"""

@@ -93,7 +93,6 @@ class SessionMixin:
             redis_key = f"mfa:session:{session_token}"
             session_data = {
                 "user_id": str(user.id),
-                "org_id": str(user.organization_id),
                 "role": role,
                 # Bound at creation: the OTP is verified against this address,
                 # never against caller-supplied input (stops session fixation
@@ -114,7 +113,7 @@ class SessionMixin:
         # ── Normal login (MFA disabled) ──────────────────────────────────────
         tokens = await self.issue_tokens(
             user_id=user.id,
-            organization_id=user.organization_id,
+
             role=role,
         )
         return LoginResponse(
@@ -179,12 +178,11 @@ class SessionMixin:
 
         # Issue tokens
         user_id = uuid.UUID(session_data["user_id"])
-        org_id = uuid.UUID(session_data["org_id"])
         role = session_data["role"]
 
         return await self.issue_tokens(
             user_id=user_id,
-            organization_id=org_id,
+
             role=role,
         )
     # ── MFA enable / disable ───────────────────────────────────────────────

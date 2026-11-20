@@ -43,7 +43,7 @@ class EnqueueTasksMixin:
     async def _enqueue_arq_tasks(
         self,
         job_id: str,
-        org_id: str,
+        user_id: str,
         project_id: str,
         session_id: str,
         episodes: list[dict[str, Any]],
@@ -69,7 +69,7 @@ class EnqueueTasksMixin:
 
         Args:
             job_id: The composite job ID for this ingestion.
-            org_id: The organization UUID string.
+            user_id: The organization UUID string.
             project_id: The project UUID string.
             session_id: The session UUID string.
             episodes: List of episode dicts with ``id`` and ``role``.
@@ -89,7 +89,7 @@ class EnqueueTasksMixin:
                     self._enqueue_one_episode(
                         arq_pool,
                         job_id,
-                        org_id,
+                        user_id,
                         project_id,
                         session_id,
                         trace_id,
@@ -107,7 +107,7 @@ class EnqueueTasksMixin:
                 extra={
                     "job_id": job_id,
                     "task_count": 3,
-                    "org_id": org_id,
+                    "user_id": user_id,
                     "project_id": project_id,
                 },
             )
@@ -116,7 +116,7 @@ class EnqueueTasksMixin:
                 "memory.arq_enqueue_failed",
                 extra={
                     "job_id": job_id,
-                    "org_id": org_id,
+                    "user_id": user_id,
                     "project_id": project_id,
                     "session_id": session_id,
                     "episode_ids": episode_ids,
@@ -129,7 +129,7 @@ class EnqueueTasksMixin:
             raise
 
     async def _invalidate_context_cache(
-        self, org_id: str, project_id: str
+        self, user_id: str, project_id: str
     ) -> None:
         """Invalidate all context cache entries for a project.
 
@@ -144,17 +144,17 @@ class EnqueueTasksMixin:
         as best-effort (logged, never raised).
 
         Args:
-            org_id: The organization UUID string.
+            user_id: The organization UUID string.
             project_id: The project UUID string.
         """
         from services.cache_service import CacheService
 
-        key = CacheService.build_context_version_key(org_id, project_id)
+        key = CacheService.build_context_version_key(user_id, project_id)
         new_version: int = await self._redis.incr(key)
         logger.debug(
             "memory.context_cache_invalidated",
             extra={
-                "org_id": org_id,
+                "user_id": user_id,
                 "project_id": project_id,
                 "new_version": new_version,
             },
@@ -164,7 +164,7 @@ class EnqueueTasksMixin:
         self,
         *,
         job_id: UUID,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         session_id: UUID,
         episodes: list[Any],
@@ -181,7 +181,7 @@ class EnqueueTasksMixin:
 
         Args:
             job_id: The claimed job ID for this ingestion.
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: Project scope.
             session_id: Target session.
             episodes: Inserted ``Episode`` rows.
@@ -203,7 +203,7 @@ class EnqueueTasksMixin:
         try:
             await self._enqueue_arq_tasks(
                 job_id=str(job_id),
-                org_id=str(org_id),
+                user_id=str(user_id),
                 project_id=str(project_id),
                 session_id=str(session_id),
                 episodes=episode_dicts,
@@ -213,7 +213,7 @@ class EnqueueTasksMixin:
                 "memory.arq_enqueue_failed_post_commit",
                 extra={
                     "job_id": str(job_id),
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "session_id": str(session_id),
                     "episode_count": len(episode_dicts),
@@ -224,7 +224,7 @@ class EnqueueTasksMixin:
         if blob_records:
             await self._enqueue_blob_extraction_tasks(
                 blob_records=blob_records,
-                org_id=org_id,
+                user_id=user_id,
                 project_id=project_id,
             )
 
@@ -239,7 +239,7 @@ class EnqueueTasksMixin:
         if idempotency_key is not None:
             try:
                 await self._idem.store_idempotency_key(
-                    idempotency_key, body_hash or "", response.model_dump(), str(org_id)
+                    idempotency_key, body_hash or "", response.model_dump(), str(user_id)
                 )
             except Exception:
                 # note: no release_content_hash — the claim stays held so
@@ -248,7 +248,7 @@ class EnqueueTasksMixin:
                 logger.exception(
                     "memory.idempotency_key_store_failed",
                     extra={
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                         "job_id": str(job_id),
                     },
@@ -261,28 +261,28 @@ class EnqueueTasksMixin:
         # ── Post-commit effects (best-effort) ────────────────────────────
         try:
             await self._invalidate_context_cache(
-                str(org_id), str(project_id)
+                str(user_id), str(project_id)
             )
         except Exception:
             logger.exception(
                 "memory.context_cache_invalidate_failed",
-                extra={"org_id": str(org_id), "project_id": str(project_id)},
+                extra={"user_id": str(user_id), "project_id": str(project_id)},
             )
         if self._webhook_service:
             event_payload = {
-                "org_id": str(org_id),
+                "user_id": str(user_id),
                 "project_id": str(project_id),
                 "session_id": str(session_id),
                 "episode_count": len(episodes),
                 "job_id": str(job_id),
             }
             await self._webhook_service.emit(
-                organization_id=org_id,
+                user_id=user_id,
                 event_type=EventType.INGEST_BATCH_COMPLETED,
                 payload=event_payload,
             )
             await self._webhook_service.emit(
-                organization_id=org_id,
+                user_id=user_id,
                 event_type=EventType.MESSAGE_ADDED,
                 payload=event_payload,
             )

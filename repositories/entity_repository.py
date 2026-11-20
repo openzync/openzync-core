@@ -62,16 +62,16 @@ class EntityRepository:
 
     async def upsert_entity(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         name: str,
         entity_type: str,
         summary: str | None = None,
     ) -> dict:
-        """Create or update an entity (upsert by org_id + name).
+        """Create or update an entity (upsert by user_id + name).
 
         Delegates to the graph backend which uses ``ON CONFLICT DO UPDATE``
-        on ``(organization_id, name)`` — the unique constraint added in
+        on ``(user_id, name)`` — the unique constraint added in
         migration 0012 ensures no duplicates.
 
         Raises:
@@ -84,7 +84,7 @@ class EntityRepository:
             )
 
         # Check if entity with this name already exists (for logging only)
-        existing = await self.get_entity_by_name(org_id, project_id, name)
+        existing = await self.get_entity_by_name(user_id, project_id, name)
         action = "created"
         changed_fields: list[str] = []
 
@@ -102,7 +102,7 @@ class EntityRepository:
 
         try:
             entity = await self._backend.create_entity(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=project_id,
                 name=name,
                 entity_type=entity_type,
@@ -111,7 +111,7 @@ class EntityRepository:
             logger.info(
                 "entity_repository.entity_upserted",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_name": name,
                     "entity_type": entity_type,
@@ -127,7 +127,7 @@ class EntityRepository:
             logger.error(
                 "entity_repository.upsert_entity_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_name": name,
                     "entity_type": entity_type,
@@ -141,7 +141,7 @@ class EntityRepository:
 
     async def get_entity_by_name(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         name: str,
     ) -> dict | None:
@@ -165,7 +165,7 @@ class EntityRepository:
 
         try:
             results = await self._backend.search_entities(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=project_id,
                 query=name,
                 limit=10,
@@ -188,7 +188,7 @@ class EntityRepository:
             logger.error(
                 "entity_repository.get_entity_by_name_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_name": name,
                 },
@@ -200,7 +200,7 @@ class EntityRepository:
 
     async def get_entity_by_id(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_id: UUID,
     ) -> dict | None:
@@ -220,13 +220,13 @@ class EntityRepository:
 
         try:
             return await self._backend.get_entity(
-                org_id=org_id, project_id=project_id, entity_id=entity_id
+                user_id=user_id, project_id=project_id, entity_id=entity_id
             )
         except Exception as exc:
             logger.error(
                 "entity_repository.get_entity_by_id_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": str(entity_id),
                 },
@@ -243,7 +243,7 @@ class EntityRepository:
         subject: str,
         predicate: str,
         obj: str,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
     ) -> dict | None:
         """Create a relationship between two entities by name.
@@ -264,24 +264,24 @@ class EntityRepository:
             )
 
         # Look up both endpoints by name
-        subject_node = await self.get_entity_by_name(org_id, project_id, subject)
+        subject_node = await self.get_entity_by_name(user_id, project_id, subject)
         if subject_node is None:
             logger.warning(
                 "entity_repository.relationship_subject_not_found",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "subject": subject,
                 },
             )
             return None
 
-        object_node = await self.get_entity_by_name(org_id, project_id, obj)
+        object_node = await self.get_entity_by_name(user_id, project_id, obj)
         if object_node is None:
             logger.warning(
                 "entity_repository.relationship_object_not_found",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "object": obj,
                 },
@@ -291,7 +291,7 @@ class EntityRepository:
         # Create relationship
         try:
             relationship = await self._backend.create_relationship(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=project_id,
                 source_id=UUID(subject_node["id"]),
                 target_id=UUID(object_node["id"]),
@@ -300,7 +300,7 @@ class EntityRepository:
             logger.info(
                 "entity_repository.relationship_created",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "subject": subject,
                     "predicate": predicate,
@@ -313,7 +313,7 @@ class EntityRepository:
             logger.error(
                 "entity_repository.upsert_relationship_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "subject": subject,
                     "predicate": predicate,

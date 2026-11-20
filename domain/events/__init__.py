@@ -17,7 +17,7 @@ class FactSuperseded:
 
     old_fact_id: UUID
     new_fact_id: UUID | None
-    organization_id: UUID
+    user_id: UUID
     project_id: UUID
     at_time: datetime
 
@@ -28,7 +28,7 @@ class FactInvalidated:
 
     old_fact_id: UUID
     new_fact_id: UUID | None
-    organization_id: UUID
+    user_id: UUID
     project_id: UUID
     reason: str | None
     at_time: datetime
@@ -39,7 +39,7 @@ class IngestBatchCompleted:
     """An ingest batch committed episodes for downstream enrichment."""
 
     job_id: str
-    organization_id: UUID
+    user_id: UUID
     project_id: UUID
     session_id: UUID
     episode_count: int
@@ -50,7 +50,7 @@ class ObservationPersisted:
     """A graph-topology observation was persisted."""
 
     observation_id: UUID
-    organization_id: UUID
+    user_id: UUID
     project_id: UUID
     observation_type: str
     subject_entity_id: UUID
@@ -62,7 +62,7 @@ class ExtractionCompleted:
     """A structured extraction finished for an episode."""
 
     episode_id: UUID
-    organization_id: UUID
+    user_id: UUID
     project_id: UUID
     schema_id: UUID | None = None
 

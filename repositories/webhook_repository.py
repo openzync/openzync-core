@@ -34,7 +34,7 @@ class WebhookRepository:
 
     async def get_by_organization(
         self,
-        organization_id: uuid.UUID,
+        user_id: uuid.UUID,
         sort: SortSpec | None = None,
     ) -> list[WebhookEndpoint]:
         """Fetch all endpoints for an organization.
@@ -42,14 +42,14 @@ class WebhookRepository:
         Default ``created_at/desc``; whitelist ``name``, ``created_at``.
 
         Args:
-            organization_id: Tenant scope.
+            user_id: Tenant scope.
             sort: Validated sort spec.
         """
         spec = sort if sort is not None else SortSpec()
         req_sort, req_dir = spec.effective("created_at", "desc")
         result = await self._db.execute(
             select(WebhookEndpoint)
-            .where(WebhookEndpoint.organization_id == organization_id)
+            .where(WebhookEndpoint.user_id == user_id)
             .order_by(
                 *resolve_order_by(
                     WEBHOOK_SORTABLE_COLUMNS,
@@ -65,7 +65,7 @@ class WebhookRepository:
 
     async def create(
         self,
-        organization_id: uuid.UUID,
+        user_id: uuid.UUID,
         name: str,
         url: str,
         events: list[str] | None = None,
@@ -81,7 +81,7 @@ class WebhookRepository:
         """
         endpoint = WebhookEndpoint(
             id=endpoint_id if endpoint_id is not None else uuid.uuid4(),
-            organization_id=organization_id,
+
             name=name,
             url=url,
             # orjson.dumps returns bytes; the column is TEXT and asyncpg
@@ -173,7 +173,7 @@ class WebhookRepository:
 
     async def get_active_endpoints_for_event(
         self,
-        organization_id: uuid.UUID,
+        user_id: uuid.UUID,
         event_type: str,
     ) -> list[WebhookEndpoint]:
         """Get all active endpoints that subscribe to a given event type.
@@ -185,10 +185,10 @@ class WebhookRepository:
         binding the lookup would match no rows and the event would be
         silently dropped.
         """
-        await rls.set_tenant_context(self._db, organization_id)
+        await rls.set_tenant_context(self._db, user_id)
         result = await self._db.execute(
             select(WebhookEndpoint).where(
-                WebhookEndpoint.organization_id == organization_id,
+                WebhookEndpoint.user_id == user_id,
                 WebhookEndpoint.is_active.is_(True),
             )
         )

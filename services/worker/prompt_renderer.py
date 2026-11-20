@@ -12,7 +12,7 @@ Usage (workers):
 
     system_prompt, ctx = await render_prompt(
         "enrich_episode",
-        org_id=org_id,
+        user_id=user_id,
         episode_id=episode_id,
         session_id=session_id,
         db_session_factory=session_factory,
@@ -163,7 +163,7 @@ _USER_ENTITIES_EPISODE_CAP: int = 500
 
 async def _fetch_episode_content(
     db: AsyncSession,
-    org_id: UUID,
+    user_id: UUID,
     episode_id: UUID | None,
     **_: Any,
 ) -> dict[str, Any]:
@@ -180,13 +180,13 @@ async def _fetch_episode_content(
     )
 
     repo = PromptContextRepository(db)
-    row = await repo.get_episode_content(episode_id=episode_id, org_id=org_id)
+    row = await repo.get_episode_content(episode_id=episode_id, user_id=user_id)
     return {"conversation": row if row is not None else ""}
 
 
 async def _fetch_session_entities(
     db: AsyncSession,
-    org_id: UUID,
+    user_id: UUID,
     session_id: UUID | None,
     graph_backend: GraphBackend | None,
     project_id: UUID | None,
@@ -220,10 +220,10 @@ async def _fetch_session_entities(
                 try:
                     # The graph tables are tenant-scoped — bind the session
                     # before the backend reads them.
-                    await rls.set_tenant_context(fresh_db, org_id)
+                    await rls.set_tenant_context(fresh_db, user_id)
                     fresh_backend = PostgresGraphBackend(db=fresh_db)
                     entities = await fresh_backend.get_entities_for_session(
-                        org_id=org_id,
+                        user_id=user_id,
                         project_id=project_id,
                         session_id=session_id,
                     )
@@ -234,7 +234,7 @@ async def _fetch_session_entities(
     # SurrealDB and FalkorDB manage their own connections — safe to use
     # the backend's internal session directly.
     entities = await graph_backend.get_entities_for_session(
-        org_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         session_id=session_id,
     )
@@ -243,7 +243,7 @@ async def _fetch_session_entities(
 
 async def _fetch_session_facts(
     db: AsyncSession,
-    org_id: UUID,
+    user_id: UUID,
     session_id: UUID | None,
     **_: Any,
 ) -> dict[str, Any]:
@@ -260,7 +260,7 @@ async def _fetch_session_facts(
 
     repo = FactRepository(db)
     facts, _ = await repo.list_by_session(
-        organization_id=org_id,
+        user_id=user_id,
         session_id=session_id,
         limit=200,
     )
@@ -269,7 +269,7 @@ async def _fetch_session_facts(
 
 async def _fetch_session_recent_history(
     db: AsyncSession,
-    org_id: UUID,
+    user_id: UUID,
     session_id: UUID | None,
     episode_id: UUID | None,
     **_: Any,
@@ -301,7 +301,7 @@ async def _fetch_session_recent_history(
 
 async def _fetch_episode_metadata(
     db: AsyncSession,
-    org_id: UUID,
+    user_id: UUID,
     episode_id: UUID | None,
     **_: Any,
 ) -> dict[str, Any]:
@@ -318,15 +318,14 @@ async def _fetch_episode_metadata(
     )
 
     repo = PromptContextRepository(db)
-    row = await repo.get_episode_metadata(episode_id=episode_id, org_id=org_id)
+    row = await repo.get_episode_metadata(episode_id=episode_id, user_id=user_id)
     return {"message_metadata": row if row is not None else {}}
 
 
 async def _fetch_similar_episodes(
     db: AsyncSession,
-    org_id: UUID,
+    user_id: UUID,
     episode_id: UUID | None,
-    user_id: UUID | None,
     **_: Any,
 ) -> dict[str, Any]:
     """Fetch semantically similar episodes via BM25 full-text search.
@@ -347,7 +346,7 @@ async def _fetch_similar_episodes(
 
     # Fetch current episode content + project_id to use as search query
     found = await PromptContextRepository(db).get_episode_content_and_project(
-        episode_id=episode_id, org_id=org_id
+        episode_id=episode_id, user_id=user_id
     )
     if found is None:
         return {"similar_episodes": []}
@@ -359,7 +358,7 @@ async def _fetch_similar_episodes(
     results = await repo.search_by_bm25(
         query=query,
         project_id=project_id,
-        org_id=org_id,
+        user_id=user_id,
         limit=5,
     )
     # Filter out current episode from results
@@ -369,9 +368,8 @@ async def _fetch_similar_episodes(
 
 async def _fetch_similar_facts(
     db: AsyncSession,
-    org_id: UUID,
+    user_id: UUID,
     episode_id: UUID | None,
-    user_id: UUID | None,
     **_: Any,
 ) -> dict[str, Any]:
     """Fetch semantically similar facts via BM25 full-text search.
@@ -390,7 +388,7 @@ async def _fetch_similar_facts(
 
     # Fetch current episode content + project_id to use as search query
     found = await PromptContextRepository(db).get_episode_content_and_project(
-        episode_id=episode_id, org_id=org_id
+        episode_id=episode_id, user_id=user_id
     )
     if found is None:
         return {"related_facts": []}
@@ -402,7 +400,7 @@ async def _fetch_similar_facts(
     results = await repo.search_by_bm25(
         query=query,
         project_id=project_id,
-        org_id=org_id,
+        user_id=user_id,
         limit=5,
     )
     return {"related_facts": results}
@@ -410,7 +408,7 @@ async def _fetch_similar_facts(
 
 async def _fetch_org_entity_types(
     db: AsyncSession,
-    org_id: UUID,
+    user_id: UUID,
     **_: Any,
 ) -> dict[str, Any]:
     """Fetch entity type ontology from the org's extraction schemas.
@@ -424,7 +422,7 @@ async def _fetch_org_entity_types(
 
     repo = PromptContextRepository(db)
     schemas = await repo.list_schema_json_by_type(
-        org_id=org_id, schema_type="entity_type"
+        user_id=user_id, schema_type="entity_type"
     )
 
     if not schemas:
@@ -463,7 +461,7 @@ async def _fetch_org_entity_types(
 
 async def _fetch_classification_labels(
     db: AsyncSession,
-    org_id: UUID,
+    user_id: UUID,
     **_: Any,
 ) -> dict[str, Any]:
     """Fetch classification labels from the org's extraction schemas.
@@ -480,7 +478,7 @@ async def _fetch_classification_labels(
 
     repo = PromptContextRepository(db)
     schemas = await repo.list_schema_json_by_type(
-        org_id=org_id, schema_type="classification"
+        user_id=user_id, schema_type="classification"
     )
 
     if not schemas:
@@ -533,7 +531,7 @@ async def _fetch_classification_labels(
 
 async def _fetch_structured_schemas(
     db: AsyncSession,
-    org_id: UUID,
+    user_id: UUID,
     **_: Any,
 ) -> dict[str, Any]:
     """Fetch active structured extraction schemas.
@@ -546,14 +544,13 @@ async def _fetch_structured_schemas(
     )
 
     repo = PromptContextRepository(db)
-    schemas = await repo.list_structured_schemas(org_id=org_id)
+    schemas = await repo.list_structured_schemas(user_id=user_id)
     return {"schemas": schemas}
 
 
 async def _fetch_user_episodes(
     db: AsyncSession,
-    org_id: UUID,
-    user_id: UUID | None,
+    user_id: UUID,
     **_: Any,
 ) -> dict[str, Any]:
     """Fetch last 100 episodes for a user (chronological).
@@ -569,7 +566,7 @@ async def _fetch_user_episodes(
 
     repo = PromptContextRepository(db)
     episodes_raw = await repo.list_user_episodes(
-        user_id=user_id, org_id=org_id, limit=100
+        user_id=user_id, limit=100
     )
     episodes_raw = list(episodes_raw)
     episodes_raw.reverse()  # chronological
@@ -579,8 +576,7 @@ async def _fetch_user_episodes(
 
 async def _fetch_user_facts(
     db: AsyncSession,
-    org_id: UUID,
-    user_id: UUID | None,
+    user_id: UUID,
     **_: Any,
 ) -> dict[str, Any]:
     """Fetch last 100 extracted facts for a user.
@@ -599,7 +595,6 @@ async def _fetch_user_facts(
     repo = PromptContextRepository(db)
     rows = await repo.list_user_facts(
         user_id=user_id,
-        org_id=org_id,
         effective_at=datetime.now(UTC),
         limit=100,
     )
@@ -611,8 +606,7 @@ async def _fetch_user_facts(
 
 async def _fetch_user_entities(
     db: AsyncSession,
-    org_id: UUID,
-    user_id: UUID | None,
+    user_id: UUID,
     graph_backend: GraphBackend | None,
     project_id: UUID | None,
     **extra: Any,
@@ -644,11 +638,10 @@ async def _fetch_user_entities(
 
         logger.error(
             "prompt_renderer.user_entities_no_backend",
-            org_id=str(org_id),
             user_id=str(user_id),
         )
         raise GraphBackendUnavailableError(
-            f"No graph backend resolved for user entities (org {org_id}) — "
+            f"No graph backend resolved for user entities (org {user_id}) — "
             "refusing to return an empty entity list that would silently "
             "degrade extraction context."
         )
@@ -660,7 +653,6 @@ async def _fetch_user_entities(
     repo = PromptContextRepository(db)
     rows = await repo.list_user_episode_ids(
         user_id=user_id,
-        org_id=org_id,
         project_id=project_id,
         cap=_USER_ENTITIES_EPISODE_CAP,
     )
@@ -682,11 +674,11 @@ async def _fetch_user_entities(
         if isinstance(graph_backend, PostgresGraphBackend):
             async with db_session_factory() as fresh_db:
                 try:
-                    await rls.set_tenant_context(fresh_db, org_id)
+                    await rls.set_tenant_context(fresh_db, user_id)
                     backend = PostgresGraphBackend(db=fresh_db)
                     return {
                         "entities": await _collect_user_entities(
-                            backend, org_id, user_id, by_project
+                            backend, user_id, by_project
                         )
                     }
                 finally:
@@ -695,13 +687,12 @@ async def _fetch_user_entities(
     # SurrealDB and FalkorDB manage their own connections — safe to use
     # the backend's internal session directly.
     return {
-        "entities": await _collect_user_entities(backend, org_id, user_id, by_project)
+        "entities": await _collect_user_entities(backend, user_id, by_project)
     }
 
 
 async def _collect_user_entities(
     backend: GraphBackend,
-    org_id: UUID,
     user_id: UUID,
     by_project: dict[str, list[UUID]],
 ) -> list[dict[str, str]]:
@@ -714,9 +705,8 @@ async def _collect_user_entities(
     merged: list[dict[str, str]] = []
     for project_key, episode_ids in by_project.items():
         entities = await backend.get_entities_for_user(
-            org_id=org_id,
-            project_id=UUID(project_key),
             user_id=user_id,
+            project_id=UUID(project_key),
             episode_ids=episode_ids,
         )
         for entity in entities:
@@ -736,8 +726,7 @@ async def _collect_user_entities(
 
 async def _fetch_user_classifications(
     db: AsyncSession,
-    org_id: UUID,
-    user_id: UUID | None,
+    user_id: UUID,
     **_: Any,
 ) -> dict[str, Any]:
     """Fetch aggregate classification labels for a user.
@@ -759,7 +748,7 @@ async def _fetch_user_classifications(
 
     repo = PromptContextRepository(db)
     rows = await repo.list_user_classifications(
-        user_id=user_id, org_id=org_id, limit=5
+        user_id=user_id, limit=5
     )
     top_intents: list[str] = []
     top_emotions: list[str] = []
@@ -779,8 +768,7 @@ async def _fetch_user_classifications(
 
 async def _fetch_custom_instructions(
     db: AsyncSession,
-    org_id: UUID,
-    user_id: UUID | None = None,
+    user_id: UUID,
     **_: Any,
 ) -> dict[str, Any]:
     """Fetch custom instructions for the org.
@@ -795,7 +783,7 @@ async def _fetch_custom_instructions(
 
     repo = CustomInstructionRepository(db)
     raw = await repo.get_by_scope(
-        org_id=org_id,
+        user_id=user_id,
         # user_summary uses scope="user_summary" with user_id;
         # other scopes use "extraction" without user_id.
         scope="user_summary" if user_id is not None else "extraction",
@@ -842,10 +830,9 @@ async def render_prompt(
     prompt_type: str,
     *,
     template_text: str | None = None,
-    org_id: UUID | str | None = None,
+    user_id: UUID | str | None = None,
     episode_id: UUID | str | None = None,
     session_id: UUID | str | None = None,
-    user_id: UUID | str | None = None,
     project_id: UUID | str | None = None,
     graph_backend: GraphBackend | None = None,
     db_session_factory: SessionFactory | None = None,
@@ -854,12 +841,12 @@ async def render_prompt(
 ) -> str | tuple[str, dict[str, Any]]:
     """Fetch and return a system prompt with auto-injected context.
 
-    When ``org_id`` and ``db_session_factory`` are provided, context
+    When ``user_id`` and ``db_session_factory`` are provided, context
     variables are auto-fetched from the DB according to the registered
     ``TYPE_DATA_SOURCES`` for the given ``prompt_type``.  Explicit
     ``extra_context`` kwargs take precedence over auto-injected values.
 
-    When ``org_id`` is ``None`` (or ``db_session_factory`` is ``None``),
+    When ``user_id`` is ``None`` (or ``db_session_factory`` is ``None``),
     no auto-injection occurs — only ``extra_context`` and the optional
     ``template_text`` are used.  This is the direct-invocation mode
     suitable for eval tests and one-off prompts.
@@ -872,7 +859,7 @@ async def render_prompt(
             Used to look up the registry of data sources to auto-inject.
         template_text: Raw template string.  If ``None``, resolved from
             the startup disk cache via ``resolve_prompt_template_by_type``.
-        org_id: Organisation UUID.  Required for auto-injection.
+        user_id: Organisation UUID.  Required for auto-injection.
         episode_id: Episode UUID.  Used to fetch conversation content
             and recent history.
         session_id: Session UUID.  Used to fetch known entities and
@@ -908,7 +895,7 @@ async def render_prompt(
 
             prompt = await render_prompt(
                 "enrich_episode",
-                org_id="...",
+                user_id="...",
                 episode_id="...",
                 session_id="...",
                 db_session_factory=session_factory,
@@ -922,7 +909,7 @@ async def render_prompt(
     # ── Auto-inject context from DB ────────────────────────────────────
     context: dict[str, Any] = dict(extra_context)
 
-    if org_id is not None and db_session_factory is not None:
+    if user_id is not None and db_session_factory is not None:
         sources = TYPE_DATA_SOURCES.get(prompt_type)
         if sources is None:
             raise KeyError(
@@ -930,7 +917,7 @@ async def render_prompt(
                 f"Known types: {', '.join(sorted(TYPE_DATA_SOURCES))}"
             )
 
-        resolved_org_id = UUID(org_id) if isinstance(org_id, str) else org_id
+        resolved_org_id = UUID(user_id) if isinstance(user_id, str) else user_id
         resolved_episode_id = (
             UUID(episode_id) if isinstance(episode_id, str) else episode_id
         )
@@ -954,10 +941,9 @@ async def render_prompt(
 
                     result = await provider(
                         db=db,
-                        org_id=resolved_org_id,
+                        user_id=resolved_org_id,
                         episode_id=resolved_episode_id,
                         session_id=resolved_session_id,
-                        user_id=resolved_user_id,
                         project_id=resolved_project_id,
                         graph_backend=graph_backend,
                         db_session_factory=db_session_factory,

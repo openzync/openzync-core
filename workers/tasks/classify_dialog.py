@@ -33,7 +33,7 @@ ALLOWED_AROUSALS = frozenset({"low", "medium", "high"})
 
 
 async def _fetch_validation_sets(
-    db: Any, org_id: str
+    db: Any, user_id: str
 ) -> dict[str, set[str]]:
     """Fetch intent and emotion label sets from the org's schemas.
 
@@ -44,18 +44,18 @@ async def _fetch_validation_sets(
     result = await db.execute(
         text("""
             SELECT json_schema FROM extraction_schemas
-            WHERE organization_id = :org_id
+            WHERE user_id = :user_id
               AND type = 'classification'
               AND is_active = true
         """),
-        {"org_id": uuid.UUID(org_id)},
+        {"user_id": uuid.UUID(user_id)},
     )
     schemas = result.all()
 
     if not schemas:
         logger.warning(
             "classify_dialog.no_classification_schemas",
-            org_id=org_id,
+            user_id=user_id,
         )
         return {
             "intent_set": set(),
@@ -75,13 +75,13 @@ async def _fetch_validation_sets(
     if not all_intents:
         logger.warning(
             "classify_dialog.no_intents_found",
-            org_id=org_id,
+            user_id=user_id,
             schema_count=len(schemas),
         )
     if not all_emotions:
         logger.warning(
             "classify_dialog.no_emotions_found",
-            org_id=org_id,
+            user_id=user_id,
             schema_count=len(schemas),
         )
 
@@ -106,7 +106,7 @@ def _validate_label(label: Any, allowed_set: set[str]) -> str | None:
 
 async def process_classification_output(
     db: AsyncSession,
-    org_id: str,
+    user_id: str,
     episode_id: str,
     project_id: str,
     parsed: ClassificationOutput,
@@ -121,7 +121,7 @@ async def process_classification_output(
 
     Args:
         db: Database session (caller manages transaction).
-        org_id: Organization UUID string.
+        user_id: Organization UUID string.
         episode_id: Episode UUID string.
         project_id: Project UUID string.
         parsed: The validated ``ClassificationOutput`` from the LLM.
@@ -135,7 +135,7 @@ async def process_classification_output(
         Various DB errors on insert failure.
     """
     if validation_sets is None:
-        validation_sets = await _fetch_validation_sets(db, org_id)
+        validation_sets = await _fetch_validation_sets(db, user_id)
 
     intent = _validate_label(parsed.intent, validation_sets["intent_set"])
     emotion = _validate_label(parsed.emotion, validation_sets["emotion_set"])
@@ -163,17 +163,17 @@ async def process_classification_output(
     await db.execute(
         text("""
             INSERT INTO dialog_classifications
-                (organization_id, episode_id, project_id, intent,
+                (user_id, episode_id, project_id, intent,
                  emotion, valence, arousal, confidence, raw,
                  created_at, updated_at)
             VALUES
-                (:org_id, :episode_id, :project_id, :intent,
+                (:user_id, :episode_id, :project_id, :intent,
                  :emotion, :valence, :arousal, :confidence,
                  CAST(:raw AS jsonb), now(), now())
-            ON CONFLICT (organization_id, episode_id) DO NOTHING
+            ON CONFLICT (user_id, episode_id) DO NOTHING
         """),
         {
-            "org_id": uuid.UUID(org_id),
+            "user_id": uuid.UUID(user_id),
             "episode_id": uuid.UUID(episode_id),
             "project_id": uuid.UUID(project_id),
             "intent": intent,

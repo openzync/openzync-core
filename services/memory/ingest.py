@@ -38,7 +38,7 @@ class IngestMixin:
 
     async def ingest(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         created_by: UUID,
         session_external_id: str,
@@ -65,7 +65,7 @@ class IngestMixin:
            (all best-effort — never fail a committed ingest).
 
         Args:
-            org_id: The authenticated organization UUID.
+            user_id: The authenticated organization UUID.
             project_id: The project UUID for scoping.
             created_by: The authenticated user's UUID (attribution).
             session_external_id: The session external ID. The session must
@@ -89,7 +89,7 @@ class IngestMixin:
             ExternalServiceError: Blob storage config unreadable (502).
         """
         # ── Step 0: Block ingests to archived projects ───────────────────
-        project = await self._project_repo.get_by_id(org_id, project_id)
+        project = await self._project_repo.get_by_id(user_id, project_id)
         if project is None:
             raise NotFoundError(
                 message=f"Project {project_id} not found",
@@ -99,12 +99,12 @@ class IngestMixin:
         # ── Steps 1–2: Idempotency check + session resolve ───────────────
         if idempotency_key is not None:
             replay = await self._check_idempotency_key(
-                idempotency_key, body_hash or "", org_id, project_id
+                idempotency_key, body_hash or "", user_id, project_id
             )
             if replay is not None:
                 return replay
         session = await self._resolve_session(
-            organization_id=org_id,
+            user_id=user_id,
             project_id=project_id,
             session_external_id=session_external_id,
         )
@@ -122,7 +122,7 @@ class IngestMixin:
         # ── Steps 3–4: Canonical msgs + atomic claim ─────────────────────
         msgs = [m.model_dump() for m in messages]
         job_id, replay = await self._claim_batch(
-            org_id, created_by, session_id, msgs, project_id
+            user_id, created_by, session_id, msgs, project_id
         )
         if replay is not None:
             return replay
@@ -146,10 +146,10 @@ class IngestMixin:
                 for msg in messages
             ]
             await self._redact_episodes(
-                org_id, episode_dicts, job_id
+                user_id, episode_dicts, job_id
             )
             episodes = await self._lock_and_insert(
-                org_id, project_id, session_id, created_by, episode_dicts
+                user_id, project_id, session_id, created_by, episode_dicts
             )
 
             # ── Step 6: Blobs (same transaction) ─────────────────────────
@@ -157,7 +157,7 @@ class IngestMixin:
             blob_records: list[Any] = []
             if uploaded_blobs:
                 blob_count, blob_records = await self._process_blobs(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=project_id,
                     session_id=session_id,
                     created_by=created_by,
@@ -184,26 +184,26 @@ class IngestMixin:
         except asyncio.CancelledError:
             await self._db.rollback()
             await self._compensate_blob_uploads(
-                org_id, uploaded_keys
+                user_id, uploaded_keys
             )
             await self._idem.release_content_hash(
-                str(org_id), str(created_by), str(session_id), msgs
+                str(user_id), str(created_by), str(session_id), msgs
             )
             raise
         except Exception:
             await self._db.rollback()
             await self._compensate_blob_uploads(
-                org_id, uploaded_keys
+                user_id, uploaded_keys
             )
             await self._idem.release_content_hash(
-                str(org_id), str(created_by), str(session_id), msgs
+                str(user_id), str(created_by), str(session_id), msgs
             )
             raise
 
         # ── Steps 7–8: Post-commit fan-out (best-effort) ─────────────────
         return await self._finalize_ingest(
             job_id=job_id,
-            org_id=org_id,
+            user_id=user_id,
             project_id=project_id,
             session_id=session_id,
             episodes=episodes,
@@ -215,30 +215,29 @@ class IngestMixin:
 
     async def _resolve_user(
         self,
-        org_id: UUID,
+        user_id: UUID,
         external_id: str,
     ) -> User:
         """Resolve a user by external_id, creating one if it does not exist.
 
-        Thread-safe via the ``(organization_id, external_id)`` unique
+        Thread-safe via the ``(user_id, external_id)`` unique
         constraint — concurrent creates are handled with an IntegrityError
         retry in the repository layer.
 
         Args:
-            org_id: The organization UUID.
+            user_id: The organization UUID.
             external_id: The caller-defined user identifier.
 
         Returns:
             A ``User`` ORM instance (existing or newly created).
         """
         return await self._user_repo.create_or_get_by_external_id(
-            organization_id=org_id,
             external_id=external_id,
         )
 
     async def _resolve_session(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         session_external_id: str,
     ) -> Session:
@@ -249,7 +248,7 @@ class IngestMixin:
         IDs — the SDK must call ``POST /sessions`` first.
 
         Args:
-            organization_id: The organization UUID.
+            user_id: The organization UUID.
             project_id: The project UUID.
             session_external_id: The caller-defined session identifier.
 
@@ -261,7 +260,7 @@ class IngestMixin:
         """
         # Try by external_id first (the canonical lookup).
         session = await self._session_repo.get_by_external_id(
-            org_id=organization_id,
+            user_id=user_id,
             project_id=project_id,
             external_id=session_external_id,
         )
@@ -275,7 +274,7 @@ class IngestMixin:
                 parsed = None
             if parsed is not None:
                 session = await self._session_repo.get_by_uuid(
-                    org_id=organization_id,
+                    user_id=user_id,
                     session_id=parsed,
                     project_id=project_id,
                 )

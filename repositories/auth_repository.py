@@ -36,6 +36,11 @@ class AuthRepository:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
+    @property
+    def session(self) -> AsyncSession:
+        """Return the database session for cross-layer RLS binding."""
+        return self._db
+
     # ── User lookup ─────────────────────────────────────────────────────────
 
     async def find_user_by_email(self, email: str) -> User | None:
@@ -86,7 +91,6 @@ class AuthRepository:
 
     async def create_dashboard_user(
         self,
-        organization_id: uuid.UUID,
         email: str,
         password_hash: str | None = None,
         name: str | None = None,
@@ -98,11 +102,10 @@ class AuthRepository:
         """Create a dashboard user (admin/member).
 
         Sets ``external_id`` to the email for simplicity.  The unique
-        constraint on ``(organization_id, external_id)`` prevents two
-        dashboard users with the same email in the same org.
+        constraint on ``external_id`` prevents two dashboard users
+        with the same email.
 
         Args:
-            organization_id: Owning organization.
             email: Email address (used as external_id too).
             password_hash: bcrypt hash of the password.  ``None`` for a
                 pending user (approval flow — no credential yet).
@@ -120,7 +123,6 @@ class AuthRepository:
             The newly created User.
         """
         user = User(
-            organization_id=organization_id,
             external_id=email,
             email=email,
             name=name,
@@ -141,7 +143,7 @@ class AuthRepository:
     async def create_refresh_token(
         self,
         user_id: uuid.UUID,
-        organization_id: uuid.UUID,
+
         token_hash: str,
         expires_at: datetime,
     ) -> RefreshToken:
@@ -149,7 +151,7 @@ class AuthRepository:
 
         Args:
             user_id: The authenticated user's UUID.
-            organization_id: The user's organization UUID.
+
             token_hash: SHA-256 hash of the opaque refresh token string.
             expires_at: Expiration timestamp (naive UTC).
 
@@ -157,8 +159,8 @@ class AuthRepository:
             The newly created RefreshToken.
         """
         rt = RefreshToken(
-            user_id=str(user_id),
-            organization_id=organization_id,
+            user_id=user_id,
+
             token_hash=token_hash,
             expires_at=expires_at,
         )
@@ -332,7 +334,7 @@ class AuthRepository:
         stmt = (
             update(RefreshToken)
             .where(
-                RefreshToken.user_id == str(user_id),
+                RefreshToken.user_id == user_id,
                 RefreshToken.is_revoked.is_(False),
             )
             .values(is_revoked=True)

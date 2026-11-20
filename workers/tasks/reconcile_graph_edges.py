@@ -50,7 +50,7 @@ Limits the burst of enqueued ``expire_graph_edges`` jobs on each run.
 # an edge kept alive by a superseded fact (post-commit sync failed) is
 # exactly the drift this cron exists to repair.
 STALE_EDGES_SQL = """
-SELECT e.id, e.organization_id, e.project_id,
+SELECT e.id, e.user_id, e.project_id,
        e.source_id, e.target_id, e.relationship_type
 FROM graph_relationships e
 WHERE e.invalid_at IS NULL
@@ -63,7 +63,7 @@ WHERE e.invalid_at IS NULL
             -- the fact becomes effective; its valid_to is either open or
             -- future, both of which the clause below keeps.
             AND (f.valid_to IS NULL OR f.valid_to > :now)
-            AND f.organization_id = e.organization_id
+            AND f.user_id = e.user_id
             AND f.project_id = e.project_id
             AND f.subject_entity_id = e.source_id
             AND f.predicate = e.relationship_type
@@ -115,7 +115,7 @@ async def reconcile_graph_edges(ctx: dict[str, Any]) -> str:
     stale_edges: list[dict[str, Any]] = []
     async with session_factory() as db:
         # Cross-org cron scan: bypass RLS so every org is visible.  The
-        # policies read NULLIF(current_setting('app.org_id', true), ''),
+        # policies read NULLIF(current_setting('app.user_id', true), ''),
         # so an unset context matches no rows — the bypass is what makes
         # the platform-wide scan possible.  The bypass is bound on the
         # session, so it survives a commit instead of silently vanishing.
@@ -130,7 +130,7 @@ async def reconcile_graph_edges(ctx: dict[str, Any]) -> str:
         for row in result.all():
             stale_edges.append(
                 {
-                    "org_id": str(row.organization_id),
+                    "user_id": str(row.user_id),
                     "project_id": str(row.project_id),
                     "source_id": str(row.source_id),
                     "target_id": str(row.target_id),
@@ -154,7 +154,7 @@ async def reconcile_graph_edges(ctx: dict[str, Any]) -> str:
         try:
             await arq_redis.enqueue_job(
                 "expire_graph_edges",
-                org_id=edge["org_id"],
+                user_id=edge["user_id"],
                 project_id=edge["project_id"],
                 source_id=edge["source_id"],
                 target_id=edge["target_id"],
@@ -170,7 +170,7 @@ async def reconcile_graph_edges(ctx: dict[str, Any]) -> str:
             logger.warning(
                 "reconcile_graph_edges.enqueue_failed",
                 extra={
-                    "org_id": edge["org_id"],
+                    "user_id": edge["user_id"],
                     "source_id": edge["source_id"],
                     "target_id": edge["target_id"],
                     "relationship_type": edge["relationship_type"],

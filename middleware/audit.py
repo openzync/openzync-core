@@ -45,7 +45,7 @@ _UUID_PATTERN = re.compile(
 
 
 async def _resolve_audit_body_capture(
-    org_id: str | None,
+    user_id: str | None,
     scope: Scope,
 ) -> bool:
     """Resolve whether to capture the response body for this request.
@@ -54,14 +54,14 @@ async def _resolve_audit_body_capture(
     field is not set for the org, defaults to ``False``.
 
     Args:
-        org_id: The authenticated organization ID (may be ``None`` for
+        user_id: The authenticated organization ID (may be ``None`` for
             unauthenticated requests).
         scope: The ASGI connection scope (used to access ``app.state``).
 
     Returns:
         ``True`` if the response body should be captured for audit.
     """
-    if org_id is None:
+    if user_id is None:
         return False
 
     app = scope.get("app")
@@ -75,7 +75,7 @@ async def _resolve_audit_body_capture(
         try:
             from core.org_config import CACHE_KEY_PREFIX
 
-            cache_key = f"{CACHE_KEY_PREFIX}:{org_id}"
+            cache_key = f"{CACHE_KEY_PREFIX}:{user_id}"
             cached = await redis.get(cache_key)
             if cached:
                 raw = orjson.loads(cached.encode())
@@ -93,7 +93,7 @@ async def _resolve_audit_body_capture(
         bao_client = getattr(app.state, "openbao_client", None)
         if bao_client is not None:
             config = await get_org_config(
-                UUID(org_id), redis=redis, bao_client=bao_client, skip_cache=True
+                UUID(user_id), redis=redis, bao_client=bao_client, skip_cache=True
             )
         else:
             from core.config import BootstrapSettings
@@ -107,7 +107,7 @@ async def _resolve_audit_body_capture(
                 timeout=10.0,
             ) as _bao:
                 config = await get_org_config(
-                    UUID(org_id), redis=redis, bao_client=_bao, skip_cache=True
+                    UUID(user_id), redis=redis, bao_client=_bao, skip_cache=True
                 )
         return bool(config.audit_log_response_body) if config.audit_log_response_body is not None else False
     except Exception as exc:
@@ -134,15 +134,16 @@ EXEMPT_PATHS: frozenset = frozenset({
 # - ``routers/admin_webhooks.py`` POST "/v1/admin/webhooks" → create (and any
 #   future rotate route added there) returns the raw webhook signing secret —
 #   shown exactly once to the caller.
-# - ``routers/admin_org_code.py`` POST "/admin/org/org-code/regenerate" →
-#   returns the freshly rotated org join code, which is a valid join token.
-# - ``routers/admin_org_code.py`` PATCH "/admin/org/org-code" → returns the
-#   live org join code (unchanged by the toggle) — a valid join token.
+# - ``routers/admin_org_code.py`` (removed — the org-code admin toggle was
+#   inert) POST "/admin/org/org-code/regenerate" → returned the freshly
+#   rotated org join code, a valid join token.
+# - ``routers/admin_org_code.py`` (removed) PATCH "/admin/org/org-code" →
+#   returned the live org join code (unchanged by the toggle).
 # - ``routers/admin_org_config.py`` PATCH/PUT "/admin/org/config" → responses
 #   echo the stored config, which may include unmasked LLM API keys.
 # - ``routers/auth.py`` POST "/v1/auth/invites/accept" → returns the JWT
 #   access + refresh pair.  The magic-link flow is unauthenticated, so the
-#   audit middleware cannot derive org_id from request state — the tokens
+#   audit middleware cannot derive user_id from request state — the tokens
 #   must never be body-captured regardless (defense-in-depth: a live bearer
 #   credential in the audit log is a standing credential leak).
 #
@@ -251,7 +252,7 @@ class AuditMiddleware:
         state = scope.get("state") or {}
         headers = dict(scope.get("headers") or [])
 
-        org_id: str | None = state.get("org_id", None)
+        user_id: str | None = state.get("user_id", None)
         user_id: str | None = state.get("user_id", None)
         auth_type: str | None = state.get("auth_type", None)
         request_id: str | None = state.get("request_id", None)
@@ -268,7 +269,7 @@ class AuditMiddleware:
             actor_id = user_id
             actor_type = "user"
         elif auth_type == "api_key":
-            actor_id = state.get("api_key_id") or org_id
+            actor_id = state.get("api_key_id") or user_id
             actor_type = "api_key"
         else:
             actor_id = "anonymous"
@@ -292,7 +293,7 @@ class AuditMiddleware:
         }
 
         # Resolve audit_log_response_body: per-org config → env default.
-        _capture_body = await _resolve_audit_body_capture(org_id, scope)
+        _capture_body = await _resolve_audit_body_capture(user_id, scope)
         if (method, path) in WEBHOOK_SECRET_RESPONSE_ROUTES:
             # SECURITY: never persist one-time secrets (webhook signing
             # secret, freshly rotated org join code, unmasked LLM API keys) —
@@ -318,7 +319,7 @@ class AuditMiddleware:
         await arq_pool.enqueue(
             "write_audit_log",
             queue_name=queue_full_name,
-            organization_id=str(org_id) if org_id else None,
+            user_id=str(user_id) if user_id else None,
             actor_id=actor_id,
             actor_type=actor_type,
             action=action,

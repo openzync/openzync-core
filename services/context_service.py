@@ -87,7 +87,7 @@ class ContextService:
 
     Args:
         db: An async SQLAlchemy session (request-scoped).
-        org_id: The authenticated organization UUID.
+        user_id: The authenticated user's UUID (row owner).
         redis: An optional async Redis client for caching.  When ``None``,
             caching is disabled but the service continues to function.
     """
@@ -95,7 +95,7 @@ class ContextService:
     def __init__(
         self,
         db: object,
-        org_id: UUID,
+        user_id: UUID,
         redis: object | None = None,
         graph_backends: list | None = None,
         org_config: OrgConfigBase | None = None,
@@ -105,7 +105,7 @@ class ContextService:
         reranker = RerankerFactory.create(org_config) if org_config else None
         self._retriever = HybridRetriever(
             db,
-            org_id,
+            user_id,
             redis,
             graph_backends=graph_backends,
             org_config=org_config,
@@ -118,8 +118,7 @@ class ContextService:
             else DEFAULT_CONTEXT_CACHE_TTL
         )
         self._cache = CacheService(redis, default_ttl=cache_ttl) if redis else None
-        self._db = db
-        self._org_id = org_id
+        self._user_id = user_id
         self._org_config = org_config
 
     # ── Public API ──────────────────────────────────────────────────────────────
@@ -136,7 +135,7 @@ class ContextService:
         """Assemble a context block for a project from a natural-language query.
 
         Full pipeline:
-        1. Build a cache key from (org_id, project_id, query, as_of, sort) and
+        1. Build a cache key from (user_id, project_id, query, as_of, sort) and
            check Redis — different effective-at timestamps get distinct
            keys so a cached as-of result never poisons another timestamp's
            30s cache window.
@@ -173,19 +172,19 @@ class ContextService:
         if self._cache is not None:
             try:
                 version = await self._cache.get_context_version(
-                    str(self._org_id), str(project_id)
+                    str(self._user_id), str(project_id)
                 )
             except CacheUnavailableError:
                 # Redis blip — fall back to generation "0"; the get below
                 # will miss the same way and we recompute from the DB.
                 logger.warning(
                     "context.cache_version_unavailable",
-                    org_id=str(self._org_id),
+                    user_id=str(self._user_id),
                     project_id=str(project_id),
                 )
                 version = "0"
             cache_key = self._cache.build_context_cache_key(
-                str(self._org_id),
+                str(self._user_id),
                 str(project_id),
                 query,
                 as_of=as_of.isoformat() if as_of is not None else None,
@@ -200,18 +199,18 @@ class ContextService:
                 # Redis blip is a miss, never a 500 — recompute from the DB.
                 logger.warning(
                     "context.cache_read_unavailable",
-                    org_id=str(self._org_id),
+                    user_id=str(self._user_id),
                     project_id=str(project_id),
                 )
                 cached = None
             if cached is not None:
                 elapsed = (time.monotonic() - start) * 1000
                 context_latency_seconds.labels(
-                    type="warm", org_id=str(self._org_id)
+                    type="warm", user_id=str(self._user_id)
                 ).observe(elapsed / 1000)
                 logger.debug(
                     "context.assembled",
-                    org_id=str(self._org_id),
+                    user_id=str(self._user_id),
                     project_id=str(project_id),
                     query=query[:200],
                     cache_hit=True,
@@ -341,17 +340,17 @@ class ContextService:
             except CacheUnavailableError:
                 logger.warning(
                     "context.cache_write_unavailable",
-                    org_id=str(self._org_id),
+                    user_id=str(self._user_id),
                     project_id=str(project_id),
                 )
 
         elapsed = (time.monotonic() - start) * 1000
-        context_latency_seconds.labels(type="cold", org_id=str(self._org_id)).observe(
+        context_latency_seconds.labels(type="cold", user_id=str(self._user_id)).observe(
             elapsed / 1000
         )
         logger.debug(
             "context.assembled",
-            org_id=str(self._org_id),
+            user_id=str(self._user_id),
             project_id=str(project_id),
             query=query[:200],
             cache_hit=False,

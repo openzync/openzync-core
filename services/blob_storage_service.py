@@ -191,7 +191,7 @@ class BlobStorageService:
 
         service = BlobStorageService(db, blob_repo)
         blob_records = await service.upload_blobs(
-            org_id=...,
+            user_id=...,
             project_id=...,
             episode_id=...,
             session_id=...,
@@ -214,7 +214,7 @@ class BlobStorageService:
 
     async def upload_blobs(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         episode_id: UUID,
         session_id: UUID,
@@ -231,7 +231,7 @@ class BlobStorageService:
         entire operation is aborted — no partial DB records are created.
 
         Args:
-            org_id: Organization UUID.
+            user_id: Organization UUID.
             project_id: Project UUID.
             episode_id: Episode UUID.
             session_id: Session UUID.
@@ -303,7 +303,7 @@ class BlobStorageService:
             blob_index = meta.blob_id  # use blob_id as index
 
             key = storage.build_key(
-                org_id=str(org_id),
+                user_id=str(user_id),
                 project_id=str(project_id),
                 episode_id=str(episode_id),
                 blob_index=blob_index,
@@ -344,7 +344,7 @@ class BlobStorageService:
             return []
 
         return await self._blob_repo.batch_create(
-            organization_id=org_id,
+            user_id=user_id,
             project_id=project_id,
             session_id=session_id,
             episode_id=episode_id,

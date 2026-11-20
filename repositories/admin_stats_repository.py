@@ -49,14 +49,14 @@ class AdminStatsRepository:
 
     async def episodes_per_day(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
     ) -> list[tuple[datetime, int]]:
         """Return ``(day, count)`` episode rows in the window."""
         conds: list[Any] = [
-            Episode.organization_id == org_id,
+            Episode.user_id == user_id,
             Episode.is_deleted.is_(False),
             *self._window(Episode.created_at, start, end_exclusive),
         ]
@@ -77,14 +77,14 @@ class AdminStatsRepository:
 
     async def sessions_per_day(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
     ) -> list[tuple[datetime, int]]:
         """Return ``(day, count)`` session rows in the window."""
         conds: list[Any] = [
-            Session.organization_id == org_id,
+            Session.user_id == user_id,
             Session.is_deleted.is_(False),
             *self._window(Session.created_at, start, end_exclusive),
         ]
@@ -105,14 +105,14 @@ class AdminStatsRepository:
 
     async def facts_per_day(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
     ) -> list[tuple[datetime, int]]:
         """Return ``(day, count)`` fact rows in the window."""
         conds: list[Any] = [
-            Fact.organization_id == org_id,
+            Fact.user_id == user_id,
             *self._window(Fact.created_at, start, end_exclusive),
         ]
         if project_id is not None:
@@ -132,14 +132,14 @@ class AdminStatsRepository:
 
     async def extractions_per_day(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
     ) -> list[tuple[datetime, int]]:
         """Return ``(day, count)`` extraction rows in the window."""
         conds: list[Any] = [
-            Project.organization_id == org_id,
+            Project.user_id == user_id,
             *self._window(StructuredExtraction.created_at, start, end_exclusive),
         ]
         if project_id is not None:
@@ -160,14 +160,14 @@ class AdminStatsRepository:
 
     async def observations_per_day(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
     ) -> list[tuple[datetime, int]]:
         """Return ``(day, count)`` observation rows in the window."""
         conds: list[Any] = [
-            GraphObservation.organization_id == org_id,
+            GraphObservation.user_id == user_id,
             *self._window(GraphObservation.created_at, start, end_exclusive),
         ]
         if project_id is not None:
@@ -187,14 +187,14 @@ class AdminStatsRepository:
 
     async def classifications_per_day(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
     ) -> list[tuple[datetime, int]]:
         """Return ``(day, count)`` classification rows in the window."""
         conds: list[Any] = [
-            DialogClassification.organization_id == org_id,
+            DialogClassification.user_id == user_id,
             *self._window(DialogClassification.created_at, start, end_exclusive),
         ]
         if project_id is not None:
@@ -214,14 +214,14 @@ class AdminStatsRepository:
 
     async def edges_per_day(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
     ) -> list[tuple[datetime, int]]:
         """Return ``(day, count)`` graph-relationship rows in the window."""
-        params: dict[str, object] = {"org_id": str(org_id), "start": start}
-        edge_where = "WHERE organization_id = :org_id AND created_at >= :start"
+        params: dict[str, object] = {"user_id": str(user_id), "start": start}
+        edge_where = "WHERE user_id = :user_id AND created_at >= :start"
         if end_exclusive is not None:
             edge_where += " AND created_at < :end_exclusive"
             params["end_exclusive"] = end_exclusive
@@ -239,14 +239,14 @@ class AdminStatsRepository:
 
     async def count_episodes(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
     ) -> int:
         """Return windowed non-deleted episode count."""
         conds: list[Any] = [
-            Episode.organization_id == org_id,
+            Episode.user_id == user_id,
             Episode.is_deleted.is_(False),
             *self._window(Episode.created_at, start, end_exclusive),
         ]
@@ -256,14 +256,14 @@ class AdminStatsRepository:
 
     async def count_sessions(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
     ) -> int:
         """Return windowed non-deleted session count."""
         conds: list[Any] = [
-            Session.organization_id == org_id,
+            Session.user_id == user_id,
             Session.is_deleted.is_(False),
             *self._window(Session.created_at, start, end_exclusive),
         ]
@@ -273,14 +273,14 @@ class AdminStatsRepository:
 
     async def count_facts(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
     ) -> int:
         """Return windowed fact count."""
         conds: list[Any] = [
-            Fact.organization_id == org_id,
+            Fact.user_id == user_id,
             *self._window(Fact.created_at, start, end_exclusive),
         ]
         if project_id is not None:
@@ -289,14 +289,14 @@ class AdminStatsRepository:
 
     async def count_extractions(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
     ) -> int:
         """Return windowed extraction count (scoped via project join)."""
         conds: list[Any] = [
-            Project.organization_id == org_id,
+            Project.user_id == user_id,
             *self._window(StructuredExtraction.created_at, start, end_exclusive),
         ]
         if project_id is not None:
@@ -310,14 +310,14 @@ class AdminStatsRepository:
 
     async def count_observations(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
     ) -> int:
         """Return windowed observation count."""
         conds: list[Any] = [
-            GraphObservation.organization_id == org_id,
+            GraphObservation.user_id == user_id,
             *self._window(GraphObservation.created_at, start, end_exclusive),
         ]
         if project_id is not None:
@@ -328,14 +328,14 @@ class AdminStatsRepository:
 
     async def count_classifications(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
     ) -> int:
         """Return windowed classification count."""
         conds: list[Any] = [
-            DialogClassification.organization_id == org_id,
+            DialogClassification.user_id == user_id,
             *self._window(DialogClassification.created_at, start, end_exclusive),
         ]
         if project_id is not None:

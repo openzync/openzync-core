@@ -1,7 +1,8 @@
 """Create instance_settings table (missed in 0029).
 
 Revision ID: 0066
-Revises: 0065
+Revises: 0065 — runs immediately after 0065 (whose step 4
+guards on this table's absence — see 0065 header).
 
 The model (models/instance_settings.py) and repository
 (repositories/instance_settings_repository.py) predate this table — 0065

@@ -20,7 +20,7 @@ class CustomInstruction(TimestampMixin, Base):
 
     Attributes:
         id: UUID primary key, generated server-side.
-        organization_id: Foreign key to the owning organization.
+        user_id: Foreign key to the owning organization.
         scope: Instruction scope — ``extraction`` or ``user_summary``.
         target_id: Optional target entity UUID (e.g. user UUID for
             ``user_summary``).  ``NULL`` represents org-level instructions.
@@ -35,8 +35,8 @@ class CustomInstruction(TimestampMixin, Base):
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
     )
-    organization_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="CASCADE"),
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
     scope: Mapped[str] = mapped_column(String(50), nullable=False)

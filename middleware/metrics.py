@@ -9,7 +9,7 @@ Usage:
 
     # Increment in middleware or service code
     http_requests_total.labels(  # noqa: E501 - example
-        method="GET", path="/v1/users", status="200", org_id="anonymous"
+        method="GET", path="/v1/users", status="200", user_id="anonymous"
     ).inc()
 
 To expose the metrics, mount ``routers/metrics.py`` at ``GET /metrics``.
@@ -32,7 +32,7 @@ METRICS_REGISTRY = CollectorRegistry(auto_describe=False)
 http_requests_total = Counter(
     "openzync_http_requests_total",
     "Total HTTP requests processed.",
-    labelnames=["method", "path", "status", "org_id"],
+    labelnames=["method", "path", "status", "user_id"],
     registry=METRICS_REGISTRY,
 )
 
@@ -40,7 +40,7 @@ http_requests_total = Counter(
 http_errors_total = Counter(
     "openzync_http_errors_total",
     "Total HTTP 5xx errors.",
-    labelnames=["method", "path", "org_id"],
+    labelnames=["method", "path", "user_id"],
     registry=METRICS_REGISTRY,
 )
 
@@ -48,7 +48,7 @@ http_errors_total = Counter(
 http_request_duration_seconds = Histogram(
     "openzync_http_request_duration_seconds",
     "HTTP request latency in seconds.",
-    labelnames=["method", "path", "org_id"],
+    labelnames=["method", "path", "user_id"],
     buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
     registry=METRICS_REGISTRY,
 )
@@ -75,7 +75,7 @@ http_request_size_bytes = Histogram(
 context_latency_seconds = Histogram(
     "openzync_context_latency_seconds",
     "Context assembly latency. ``type`` distinguishes cold (miss) vs warm (hit).",
-    labelnames=["type", "org_id"],  # "cold" | "warm" + org
+    labelnames=["type", "user_id"],  # "cold" | "warm" + org
     buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
     registry=METRICS_REGISTRY,
 )
@@ -83,7 +83,7 @@ context_latency_seconds = Histogram(
 graph_search_latency_seconds = Histogram(
     "openzync_graph_search_latency_seconds",
     "Hybrid graph+vector+BM25 search latency in seconds.",
-    labelnames=["org_id"],
+    labelnames=["user_id"],
     buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
     registry=METRICS_REGISTRY,
 )
@@ -145,7 +145,7 @@ class MetricsMiddleware:
         self.app = app
 
     async def __call__(self, scope: dict, receive: callable, send: callable) -> None:
-        """Record RED metrics for each HTTP request, labeled by org_id."""
+        """Record RED metrics for each HTTP request, labeled by user_id."""
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -178,20 +178,20 @@ class MetricsMiddleware:
             duration = time.monotonic() - start
             http_requests_in_progress.labels(method=method).dec()
 
-            org_id = (scope.get("state") or {}).get("org_id") or "anonymous"
-            org_id = str(org_id)
+            user_id = (scope.get("state") or {}).get("user_id") or "anonymous"
+            user_id = str(user_id)
             status_group = f"{status_code // 100}xx"
             http_requests_total.labels(
-                method=method, path=path_template, status=status_group, org_id=org_id
+                method=method, path=path_template, status=status_group, user_id=user_id
             ).inc()
 
             if status_code >= 500:
                 http_errors_total.labels(
-                    method=method, path=path_template, org_id=org_id
+                    method=method, path=path_template, user_id=user_id
                 ).inc()
 
             # Only record duration for non-WebSocket upgrades
             if scope.get("type") == "http":
                 http_request_duration_seconds.labels(
-                    method=method, path=path_template, org_id=org_id
+                    method=method, path=path_template, user_id=user_id
                 ).observe(duration)

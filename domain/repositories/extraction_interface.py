@@ -15,7 +15,7 @@ class ExtractionRepository(Protocol):
 
     async def get_by_session(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         *,
         sort_by: str,
@@ -29,7 +29,7 @@ class ExtractionRepository(Protocol):
 
     async def count_for_session(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         project_id: UUID | None = None,
     ) -> int:

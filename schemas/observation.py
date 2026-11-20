@@ -20,7 +20,7 @@ class ObservationResponse(BaseModel):
 
     Attributes:
         id: UUID primary key.
-        organization_id: Owning organization (RLS enforcement).
+        user_id: Owning organization (RLS enforcement).
         project_id: Owning project (project-scoped isolation).
         subject_entity_id: The entity this observation is about.
         related_entity_id: For pair-level observations (e.g., co-occurrence),
@@ -40,7 +40,7 @@ class ObservationResponse(BaseModel):
     """
 
     id: UUID = Field(..., description="UUID primary key.")
-    organization_id: UUID = Field(..., description="Owning organization.")
+    user_id: UUID = Field(..., description="Owning organization.")
     project_id: UUID = Field(..., description="Owning project.")
     subject_entity_id: UUID = Field(
         ..., description="The entity this observation is about.",

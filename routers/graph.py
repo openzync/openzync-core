@@ -101,11 +101,11 @@ async def list_graph_nodes(
     service: GraphService = Depends(get_graph_service),
 ) -> GraphNodesListResponse:
     """List entity nodes with optional type filter and cursor pagination."""
-    org_id = UUID(request.state.org_id)
+    user_id = UUID(request.state.user_id)
     project_id = UUID(request.path_params["project_id"])
 
     result = await service.get_entities(
-        org_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         entity_type=entity_type,
         session_id=session_id,
@@ -149,11 +149,11 @@ async def get_graph_node(
     service: GraphService = Depends(get_graph_service),
 ) -> GraphNodeDetailResponse:
     """Get a single entity node with all its incident edges."""
-    org_id = UUID(request.state.org_id)
+    user_id = UUID(request.state.user_id)
     project_id = UUID(request.path_params["project_id"])
 
     result = await service.get_entity(
-        org_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         entity_id=node_id,
     )
@@ -193,18 +193,18 @@ async def delete_graph_node(
     service: GraphService = Depends(get_graph_service),
 ) -> Response:
     """Delete an entity node from the knowledge graph."""
-    org_id = UUID(request.state.org_id)
+    user_id = UUID(request.state.user_id)
     project_id = UUID(request.path_params["project_id"])
 
     deleted = await service.delete_entity(
-        org_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         entity_id=node_id,
     )
     if not deleted:
         raise NotFoundError(
             message=f"Entity {node_id} not found in the knowledge graph.",
-            detail={"entity_id": str(node_id), "org_id": str(org_id)},
+            detail={"entity_id": str(node_id), "user_id": str(user_id)},
         )
     return Response(status_code=204)
 
@@ -266,7 +266,7 @@ async def list_graph_edges(
     service: GraphService = Depends(get_graph_service),
 ) -> GraphEdgesListResponse:
     """List relationship edges with optional predicate filtering."""
-    org_id = UUID(request.state.org_id)
+    user_id = UUID(request.state.user_id)
     project_id = UUID(request.path_params["project_id"])
 
     if subject_id is None and subject_ids is None:
@@ -293,7 +293,7 @@ async def list_graph_edges(
             )
 
     result = await service.get_edges(
-        org_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         subject_id=subject_id,
         subject_ids=parsed_ids,
@@ -345,11 +345,11 @@ async def list_communities(
     service: GraphService = Depends(get_graph_service),
 ) -> GraphCommunitiesListResponse:
     """List community summary nodes."""
-    org_id = UUID(request.state.org_id)
+    user_id = UUID(request.state.user_id)
     project_id = UUID(request.path_params["project_id"])
 
     communities = await service.get_communities(
-        org_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )

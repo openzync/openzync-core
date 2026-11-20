@@ -31,7 +31,8 @@ irreversible (pre-merge org attribution is not recoverable).  Step 2 is
 batched (10k rows per statement) with per-table row-count notices.
 
 Revision ID: 0065
-Revises: 0064
+Revises: 0064 — runs immediately before 0066 (which creates
+``instance_settings``; step 4 guards on its absence — see 0066 header).
 """
 
 from __future__ import annotations
@@ -169,6 +170,8 @@ def upgrade() -> None:
     )
 
     # ── 2. Remap every org-scoped FK to the survivor ────────────────────
+    # ``audit_logs.organization_id`` is nullable — logged-out rows (NULL) fail
+    # the ``<>`` comparison and stay NULL, never remapped (still invisible via RLS).
     # Batched (10k rows per UPDATE) with per-table row-count notices:
     # one giant UPDATE would hold every row lock to commit and bloat the
     # single transaction on large tenants tables (episodes, facts).

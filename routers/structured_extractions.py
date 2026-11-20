@@ -87,10 +87,10 @@ async def list_structured_extractions(
     by the ``extract_structured`` worker yet, or if no structured schemas
     are configured for the organization.
     """
-    org_id = UUID(request.state.org_id)
+    user_id = UUID(request.state.user_id)
     project_id = UUID(request.path_params["project_id"])
     items, next_cursor = await service.get_session_extractions(
-        org_id=org_id,
+        user_id=user_id,
         session_id=session_id,
         project_id=project_id,
         sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
@@ -98,7 +98,7 @@ async def list_structured_extractions(
         cursor=cursor,
     )
     total = await service.count_extractions_for_session(
-        org_id=org_id,
+        user_id=user_id,
         session_id=session_id,
         project_id=project_id,
     )
@@ -129,10 +129,10 @@ async def get_episode_extraction(
     Returns 404 if the episode has not been processed yet or no matching
     extraction exists.
     """
-    org_id = UUID(request.state.org_id)
+    user_id = UUID(request.state.user_id)
     project_id = UUID(request.path_params["project_id"])
     result = await service.get_episode_extraction(
-        org_id=org_id,
+        user_id=user_id,
         session_id=session_id,
         episode_id=episode_id,
         project_id=project_id,

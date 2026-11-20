@@ -218,9 +218,9 @@ def with_task_metrics(func: Callable[F, T]) -> Callable[F, T]:
 
         if isinstance(ctx, dict):
             ctx["task_type"] = func.__name__
-            org_id = params.get("org_id") or params.get("organization_id")
-            if org_id:
-                ctx["org_id"] = str(org_id)
+            user_id = params.get("user_id") or params.get("user_id")
+            if user_id:
+                ctx["user_id"] = str(user_id)
             trace_id = params.get("trace_id")
             if trace_id:
                 ctx["trace_id"] = str(trace_id)

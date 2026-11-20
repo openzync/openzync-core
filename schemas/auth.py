@@ -77,39 +77,6 @@ class JoinRequest(BaseModel):
     )
 
 
-class OrgCodeResponse(BaseModel):
-    """Response body for org-code admin endpoints.
-
-    Returned by ``GET /admin/org/org-code``,
-    ``PATCH /admin/org/org-code`` and
-    ``POST /admin/org/org-code/regenerate``.
-    """
-
-    org_code: str = Field(
-        ...,
-        description="The organization's current join code.",
-        examples=["K7M2Q9X4"],
-    )
-    join_enabled: bool = Field(
-        ...,
-        description="Whether the org accepts new members via org-code join.",
-        examples=[True],
-    )
-
-
-class UpdateOrgJoinRequest(BaseModel):
-    """Request body for ``PATCH /admin/org/org-code``.
-
-    Toggles org-code self-registration for the organization.  The field is
-    mandatory — a missing ``join_enabled`` fails with 422.
-    """
-
-    join_enabled: bool = Field(
-        ...,
-        description="Whether the org accepts new members via org-code join.",
-        examples=[False],
-    )
-
 class SignupResponse(BaseModel):
     """Response body for ``POST /v1/auth/signup``.
 
@@ -392,9 +359,9 @@ class InviteInfoResponse(BaseModel):
 
     Shown on the invite landing page before the invitee sets a password.
     Contains no secrets — safe to return for any valid (unexpired) token.
+    # ⚠️ BREAKING (0069): ``org_name`` removed — no orgs in the user model.
     """
 
-    org_name: str = Field(..., description="Inviting organization's name.")
     email: EmailStr = Field(..., description="Invitee email address.")
     name: str = Field(..., description="Invitee display name.")
 
@@ -430,7 +397,7 @@ class DashboardUserResponse(BaseModel):
     email: str = Field(..., description="Email address.")
     name: str | None = Field(default=None, description="Display name.")
     role: str = Field(default="member", description="User role.")
-    organization_id: UUID = Field(..., description="Owning organization ID.")
+    user_id: UUID = Field(..., description="Owner user UUID (self-ID).")
     is_email_verified: bool = Field(
         default=False,
         description="Whether the user's email has been verified.",

@@ -4,8 +4,8 @@ Canonical paths: ``GET`` / ``PATCH /v1/me/config`` (routers/me.py).
 The former ``/v1/auth/me/config`` alias was removed (BREAKING) — no
 compat shims are kept.
 
-A user override is a partial config dict layered over the platform org
-config — user keys win.  Only keys present in the override apply; the
+A user override is a partial config dict layered over the platform
+system config — user keys win. Only keys present in the override apply; the
 effective config is resolved by
 ``services.user_config_service.get_effective_config``.
 """
@@ -21,7 +21,8 @@ class UserConfigUpdate(BaseModel):
     """Request body for ``PATCH /v1/me/config``.
 
     Partial deep-merge onto the stored override: provided keys override,
-    ``None`` values remove the key.  Unknown keys are rejected.
+    ``None`` removes that top-level key (nested removal is not supported).
+    Unknown keys are rejected.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -37,7 +38,7 @@ class UserConfigResponse(BaseModel):
 
     Attributes:
         override: Only the keys the user explicitly set.
-        effective: The merged ``user ⊕ org ⊕ system`` view actually applied.
+        effective: The merged ``user ⊕ system`` view actually applied.
     """
 
     override: dict[str, Any] = Field(
@@ -46,5 +47,5 @@ class UserConfigResponse(BaseModel):
     )
     effective: dict[str, Any] = Field(
         default_factory=dict,
-        description="Merged user ⊕ org ⊕ system config actually applied.",
+        description="Merged user ⊕ system config actually applied.",
     )

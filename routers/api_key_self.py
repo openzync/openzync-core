@@ -7,7 +7,7 @@ their project context without the caller passing it explicitly.
 
 from fastapi import APIRouter, Depends, Request
 
-from dependencies.auth import require_org_id
+from dependencies.auth import require_user_id
 
 router = APIRouter(prefix="/v1/api-key", tags=["API Key Self"])
 
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/v1/api-key", tags=["API Key Self"])
 @router.get("/project-id")
 async def get_api_key_project_id(
     request: Request,
-    _: None = Depends(require_org_id),
+    _: None = Depends(require_user_id),
 ) -> dict:
     """Return the project_id scoped to the authenticating API key.
 

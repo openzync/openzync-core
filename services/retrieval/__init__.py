@@ -52,14 +52,14 @@ class HybridRetriever(
 
     Args:
         db: An async SQLAlchemy session (request-scoped).
-        org_id: The authenticated organization UUID for tenant isolation.
+        user_id: The authenticated organization UUID for tenant isolation.
         redis: Optional async Redis client for result caching.
     """
 
     def __init__(
         self,
         db: AsyncSession,
-        org_id: UUID,
+        user_id: UUID,
         redis: object | None = None,
         graph_backends: list[GraphBackend] | None = None,
         org_config: OrgConfigBase | None = None,
@@ -67,7 +67,7 @@ class HybridRetriever(
         session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
         self._db = db
-        self._org_id = org_id
+        self._org_id = user_id
         self._redis = redis
         self._graph_backends = graph_backends or []
         self._org_config = org_config
@@ -174,7 +174,7 @@ class HybridRetriever(
             logger.warning(
                 "hybrid_retriever.embedding_degraded",
                 extra={
-                    "org_id": str(self._org_id),
+                    "user_id": str(self._org_id),
                     "project_id": str(project_id),
                     "error": str(exc),
                 },
@@ -200,7 +200,7 @@ class HybridRetriever(
                     "hybrid_retriever.leg_degraded",
                     extra={
                         "leg": leg_name,
-                        "org_id": str(self._org_id),
+                        "user_id": str(self._org_id),
                         "project_id": str(project_id),
                         "error": str(exc),
                     },
@@ -302,7 +302,7 @@ class HybridRetriever(
             query, merged_episodes, merged_facts, sort, failed_legs
         )
 
-        graph_search_latency_seconds.labels(org_id=str(self._org_id)).observe(
+        graph_search_latency_seconds.labels(user_id=str(self._org_id)).observe(
             time.monotonic() - _search_start
         )
 

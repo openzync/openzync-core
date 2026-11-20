@@ -6,7 +6,7 @@ Cursor pagination uses ``sequence_number`` for deterministic ordering.
 
 Key patterns:
 - ``batch_create`` uses raw ``INSERT ... RETURNING`` SQL because the ORM
-  model does not yet map ``organization_id`` as a column (the column exists
+  model does not yet map ``user_id`` as a column (the column exists
   in the schema via migration 0001, but the model mixin is pending).
 - All list queries use LIMIT + 1 to detect ``has_more`` without a COUNT.
 - Cursor encoding uses ``{sequence_number}|{episode_id_hex}``, base64.
@@ -34,7 +34,7 @@ from models.episode import Episode
 class EpisodeRepository:
     """All database access for episodes (messages).
 
-    Every method accepts ``organization_id`` to enforce tenant isolation.
+    Every method accepts ``user_id`` to enforce tenant isolation.
     No business logic — pure query construction and execution.
 
     Args:
@@ -48,7 +48,7 @@ class EpisodeRepository:
 
     async def batch_create(
         self,
-        organization_id: UUID,
+
         project_id: UUID,
         session_id: UUID,
         user_id: UUID,
@@ -57,7 +57,7 @@ class EpisodeRepository:
     ) -> list[Episode]:
         """Insert multiple episodes in a single round-trip with RETURNING.
 
-        Uses raw SQL to include ``organization_id`` and ``project_id``
+        Uses raw SQL to include ``user_id`` and ``project_id``
         (the schema requires them for RLS and project isolation).
 
         Sequence numbers are server-assigned as ``start_seq + i``
@@ -68,7 +68,7 @@ class EpisodeRepository:
         ``ORDER BY seq, id``.
 
         Args:
-            organization_id: Tenant scope (included for RLS enforcement).
+
             project_id: Project scope (included for project isolation).
             session_id: The parent session's UUID.
             user_id: The creating user's UUID.
@@ -97,7 +97,7 @@ class EpisodeRepository:
             seq = start_seq + i
 
             params[f"id_{i}"] = episode_id
-            params[f"org_id_{i}"] = organization_id
+            params[f"org_id_{i}"] = user_id
             params[f"project_id_{i}"] = project_id
             params[f"session_id_{i}"] = session_id
             params[f"user_id_{i}"] = user_id
@@ -117,12 +117,12 @@ class EpisodeRepository:
         stmt = text(
             f"""
             INSERT INTO episodes (
-                id, organization_id, project_id, session_id, user_id,
+                id, user_id, project_id, session_id, user_id,
                 role, content, metadata, created_at, sequence_number
             )
             VALUES {', '.join(values)}
             RETURNING
-                id, organization_id, session_id, user_id,
+                id, user_id, session_id, user_id,
                 role, content, metadata, embedding, token_count,
                 sequence_number, enrichment_status, is_deleted,
                 created_at, updated_at
@@ -138,7 +138,7 @@ class EpisodeRepository:
             mapping = row._mapping  # type: ignore[attr-defined]
             episode = Episode(
                 id=mapping["id"],
-                organization_id=mapping["organization_id"],
+
                 session_id=mapping["session_id"],
                 user_id=mapping["user_id"],
                 role=mapping["role"],
@@ -303,13 +303,13 @@ class EpisodeRepository:
     # ── Batch Content Fetch ─────────────────────────────────────────────────
 
     async def get_content_batch(
-        self, episode_ids: list[UUID], org_id: UUID | None = None
+        self, episode_ids: list[UUID], user_id: UUID | None = None
     ) -> dict[UUID, tuple[str, str]]:
         """Fetch ``(content, role)`` for a batch of episode IDs.
 
         Args:
             episode_ids: List of episode UUIDs to fetch content for.
-            org_id: Optional tenant UUID for defense-in-depth filtering.
+            user_id: Optional tenant UUID for defense-in-depth filtering.
 
         Returns:
             Dict mapping ``{episode_id: (content, role)}``.
@@ -321,8 +321,8 @@ class EpisodeRepository:
         query = select(Episode.id, Episode.content, Episode.role).where(
             Episode.id.in_(episode_ids), Episode.is_deleted.is_(False)
         )
-        if org_id is not None:
-            query = query.where(Episode.organization_id == org_id)
+        if user_id is not None:
+            query = query.where(Episode.user_id == user_id)
 
         result = await self._db.execute(query)
         return {row.id: (row.content, row.role) for row in result.all()}
@@ -415,17 +415,17 @@ class EpisodeRepository:
     # ── Soft Delete by User ──────────────────────────────────────────────────
 
     async def soft_delete_by_project(
-        self, project_id: UUID, organization_id: UUID
+        self, project_id: UUID, user_id: UUID
     ) -> int:
         """Soft-delete all episodes for a project.
 
         Sets ``is_deleted = True`` and ``updated_at = now()`` for every
-        episode belonging to the project. The ``organization_id`` predicate
+        episode belonging to the project. The ``user_id`` predicate
         is defense-in-depth alongside the service-layer org gate.
 
         Args:
             project_id: The project's UUID.
-            organization_id: Tenant scope — only rows in this org are touched.
+            user_id: Tenant scope — only rows in this org are touched.
 
         Returns:
             Number of episodes soft-deleted.
@@ -434,17 +434,17 @@ class EpisodeRepository:
             text(
                 "UPDATE episodes SET is_deleted = true, updated_at = now() "
                 "WHERE project_id = :project_id "
-                "AND organization_id = :organization_id "
+                "AND user_id = :user_id "
                 "AND is_deleted = false"
             ),
-            {"project_id": project_id, "organization_id": organization_id},
+            {"project_id": project_id, "user_id": user_id},
         )
         return result.rowcount  # type: ignore[return-value]
 
     # ── Vector Search ─────────────────────────────────────────────────────────
 
     async def search_by_vector(
-        self, embedding: list[float], project_id: UUID, org_id: UUID, limit: int = 50
+        self, embedding: list[float], project_id: UUID, user_id: UUID, limit: int = 50
     ) -> list[dict[str, Any]]:
         """Search episodes by vector similarity (pgvector cosine distance).
 
@@ -454,7 +454,7 @@ class EpisodeRepository:
         Args:
             embedding: The query embedding vector.
             project_id: Scope results to this project.
-            org_id: Tenant scope for multi-tenant isolation.
+            user_id: Tenant scope for multi-tenant isolation.
             limit: Maximum results (capped at 200).
 
         Returns:
@@ -469,7 +469,7 @@ class EpisodeRepository:
                        1 - (embedding <=> :embedding) AS score
                 FROM episodes
                 WHERE project_id = :project_id
-                  AND organization_id = :org_id
+                  AND user_id = :user_id
                   AND is_deleted = false
                   AND embedding IS NOT NULL
                 ORDER BY embedding <=> :embedding
@@ -479,7 +479,7 @@ class EpisodeRepository:
             {
                 "embedding": embedding,
                 "project_id": project_id,
-                "org_id": org_id,
+                "user_id": user_id,
                 "limit": effective_limit,
             },
         )
@@ -497,7 +497,7 @@ class EpisodeRepository:
     # ── BM25 Full-Text Search ─────────────────────────────────────────────────
 
     async def search_by_bm25(
-        self, query: str, project_id: UUID, org_id: UUID, limit: int = 50
+        self, query: str, project_id: UUID, user_id: UUID, limit: int = 50
     ) -> list[dict[str, Any]]:
         """Search episodes by BM25 full-text (PostgreSQL ``ts_rank``).
 
@@ -507,7 +507,7 @@ class EpisodeRepository:
         Args:
             query: Raw search text (no special syntax needed).
             project_id: Scope results to this project.
-            org_id: Tenant scope for multi-tenant isolation.
+            user_id: Tenant scope for multi-tenant isolation.
             limit: Maximum results (capped at 200).
 
         Returns:
@@ -525,7 +525,7 @@ class EpisodeRepository:
                        ) AS score
                 FROM episodes
                 WHERE project_id = :project_id
-                  AND organization_id = :org_id
+                  AND user_id = :user_id
                   AND is_deleted = false
                   AND to_tsvector('english', content)
                       @@ plainto_tsquery('english', :query)
@@ -533,7 +533,7 @@ class EpisodeRepository:
                 LIMIT :limit
                 """
             ),
-            {"query": query, "project_id": project_id, "org_id": org_id, "limit": effective_limit},
+            {"query": query, "project_id": project_id, "user_id": user_id, "limit": effective_limit},
         )
         return [
             {

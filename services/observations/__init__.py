@@ -94,7 +94,7 @@ class ObservationService(DetectionMixin, DescriptionMixin, PersistenceMixin):
     async def run_full_project_scan(
         self,
         project_id: UUID,
-        organization_id: UUID,
+        user_id: UUID,
         llm_backend: Any | None = None,
     ) -> dict[str, int]:
         """Run all detection algorithms and persist observations.
@@ -109,7 +109,7 @@ class ObservationService(DetectionMixin, DescriptionMixin, PersistenceMixin):
 
         Args:
             project_id: Project scope.
-            organization_id: Organization scope (for RLS).
+            user_id: Organization scope (for RLS).
             llm_backend: Optional LLM backend for content generation.
                 If ``None``, template-based descriptions are used.
 
@@ -128,15 +128,15 @@ class ObservationService(DetectionMixin, DescriptionMixin, PersistenceMixin):
         # A graph-timeout here must not abort temporal/behavioral
         # detection — record zero and continue.
         try:
-            co_pairs = await self.detect_co_occurrences(project_id, organization_id)
+            co_pairs = await self.detect_co_occurrences(project_id, user_id)
             count = await self._persist_co_occurrences(
-                co_pairs, project_id, organization_id, llm_backend,
+                co_pairs, project_id, user_id, llm_backend,
             )
         except ExternalServiceError as exc:
             logger.warning(
                 "observation_service.co_occurrences_skipped",
                 project_id=str(project_id),
-                organization_id=str(organization_id),
+
                 min_co_count=self._min_co_count,
                 error=str(exc),
             )
@@ -150,10 +150,10 @@ class ObservationService(DetectionMixin, DescriptionMixin, PersistenceMixin):
 
         # ── 2. Temporal gaps ──────────────────────────────────────────────────
         temporal_patterns = await self.detect_temporal_gaps(
-            project_id, organization_id,
+            project_id, user_id,
         )
         count = await self._persist_temporal_patterns(
-            temporal_patterns, project_id, organization_id, llm_backend,
+            temporal_patterns, project_id, user_id, llm_backend,
         )
         counts[str(ObservationType.TEMPORAL_PATTERN)] = count
         logger.info(
@@ -164,10 +164,10 @@ class ObservationService(DetectionMixin, DescriptionMixin, PersistenceMixin):
 
         # ── 3. Behavioral patterns ────────────────────────────────────────────
         behavioral_patterns = await self.detect_behavioral_patterns(
-            project_id, organization_id,
+            project_id, user_id,
         )
         count = await self._persist_behavioral_patterns(
-            behavioral_patterns, project_id, organization_id, llm_backend,
+            behavioral_patterns, project_id, user_id, llm_backend,
         )
         counts[str(ObservationType.BEHAVIORAL_PATTERN)] = count
         logger.info(

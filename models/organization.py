@@ -1,8 +1,8 @@
-"""Organization model — top-level tenant entity.
+"""Organization model — inert legacy tenant entity (dropped in 0070).
 
-Each organization owns users, API keys, extraction schemas, and org settings.
-Isolation between organizations is enforced via RLS policies keyed on
-``organization_id`` throughout the schema.
+Kept only so the ``organizations`` table stays mapped until migration
+0070 drops it.  No new code may reference this model — ownership is
+user-scoped (RLS ``user_isolation`` policies keyed on ``user_id``).
 """
 
 import uuid
@@ -17,6 +17,11 @@ from models.base import Base, TimestampMixin
 
 class Organization(TimestampMixin, Base):
     """A tenant organization in the OpenZync platform.
+
+    Single platform org — there is no ``DELETE /organizations`` endpoint
+    and no service-layer delete; all ``organizations.id`` FKs are
+    ``ON DELETE RESTRICT`` so a stray SQL delete fails loudly instead of
+    wiping tenant rows.
 
     Attributes:
         id: UUID primary key, generated server-side via gen_random_uuid().
@@ -86,9 +91,12 @@ class Organization(TimestampMixin, Base):
     org_code: Mapped[str] = mapped_column(
         String(24),
         nullable=False,
-        comment="Join code for POST /v1/auth/join — plaintext by product decision.",
+        comment="Legacy join-code column (self-registration removed; admin toggle deleted). Plaintext by product decision.",
     )
-    # Org-code self-registration toggle — False ⇒ POST /v1/auth/join returns 403.
+    # Legacy self-registration toggle — the admin GET/PATCH endpoints were
+    # removed (the gate was inert: signup/join consult registration_mode,
+    # never this flag).  Column retained for the NOT NULL constraint;
+    # always FALSE on the platform row.
     join_enabled: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

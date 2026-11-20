@@ -1,11 +1,14 @@
-"""Admin REST API for per-organization configuration.
+"""Admin REST API for per-user configuration.
 
 Endpoints allow dashboard users and API keys with ``admin:write`` scope to
 read and update UI-exposed settings (LLM, embeddings, graph, behaviour)
 that were previously env-var-only.
 
-All endpoints are scoped to the authenticated organization — an admin can
-only manage their own org's config.
+All endpoints are scoped to the authenticated user — an admin can
+only manage their own config.
+
+NOTE: the ``/admin/org/config`` prefix and ``OrgConfig*`` class names are
+legacy (pre-0070 org scoping) kept for API compat — scope is per-user.
 """
 
 from __future__ import annotations
@@ -52,7 +55,7 @@ def _get_system_managed_fields() -> list[str]:
     """Return field names that are locked at the system level.
 
     Checks the global Settings instance.  When a backend's URL is set at
-    the system level, all corresponding per-org config fields are blocked.
+    the system level, all corresponding per-user config fields are blocked.
     """
     settings = get_settings()
     fields: list[str] = []
@@ -98,20 +101,20 @@ def _get_connection_service(
     return OrgConfigConnectionService(bao_client=bao_client, redis=redis)
 
 
-#: Max config-test probes per org per window (fail-open on Redis errors).
+#: Max config-test probes per user per window (fail-open on Redis errors).
 _TEST_THROTTLE_LIMIT = 10
 _TEST_THROTTLE_WINDOW_S = 60
 
 
-async def _check_config_test_throttle(redis: Any | None, org_id: str) -> None:
-    """Enforce a per-org fixed-window throttle (~10/min) for config tests.
+async def _check_config_test_throttle(redis: Any | None, user_id: str) -> None:
+    """Enforce a per-user fixed-window throttle (~10/min) for config tests.
 
     Fail-open on Redis errors — throttling is protective, not load-bearing.
     Exceeding the allowance raises :class:`RateLimitError` (HTTP 429).
     """
     if redis is None:
         return
-    key = f"org_config:test:{org_id}"
+    key = f"user_config:test:{user_id}"
     try:
         count = await redis.incr(key)
         if count == 1:
@@ -119,7 +122,7 @@ async def _check_config_test_throttle(redis: Any | None, org_id: str) -> None:
     except Exception:
         logger.error(
             "org_config.test_throttle_failed",
-            extra={"org_id": org_id},
+            extra={"user_id": user_id},
             exc_info=True,
         )
         return
@@ -143,11 +146,13 @@ async def _check_config_test_throttle(redis: Any | None, org_id: str) -> None:
     response_model=UpdateOrgConfigRequest,
 )
 async def get_org_config_defaults() -> UpdateOrgConfigRequest:
-    """Return seeded onboarding defaults for a new organization.
+    """Return seeded onboarding defaults for a new user.
 
     These are **not** the stored config — they are starter values for the
     onboarding form.  The user reviews and adjusts them before saving via
     ``PATCH /admin/org/config``.
+    Empty-string secrets are intentional (frontend treats "" as unset —
+    the user MUST fill them in; never persist the placeholder).
 
     No auth required — this endpoint returns only non-sensitive defaults.
     Secrets such as ``openai_api_key`` are returned as empty strings so
@@ -170,10 +175,10 @@ async def get_org_config_defaults() -> UpdateOrgConfigRequest:
     response_model=OrgConfigResponse,
 )
 async def get_org_config(
-    _org_id: str = Depends(require_permission("configuration:read")),
+    _user_id: str = Depends(require_permission("configuration:read")),
     service: OrgConfigService = Depends(_get_config_service),
 ) -> OrgConfigResponse:
-    """Get the stored configuration for the current organization.
+    """Get the stored configuration for the current user.
 
     Returns only the fields explicitly set in the DB.  Unset fields are
     ``null`` — there is no env-var fallback.
@@ -181,7 +186,7 @@ async def get_org_config(
     Permission-gated (``require_permission("configuration:read")``): the
     response contains unmasked secrets, so members and API keys are denied.
     """
-    response = await service.get_config_response(UUID(_org_id))
+    response = await service.get_config_response(UUID(_user_id))
     response.system_managed_fields = _get_system_managed_fields()
     return response
 
@@ -198,10 +203,10 @@ async def get_org_config(
 @audit_action("config.update", "config", "Configuration updated")
 async def update_org_config(
     body: UpdateOrgConfigRequest,
-    _org_id: str = Depends(require_permission("configuration:write")),
+    _user_id: str = Depends(require_permission("configuration:write")),
     service: OrgConfigService = Depends(_get_config_service),
 ) -> OrgConfigBase:
-    """Partially update the organization's configuration.
+    """Partially update the user's configuration.
 
     Only fields explicitly provided in the request body are updated.
     Set a field to ``null`` to remove it from the stored config (it
@@ -226,7 +231,7 @@ async def update_org_config(
                     f"{', '.join(sorted(overridden))}."
                 ),
             )
-    return await service.update_config(UUID(_org_id), body)
+    return await service.update_config(UUID(_user_id), body)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -241,10 +246,10 @@ async def update_org_config(
 @audit_action("config.update", "config", "Configuration updated")
 async def replace_org_config(
     body: UpdateOrgConfigRequest,
-    _org_id: str = Depends(require_permission("configuration:write")),
+    _user_id: str = Depends(require_permission("configuration:write")),
     service: OrgConfigService = Depends(_get_config_service),
 ) -> OrgConfigBase:
-    """Replace the entire organization configuration.
+    """Replace the entire user configuration.
 
     Every field is stored as provided.  Fields set to ``null`` are stored
     as ``null``.  Fields not included in the request body are **removed**
@@ -272,7 +277,7 @@ async def replace_org_config(
                     f"{', '.join(sorted(overridden))}."
                 ),
             )
-    return await service.update_config(UUID(_org_id), body)
+    return await service.update_config(UUID(_user_id), body)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -288,7 +293,7 @@ async def replace_org_config(
 async def test_org_config(
     body: TestOrgConfigRequest,
     request: Request,
-    _org_id: str = Depends(require_permission("configuration:write")),  # noqa: B008
+    _user_id: str = Depends(require_permission("configuration:write")),  # noqa: B008
     service: OrgConfigConnectionService = Depends(  # noqa: B008
         _get_connection_service
     ),
@@ -304,15 +309,17 @@ async def test_org_config(
     payloads (422) or a down secrets backend (503) change the status code.
 
     Requires ``configuration:write``.  Throttled to ~10 requests/min
-    per org.  The candidate and probe details carry no secrets beyond
+    per user.  The candidate and probe details carry no secrets beyond
     action metadata in the audit log.
     """
     from repositories.user_repository import UserRepository
 
     redis = getattr(request.app.state, "redis", None)
-    await _check_config_test_throttle(redis, _org_id)
+    await _check_config_test_throttle(redis, _user_id)
     candidate = body.config
     if as_user is not None:
+        # Single-call probe path — direct repo read is intentional (no
+        # service round-trip); the candidate merge below is in-memory only.
         override = await UserRepository(db).get_config_override(as_user)
         if override:
             from schemas.organization_config import UpdateOrgConfigRequest
@@ -320,7 +327,7 @@ async def test_org_config(
             merged = {**override, **candidate.model_dump(exclude_unset=True)}
             candidate = UpdateOrgConfigRequest(**merged)
     try:
-        return await service.test_connections(UUID(_org_id), body.domain, candidate)
+        return await service.test_connections(UUID(_user_id), body.domain, candidate)
     except OpenBaoError as exc:
         raise HTTPException(
             status_code=503,

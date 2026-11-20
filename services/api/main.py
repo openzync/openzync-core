@@ -50,8 +50,8 @@ from routers import (
     admin_invites,
     admin_llm_usage,
     admin_metrics,
-    admin_org_code,
     admin_org_config,
+    admin_schemas,
     admin_organizations,
     admin_quick_actions,
     admin_schemas,
@@ -330,9 +330,9 @@ def create_app() -> FastAPI:
     #   1. CORSMiddleware
     #   1. LoggingMiddleware
     #   2. TracingMiddleware
-    #   3. AuthMiddleware       — sets org_id
-    #   4. MetricsMiddleware    — reads org_id (moved inside Auth to be org-scoped)
-    #   5. RateLimitMiddleware  — reads org_id
+    #   3. AuthMiddleware       — sets user_id
+    #   4. MetricsMiddleware    — reads user_id (moved inside Auth to be org-scoped)
+    #   5. RateLimitMiddleware  — reads user_id
     #   6. AuditMiddleware
     #   7. GZipMiddleware
     #   8. TrustedHostMiddleware
@@ -378,13 +378,13 @@ def create_app() -> FastAPI:
     app.add_middleware(AuditMiddleware)
 
     # Runtime 5 — Rate limiting: registered BEFORE Auth so it runs AFTER Auth,
-    # giving it access to scope["state"]["org_id"] set by AuthMiddleware.
+    # giving it access to scope["state"]["user_id"] set by AuthMiddleware.
     # (Registered later = executes earlier; see LIFO note above.)
     app.add_middleware(RateLimitMiddleware)
 
     # Runtime 4 — Metrics: registered BEFORE Auth so it runs AFTER Auth,
-    # giving it access to org_id for org-scoped RED metrics.
-    # (Moved inside Auth — previously outermost, could not see org_id.)
+    # giving it access to user_id for org-scoped RED metrics.
+    # (Moved inside Auth — previously outermost, could not see user_id.)
     app.add_middleware(MetricsMiddleware)
 
     # Runtime 3 — Auth: extract/validate JWT & API key, set request state.
@@ -429,7 +429,6 @@ def create_app() -> FastAPI:
     app.include_router(admin_webhooks.router)
     app.include_router(admin_organizations.router)
     app.include_router(admin_org_config.router)
-    app.include_router(admin_org_code.router)
     app.include_router(admin_invites.router)
     app.include_router(admin_system.router)
     app.include_router(audit_log.router)

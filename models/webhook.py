@@ -20,7 +20,7 @@ class WebhookEndpoint(TimestampMixin, Base):
 
     Attributes:
         id: UUID primary key.
-        organization_id: Foreign key to the owning organization.
+        user_id: Foreign key to the owning user.
         name: Human-readable label (e.g. "Production Slack").
         url: HTTPS endpoint URL that receives POST requests.
         events: JSON array of subscribed event type strings.
@@ -37,8 +37,8 @@ class WebhookEndpoint(TimestampMixin, Base):
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
     )
-    organization_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="CASCADE"),
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -66,7 +66,7 @@ class WebhookEndpoint(TimestampMixin, Base):
     last_delivery_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     __table_args__ = (
-        Index("ix_webhook_endpoints_org", "organization_id"),
+        Index("ix_webhook_endpoints_user", "user_id"),
     )
 
     def __repr__(self) -> str:

@@ -19,7 +19,7 @@ class LLMUsageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID = Field(..., description="Usage row UUID.")
-    organization_id: UUID = Field(..., description="Owning organization UUID.")
+    user_id: UUID = Field(..., description="Owning organization UUID.")
     provider: str = Field(..., description="Backend identifier.")
     model: str = Field(..., description="Model identifier.")
     worker: str | None = Field(None, description="Worker/service label.")

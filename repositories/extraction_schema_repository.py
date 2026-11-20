@@ -1,6 +1,6 @@
 """Repository for extraction schemas — all DB access for ``extraction_schemas``.
 
-All methods accept an ``org_id`` parameter that must match the authenticated
+All methods accept an ``user_id`` parameter that must match the authenticated
 organization's UUID.  RLS ensures cross-tenant isolation at the database level.
 """
 
@@ -28,23 +28,23 @@ class ExtractionSchemaRepository:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
-    async def get_by_id(self, org_id: UUID, schema_id: UUID) -> ExtractionSchema | None:
+    async def get_by_id(self, user_id: UUID, schema_id: UUID) -> ExtractionSchema | None:
         """Fetch a single schema by ID, scoped to the organization."""
         result = await self._db.execute(
             select(ExtractionSchema).where(
                 ExtractionSchema.id == schema_id,
-                ExtractionSchema.organization_id == org_id,
+                ExtractionSchema.user_id == user_id,
             )
         )
         return result.scalar_one_or_none()
 
     async def get_by_name(
-        self, org_id: UUID, name: str
+        self, user_id: UUID, name: str
     ) -> ExtractionSchema | None:
         """Fetch a single schema by name within an organization."""
         result = await self._db.execute(
             select(ExtractionSchema).where(
-                ExtractionSchema.organization_id == org_id,
+                ExtractionSchema.user_id == user_id,
                 ExtractionSchema.name == name,
             )
         )
@@ -52,7 +52,7 @@ class ExtractionSchemaRepository:
 
     async def get_all(
         self,
-        org_id: UUID,
+        user_id: UUID,
         schema_type: str | None = None,
         is_active: bool | None = None,
         sort: SortSpec | None = None,
@@ -63,7 +63,7 @@ class ExtractionSchemaRepository:
         ``type``.
         """
         query = select(ExtractionSchema).where(
-            ExtractionSchema.organization_id == org_id
+            ExtractionSchema.user_id == user_id
         )
         if schema_type is not None:
             query = query.where(ExtractionSchema.type == schema_type)
@@ -86,7 +86,7 @@ class ExtractionSchemaRepository:
 
     async def create(
         self,
-        org_id: UUID,
+        user_id: UUID,
         name: str,
         json_schema: dict,
         type: str = "structured",
@@ -95,7 +95,7 @@ class ExtractionSchemaRepository:
         """Create a new extraction schema.
 
         Args:
-            org_id: Owning organization UUID.
+            user_id: Owning organization UUID.
             name: Schema name (must be unique per org).
             json_schema: JSON Schema or classification label definitions.
             type: Schema type — ``'structured'`` or ``'classification'``.
@@ -109,7 +109,7 @@ class ExtractionSchemaRepository:
                 already exists in this organization.
         """
         schema = ExtractionSchema(
-            organization_id=org_id,
+            user_id=user_id,
             name=name,
             type=type,
             json_schema=json_schema,
@@ -144,11 +144,11 @@ class ExtractionSchemaRepository:
         await self._db.flush()
 
     async def count_for_org(
-        self, org_id: UUID, schema_type: str | None = None
+        self, user_id: UUID, schema_type: str | None = None
     ) -> int:
         """Count schemas for an org, optionally filtered by type."""
         query = select(func.count()).select_from(ExtractionSchema).where(
-            ExtractionSchema.organization_id == org_id
+            ExtractionSchema.user_id == user_id
         )
         if schema_type is not None:
             query = query.where(ExtractionSchema.type == schema_type)
@@ -156,7 +156,7 @@ class ExtractionSchemaRepository:
         return result.scalar_one()
 
     async def get_classification_labels(
-        self, org_id: UUID
+        self, user_id: UUID
     ) -> list[dict]:
         """Fetch all active classification schema JSON definitions.
 
@@ -164,7 +164,7 @@ class ExtractionSchemaRepository:
         """
         result = await self._db.execute(
             select(ExtractionSchema.json_schema).where(
-                ExtractionSchema.organization_id == org_id,
+                ExtractionSchema.user_id == user_id,
                 ExtractionSchema.type == "classification",
                 ExtractionSchema.is_active == True,
             )

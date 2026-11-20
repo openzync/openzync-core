@@ -15,6 +15,7 @@ import logging
 from repositories.instance_settings_repository import InstanceSettingsRepository
 from repositories.organization_repository import OrganizationRepository
 from repositories.user_repository import UserRepository
+from utils.password import hash_password
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,6 @@ class SetupService:
                 or the org name is blank.
         """
         from core.exceptions import ConflictError, ValidationError
-        from services import auth_service as _facade  # via facade (patchable)
         from services.auth_service import AuthService
 
         if not org_name.strip():
@@ -92,7 +92,7 @@ class SetupService:
 
         await self._org_repo.ensure_platform_org(name=org_name.strip())
         # bcrypt blocks the event loop — offload to a worker thread.
-        pw_hash = await asyncio.to_thread(_facade.hash_password, password)
+        pw_hash = await asyncio.to_thread(hash_password, password)
         inserted = await self._user_repo.create_platform_root(pw_hash)
         if not inserted:
             raise ConflictError("Platform setup is not available.")

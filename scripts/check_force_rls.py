@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""List tables with ``organization_id`` missing FORCE row-level security.
+"""List tables with ``user_id`` missing FORCE row-level security.
 
 Runtime/CI assertion for the 0059/0060 invariant: PostgreSQL exempts the
 table *owner* from non-forced RLS policies, and the application role owns
@@ -9,7 +9,7 @@ a silent cross-tenant read hole.
 Usage:
     OZ_DATABASE_URL=postgresql://... python scripts/check_force_rls.py
 
-Exit 0 when every ``organization_id`` table is forced (and has a
+Exit 0 when every ``user_id`` table is forced (and has a
 policy); exit 1 listing offenders otherwise.
 """
 
@@ -34,7 +34,7 @@ WHERE n.nspname = 'public'
       SELECT 1 FROM information_schema.columns
       WHERE table_schema = 'public'
         AND table_name = c.relname
-        AND column_name = 'organization_id'
+        AND column_name = 'user_id'
   )
 ORDER BY 1
 """
@@ -73,7 +73,7 @@ async def main() -> int:
         for line in offenders:
             print(f"  - {line}")
         return 1
-    print(f"OK: {len(rows)} organization_id tables carry FORCE RLS.")
+    print(f"OK: {len(rows)} user_id tables carry FORCE RLS.")
     return 0
 
 

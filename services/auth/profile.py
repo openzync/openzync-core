@@ -22,6 +22,8 @@ from schemas.auth import (
     DashboardUserResponse,
     UpdateProfileRequest,
 )
+from utils.password import hash_password, verify_password
+from utils.pii import mask_email
 
 if TYPE_CHECKING:
     from models.user import User
@@ -79,7 +81,7 @@ class ProfileMixin:
             email=user.email or "",
             name=user.name,
             role=user.role if user.role is not None else "member",
-            organization_id=user.organization_id,
+            user_id=user.id,
             is_email_verified=user.is_email_verified,
             mfa_enabled=user.mfa_enabled,
             must_change_password=bool(user.must_change_password),
@@ -137,10 +139,9 @@ class ProfileMixin:
                     raise ValidationError(
                         "This account does not have a password set."
                     )
-                from services import auth_service as _facade  # via facade (patchable)
                 # bcrypt blocks the event loop — offload to a worker thread.
                 if not await asyncio.to_thread(
-                    _facade.verify_password,
+                    verify_password,
                     payload.current_password,
                     user.password_hash,
                 ):
@@ -165,17 +166,16 @@ class ProfileMixin:
                 raise ValidationError(
                     "This account does not have a password set."
                 )
-            from services import auth_service as _facade  # via facade
             # bcrypt blocks the event loop — offload to a worker thread.
             if not await asyncio.to_thread(
-                _facade.verify_password,
+                verify_password,
                 payload.current_password,
                 user.password_hash,
             ):
                 raise AuthenticationError("Current password is incorrect.")
             self._validate_password(payload.new_password)
             update_kwargs["password_hash"] = await asyncio.to_thread(
-                _facade.hash_password, payload.new_password
+                hash_password, payload.new_password
             )
             has_changes = True
 
@@ -204,7 +204,7 @@ class ProfileMixin:
                     except Exception:
                         logger.warning(
                             "Failed to send password-change notification email",
-                            extra={"email": user_email[:3] + "**@" + user_email.split("@")[-1]},
+                            extra={"email": mask_email(user_email)},
                         )
 
         if has_changes:
@@ -227,7 +227,7 @@ class ProfileMixin:
             email=user.email or "",
             name=user.name,
             role=user.role if user.role is not None else "member",
-            organization_id=user.organization_id,
+
             is_email_verified=user.is_email_verified,
             mfa_enabled=user.mfa_enabled,
             must_change_password=bool(user.must_change_password),

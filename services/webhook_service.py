@@ -157,28 +157,28 @@ class WebhookService:
 
     async def list_endpoints(
         self,
-        organization_id: uuid.UUID,
+        user_id: uuid.UUID,
         sort: SortSpec | None = None,
     ) -> list[dict]:
         """List all webhook endpoints for an organization.
 
         Default ``created_at/desc``; whitelist ``name``, ``created_at``.
         """
-        endpoints = await self._repo.get_by_organization(organization_id, sort=sort)
+        endpoints = await self._repo.get_by_organization(user_id, sort=sort)
         return [self._serialize(e) for e in endpoints]
 
     async def get_endpoint(
-        self, endpoint_id: uuid.UUID, organization_id: uuid.UUID,
+        self, endpoint_id: uuid.UUID, user_id: uuid.UUID,
     ) -> dict | None:
         """Get a single webhook endpoint by ID, verifying ownership."""
         endpoint = await self._repo.get_by_id(endpoint_id)
-        if not endpoint or endpoint.organization_id != organization_id:
+        if not endpoint or endpoint.user_id != user_id:
             return None
         return self._serialize(endpoint)
 
     async def create_endpoint(
         self,
-        organization_id: uuid.UUID,
+        user_id: uuid.UUID,
         name: str,
         url: str,
         events: list[str] | None = None,
@@ -191,7 +191,7 @@ class WebhookService:
         do not expose it.  Rotate via :meth:`rotate_endpoint_secret`.
 
         Args:
-            organization_id: The owning organization's UUID.
+            user_id: The owning organization's UUID.
             name: Human-readable endpoint label.
             url: HTTPS endpoint URL that receives POST deliveries.
             events: Subscribed event types; empty/None subscribes to all.
@@ -204,7 +204,7 @@ class WebhookService:
         # Pre-generated so it doubles as the Transit AAD context.
         ciphertext = await self._encrypt_secret(endpoint_id, signing_secret)
         endpoint = await self._repo.create(
-            organization_id=organization_id,
+
             name=name,
             url=url,
             events=events,
@@ -216,20 +216,20 @@ class WebhookService:
     async def rotate_endpoint_secret(
         self,
         endpoint_id: uuid.UUID,
-        organization_id: uuid.UUID,
+        user_id: uuid.UUID,
     ) -> str | None:
         """Rotate an endpoint's signing secret, returning the new value once.
 
         Args:
             endpoint_id: The endpoint whose secret should be rotated.
-            organization_id: The owning organization (ownership check).
+            user_id: The owning organization (ownership check).
 
         Returns:
             The new signing secret, or ``None`` if the endpoint does not
             exist or belongs to a different organization.
         """
         endpoint = await self._repo.get_by_id(endpoint_id)
-        if not endpoint or endpoint.organization_id != organization_id:
+        if not endpoint or endpoint.user_id != user_id:
             return None
 
         new_secret = secrets.token_urlsafe(43)
@@ -240,12 +240,12 @@ class WebhookService:
     async def update_endpoint(
         self,
         endpoint_id: uuid.UUID,
-        organization_id: uuid.UUID,
+        user_id: uuid.UUID,
         updates: Mapping[str, object],
     ) -> dict | None:
         """Update a webhook endpoint. Returns updated endpoint or None."""
         endpoint = await self._repo.get_by_id(endpoint_id)
-        if not endpoint or endpoint.organization_id != organization_id:
+        if not endpoint or endpoint.user_id != user_id:
             return None
 
         updates = dict(updates)
@@ -261,12 +261,12 @@ class WebhookService:
     async def toggle_endpoint(
         self,
         endpoint_id: uuid.UUID,
-        organization_id: uuid.UUID,
+        user_id: uuid.UUID,
         is_active: bool,
     ) -> dict | None:
         """Enable or disable a webhook endpoint."""
         endpoint = await self._repo.get_by_id(endpoint_id)
-        if not endpoint or endpoint.organization_id != organization_id:
+        if not endpoint or endpoint.user_id != user_id:
             return None
 
         updated = await self._repo.update(
@@ -277,11 +277,11 @@ class WebhookService:
     async def delete_endpoint(
         self,
         endpoint_id: uuid.UUID,
-        organization_id: uuid.UUID,
+        user_id: uuid.UUID,
     ) -> bool:
         """Delete a webhook endpoint. Returns True if deleted."""
         endpoint = await self._repo.get_by_id(endpoint_id)
-        if not endpoint or endpoint.organization_id != organization_id:
+        if not endpoint or endpoint.user_id != user_id:
             return False
 
         return await self._repo.delete(endpoint_id)
@@ -290,7 +290,7 @@ class WebhookService:
 
     async def emit(
         self,
-        organization_id: uuid.UUID,
+        user_id: uuid.UUID,
         event_type: str,
         payload: dict | None = None,
     ) -> bool:
@@ -309,7 +309,7 @@ class WebhookService:
         webhook scheduling failure must never fail that work.
 
         Args:
-            organization_id: The organization emitting the event.
+            user_id: The organization emitting the event.
             event_type: The event type string (e.g. ``session.created``).
             payload: Optional event payload dict.
 
@@ -320,7 +320,7 @@ class WebhookService:
         """
         try:
             endpoints = await self._repo.get_active_endpoints_for_event(
-                organization_id, event_type,
+                user_id, event_type,
             )
             if not endpoints:
                 return True
@@ -402,7 +402,7 @@ class WebhookService:
         except Exception:
             logger.exception(
                 "webhook.emit_failed",
-                extra={"event_type": event_type, "org_id": str(organization_id)},
+                extra={"event_type": event_type, "user_id": str(user_id)},
             )
             webhook_emit_failures_total.labels(event_type=event_type).inc()
             return False
@@ -430,7 +430,7 @@ class WebhookService:
 
         return {
             "id": str(endpoint.id),
-            "organization_id": str(endpoint.organization_id),
+            "user_id": str(endpoint.user_id),
             "name": endpoint.name,
             "url": endpoint.url,
             "events": events_list,

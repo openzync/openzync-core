@@ -32,7 +32,7 @@ class GraphObservation(TimestampMixin, Base):
 
     Attributes:
         id: UUID primary key.
-        organization_id: Owning organization (RLS enforcement).
+        user_id: Owning organization (RLS enforcement).
         project_id: Owning project (project-scoped isolation).
         subject_entity_id: The entity this observation is about.
         related_entity_id: For pair-level observations (e.g., co-occurrence),
@@ -60,7 +60,7 @@ class GraphObservation(TimestampMixin, Base):
         primary_key=True,
         server_default=func.gen_random_uuid(),
     )
-    organization_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,

@@ -13,6 +13,7 @@ from core.exceptions import (
     AuthorizationError,
 )
 from core.openbao_exceptions import OpenBaoConnectionError
+from core.rls import set_user_context
 from core.rbac import (
     MEMBER_DEFAULT_PERMISSIONS,
 )
@@ -23,6 +24,7 @@ from schemas.auth import (
     TokenResponse,
     VerifyEmailRequest,
 )
+from utils.password import hash_password
 from utils.pii import mask_email
 
 logger = logging.getLogger(__name__)
@@ -68,19 +70,13 @@ class OrgJoinMixin:
                 platform org is missing.
         """
         # ── Platform policy gate ──────────────────────────────────────────
-        from services import auth_service as _facade  # via facade (patchable)
-
         mode = await self._settings().get_registration_mode()
         if mode == "invite_only":
             raise AuthorizationError("Registration is invite-only")
         if mode not in ("open", "approval"):
             raise AuthorizationError("Registration is disabled")
 
-        org = await self._org_repo.get_platform_org()
-        if org is None:
-            raise AuthorizationError("Registration is disabled")
-        await self._org_repo.set_tenant_context(org.id)
-
+        # No org gate — the single-user model has no platform org.
         existing = await self._repo.find_user_by_email(payload.email)
         if existing is not None:
             logger.warning(
@@ -90,16 +86,16 @@ class OrgJoinMixin:
             return self._signup_success_response(payload.email)
 
         # bcrypt blocks the event loop — offload to a worker thread.
-        pw_hash = await asyncio.to_thread(_facade.hash_password, payload.password)
+        pw_hash = await asyncio.to_thread(hash_password, payload.password)
         try:
             user = await self._repo.create_dashboard_user(
-                organization_id=org.id,
                 email=payload.email,
                 password_hash=pw_hash,
                 name=payload.email.split("@")[0],  # default name from email
                 role="member",
                 permissions=list(MEMBER_DEFAULT_PERMISSIONS),
             )
+            await set_user_context(self._repo.session, user.id)
             if mode == "approval":
                 user.is_active = False
                 await self._repo.flush()
@@ -150,9 +146,9 @@ class OrgJoinMixin:
                 "Please request a new code."
             )
 
-        # Bind the session to the caller's tenant — the email-verification
-        # update and the refresh-token insert below are org-scoped.
-        await self._org_repo.set_tenant_context(user.organization_id)
+        # Bind the session to the caller's user — the email-verification
+        # update and the refresh-token insert below are user-scoped.
+        await set_user_context(self._repo.session, user.id)
 
         # Always verify the OTP — even for already-verified users.
         # This prevents an unauthenticated attacker who knows a verified
@@ -179,12 +175,11 @@ class OrgJoinMixin:
             raise OpenBaoConnectionError(
                 "OpenBao client required to bootstrap the org namespace"
             )
-        await self._bao_client.create_org_namespace(user.organization_id)
+        await self._bao_client.create_org_namespace(user.id)
 
         # Issue tokens now that email is verified
         return await self.issue_tokens(
             user_id=user.id,
-            organization_id=user.organization_id,
             role=user.role if user.role is not None else "member",
         )
     async def resend_verification(self, email: str) -> SignupResponse:

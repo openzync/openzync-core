@@ -128,7 +128,7 @@ async def _resolve_existing_fact_refs(
 async def enrich_episode(
     ctx: object,
     episode_id: str,
-    org_id: str,
+    user_id: str,
     project_id: str,
     content: str | None = None,
     session_id: str | None = None,
@@ -162,7 +162,7 @@ async def enrich_episode(
     Args:
         ctx: ARQ worker context (``db_session_factory``, ``redis``).
         episode_id: UUID of the source episode (string, from ARQ).
-        org_id: UUID of the owning organization.
+        user_id: UUID of the owning organization.
         project_id: UUID of the project for project scoping.
         content: Legacy payload from older enqueues — ignored.  Text is
             always loaded from the episode row (``episode_id``-only jobs).
@@ -208,7 +208,7 @@ async def enrich_episode(
 
     log = logger.bind(
         episode_id=episode_id,
-        org_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         trace_id=trace_id,
     )
@@ -235,7 +235,7 @@ async def enrich_episode(
             # The binding is remembered by the session, so the commit at the
             # end of the task re-applies it — a bare ``set_config`` would
             # leave the session un-tenanted after that commit.
-            await rls.set_tenant_context(db, org_id)
+            await rls.set_tenant_context(db, user_id)
 
             episode_repo = EpisodeRepository(db)
             episode = await episode_repo.get_by_id_for_update(uuid.UUID(episode_id))
@@ -260,12 +260,12 @@ async def enrich_episode(
             # Fail-closed (missing row counts as archived). Early return
             # sets no bits, so un-archiving resumes via reconcile or retry.
             if await ProjectRepository(db).is_archived(
-                uuid.UUID(org_id), uuid.UUID(project_id)
+                uuid.UUID(user_id), uuid.UUID(project_id)
             ):
                 log.info(
                     "enrich_episode.project_archived_skipping",
                     episode_id=episode_id,
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=project_id,
                 )
                 return
@@ -281,20 +281,20 @@ async def enrich_episode(
             try:
                 graph_backend = await resolve_graph_backend(
                     ctx if isinstance(ctx, dict) else {},
-                    uuid.UUID(org_id),
+                    uuid.UUID(user_id),
                     db,
                 )
             except GraphBackendUnavailableError:
                 log.error(
                     "enrich_episode.graph_backend_unavailable",
-                    org_id=org_id,
+                    user_id=user_id,
                     episode_id=episode_id,
                 )
                 raise
             except Exception:
                 log.error(
                     "enrich_episode.graph_backend_resolve_failed",
-                    org_id=org_id,
+                    user_id=user_id,
                     episode_id=episode_id,
                     exc_info=True,
                 )
@@ -304,10 +304,9 @@ async def enrich_episode(
             try:
                 system_prompt, prompt_ctx = await render_prompt(
                     "enrich_episode",
-                    org_id=org_id,
+                    user_id=user_id,
                     episode_id=episode_id,
                     session_id=session_id,
-                    user_id=user_id,
                     project_id=project_id,
                     graph_backend=graph_backend,
                     db_session_factory=session_factory,
@@ -359,7 +358,7 @@ async def enrich_episode(
             try:
                 if bao_client is not None:
                     org_cfg = await get_org_config(
-                        uuid.UUID(org_id), redis=None, bao_client=bao_client
+                        uuid.UUID(user_id), redis=None, bao_client=bao_client
                     )
                 else:
                     from core.config import BootstrapSettings
@@ -373,7 +372,7 @@ async def enrich_episode(
                         timeout=10.0,
                     ) as _tmp_bao:
                         org_cfg = await get_org_config(
-                            uuid.UUID(org_id), redis=None, bao_client=_tmp_bao
+                            uuid.UUID(user_id), redis=None, bao_client=_tmp_bao
                         )
                 llm_config_dict = org_cfg.to_llm_config_dict()
             except Exception:
@@ -391,7 +390,7 @@ async def enrich_episode(
             try:
                 sink = make_sink(
                     session_factory,
-                    org_id=uuid.UUID(org_id),
+                    user_id=uuid.UUID(user_id),
                     worker="enrich_episode",
                     project_id=uuid.UUID(project_id),
                     episode_id=uuid.UUID(episode_id),
@@ -473,7 +472,7 @@ async def enrich_episode(
                     async with db.begin_nested():
                         await process_classification_output(
                             db=db,
-                            org_id=org_id,
+                            user_id=user_id,
                             episode_id=episode_id,
                             project_id=project_id,
                             parsed=parsed.classification,
@@ -498,7 +497,7 @@ async def enrich_episode(
                                 graph_backend=graph_backend,
                                 entity_repo=entity_repo,
                                 episode_repo=episode_repo,
-                                org_id=org_id,
+                                user_id=user_id,
                                 episode_id=episode_id,
                                 project_id=project_id,
                                 parsed=EntityExtractionOutput(
@@ -546,11 +545,10 @@ async def enrich_episode(
                             entity_repo=entity_repo,
                             fact_repo=fact_repo,
                             episode_repo=episode_repo,
-                            org_id=org_id,
+                            user_id=user_id,
                             episode_id=episode_id,
                             project_id=project_id,
                             session_id=session_id or "",
-                            user_id=user_id,
                             trace_id=trace_id,
                             parsed=FactExtractionOutput(
                                 facts=parsed.facts,
@@ -615,7 +613,7 @@ async def enrich_episode(
                             )
                             invalidation_result = (
                                 await invalidation_svc.apply_llm_invalidations(
-                                    org_id=uuid.UUID(org_id),
+                                    user_id=uuid.UUID(user_id),
                                     project_id=uuid.UUID(project_id),
                                     invalidations=[
                                         inv.model_dump() for inv in invalidations
@@ -660,7 +658,7 @@ async def enrich_episode(
                     async with db.begin_nested():
                         await process_structured_output(
                             db=db,
-                            org_id=org_id,
+                            user_id=user_id,
                             episode_id=episode_id,
                             project_id=project_id,
                             session_id=session_id or "",
@@ -698,7 +696,7 @@ async def enrich_episode(
         log.error(
             "enrich_episode.failed",
             episode_id=episode_id,
-            org_id=org_id,
+            user_id=user_id,
         )
         raise
     finally:

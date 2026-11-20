@@ -53,7 +53,7 @@ async def list_event_types() -> dict:
 @router.get("")
 async def list_webhooks(
     service: WebhookService = Depends(get_webhook_service),
-    org_id: str = Depends(require_permission("configuration:read")),
+    user_id: str = Depends(require_permission("configuration:read")),
     sort_by: WebhookSortBy | None = Query(
         default=None, description="Sort key (default created_at)."
     ),
@@ -63,7 +63,7 @@ async def list_webhooks(
 ) -> dict:
     """List all webhook endpoints for the authenticated organization."""
     endpoints = await service.list_endpoints(
-        uuid.UUID(org_id), sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir)
+        uuid.UUID(user_id), sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir)
     )
     return {"data": endpoints}
 
@@ -75,10 +75,10 @@ async def list_webhooks(
 async def get_webhook(
     endpoint_id: uuid.UUID,
     service: WebhookService = Depends(get_webhook_service),
-    org_id: str = Depends(require_permission("configuration:read")),
+    user_id: str = Depends(require_permission("configuration:read")),
 ) -> dict:
     """Get a single webhook endpoint by ID."""
-    endpoint = await service.get_endpoint(endpoint_id, uuid.UUID(org_id))
+    endpoint = await service.get_endpoint(endpoint_id, uuid.UUID(user_id))
     if not endpoint:
         raise HTTPException(status_code=404, detail="Webhook endpoint not found")
     return {"data": endpoint}
@@ -92,7 +92,7 @@ async def get_webhook(
 async def create_webhook(
     body: CreateWebhookRequest,
     service: WebhookService = Depends(get_webhook_service),
-    org_id: str = Depends(require_permission("configuration:write")),
+    user_id: str = Depends(require_permission("configuration:write")),
 ) -> WebhookSecretResponse:
     """Create a new webhook endpoint.
 
@@ -100,7 +100,7 @@ async def create_webhook(
     HMAC-SHA256 signatures. Shown once — never returned again.
     """
     endpoint, secret = await service.create_endpoint(
-        organization_id=uuid.UUID(org_id),
+        user_id=uuid.UUID(user_id),
         name=body.name,
         url=str(body.url),
         events=body.events if body.events else None,
@@ -122,7 +122,7 @@ async def update_webhook(
     endpoint_id: uuid.UUID,
     body: UpdateWebhookRequest,
     service: WebhookService = Depends(get_webhook_service),
-    org_id: str = Depends(require_permission("configuration:write")),
+    user_id: str = Depends(require_permission("configuration:write")),
 ) -> dict:
     """Update a webhook endpoint's name, URL, events, or active status."""
     updates: dict = body.model_dump(exclude_none=True)
@@ -130,7 +130,7 @@ async def update_webhook(
         raise HTTPException(status_code=400, detail="No fields to update")
 
     endpoint = await service.update_endpoint(
-        endpoint_id, uuid.UUID(org_id), updates,
+        endpoint_id, uuid.UUID(user_id), updates,
     )
     if not endpoint:
         raise HTTPException(status_code=404, detail="Webhook endpoint not found")
@@ -145,10 +145,10 @@ async def update_webhook(
 async def delete_webhook(
     endpoint_id: uuid.UUID,
     service: WebhookService = Depends(get_webhook_service),
-    org_id: str = Depends(require_permission("configuration:write")),
+    user_id: str = Depends(require_permission("configuration:write")),
 ) -> Response:
     """Delete a webhook endpoint."""
-    deleted = await service.delete_endpoint(endpoint_id, uuid.UUID(org_id))
+    deleted = await service.delete_endpoint(endpoint_id, uuid.UUID(user_id))
     if not deleted:
         raise HTTPException(status_code=404, detail="Webhook endpoint not found")
     return Response(status_code=204)

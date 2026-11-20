@@ -396,7 +396,7 @@ class OrgConfigBase(BaseModel):
 
 
 class UpdateOrgConfigRequest(BaseModel):
-    """Request body for ``PATCH /admin/organizations/{org_id}/config``.
+    """Request body for ``PATCH /admin/organizations/{user_id}/config``.
 
     Same shape as ``OrgConfigBase`` — every field is optional, only provided
     fields are updated.  Set a field to ``null`` to remove it (the caller

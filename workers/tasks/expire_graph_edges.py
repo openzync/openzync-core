@@ -41,7 +41,7 @@ graph_edge_sync_failures_total = Counter(
 )
 
 
-async def _resolve_backend(ctx: dict[str, Any], org_id: UUID, db: Any) -> Any:
+async def _resolve_backend(ctx: dict[str, Any], user_id: UUID, db: Any) -> Any:
     """Resolve the org's graph backend for this task's session.
 
     Delegates to ``workers.backend.resolve_graph_backend`` — the worker
@@ -51,7 +51,7 @@ async def _resolve_backend(ctx: dict[str, Any], org_id: UUID, db: Any) -> Any:
 
     Args:
         ctx: ARQ worker context dict.
-        org_id: The organization UUID.
+        user_id: The organization UUID.
         db: The task's async SQLAlchemy session.
 
     Returns:
@@ -60,14 +60,14 @@ async def _resolve_backend(ctx: dict[str, Any], org_id: UUID, db: Any) -> Any:
     """
     from workers.backend import resolve_graph_backend
 
-    return await resolve_graph_backend(ctx, org_id, db)
+    return await resolve_graph_backend(ctx, user_id, db)
 
 
 @with_retry(max_retries=3, base_delay_s=2.0)
 async def _expire_graph_edges(
     ctx: dict[str, Any],
     *,
-    org_id: UUID,
+    user_id: UUID,
     project_id: UUID,
     source_id: UUID,
     target_id: UUID,
@@ -78,7 +78,7 @@ async def _expire_graph_edges(
 
     Args:
         ctx: ARQ worker context (``db_session_factory`` + dispatcher).
-        org_id: Tenant scope.
+        user_id: Tenant scope.
         project_id: Project scope.
         source_id: Edge source (fact subject entity).
         target_id: Edge target (fact object entity).
@@ -98,23 +98,23 @@ async def _expire_graph_edges(
 
     async with session_factory() as db:
         # Single-org task: scope RLS to this org before any org-scoped
-        # query.  The policies read NULLIF(current_setting('app.org_id',
+        # query.  The policies read NULLIF(current_setting('app.user_id',
         # true), ''), so an unset context matches no rows instead of
         # raising.  The binding is remembered by the session, so the commit
         # below re-applies it.
-        await rls.set_tenant_context(db, org_id)
-        backend = await _resolve_backend(ctx, org_id, db)
+        await rls.set_tenant_context(db, user_id)
+        backend = await _resolve_backend(ctx, user_id, db)
         if backend is None:
             logger.info(
                 "expire_graph_edges.graph_disabled",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                 },
             )
             return 0
         count = await backend.expire_relationships_matching(
-            org_id=org_id,
+            user_id=user_id,
             project_id=project_id,
             source_id=source_id,
             target_id=target_id,
@@ -125,7 +125,7 @@ async def _expire_graph_edges(
         logger.info(
             "expire_graph_edges.expired",
             extra={
-                "org_id": str(org_id),
+                "user_id": str(user_id),
                 "project_id": str(project_id),
                 "source_id": str(source_id),
                 "target_id": str(target_id),
@@ -141,7 +141,7 @@ async def _expire_graph_edges(
 async def expire_graph_edges(
     ctx: dict[str, Any],
     *,
-    org_id: str,
+    user_id: str,
     project_id: str,
     source_id: str,
     target_id: str,
@@ -158,7 +158,7 @@ async def expire_graph_edges(
 
     Args:
         ctx: ARQ worker context dict.
-        org_id: Organization UUID string.
+        user_id: Organization UUID string.
         project_id: Project UUID string.
         source_id: Edge source UUID string.
         target_id: Edge target UUID string.
@@ -175,7 +175,7 @@ async def expire_graph_edges(
     try:
         count = await _expire_graph_edges(
             ctx,
-            org_id=UUID(org_id),
+            user_id=UUID(user_id),
             project_id=UUID(project_id),
             source_id=UUID(source_id),
             target_id=UUID(target_id),
@@ -190,7 +190,7 @@ async def expire_graph_edges(
         logger.error(
             "expire_graph_edges.failed",
             extra={
-                "org_id": org_id,
+                "user_id": user_id,
                 "project_id": project_id,
                 "source_id": source_id,
                 "target_id": target_id,

@@ -91,10 +91,10 @@ async def ingest_facts(
     - Each triple requires ``subject``, ``predicate``, and ``object``.
       ``content`` is auto-generated if omitted.
     """
-    org_id = UUID(request.state.org_id)
+    user_id = UUID(request.state.user_id)
     project_id = UUID(request.path_params["project_id"])
     return await service.ingest_facts(
-        org_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         created_by=created_by,
         facts=payload.facts,
@@ -170,7 +170,7 @@ async def list_facts_at_time(
         A ``PaginatedFactsResponse`` with facts valid at ``as_of``.
     """
     project_id = UUID(request.path_params["project_id"])
-    org_id = UUID(request.state.org_id)
+    user_id = UUID(request.state.user_id)
 
     # Default to now; coerce naive ISO-8601 input to UTC-aware so the
     # comparison against tz-aware DB timestamps is well-defined.
@@ -182,7 +182,7 @@ async def list_facts_at_time(
     facts = await repo.get_facts_at_time(
         project_id=project_id,
         timestamp=query_time,
-        organization_id=org_id,
+
         limit=limit + 1,
         offset=offset,
         sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
@@ -242,11 +242,11 @@ async def retract_fact(
     Returns:
         The retracted fact (or the unchanged fact if already closed).
     """
-    org_id = UUID(request.state.org_id)
+    user_id = UUID(request.state.user_id)
     project_id = UUID(request.path_params["project_id"])
     fact = await service.retract_fact(
         fact_id,
-        organization_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         reason=payload.reason if payload else None,
     )
@@ -314,11 +314,11 @@ async def get_fact_history(
         A ``FactHistoryResponse`` with the serialized fact and its
         lineage events (newest first).
     """
-    org_id = UUID(request.state.org_id)
+    user_id = UUID(request.state.user_id)
     project_id = UUID(request.path_params["project_id"])
     result = await service.get_fact_history(
         fact_id,
-        organization_id=org_id,
+
         project_id=project_id,
         limit=limit,
         offset=offset,

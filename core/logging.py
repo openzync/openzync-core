@@ -6,7 +6,7 @@ Provides:
 - ``add_pii_redaction()`` — processor that redacts sensitive fields before
   they reach a renderer.
 - ``bind_request_context()`` — convenience for binding global context vars
-  (request_id, org_id, user_id).
+  (request_id, user_id, user_id).
 
 Usage:
 
@@ -21,8 +21,7 @@ Usage:
     # Inside a middleware / dependency:
     bind_request_context(
         request_id="abc-123",
-        org_id="org-42",
-        user_id="usr-7",
+        user_id="org-42",
     )
 
     # Any subsequent structlog.get_logger() call will include those fields.
@@ -95,7 +94,7 @@ _request_id: contextvars.ContextVar[str] = contextvars.ContextVar(
     "request_id", default=""
 )
 _org_id: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "org_id", default=""
+    "user_id", default=""
 )
 _user_id: contextvars.ContextVar[str] = contextvars.ContextVar(
     "user_id", default=""
@@ -104,7 +103,6 @@ _user_id: contextvars.ContextVar[str] = contextvars.ContextVar(
 
 def bind_request_context(
     request_id: str,
-    org_id: str | None = None,
     user_id: str | None = None,
 ) -> None:
     """Bind global request-scoped context variables.
@@ -114,12 +112,12 @@ def bind_request_context(
 
     Args:
         request_id: Unique identifier for the current request.
-        org_id: Organisation identifier (optional).
+        user_id: Organisation identifier (optional).
         user_id: Authenticated user identifier (optional).
     """
     _request_id.set(request_id)
-    if org_id is not None:
-        _org_id.set(org_id)
+    if user_id is not None:
+        _org_id.set(user_id)
     if user_id is not None:
         _user_id.set(user_id)
 
@@ -131,7 +129,7 @@ def _add_context_from_vars(
 ) -> structlog.types.EventDict:
     """Inject context-variable values into the event dict.
 
-    Registered as a processor so that ``request_id``, ``org_id``, and
+    Registered as a processor so that ``request_id``, ``user_id``, and
     ``user_id`` appear on every log line automatically.
     """
     rid = _request_id.get()
@@ -139,7 +137,7 @@ def _add_context_from_vars(
         event_dict["request_id"] = rid
     oid = _org_id.get()
     if oid:
-        event_dict["org_id"] = oid
+        event_dict["user_id"] = oid
     uid = _user_id.get()
     if uid:
         event_dict["user_id"] = uid

@@ -48,9 +48,8 @@ class SupersessionIngestMixin:
     async def ingest_with_supersession(
         self,
         *,
-        org_id: UUID,
-        project_id: UUID,
         user_id: UUID,
+        project_id: UUID,
         facts: list[dict[str, Any]],
         source_episode_id: UUID | None = None,
         insert_mode: Literal["batch_create", "batch_create_or_skip"] = "batch_create",
@@ -59,7 +58,7 @@ class SupersessionIngestMixin:
         """Persist a batch of facts, superseding conflicting active facts.
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: Project scope.
             user_id: Fact owner (attribution).
             facts: Fact dicts with keys ``subject``, ``predicate``,
@@ -117,7 +116,7 @@ class SupersessionIngestMixin:
         # Sorted acquisition keeps multi-identity batches deadlock-free.
         lock_keys = sorted(
             {
-                self._lock_key_for_identity(org_id, project_id, entry["name_identity"])
+                self._lock_key_for_identity(user_id, project_id, entry["name_identity"])
                 for entry in entries
             }
         )
@@ -129,7 +128,7 @@ class SupersessionIngestMixin:
         # key so the scan also returns literal (unresolved) candidates for
         # the cross-form match — a resolved-only key would miss them.
         candidates = await self._fact_repo.find_conflicting_active_for_update(
-            org_id=org_id,
+            user_id=user_id,
             project_id=project_id,
             match_keys=[k for e in entries for k in e["match_keys"]],
             now=now,
@@ -145,7 +144,7 @@ class SupersessionIngestMixin:
 
         # ── 1b. Tombstone scan (ADR 005: retracted --> [*], terminal) ────
         tombstones_by_identity = await self._scan_tombstones(
-            org_id, project_id, entries
+            user_id, project_id, entries
         )
 
         # Identities occurring once are batch-safe (one INSERT statement);
@@ -160,9 +159,8 @@ class SupersessionIngestMixin:
         ]
 
         ctx = _BatchCtx(
-            org_id=org_id,
-            project_id=project_id,
             user_id=user_id,
+            project_id=project_id,
             source_episode_id=source_episode_id,
             insert_mode=insert_mode,
             now=now,
@@ -182,7 +180,7 @@ class SupersessionIngestMixin:
         )
 
         # ── 2c. Lineage: superseded_by_fact_id + invalidation row ──────────
-        await self._record_lineage(org_id, project_id, now, state)
+        await self._record_lineage(user_id, project_id, now, state)
 
         # ── 3. Post-commit side effects (deferred to the real commit) ──────
         # The caller owns the commit point, so firing here would emit
@@ -198,7 +196,7 @@ class SupersessionIngestMixin:
                 self._queue_post_commit_effect(
                     partial(
                         self._cache_service.invalidate_project_context,
-                        str(org_id),
+                        str(user_id),
                         str(project_id),
                     )
                 )
@@ -208,7 +206,7 @@ class SupersessionIngestMixin:
                     continue  # retraction — no successor, nothing to webhook
                 self._queue_post_commit_effect(
                     self._make_webhook_effect(
-                        org_id=org_id,
+                        user_id=user_id,
                         project_id=project_id,
                         old_id=event.old_fact_id,
                         new_id=event.new_fact_id,
@@ -221,7 +219,7 @@ class SupersessionIngestMixin:
         if state.events and self._graph_sync is not None:
             self._queue_post_commit_effect(
                 self._make_graph_sync_effect(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=project_id,
                     events=state.events,
                     at_time=now,
@@ -231,7 +229,7 @@ class SupersessionIngestMixin:
         logger.info(
             "fact_invalidation.ingested",
             extra={
-                "org_id": str(org_id),
+                "user_id": str(user_id),
                 "project_id": str(project_id),
                 "input_count": len(facts),
                 "inserted_count": len(state.created),

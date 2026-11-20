@@ -23,14 +23,13 @@ logger = logging.getLogger(__name__)
 class GlobalSearchService:
     """Search across projects, users, and sessions within an organization.
 
-    Queries are scoped by ``org_id`` and (for projects/sessions) by
+    Queries are scoped by ``user_id`` and (for projects/sessions) by
     ``user_id`` membership, so results only include resources the
     authenticated user can access.
     """
 
-    def __init__(self, db: AsyncSession, org_id: UUID, user_id: UUID) -> None:
+    def __init__(self, db: AsyncSession, user_id: UUID) -> None:
         self._db = db
-        self._org_id = org_id
         self._user_id = user_id
         self._recent_keys: dict[str, str] = {}
         """Sort-only ``id → created_at ISO`` map for ``sort=recent``."""
@@ -82,7 +81,7 @@ class GlobalSearchService:
     ) -> list[GlobalSearchItem]:
         """Search projects the user is a member of."""
         rows = await ProjectRepository(self._db).search_member_projects(
-            self._org_id, self._user_id, pattern, limit
+            self._user_id, self._user_id, pattern, limit
         )
         items: list[GlobalSearchItem] = []
         for row in rows:
@@ -101,7 +100,7 @@ class GlobalSearchService:
     async def _search_users(self, pattern: str, limit: int) -> list[GlobalSearchItem]:
         """Search users in the same organization."""
         rows = await UserRepository(self._db).search_by_pattern(
-            self._org_id, pattern, limit
+            self._user_id, pattern, limit
         )
         results: list[GlobalSearchItem] = []
         for row in rows:
@@ -129,7 +128,7 @@ class GlobalSearchService:
     ) -> list[GlobalSearchItem]:
         """Search sessions within projects the user is a member of."""
         rows = await SessionRepository(self._db).search_member_sessions(
-            self._org_id, self._user_id, pattern, limit
+            self._user_id, self._user_id, pattern, limit
         )
         items: list[GlobalSearchItem] = []
         for row in rows:

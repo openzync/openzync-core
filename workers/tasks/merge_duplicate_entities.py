@@ -66,17 +66,17 @@ _BULK_SEARCH_LIMIT: int = 100
 @with_retry(max_retries=2, base_delay_s=5.0)
 async def merge_duplicate_entities(
     ctx: dict,
-    org_id: str | None = None,
+    user_id: str | None = None,
 ) -> dict:
     """Merge duplicate entities for an organization.
 
     Can be called:
-    - Without ``org_id`` (scheduled weekly run): processes all eligible orgs.
-    - With ``org_id`` (manual trigger): processes a single org.
+    - Without ``user_id`` (scheduled weekly run): processes all eligible orgs.
+    - With ``user_id`` (manual trigger): processes a single org.
 
     Args:
         ctx: ARQ worker context (passed to ``resolve_graph_backend``).
-        org_id: Optional org UUID to process (processes all if ``None``).
+        user_id: Optional org UUID to process (processes all if ``None``).
 
     Returns:
         Dict with ``status``, ``orgs_processed``, ``orgs_failed``,
@@ -107,8 +107,8 @@ async def merge_duplicate_entities(
         async with _session_factory() as db:
             try:
                 # Determine which orgs to process
-                if org_id:
-                    org_ids = [uuid.UUID(org_id)]
+                if user_id:
+                    org_ids = [uuid.UUID(user_id)]
                 else:
                     # Platform-wide sweep: the organization list is not
                     # tenant-scoped, so the scan runs under the RLS bypass.
@@ -146,7 +146,7 @@ async def merge_duplicate_entities(
                     except Exception as exc:
                         logger.error(
                             "merge_duplicates.org_failed",
-                            org_id=str(current_org_id),
+                            user_id=str(current_org_id),
                             error=str(exc),
                         )
                         org_errors.append(str(current_org_id))
@@ -210,7 +210,7 @@ async def _find_eligible_orgs(db: AsyncSession) -> list[uuid.UUID]:
 async def _process_org(
     ctx: dict,
     db: AsyncSession,
-    org_id: uuid.UUID,
+    user_id: uuid.UUID,
 ) -> dict[str, int]:
     """Run dedup logic for a single organization.
 
@@ -220,24 +220,24 @@ async def _process_org(
     Args:
         ctx: ARQ worker context (passed to ``resolve_graph_backend``).
         db: Database session.
-        org_id: Organization UUID.
+        user_id: Organization UUID.
 
     Returns:
         Dict with ``clusters``, ``entities_merged``,
         ``relationships_rewired`` counts.
     """
-    backend = await resolve_graph_backend(ctx, org_id, db)
+    backend = await resolve_graph_backend(ctx, user_id, db)
     if backend is None:
         logger.warning(
             "merge_duplicates.graph_disabled",
-            org_id=str(org_id),
+            user_id=str(user_id),
         )
         return {"clusters": 0, "entities_merged": 0, "relationships_rewired": 0}
 
     # Discover projects for this org
     result = await db.execute(
         select(Project.id).where(
-            Project.organization_id == org_id,
+            Project.user_id == user_id,
             Project.is_archived.is_(False),
         )
     )
@@ -254,7 +254,7 @@ async def _process_org(
     for project_id in project_ids:
         try:
             result_counts = await _process_project(
-                db, backend, org_id, project_id,
+                db, backend, user_id, project_id,
             )
             total_clusters += result_counts["clusters"]
             total_merged += result_counts["entities_merged"]
@@ -262,7 +262,7 @@ async def _process_org(
         except Exception as exc:
             logger.error(
                 "merge_duplicates.project_failed",
-                org_id=str(org_id),
+                user_id=str(user_id),
                 project_id=str(project_id),
                 error=str(exc),
             )
@@ -271,14 +271,14 @@ async def _process_org(
     if cluster_errors and len(cluster_errors) == len(project_ids):
         raise RuntimeError(
             f"All {len(project_ids)} projects failed to merge duplicates "
-            f"for org {org_id}: {', '.join(cluster_errors)}"
+            f"for org {user_id}: {', '.join(cluster_errors)}"
         )
 
     await db.commit()
 
     logger.info(
         "merge_duplicates.org_completed",
-        org_id=str(org_id),
+        user_id=str(user_id),
         clusters=total_clusters,
         projects_failed=len(cluster_errors),
         entities_merged=total_merged,
@@ -296,7 +296,7 @@ async def _process_org(
 async def _process_project(
     db: AsyncSession,
     backend: GraphBackend,
-    org_id: uuid.UUID,
+    user_id: uuid.UUID,
     project_id: uuid.UUID,
 ) -> dict[str, int]:
     """Run dedup logic for a single project within an org.
@@ -304,14 +304,14 @@ async def _process_project(
     Args:
         db: Database session (for audit log).
         backend: Graph backend for this org.
-        org_id: Organization UUID.
+        user_id: Organization UUID.
         project_id: Project UUID.
 
     Returns:
         Dict with ``clusters``, ``entities_merged``,
         ``relationships_rewired`` counts.
     """
-    clusters = await _find_duplicate_clusters(backend, org_id, project_id)
+    clusters = await _find_duplicate_clusters(backend, user_id, project_id)
 
     if not clusters:
         return {"clusters": 0, "entities_merged": 0, "relationships_rewired": 0}
@@ -322,13 +322,13 @@ async def _process_project(
 
     for cluster in clusters:
         try:
-            result = await _merge_cluster(db, backend, org_id, project_id, cluster)
+            result = await _merge_cluster(db, backend, user_id, project_id, cluster)
             total_merged += result["entities_merged"]
             total_rewired += result["relationships_rewired"]
         except Exception as exc:
             logger.error(
                 "merge_duplicates.cluster_failed",
-                org_id=str(org_id),
+                user_id=str(user_id),
                 project_id=str(project_id),
                 entity_ids=[str(e["id"]) for e in cluster],
                 error=str(exc),
@@ -338,7 +338,7 @@ async def _process_project(
     if cluster_errors and len(cluster_errors) == len(clusters):
         raise RuntimeError(
             f"All {len(clusters)} clusters failed to merge for project "
-            f"{project_id} in org {org_id}: {', '.join(cluster_errors)}"
+            f"{project_id} in org {user_id}: {', '.join(cluster_errors)}"
         )
 
     return {
@@ -351,7 +351,7 @@ async def _process_project(
 
 async def _find_duplicate_clusters(
     backend: GraphBackend,
-    org_id: uuid.UUID,
+    user_id: uuid.UUID,
     project_id: uuid.UUID,
 ) -> list[list[dict[str, Any]]]:
     """Find duplicate entity clusters using exact and fuzzy matching.
@@ -366,7 +366,7 @@ async def _find_duplicate_clusters(
 
     Args:
         backend: Graph backend for this org.
-        org_id: Organization UUID.
+        user_id: Organization UUID.
         project_id: Project UUID.
 
     Returns:
@@ -374,7 +374,7 @@ async def _find_duplicate_clusters(
         (``id``, ``name``, ``entity_type``, ``created_at``).
     """
     entities = await backend.get_all_entities(
-        org_id, project_id, include_merged=False,
+        user_id, project_id, include_merged=False,
     )
 
     if len(entities) < 2:
@@ -405,7 +405,7 @@ async def _find_duplicate_clusters(
             continue
 
         fuzzy_results = await backend.bulk_search_entities(
-            org_id=org_id,
+            user_id=user_id,
             project_id=project_id,
             query=entity["name"],
             fuzzy_threshold=FUZZY_SIMILARITY_THRESHOLD,
@@ -436,7 +436,7 @@ async def _find_duplicate_clusters(
 async def _merge_cluster(
     db: AsyncSession,
     backend: GraphBackend,
-    org_id: uuid.UUID,
+    user_id: uuid.UUID,
     project_id: uuid.UUID,
     cluster: list[dict[str, Any]],
 ) -> dict[str, int]:
@@ -450,7 +450,7 @@ async def _merge_cluster(
     Args:
         db: Database session (for audit log).
         backend: Graph backend for this org.
-        org_id: Organization UUID.
+        user_id: Organization UUID.
         project_id: Project UUID.
         cluster: List of entity dicts in this cluster (at least 2).
 
@@ -466,7 +466,7 @@ async def _merge_cluster(
 
     # ── 2. Atomic merge via backend ─────────────────────────────────────────
     merge_result = await backend.merge_entities(
-        org_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         canonical_id=uuid.UUID(canonical["id"]),
         merged_ids=[uuid.UUID(e["id"]) for e in duplicate_entities],
@@ -492,7 +492,7 @@ async def _merge_cluster(
 
     audit_service = AuditLogService(db)
     await audit_service.log_action(
-        organization_id=org_id,
+
         actor_id="system",
         actor_type="system",
         action="entity.merge",
@@ -510,7 +510,7 @@ async def _merge_cluster(
 
     logger.info(
         "merge_duplicates.cluster_merged",
-        org_id=str(org_id),
+        user_id=str(user_id),
         project_id=str(project_id),
         canonical_id=canonical["id"],
         canonical_name=canonical["name"],

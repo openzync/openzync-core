@@ -2,15 +2,15 @@
 
 Provides the following auth dependencies:
 
-1. ``get_org_id`` — Optional auth.  Returns the org ID if authenticated,
+1. ``get_user_id`` — Optional auth.  Returns the user ID if authenticated,
    ``None`` otherwise.  Works with both API keys and JWT tokens.
 
-2. ``require_org_id`` — Mandatory auth.  Raises 401 if not authenticated.
+2. ``require_user_id`` — Mandatory auth.  Raises 401 if not authenticated.
 
 3. ``require_permission(permission)`` — Dependency factory.  Requires the
    authenticated principal to hold a specific permission string.  API keys
    are checked against ``request.state.api_key_permissions``; JWT users
-   against their org role (``admin``/``superadmin`` are wildcard) or their
+   against their user role (``admin``/``superadmin`` are wildcard) or their
    explicit ``permissions`` column (Redis-cached, fail-closed).  Raises
    403 if missing.
 
@@ -45,8 +45,7 @@ from sqlalchemy.ext.asyncio import (
     AsyncSession,  # noqa: TC002 (runtime import — FastAPI resolves annotation names)
 )
 
-from core.config import PLATFORM_ORG_ID
-from core.rbac import get_effective_permissions, get_must_change_password, get_org_role
+from core.rbac import get_effective_permissions, get_must_change_password, get_user_role
 from dependencies.db import get_db
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -86,15 +85,15 @@ until the password is changed.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-async def get_org_id(
+async def get_user_id(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),  # noqa: ARG001
 ) -> str | None:
-    """Extract the authenticated organization ID from the request state.
+    """Extract the authenticated user ID from the request state.
 
-    The ``org_id`` is set by :class:`AuthMiddleware` after verifying the
-    API key or JWT token.  If no authentication was provided (public
-    endpoint), this returns ``None``.
+    The ``user_id`` is set by :class:`AuthMiddleware` after verifying the
+    API key (key owner's UUID) or JWT token (``sub`` claim).  If no
+    authentication was provided (public endpoint), this returns ``None``.
 
     The ``credentials`` parameter is included to ensure FastAPI parses the
     ``Authorization`` header and adds it to the OpenAPI schema.  Actual
@@ -105,29 +104,32 @@ async def get_org_id(
         credentials: Parsed Bearer credentials (used for OpenAPI schema only).
 
     Returns:
-        The organization UUID string, or ``None`` if not authenticated.
+        The user UUID string, or ``None`` if not authenticated.
     """
-    return getattr(request.state, "org_id", None)
+    return getattr(request.state, "user_id", None)
 
 
-async def require_org_id(
-    org_id: str | None = Depends(get_org_id),
+async def require_user_id(
+    user_id: str | None = Depends(get_user_id),
 ) -> str:
-    """Require a valid authenticated organization ID.
+    """Require a valid authenticated user ID.
 
-    Works with both API keys and JWT tokens.  Raises a 401 error if the
-    request has no valid authentication.
+    Works with both API keys (key owner's UUID) and JWT tokens (``sub``).
+    Raises a 401 error if the request has no valid authentication.
+    Row ownership is enforced by the ``user_isolation`` RLS policies
+    (``row.user_id = app.user_id``); a superadmin bypasses RLS via
+    ``get_db_superadmin``.
 
     Args:
-        org_id: The organization ID from :func:`get_org_id`.
+        user_id: The user ID from :func:`get_user_id`.
 
     Returns:
-        The authenticated organization UUID string.
+        The authenticated user UUID string.
 
     Raises:
         HTTPException: 401 if no valid authentication is present.
     """
-    if org_id is None:
+    if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -140,7 +142,7 @@ async def require_org_id(
                 ),
             },
         )
-    return org_id
+    return user_id
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -150,7 +152,7 @@ async def require_org_id(
 
 async def _check_permission(
     request: Request,
-    org_id: str,
+    user_id: str,
     db: AsyncSession,
     required_permission: str,
 ) -> None:
@@ -161,17 +163,18 @@ async def _check_permission(
     - **API key**: the key's permission list
       (``request.state.api_key_permissions``) must contain the required
       permission.
-    - **JWT (dashboard user)**: the org ``admin``/``superadmin`` roles are
+    - **JWT (dashboard user)**: the ``admin``/``superadmin`` roles are
       wildcard (implicitly hold every permission); any other role must
       carry the permission in their explicit ``permissions`` column
-      (Redis-cached for 60 s, fail-closed to deny).
+      (Redis-cached for 60 s, fail-closed to deny).  Ownership of the
+      target rows is enforced by RLS, not here.
 
     Shared by :func:`require_permission` and
     :func:`require_permission_or_self` so both enforce the same decision.
 
     Args:
         request: The incoming HTTP request.
-        org_id: The authenticated organization ID.
+        user_id: The authenticated user ID.
         db: Request-scoped async DB session (role/permission lookups).
         required_permission: The permission string the principal must hold.
 
@@ -203,6 +206,194 @@ async def _check_permission(
         return
 
     # JWT (dashboard user)
+    jwt_user_id: str | None = getattr(request.state, "user_id", None)
+    if jwt_user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "type": "https://errors.openzync.tech/authentication_error",
+                "title": "Invalid Session",
+                "status": 401,
+                "detail": "The JWT token does not contain a valid user identifier.",
+            },
+        )
+
+    redis = getattr(request.app.state, "redis", None)
+    if redis is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "type": "https://errors.openzync.tech/service_unavailable",
+                "title": "Service Unavailable",
+                "status": 503,
+                "detail": (
+                    "The authorization cache is not configured. "
+                    "Contact the administrator."
+                ),
+            },
+        )
+
+    role = await get_user_role(redis, db, UUID(user_id))
+    if role in ("admin", "superadmin"):
+        return
+
+    permissions = await get_effective_permissions(redis, db, UUID(user_id))
+    if required_permission not in permissions:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "type": "https://errors.openzync.tech/authorization_error",
+                "title": "Insufficient Permissions",
+                "status": 403,
+                "detail": (
+                    f"This action requires the '{required_permission}' permission."
+                ),
+            },
+        )
+
+
+def require_permission(required_permission: str):
+    """Dependency factory requiring a specific permission string.
+
+    Works for both API keys (``request.state.api_key_permissions``) and
+    JWT dashboard users (``admin``/``superadmin`` roles are wildcard,
+    otherwise the user's explicit ``permissions`` column).  Fails closed:
+    any lookup error denies with 403.  Ownership of the target rows is
+    enforced by the ``user_isolation`` RLS policies
+    (``row.user_id = token.sub``), not here.
+
+    Args:
+        required_permission: The permission string the principal must hold
+            (e.g. ``"configuration:write"``, ``"members:read"``).
+
+    Returns:
+        A dependency callable that returns the ``user_id`` if the permission
+        is held, or raises 401/403/503.
+    """
+
+    async def _permission_checker(
+        request: Request,
+        user_id: str = Depends(require_user_id),  # noqa: B008
+        db: AsyncSession = Depends(get_db),  # noqa: B008
+    ) -> str:
+        """Inner dependency that performs the permission check.
+
+        Args:
+            request: The incoming HTTP request.
+            user_id: The authenticated user ID.
+            db: Request-scoped async DB session (role/permission lookups).
+
+        Returns:
+            The ``user_id`` if the permission check passes.
+
+        Raises:
+            HTTPException: 401/403/503 via :func:`_check_permission`.
+        """
+        await _check_permission(request, user_id, db, required_permission)
+        return user_id
+
+    return _permission_checker
+
+
+async def require_user(
+    request: Request,
+    user_id: str = Depends(require_user_id),  # noqa: B008
+) -> str:
+    """Require authentication and return the caller's user ID.
+
+    Ownership check helper: compare the returned ID against the target
+    row's ``user_id`` (``row.user_id == token.sub``).  Superadmins bypass
+    via ``get_db_superadmin`` instead of this dependency.
+    """
+    return user_id
+
+
+def require_permission_or_self(required_permission: str):
+    """Dependency factory requiring the permission, or acting on oneself.
+
+    The authenticated user may always access their **own** sub-resource
+    (``str(user_id) == request.state.user_id``); otherwise the same
+    permission check as :func:`require_permission` applies.  Intended for
+    per-user sub-resources (e.g. ``GET /users/{user_id}/summary``).
+
+    Args:
+        required_permission: The permission string required for acting on
+            another user's resource.
+
+    Returns:
+        A dependency callable that returns the caller's ``user_id``.
+    """
+
+    async def _permission_or_self_checker(
+        request: Request,
+        user_id: UUID = Path(...),  # noqa: B008
+        caller_id: str = Depends(require_user_id),  # noqa: B008
+        db: AsyncSession = Depends(get_db),  # noqa: B008
+    ) -> str:
+        """Inner dependency that performs the self-or-permission check.
+
+        Args:
+            request: The incoming HTTP request.
+            user_id: The target user's UUID (path param).
+            caller_id: The authenticated caller's user ID.
+            db: Request-scoped async DB session (role/permission lookups).
+
+        Returns:
+            The caller's ``user_id`` if the caller is the target user or
+            holds the required permission.
+
+        Raises:
+            HTTPException: 401/403/503 via :func:`_check_permission`.
+        """
+        # Self-bypass is JWT-session only: API keys authenticate as the
+        # key owner's UUID, and must not reach personal endpoints via a
+        # creator identity.
+        auth_type: str | None = getattr(request.state, "auth_type", None)
+        actor_user_id: str | None = getattr(request.state, "user_id", None)
+        if (
+            auth_type == "jwt"
+            and actor_user_id is not None
+            and str(user_id) == actor_user_id
+        ):
+            return caller_id
+        await _check_permission(request, caller_id, db, required_permission)
+        return caller_id
+
+    return _permission_or_self_checker
+
+
+async def get_actor_permissions(
+    request: Request,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> frozenset[str] | None:
+    """Resolve the calling principal's grantable permission set.
+
+    Used to cap permission grants so a principal can never escalate beyond
+    its own set.  API keys resolve from
+    ``request.state.api_key_permissions`` (always populated by
+    :class:`AuthMiddleware` — ``None`` is treated as an empty set,
+    fail-closed).  JWT sessions resolve via the user role
+    (``admin``/``superadmin`` are wildcard) or the cached explicit
+    permission set.
+
+    Args:
+        request: The incoming HTTP request.
+        db: Request-scoped async DB session (role/permission lookups).
+
+    Returns:
+        ``None`` for admin/superadmin (uncapped — wildcard), otherwise the
+        actor's permission set used to cap grants.
+
+    Raises:
+        HTTPException: 401 if a JWT session is missing a user id or org id.
+        HTTPException: 503 if Redis is not configured on app state.
+    """
+    if getattr(request.state, "auth_type", None) == "api_key":
+        key_permissions: list[str] | None = getattr(
+            request.state, "api_key_permissions", None
+        )
+        return frozenset(key_permissions or [])
+
     user_id: str | None = getattr(request.state, "user_id", None)
     if user_id is None:
         raise HTTPException(
@@ -230,196 +421,10 @@ async def _check_permission(
             },
         )
 
-    role = await get_org_role(redis, db, UUID(org_id), UUID(user_id))
-    if role in ("admin", "superadmin"):
-        return
-
-    permissions = await get_effective_permissions(
-        redis, db, UUID(org_id), UUID(user_id)
-    )
-    if required_permission not in permissions:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "type": "https://errors.openzync.tech/authorization_error",
-                "title": "Insufficient Permissions",
-                "status": 403,
-                "detail": (
-                    f"This action requires the '{required_permission}' permission."
-                ),
-            },
-        )
-
-
-def require_permission(required_permission: str):
-    """Dependency factory requiring a specific permission string.
-
-    Works for both API keys (``request.state.api_key_permissions``) and
-    JWT dashboard users (org ``admin``/``superadmin`` roles are wildcard,
-    otherwise the user's explicit ``permissions`` column).  Fails closed:
-    any lookup error denies with 403.
-
-    Use this to protect endpoints that require elevated permissions:
-
-    .. code-block:: python
-
-        @router.post("/orgs/{org_id}/config")
-        async def update_config(
-            org_id: str = Depends(require_permission("configuration:write")),
-        ):
-            ...
-
-    Args:
-        required_permission: The permission string the principal must hold
-            (e.g. ``"configuration:write"``, ``"members:read"``).
-
-    Returns:
-        A dependency callable that returns the ``org_id`` if the permission
-        is held, or raises 401/403/503.
-    """
-
-    async def _permission_checker(
-        request: Request,
-        org_id: str = Depends(require_org_id),  # noqa: B008
-        db: AsyncSession = Depends(get_db),  # noqa: B008
-    ) -> str:
-        """Inner dependency that performs the permission check.
-
-        Args:
-            request: The incoming HTTP request.
-            org_id: The authenticated organization ID.
-            db: Request-scoped async DB session (role/permission lookups).
-
-        Returns:
-            The ``org_id`` if the permission check passes.
-
-        Raises:
-            HTTPException: 401/403/503 via :func:`_check_permission`.
-        """
-        await _check_permission(request, org_id, db, required_permission)
-        return org_id
-
-    return _permission_checker
-
-
-def require_permission_or_self(required_permission: str):
-    """Dependency factory requiring the permission, or acting on oneself.
-
-    The authenticated user may always access their **own** sub-resource
-    (``str(user_id) == request.state.user_id``); otherwise the same
-    permission check as :func:`require_permission` applies.  Intended for
-    per-user sub-resources (e.g. ``GET /users/{user_id}/summary``).
-
-    Args:
-        required_permission: The permission string required for acting on
-            another user's resource.
-
-    Returns:
-        A dependency callable that returns the ``org_id``.
-    """
-
-    async def _permission_or_self_checker(
-        request: Request,
-        user_id: UUID = Path(...),  # noqa: B008
-        org_id: str = Depends(require_org_id),  # noqa: B008
-        db: AsyncSession = Depends(get_db),  # noqa: B008
-    ) -> str:
-        """Inner dependency that performs the self-or-permission check.
-
-        Args:
-            request: The incoming HTTP request.
-            user_id: The target user's UUID (path param).
-            org_id: The authenticated organization ID.
-            db: Request-scoped async DB session (role/permission lookups).
-
-        Returns:
-            The ``org_id`` if the caller is the target user or holds the
-            required permission.
-
-        Raises:
-            HTTPException: 401/403/503 via :func:`_check_permission`.
-        """
-        # Self-bypass is JWT-session only: API keys carry the key's
-        # ``created_by`` in state.user_id, and must not reach org-scoped
-        # personal endpoints via the creator's identity.
-        auth_type: str | None = getattr(request.state, "auth_type", None)
-        actor_user_id: str | None = getattr(request.state, "user_id", None)
-        if (
-            auth_type == "jwt"
-            and actor_user_id is not None
-            and str(user_id) == actor_user_id
-        ):
-            return org_id
-        await _check_permission(request, org_id, db, required_permission)
-        return org_id
-
-    return _permission_or_self_checker
-
-
-async def get_actor_permissions(
-    request: Request,
-    db: AsyncSession = Depends(get_db),  # noqa: B008
-) -> frozenset[str] | None:
-    """Resolve the calling principal's grantable permission set.
-
-    Used to cap permission grants so a principal can never escalate beyond
-    its own set.  API keys resolve from
-    ``request.state.api_key_permissions`` (always populated by
-    :class:`AuthMiddleware` — ``None`` is treated as an empty set,
-    fail-closed).  JWT sessions resolve via the org role
-    (``admin``/``superadmin`` are wildcard) or the cached explicit
-    permission set.
-
-    Args:
-        request: The incoming HTTP request.
-        db: Request-scoped async DB session (role/permission lookups).
-
-    Returns:
-        ``None`` for admin/superadmin (uncapped — wildcard), otherwise the
-        actor's permission set used to cap grants.
-
-    Raises:
-        HTTPException: 401 if a JWT session is missing a user id or org id.
-        HTTPException: 503 if Redis is not configured on app state.
-    """
-    if getattr(request.state, "auth_type", None) == "api_key":
-        key_permissions: list[str] | None = getattr(
-            request.state, "api_key_permissions", None
-        )
-        return frozenset(key_permissions or [])
-
-    user_id: str | None = getattr(request.state, "user_id", None)
-    org_id: str | None = getattr(request.state, "org_id", None)
-    if user_id is None or org_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "type": "https://errors.openzync.tech/authentication_error",
-                "title": "Invalid Session",
-                "status": 401,
-                "detail": "The JWT token does not contain a valid user identifier.",
-            },
-        )
-
-    redis = getattr(request.app.state, "redis", None)
-    if redis is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "type": "https://errors.openzync.tech/service_unavailable",
-                "title": "Service Unavailable",
-                "status": 503,
-                "detail": (
-                    "The authorization cache is not configured. "
-                    "Contact the administrator."
-                ),
-            },
-        )
-
-    role = await get_org_role(redis, db, UUID(org_id), UUID(user_id))
+    role = await get_user_role(redis, db, UUID(user_id))
     if role in ("admin", "superadmin"):
         return None
-    return await get_effective_permissions(redis, db, UUID(org_id), UUID(user_id))
+    return await get_effective_permissions(redis, db, UUID(user_id))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -429,7 +434,7 @@ async def get_actor_permissions(
 
 async def get_dashboard_user(
     request: Request,
-    org_id: str = Depends(require_org_id),  # noqa: B008
+    user_id: str = Depends(require_user_id),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> str:
     """Require a JWT-authenticated dashboard user.
@@ -447,7 +452,7 @@ async def get_dashboard_user(
 
     Args:
         request: The incoming HTTP request.
-        org_id: The authenticated organization ID (from ``require_org_id``).
+        user_id: The authenticated user ID (from ``require_user_id``).
         db: Request-scoped async DB session (flag lookup).
 
     Returns:
@@ -508,7 +513,6 @@ async def get_dashboard_user(
         must_change = await get_must_change_password(
             redis,
             db,
-            UUID(org_id),
             UUID(user_id),
         )
         if must_change:
@@ -530,7 +534,7 @@ async def get_dashboard_user(
 
 async def get_current_user_id(
     request: Request,
-    org_id: str = Depends(require_org_id),
+    user_id: str = Depends(require_user_id),
 ) -> UUID:
     """Require an authenticated user and return their UUID.
 
@@ -542,7 +546,7 @@ async def get_current_user_id(
 
     Args:
         request: The incoming HTTP request.
-        org_id: The authenticated organization ID (from ``require_org_id``).
+        user_id: The authenticated user ID (from ``require_user_id``).
 
     Returns:
         The authenticated user's UUID.
@@ -574,18 +578,15 @@ async def get_current_user_id(
 
 async def _ensure_superadmin(
     request: Request,
-    org_id: str,
     user_id: str,
     db: AsyncSession,
 ) -> None:
-    """Raise 403 unless the JWT session is a DB-verified platform superadmin.
+    """Raise 403 unless the JWT session is a DB-verified superadmin.
 
-    Requires all of:
+    Requires both of:
     1. A JWT dashboard session (``get_dashboard_user`` has already raised
        401 otherwise).
-    2. ``org_id == PLATFORM_ORG_ID`` — the session must belong to the
-       platform org.
-    3. A DB-verified role of ``superadmin`` (Redis-cached, fail-closed to
+    2. A DB-verified role of ``superadmin`` (Redis-cached, fail-closed to
        ``member``) — the JWT ``role`` claim is never trusted.
 
     Fail-closed: any Redis/DB error degrades the role lookup to
@@ -594,26 +595,13 @@ async def _ensure_superadmin(
 
     Args:
         request: The incoming HTTP request (for ``app.state.redis``).
-        org_id: The authenticated organization ID (JWT claim).
         user_id: The authenticated dashboard user's UUID string.
         db: Request-scoped async DB session (role lookup).
 
     Raises:
         HTTPException: 503 if Redis is not configured on app state.
-        HTTPException: 403 if the org is not the platform org or the role
-            is not ``superadmin``.
+        HTTPException: 403 if the role is not ``superadmin``.
     """
-    if org_id != str(PLATFORM_ORG_ID):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "type": "https://errors.openzync.tech/authorization_error",
-                "title": "Insufficient Permissions",
-                "status": 403,
-                "detail": "This action requires the platform super-admin role.",
-            },
-        )
-
     redis = getattr(request.app.state, "redis", None)
     if redis is None:
         raise HTTPException(
@@ -628,7 +616,7 @@ async def _ensure_superadmin(
                 ),
             },
         )
-    role = await get_org_role(redis, db, PLATFORM_ORG_ID, UUID(user_id))
+    role = await get_user_role(redis, db, UUID(user_id))
     if role != "superadmin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -643,7 +631,6 @@ async def _ensure_superadmin(
 
 async def require_superadmin(
     request: Request,
-    org_id: str = Depends(require_org_id),  # noqa: B008
     user_id: str = Depends(get_dashboard_user),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> str:
@@ -657,7 +644,7 @@ async def require_superadmin(
 
     Args:
         request: The incoming HTTP request.
-        org_id: The authenticated organization ID (from ``require_org_id``).
+        user_id: The authenticated user ID (from ``require_user_id``).
         user_id: The dashboard user's UUID string (from ``get_dashboard_user``).
         db: Request-scoped async DB session.
 
@@ -668,5 +655,5 @@ async def require_superadmin(
         HTTPException: 401 if not a JWT-authenticated session.
         HTTPException: 403 if not a platform superadmin.
     """
-    await _ensure_superadmin(request, org_id, user_id, db)
-    return org_id
+    await _ensure_superadmin(request, user_id, db)
+    return user_id

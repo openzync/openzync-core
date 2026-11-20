@@ -19,7 +19,7 @@ class OrgStatsResponse(BaseModel):
     and classifications — windowed by days/from/to and optional project_id.
     """
 
-    organization_id: UUID = Field(..., description="The organization UUID.")
+    user_id: UUID = Field(..., description="The organization UUID.")
     total_episodes: int = Field(..., description="Total episodes (conversation turns).")
     total_sessions: int = Field(..., description="Total sessions across all projects.")
     total_facts: int = Field(

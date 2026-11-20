@@ -32,7 +32,7 @@ class AdminMetricsQueriesService:
         self,
         request: Request,
         org_config: OrgConfigBase,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
         limit: int,
@@ -50,7 +50,7 @@ class AdminMetricsQueriesService:
         return await self._batch.run_batch(
             request,
             org_config,
-            org_id,
+            user_id,
             start,
             end,
             limit,
