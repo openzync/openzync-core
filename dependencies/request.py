@@ -47,9 +47,10 @@ async def get_current_user_id(request: Request) -> UUID:
 
 
 get_current_org_id = get_current_user_id
-"""Legacy alias of :func:`get_current_user_id` (org scoping removed).
+"""Legacy alias of :func:`get_current_user_id` (user scope: ``app.user_id``).
 
-TODO(0070): remove with the ``organizations`` table drop.
+Deferred removal: 0070 dropped only the join-code policies, not the
+``organizations`` table — remove with that table drop.
 """
 
 

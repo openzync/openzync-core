@@ -1,8 +1,10 @@
-"""Organization model — inert legacy tenant entity (dropped in 0070).
+"""Organization model — inert legacy tenant entity.
 
-Kept only so the ``organizations`` table stays mapped until migration
-0070 drops it.  No new code may reference this model — ownership is
-user-scoped (RLS ``user_isolation`` policies keyed on ``user_id``).
+Kept only so the ``organizations`` table stays mapped: migration 0070
+drops only the dead join-code policies, NOT this table. The table drop
+is deferred beyond 0070. No new code may reference this model —
+ownership is user-scoped (RLS ``user_isolation`` policies keyed on
+``app.user_id``).
 """
 
 import uuid
@@ -44,7 +46,7 @@ class Organization(TimestampMixin, Base):
             ``POST /v1/auth/join`` rejects the code with 403.
     """
 
-    __tablename__ = "organizations"
+    __tablename__ = "organizations"  # inert: kept mapped; drop deferred beyond 0070.
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,

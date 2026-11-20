@@ -382,7 +382,8 @@ async def invalidate_must_change_password(
 
 
 get_org_role = get_user_role
-"""Legacy alias of :func:`get_user_role` (org scoping removed).
+"""Legacy alias of :func:`get_user_role` (user scope: ``app.user_id``).
 
-TODO(0070): remove with the ``organizations`` table drop.
+Deferred removal: 0070 dropped only the join-code policies, not the
+``organizations`` table — remove with that table drop.
 """

@@ -15,8 +15,6 @@ policies read two GUCs:
     the narrowly scoped pre-authentication lookups (see
     :func:`rls_bypass`).
 
-``app.lookup_code`` is legacy (org-code join removed) and unused.
-
 **Scope: transaction-local.**  Every binding below uses
 ``set_config(..., is_local => true)`` — i.e. ``SET LOCAL``.  PostgreSQL
 discards a transaction-local GUC when the transaction ends, so the tenant
@@ -45,14 +43,14 @@ session-creation paths that establish it:
 * ``dependencies.db.get_db`` — :func:`init_context` with the request's
   ``request.state.user_id`` (empty for public endpoints).
 * ``dependencies.db.get_db_superadmin`` — :func:`init_context` on the
-  verification session; the bypass session then binds the platform org
-  and ``app.bypass_rls='true'`` explicitly.
+  verification session; the bypass session then binds the superadmin's
+  own ``app.user_id`` and ``app.bypass_rls='true'`` explicitly.
 * ``services.worker.worker.rls_scoped_session_factory`` —
   :func:`init_context` with ``None`` (fail-closed) for every worker
   session; the task binds its own tenant afterwards.
 * Any other session opened in this repository that touches an
   RLS-protected table — initialise it with :func:`init_context` (or bind
-  a tenant with :func:`set_tenant_context`, or open a transaction-scoped
+  an owner with :func:`set_user_context`, or open a transaction-scoped
   :func:`rls_bypass`) as its first statement.
 
 **How it breaks.**  A missing or stale context can only ever *narrow* a
@@ -89,9 +87,6 @@ _APPLY_CONTEXT_SQL = text(
 
 ``is_local => true`` is ``SET LOCAL``: the value is discarded when the
 transaction ends, so it cannot survive onto a pooled connection.
-
-``app.lookup_code`` is deliberately NOT bound (the org-code join policy
-was dropped in migration 0069) — see :func:`set_lookup_code`.
 """
 
 
@@ -102,15 +97,10 @@ class RlsContext:
     Attributes:
         user_id: The owner UUID, or ``''`` for no user.
         bypass_rls: Whether the row-level-security policies are disabled.
-        lookup_code: Legacy, always ``""`` — never bound (the
-            ``org_join_code_lookup`` policy was dropped in migration 0069).
-            TODO(0070): drop the column with the ``organizations`` table and
-            remove ``set_lookup_code`` / the ``app.lookup_code`` binding.
     """
 
     user_id: str = ""
     bypass_rls: bool = False
-    lookup_code: str = ""
 
     @property
     def is_empty(self) -> bool:
@@ -119,9 +109,6 @@ class RlsContext:
 
     def as_params(self) -> dict[str, str]:
         """Render the context as ``set_config`` bind parameters.
-
-        Only the live GUCs are rendered — the legacy ``lookup_code`` is
-        intentionally omitted (no policy reads it anymore).
 
         Returns:
             The bind parameters for :data:`_APPLY_CONTEXT_SQL`.
@@ -248,10 +235,11 @@ async def set_user_context(db: AsyncSession, user_id: UUID | str) -> None:
 
 
 async def set_tenant_context(db: AsyncSession, user_id: UUID | str) -> None:
-    """Legacy alias of :func:`set_user_context` (org scoping removed).
+    """Legacy alias of :func:`set_user_context` (user scope: ``app.user_id``).
 
-    TODO(0070): remove this alias together with the ``organizations`` table
-    drop — all callers should use :func:`set_user_context` directly.
+    Deferred removal: 0070 dropped only the join-code policies, not the
+    ``organizations`` table — remove this alias together with that table
+    drop. All callers should use :func:`set_user_context` directly.
     """
     await set_user_context(db, user_id)
 
@@ -303,28 +291,12 @@ async def set_bypass_rls(db: AsyncSession, enabled: bool = True) -> None:
     await _apply_context(db, replace(ctx, bypass_rls=enabled))
 
 
-async def set_lookup_code(db: AsyncSession, code: str) -> None:
-    """Legacy no-op — org-code join is removed (single platform org).
-
-    Retained only because the ``organizations`` table drop is deferred to
-    0070; the ``org_join_code_lookup`` RLS policy it served was dropped in
-    migration 0069, so there is no GUC left to bind.  Does nothing by
-    design — callers should stop calling it.
-
-    TODO(0070): remove with the ``organizations`` table drop.
-
-    Args:
-        db: The session (unused).
-        code: The normalized organization code (ignored).
-    """
-
-
 async def init_context(db: AsyncSession, user_id: str | None) -> None:
     """Initialise the RLS context for a request.
 
     Binds the owner (empty when the request is unauthenticated — an empty
-    context yields no rows and no successful user-scoped write), pins the
-    bypass to ``'false'`` and clears any lookup code.
+    context yields no rows and no successful user-scoped write) and pins
+    the bypass to ``'false'``.
 
     This must be the **first statement of the session**.  See the module
     docstring.

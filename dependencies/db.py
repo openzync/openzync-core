@@ -139,7 +139,7 @@ async def get_db_superadmin(
     The bypass is bound **transaction-locally** (``core.rls``), so it is
     discarded by any commit, including a mid-request one.  The session is
     an :class:`core.rls.RlsAsyncSession`, which re-binds the whole
-    context (platform org + bypass) to the transaction that follows every
+    context (user ``app.user_id`` + bypass) to the transaction that follows every
     commit, so the bypass survives a mid-request commit and cannot
     outlive the transaction.
 
