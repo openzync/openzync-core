@@ -126,14 +126,6 @@ class Settings(BaseSettings):
         ),
         validation_alias="OZ_SECRET_KEY_PREVIOUS",
     )
-    # Deprecated: webhook signing uses per-endpoint secrets encrypted via
-    # core.crypto now.  Kept (empty default) so old env files still parse.
-    WEBHOOK_SIGNING_SECRET: str = Field(
-        default="",
-        description="(Deprecated — per-endpoint secrets are used instead.)",
-        validation_alias="OZ_WEBHOOK_SIGNING_SECRET",
-    )
-
     # ── Metrics / Observability ───────────────────────────────────────────
     PROMETHEUS_URL: str = Field(
         default="http://localhost:9090",

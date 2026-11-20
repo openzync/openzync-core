@@ -17,7 +17,7 @@ and factories are unchanged. ``services/auth_service.py`` re-exports it.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from repositories.auth_repository import AuthRepository
 from repositories.instance_settings_repository import InstanceSettingsRepository
@@ -55,8 +55,6 @@ class AuthService(
         redis: Async Redis client for MFA session storage.
         email_service: Optional email service for notification-only emails
             (e.g. password-change confirmation).  ``None`` skips notifications.
-        bao_client: Accepted for backward compat — no longer used.
-            during email verification.
         settings_repo: Singleton settings row (registration mode).
             Injected via ``dependencies.services.get_auth_service``.
     """
@@ -67,14 +65,12 @@ class AuthService(
         otp_service: OtpService,
         redis: AsyncRedis,
         email_service: EmailService | None = None,
-        bao_client: Any | None = None,
         settings_repo: InstanceSettingsRepository | None = None,
     ) -> None:
         self._repo = repo
         self._otp_service = otp_service
         self._redis = redis
         self._email_service = email_service
-        self._bao_client = bao_client
         self._settings_repo = settings_repo
 
 

@@ -76,10 +76,6 @@ def encrypt(purpose: str, aad: str, plaintext: str) -> str:
 
     Returns:
         A ``v1:<purpose>:<token>`` string for storage.
-
-    Raises:
-        ExternalServiceError: Never — encryption is local; misconfiguration
-            surfaces as a fail-fast error from ``get_settings``.
     """
     current, _ = _masters()
     fernet = Fernet(_derive_key(current, purpose))

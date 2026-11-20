@@ -151,6 +151,9 @@ class WebhookService:
 
         Default ``created_at/desc``; whitelist ``name``, ``created_at``.
         """
+        # note: no LIMIT — per-org endpoints are operator-created config rows
+        # (single digits); the emit path reads this same set, so a cap here
+        # would diverge list from delivery without any real cost saving.
         endpoints = await self._repo.get_by_organization(user_id, sort=sort)
         return [self._serialize(e) for e in endpoints]
 
@@ -191,7 +194,7 @@ class WebhookService:
         # Pre-generated so it doubles as the crypto AAD context.
         ciphertext = await self._encrypt_secret(endpoint_id, signing_secret)
         endpoint = await self._repo.create(
-
+            user_id=user_id,
             name=name,
             url=url,
             events=events,

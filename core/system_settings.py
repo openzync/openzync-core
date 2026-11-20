@@ -29,7 +29,6 @@ _SECRET_KEYS: frozenset[str] = frozenset(
     {
         "OZ_SECRET_KEY",
         "OZ_SECRET_KEY_PREVIOUS",
-        "OZ_WEBHOOK_SIGNING_SECRET",
         "OZ_SMTP_PASSWORD",
         "OZ_SMTP_USERNAME",  # treated as a secret — pairs with the password
     }

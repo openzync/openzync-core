@@ -81,7 +81,7 @@ class WebhookRepository:
         """
         endpoint = WebhookEndpoint(
             id=endpoint_id if endpoint_id is not None else uuid.uuid4(),
-
+            user_id=user_id,
             name=name,
             url=url,
             # orjson.dumps returns bytes; the column is TEXT and asyncpg

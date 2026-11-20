@@ -60,13 +60,14 @@ withdraws a claim without destroying the audit trail —
 fused with reciprocal rank fusion, so an entity name and a paraphrase both land —
 [memory and context](https://docs.openzync.tech/en/latest/domains/memory_context.html).
 
-**Configuration cannot drift from a stale `.env`.** OpenBao is the only source of runtime config:
-`.env` holds four bootstrap secrets, everything else is generated into OpenBao's `system` secret and
-rendered by the Agent sidecar at startup. No fallback path exists, by design —
+**Configuration is plain environment.** `.env` holds the full runtime config —
+every service reads it directly (compose `env_file`, or sourced for host runs).
+No secrets manager, no sidecar, no bootstrap step —
 [deployment guide](https://docs.openzync.tech/en/latest/guides/deployment.html).
-Set `OZ_ROOT_PASSWORD` in OpenBao's `system` secret **before first boot** to choose the seeded
-platform root password — otherwise a random one-time password is generated (fail-closed, unrecoverable
-from logs) and the root user must rotate it at first login via `must_change_password`.
+The platform root user is created once via `POST /v1/auth/setup`
+(public until setup completes, then disabled) — choose the root password there.
+Platform-wide non-secret tunables live in the root user's `config_override`,
+managed via `PATCH /admin/system/config`.
 
 ## Quick start
 
@@ -76,13 +77,11 @@ Prerequisites: Docker, Docker Compose v2, ~3 GB free disk.
 git clone https://github.com/openzync/openzync-core.git
 cd openzync-core
 cp .env.example .env
-# Fill the four <replace-with-…> placeholders, generating values with:
-#   openssl rand -hex 32                                            → BAO_STATIC_SEAL_KEY
-#   openssl rand -base64 32                                         → POSTGRES_PASSWORD
-#   python3 -c 'import secrets; print(secrets.token_urlsafe(48))'   → OZ_SECRET_KEY
-#   python3 -c 'import secrets; print(secrets.token_urlsafe(32))'   → OZ_WEBHOOK_SIGNING_SECRET
+# Fill the <replace-with-…> placeholders, generating values with:
+#   openssl rand -base64 32                                       → POSTGRES_PASSWORD
+#   python3 -c 'import secrets; print(secrets.token_urlsafe(48))' → OZ_SECRET_KEY
 
-make docker-up-local   # OpenBao, Postgres, FalkorDB, Redis, api and worker
+make docker-up-local   # Postgres, FalkorDB, Redis, api and worker
 
 curl -s localhost:8000/health   # {"status":"ok","service":"openzync-api","version":"1.0.0"}
 curl -s localhost:8000/ready    # {"status":"ok","checks":{"database":true,"redis":true,"embeddings":true}}
@@ -138,7 +137,8 @@ An empty array means all permissions (org `admin`, platform `superadmin`); new m
 ## Development
 
 ```bash
-make dev       # preflight services (OpenBao, Postgres, FalkorDB, Redis, Mailpit), then uvicorn --reload
+make deps      # one-time: Postgres, FalkorDB, Redis, Mailpit + .env check
+make dev       # uvicorn --reload with .env sourced
 make test      # unit tests only — no I/O
 make test-all  # unit + integration + security + e2e
 make lint      # ruff check + ruff format --check

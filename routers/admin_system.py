@@ -121,7 +121,7 @@ async def update_platform_config(
     body: SystemConfigUpdate,
     request: Request,
     _user_id: str = Depends(require_superadmin),  # noqa: B008
-    db: AsyncSession = Depends(get_db),  # noqa: B008
+    db: AsyncSession = Depends(get_db_superadmin),  # noqa: B008
 ) -> SystemConfigResponse:
     """Partially update the platform system config.
 
@@ -129,7 +129,9 @@ async def update_platform_config(
         body: Whitelisted fields to update (``None`` removes a key).
         request: Incoming HTTP request (app-state Redis access).
         _user_id: Superadmin user UUID (superadmin-gated).
-        db: Async DB session (platform root-row write).
+        db: RLS-bypass session (the root row belongs to the platform
+            root, not the acting superadmin — the tenant policy would
+            otherwise match zero rows fail-closed).
 
     Returns:
         The freshly stored config.

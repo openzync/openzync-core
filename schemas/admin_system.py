@@ -107,7 +107,6 @@ SYSTEM_SETTING_CATEGORIES: dict[str, str] = {
     # Security
     "OZ_SECRET_KEY": "Security",
     "OZ_SECRET_KEY_PREVIOUS": "Security",
-    "OZ_WEBHOOK_SIGNING_SECRET": "Security",
     # Auth
     "OZ_JWT_ACCESS_TOKEN_TTL_MINUTES": "Auth",
     "OZ_JWT_REFRESH_TOKEN_TTL_DAYS": "Auth",

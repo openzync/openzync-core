@@ -13,9 +13,10 @@
 #   status  one-line health check per dependency.
 #
 # Secrets:
-#   - Stable OZ_SECRET_KEY / OZ_WEBHOOK_SIGNING_SECRET / postgres password
-#     persist in scripts/.dev_preflight_secrets.env (0600). Generated on first
-#     run; reused afterwards so JWTs and encrypted payloads survive restarts.
+#   - Stable OZ_SECRET_KEY / postgres password persist in
+#     scripts/.dev_preflight_secrets.env (0600). Generated on first run;
+#     reused afterwards so JWTs and encrypted payloads survive restarts.
+#     (Webhook signing is per-endpoint via core/crypto — no global secret.)
 #   - .env is the full runtime env (OZ_DATABASE_URL, OZ_REDIS_URL,
 #     OZ_FALKORDB_URL, secrets, SMTP, ...), re-synced from the secrets file
 #     plus host-local service URLs on every run.
@@ -90,7 +91,7 @@ EOF
     exit 1
 }
 
-# ── 1. Stable secrets (OZ_SECRET_KEY, webhook secret, SMTP block) ────────────
+# ── 1. Stable secrets (OZ_SECRET_KEY, SMTP block) ────────────
 # OZ_DATABASE_URL is appended by ensure_postgres() on first container creation;
 # on a pre-existing postgres container it must already be present in the file.
 gen_secrets() {
@@ -99,7 +100,6 @@ gen_secrets() {
         log "Generating initial secrets -> ${SECRETS_FILE}"
         {
             echo "OZ_SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_urlsafe(48))')"
-            echo "OZ_WEBHOOK_SIGNING_SECRET=$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')"
             cat <<'EOF'
 OZ_SMTP_HOST=localhost
 OZ_SMTP_PORT=1025
@@ -281,7 +281,7 @@ with open(secrets_path) as f:
         if line and not line.startswith("#") and "=" in line:
             k, v = line.split("=", 1)
             vals[k] = v
-for required in ("OZ_SECRET_KEY", "OZ_WEBHOOK_SIGNING_SECRET", "OZ_DATABASE_URL"):
+for required in ("OZ_SECRET_KEY", "OZ_DATABASE_URL"):
     if not vals.get(required):
         sys.exit(
             f"FATAL: {required} missing in {secrets_path} — delete the file "
@@ -291,7 +291,6 @@ for required in ("OZ_SECRET_KEY", "OZ_WEBHOOK_SIGNING_SECRET", "OZ_DATABASE_URL"
 runtime = {
     # Stable secrets — generated once, reused so JWTs survive restarts.
     "OZ_SECRET_KEY": vals["OZ_SECRET_KEY"],
-    "OZ_WEBHOOK_SIGNING_SECRET": vals["OZ_WEBHOOK_SIGNING_SECRET"],
     "OZ_DATABASE_URL": vals["OZ_DATABASE_URL"],
     # Host-local service URLs (containers publish to 127.0.0.1).
     "OZ_REDIS_URL": "redis://localhost:6379/0",
@@ -423,6 +422,7 @@ up() {
     ensure_mailpit
     # Unconditional every run: .env is regenerated from stable secrets +
     # current host-local service URLs.
+    sync_env
     apply_migrations
     seed_host_ollama_embed_url
     probe_embeddings "$EFFECTIVE_EMBED_URL"
