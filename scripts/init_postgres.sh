@@ -19,7 +19,7 @@ set -u
 set -o pipefail
 
 # ── Paths & defaults ─────────────────────────────────────────────────────────
-DB_INIT_DIR="${DB_INIT_DIR:-/bao-init}"
+DB_INIT_DIR="${DB_INIT_DIR:-/db-init}"
 CREDS_FILE="${DB_INIT_DIR}/db-creds.json"
 POSTGRES_HOST="${POSTGRES_HOST:-postgres}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
@@ -73,10 +73,25 @@ else
     _SUPERUSER_FROM_ENV=0
 fi
 
-# ── 3. Always generate fresh migrator + app passwords (rotation-friendly) ────
-log "Generating fresh migrator and app passwords (32-byte base64 each) ..."
-OP_MIGRATOR_PASSWORD=$(openssl rand -base64 32)
-OP_APP_PASSWORD=$(openssl rand -base64 32)
+# ── 3. Migrator + app passwords (env-provided or auto-generated) ───────────
+# POSTGRES_MIGRATOR_PASSWORD / POSTGRES_APP_PASSWORD pin the passwords so
+# the same values can live in .env (compose migrate/api/worker read
+# DATABASE_URL from the environment). When unset, auto-generate fresh
+# ones (rotation-friendly) and print an export snippet at the end.
+if [ -n "${POSTGRES_MIGRATOR_PASSWORD:-}" ]; then
+    log "Migrator password sourced from POSTGRES_MIGRATOR_PASSWORD env var."
+    OP_MIGRATOR_PASSWORD="${POSTGRES_MIGRATOR_PASSWORD}"
+else
+    log "POSTGRES_MIGRATOR_PASSWORD not set — auto-generating migrator password."
+    OP_MIGRATOR_PASSWORD=$(openssl rand -base64 32)
+fi
+if [ -n "${POSTGRES_APP_PASSWORD:-}" ]; then
+    log "App password sourced from POSTGRES_APP_PASSWORD env var."
+    OP_APP_PASSWORD="${POSTGRES_APP_PASSWORD}"
+else
+    log "POSTGRES_APP_PASSWORD not set — auto-generating app password."
+    OP_APP_PASSWORD=$(openssl rand -base64 32)
+fi
 
 # ── 4. Set PGPASSWORD for all subsequent psql calls ─────────────────────────
 #      (kept in-memory only; never on the command line)
@@ -231,9 +246,14 @@ unset OP_SUPERUSER_PASSWORD OP_MIGRATOR_PASSWORD OP_APP_PASSWORD PGPASSWORD
 log "═══════════════════════════════════════════════════════════════════"
 log " init_postgres complete!"
 log "═══════════════════════════════════════════════════════════════════"
-log "  Credentials: ${CREDS_FILE}  (mode 0600)"
+log "  Credentials: ${CREDS_FILE}  (mode 0600, container-local copy)"
 log "  Database:    ${DB_NAME}@${POSTGRES_HOST}:${POSTGRES_PORT}"
 log "  Roles:       ${MIGRATOR_USER} (DDL), ${APP_USER} (CRUD)"
 log "  Generated:   ${GENERATED_AT}"
+log "═══════════════════════════════════════════════════════════════════"
+log "Point OZ_DATABASE_URL at these roles, e.g.:"
+log "  export OZ_DATABASE_URL='postgresql+asyncpg://${MIGRATOR_USER}:<migrator-password>@${POSTGRES_HOST}:${POSTGRES_PORT}/${DB_NAME}'   # migrate"
+log "  export OZ_DATABASE_URL='postgresql+asyncpg://${APP_USER}:<app-password>@${POSTGRES_HOST}:${POSTGRES_PORT}/${DB_NAME}'   # api/worker"
+log "When passwords were auto-generated, read them from ${CREDS_FILE}."
 log "═══════════════════════════════════════════════════════════════════"
 log "Done."

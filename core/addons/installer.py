@@ -29,7 +29,7 @@ _LS_CONCURRENCY = 5
 def allowed_addon_src() -> Path:
     """Return the resolved dir local addon sources must live under.
 
-    OpenBao-managed ``ALLOWED_ADDON_SRC``; defaults to ``<repo>/addons``.
+    Env-managed ``ALLOWED_ADDON_SRC``; defaults to ``<repo>/addons``.
 
     Returns:
         The resolved allowed source directory.

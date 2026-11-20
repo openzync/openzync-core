@@ -37,7 +37,6 @@ class RegistrationMixin:
     _otp_service: Any
     _redis: Any
     _email_service: Any
-    _bao_client: Any
     _settings_repo: Any
 
     def _settings(self) -> InstanceSettingsRepository:

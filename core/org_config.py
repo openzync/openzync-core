@@ -1,16 +1,16 @@
-"""Per-organization configuration resolution — cache-first, OpenBao-authoritative.
+"""Per-user configuration resolution — cache-first, DB-authoritative.
 
-Every request path and background worker that needs org-level settings (LLM,
+Every request path and background worker that needs user-level settings (LLM,
 embeddings, graph, behaviour) should resolve them through this module.
 
 Resolution order:
 1. Redis cache (key ``org_config:{user_id}``, TTL 5 min) — performance
    optimisation only.  Cache failures are logged at ERROR but the request
-   continues to OpenBao.
-2. OpenBao KV (per-org namespace ``org_<uuid>/config/``) — the authoritative
-   source.  OpenBao failures propagate as hard errors.
+   continues to the DB.
+2. ``users.config_override`` (the authoritative store).  DB failures
+   propagate as hard errors.
 
-There is **no** env-var fallback — if a field is not set in OpenBao it is
+There is **no** env-var fallback — if a field is not set in the DB it is
 returned as ``None`` and the caller decides what to do.
 
 On config update the cache is invalidated inline; invalidation failures are
@@ -26,10 +26,9 @@ from uuid import UUID
 import redis.asyncio
 import structlog
 from pydantic import ValidationError as PydanticValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import ValidationError as OrgConfigValidationError
-from core.openbao import OpenBaoClient
-from core.openbao_exceptions import OpenBaoConnectionError
 from schemas.organization_config import (
     OrgConfigBase,
     UpdateOrgConfigRequest,
@@ -74,38 +73,69 @@ def _invalid_field_names(exc: PydanticValidationError) -> list[str]:
     return sorted(fields)
 
 
+def _with_graph_default(raw: dict[str, Any]) -> OrgConfigBase:
+    """Build an :class:`OrgConfigBase` defaulting an unset graph backend.
+
+    Args:
+        raw: The stored override dict (may be empty).
+
+    Returns:
+        The validated config with ``graph_backend="falkordb"`` when unset.
+
+    Raises:
+        OrgConfigValidationError: If stored values fail schema validation.
+    """
+    if not raw.get("graph_backend"):
+        raw = {**raw, "graph_backend": "falkordb"}
+    try:
+        return OrgConfigBase(**raw)
+    except PydanticValidationError as exc:
+        fields = _invalid_field_names(exc)
+        logger.warning(
+            "org_config.stored_config_invalid",
+            extra={"fields": fields},
+        )
+        raise OrgConfigValidationError(
+            message=(
+                "Stored org config failed validation in field(s): "
+                f"{', '.join(fields) or 'unknown'}. "
+                "Fix via PATCH /admin/org/config."
+            ),
+            detail={"fields": fields},
+        ) from None
+
+
 async def get_org_config(
     user_id: UUID,
     redis: redis.asyncio.Redis | None = None,
-    bao_client: OpenBaoClient | None = None,
+    db: AsyncSession | None = None,
     *,
     skip_cache: bool = False,
 ) -> OrgConfigBase:
-    """Fetch the stored config for an org: cache → OpenBao.
+    """Fetch the stored config for a user: cache → DB.
 
     There is no env-var fallback — every field is returned as stored in
-    OpenBao.  Callers that need a default value when a field is ``None``
-    must implement that logic themselves.
+    ``users.config_override``.  Callers that need a default value when a
+    field is ``None`` must implement that logic themselves.
 
     Args:
-        user_id: The organization UUID.
+        user_id: The user UUID.
         redis: An optional async Redis client.  When ``None``, caching is
             skipped.
-        bao_client: An authenticated :class:`OpenBaoClient`.  **Required**.
-        skip_cache: If ``True``, bypass cache and always fetch from OpenBao.
+        db: Async DB session for the ``users.config_override`` read.
+            Required when the cache misses.
+        skip_cache: If ``True``, bypass cache and always fetch from the DB.
 
     Returns:
         An :class:`OrgConfigBase` with only the fields that are explicitly
-        set in OpenBao.  Unset fields are ``None``.
+        set.  Unset fields are ``None`` (except ``graph_backend``, which
+        defaults to ``"falkordb"`` for new users).
 
     Raises:
-        OpenBaoConnectionError: If *bao_client* is ``None``.
         ValidationError: If the stored config fails schema validation
             (poisoned field values written before stricter constraints).
+        RuntimeError: If *db* is ``None`` on a cache miss.
     """
-    if bao_client is None:
-        raise OpenBaoConnectionError("OpenBao client required for org config reads")
-
     cache_key = f"{CACHE_KEY_PREFIX}:{user_id}"
 
     # 1. Try cache (unless skip_cache is set)
@@ -117,7 +147,7 @@ async def get_org_config(
                     return OrgConfigBase.model_validate_json(cached)
                 except PydanticValidationError as exc:
                     # Poisoned cache entry — drop it and fall through to
-                    # OpenBao (authoritative).  Field names only, never values.
+                    # the DB (authoritative).  Field names only, never values.
                     logger.warning(
                         "org_config.cache_invalid",
                         extra={
@@ -143,46 +173,15 @@ async def get_org_config(
                 exc_info=True,
             )
 
-    # 2. Fetch from OpenBao
-    raw = await bao_client.read_org_config(user_id)
-    # When no config has been stored yet, raw is {} and **raw would apply
-    # Pydantic defaults — but we want new orgs to default to falkordb
-    # (not disabled).  Only graph_backend gets a synthetic default; all
-    # other fields stay None until explicitly set.
-    if not raw:
-        defaults = {name: None for name in OrgConfigBase.model_fields}
-        defaults["graph_backend"] = "falkordb"
-        org_config = OrgConfigBase(**defaults)
-    else:
-        # Existing org but graph_backend never set → default to falkordb
-        # (postgres removed in v1.1.0 → 410 Gone).
-        if not raw.get("graph_backend"):
-            raw = {**raw, "graph_backend": "falkordb"}
-        try:
-            org_config = OrgConfigBase(**raw)
-        except PydanticValidationError as exc:
-            # Stored config predates a stricter constraint (e.g. an
-            # ``llm_backend`` outside the known provider set).  Surface
-            # a named 422 identifying the field — never a bare-500
-            # pydantic error and never secret values.
-            fields = _invalid_field_names(exc)
-            logger.warning(
-                "org_config.stored_config_invalid",
-                extra={"user_id": str(user_id), "fields": fields},
-            )
-            raise OrgConfigValidationError(
-                message=(
-                    "Stored org config failed validation in field(s): "
-                    f"{', '.join(fields) or 'unknown'}. "
-                    "Fix via PATCH /admin/org/config."
-                ),
-                detail={"user_id": str(user_id), "fields": fields},
-                # Break the chain: the pydantic cause renders rejected
-                # input values (potentially secrets) into its string, so
-                # it must never surface via a future exc_info traceback
-                # log.  Field names are already captured above and in
-                # the raised detail — nothing is lost.
-            ) from None
+    # 2. Fetch from DB (authoritative)
+    if db is None:
+        raise RuntimeError("get_org_config requires a DB session on cache miss")
+    from repositories.user_repository import UserRepository  # noqa: PLC0415 — lazy, avoids import cycle
+
+    raw = await UserRepository(db).get_config_override(user_id)
+    # New users have {} — default only graph_backend to falkordb
+    # (not disabled); all other fields stay None until explicitly set.
+    org_config = _with_graph_default(dict(raw))
 
     # 3. Write to cache (best-effort)
     if not skip_cache and redis is not None:
@@ -203,24 +202,24 @@ async def get_org_config(
 async def update_org_config(
     user_id: UUID,
     update_data: UpdateOrgConfigRequest | dict[str, Any],
-    bao_client: OpenBaoClient,
     redis: redis.asyncio.Redis | None = None,
+    db: AsyncSession | None = None,
 ) -> OrgConfigBase:
-    """Update stored org config in OpenBao, invalidate cache, return fresh config.
+    """Update stored user config in the DB, invalidate cache, return fresh config.
 
-    Performs a deep merge: provided keys replace existing stored values.
+    Performs a shallow merge: provided keys replace existing stored values.
     Keys set to ``None`` are removed from the stored config (returning
     ``None`` on next read).
 
-    OpenBao is the sole authoritative store — there is no database
-    dual-write.
+    The DB (``users.config_override``) is the sole authoritative store —
+    there is no dual-write.
 
     Args:
-        user_id: The organization UUID.
+        user_id: The user UUID.
         update_data: Fields to update.  Can be a :class:`UpdateOrgConfigRequest`
             or a plain dict.
-        bao_client: An authenticated :class:`OpenBaoClient`.
         redis: An optional async Redis client (for cache invalidation).
+        db: Async DB session for the read/write.  Required.
 
     Returns:
         The freshly stored config after the update.
@@ -230,18 +229,24 @@ async def update_org_config(
     else:
         update_dict = update_data
 
-    # 1. Read existing config from OpenBao
-    existing = await bao_client.read_org_config(user_id)
+    if db is None:
+        raise RuntimeError("update_org_config requires a DB session")
+    from repositories.user_repository import UserRepository  # noqa: PLC0415 — lazy, avoids import cycle
 
-    # 2. Merge: provided keys override.  None values are kept in the dict on
-    #    purpose — write_org_config deletes the KV secret for any key whose
-    #    value is None.  Popping the key here used to skip that delete branch,
-    #    leaving the stale secret in OpenBao forever.
+    repo = UserRepository(db)
+
+    # 1. Read existing config from DB
+    existing = dict(await repo.get_config_override(user_id))
+
+    # 2. Shallow merge: provided keys override; None values remove the key.
     for key, value in update_dict.items():
-        existing[key] = value
+        if value is None:
+            existing.pop(key, None)
+        else:
+            existing[key] = value
 
-    # 3. Write to OpenBao (authoritative store)
-    await bao_client.write_org_config(user_id, existing)
+    # 3. Write to DB (authoritative store)
+    await repo.set_config_override(user_id, existing)
 
     # 4. Invalidate Redis cache
     if redis is not None:
@@ -255,17 +260,15 @@ async def update_org_config(
                 exc_info=True,
             )
 
-    # 5. Re-read from OpenBao (cache is cold — forces fresh read)
-    return await get_org_config(
-        user_id, redis=redis, bao_client=bao_client, skip_cache=True
-    )
+    # 5. Re-read from DB (cache is cold — forces fresh read)
+    return await get_org_config(user_id, redis=redis, db=db, skip_cache=True)
 
 
 def build_cache_key(user_id: UUID) -> str:
-    """Build the Redis cache key for an org's config.
+    """Build the Redis cache key for a user's config.
 
     Args:
-        user_id: The organization UUID.
+        user_id: The user UUID.
 
     Returns:
         A string like ``"org_config:<uuid>"``.

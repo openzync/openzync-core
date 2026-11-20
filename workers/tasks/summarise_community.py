@@ -429,21 +429,7 @@ async def _create_community(
     # Generate summary via LLM
     try:
         prompt = _build_community_prompt(context_entities, context_rels)
-        bao_client = ctx.get("openbao_client") if isinstance(ctx, dict) else None
-        if bao_client is not None:
-            org_cfg = await get_org_config(user_id, redis=None, bao_client=bao_client)
-        else:
-            from core.config import BootstrapSettings
-            from core.openbao import OpenBaoClient
-
-            bootstrap = BootstrapSettings()
-            async with OpenBaoClient(
-                bootstrap.OPENBAO_ADDR,
-                bootstrap.OPENBAO_ROLE_ID,
-                bootstrap.OPENBAO_SECRET_ID,
-                timeout=10.0,
-            ) as _tmp_bao:
-                org_cfg = await get_org_config(user_id, redis=None, bao_client=_tmp_bao)
+        org_cfg = await get_org_config(user_id, redis=None, db=db)
         llm_config_dict = org_cfg.to_llm_config_dict()
         sink = make_sink(
             db,

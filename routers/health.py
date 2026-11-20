@@ -61,7 +61,7 @@ async def readiness(request: Request) -> JSONResponse:
         # False here means startup was bypassed (e.g. tests) — fail closed.
         "embeddings": is_model_loaded(),
     }
-    # Aux outages (FalkorDB, Ollama, Transit, seed) degrade instead of
+    # Aux outages (FalkorDB, Ollama, crypto, seed) degrade instead of
     # blocking boot — /ready reports them here until they recover.
     degraded: dict[str, str] = dict(getattr(request.app.state, "degraded", {}))
     # One-time setup signal (the ONLY bootstrap probe the frontend uses):

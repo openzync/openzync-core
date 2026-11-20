@@ -44,7 +44,7 @@ def get_email_service() -> EmailService:
 
     The ``EmailService`` is stateless (per-message SMTP connections) so it
     can be created fresh each time.  Configuration is read from the runtime
-    ``Settings`` singleton populated from OpenBao.
+    ``Settings`` singleton read from ``OZ_*`` env vars.
 
     Returns:
         An initialised ``EmailService`` instance.

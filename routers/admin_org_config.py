@@ -25,8 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 — runtime impor
 
 from core.audit import audit_action
 from core.config import get_settings
-from core.exceptions import RateLimitError
-from core.openbao_exceptions import OpenBaoError
+from core.exceptions import ExternalServiceError, RateLimitError
 from dependencies.auth import require_permission
 from dependencies.db import get_db
 from schemas.organization_config import (
@@ -72,34 +71,24 @@ def _get_system_managed_fields() -> list[str]:
 
 def _get_config_service(
     request: Request,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> OrgConfigService:
     """Build a request-scoped OrgConfigService.
 
-    Reads the OpenBao client and Redis client from ``request.app.state``
-    (initialised during the application lifespan).
+    Reads the DB session from the request and the Redis client from
+    ``request.app.state`` (initialised during the application lifespan).
     """
-    bao_client = getattr(request.app.state, "openbao_client", None)
-    if bao_client is None:
-        raise HTTPException(
-            status_code=503,
-            detail="OpenBao client not available — secrets backend not initialised",
-        )
     redis = getattr(request.app.state, "redis", None)
-    return OrgConfigService(bao_client=bao_client, redis=redis)
+    return OrgConfigService(db=db, redis=redis)
 
 
 def _get_connection_service(
     request: Request,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> OrgConfigConnectionService:
-    """Build a request-scoped OrgConfigConnectionService (503 if OpenBao down)."""
-    bao_client = getattr(request.app.state, "openbao_client", None)
-    if bao_client is None:
-        raise HTTPException(
-            status_code=503,
-            detail="OpenBao client not available — secrets backend not initialised",
-        )
+    """Build a request-scoped OrgConfigConnectionService."""
     redis = getattr(request.app.state, "redis", None)
-    return OrgConfigConnectionService(bao_client=bao_client, redis=redis)
+    return OrgConfigConnectionService(db=db, redis=redis)
 
 
 #: Max config-test probes per user per window (fail-open on Redis errors).
@@ -325,11 +314,10 @@ async def test_org_config(
         # Single-call probe path — read through the user-config service
         # (no direct repo round-trip from the router); the candidate
         # merge below is in-memory only.
-        bao_client = getattr(request.app.state, "openbao_client", None)
         user_config_service = UserConfigService(
             user_repo=UserRepository(db),
-            bao_client=bao_client,
             redis=redis,
+            db=db,
         )
         override = await user_config_service.get_override(as_user)
         if override:
@@ -339,8 +327,8 @@ async def test_org_config(
             candidate = UpdateOrgConfigRequest(**merged)
     try:
         return await service.test_connections(UUID(_user_id), body.domain, candidate)
-    except OpenBaoError as exc:
+    except ExternalServiceError as exc:
         raise HTTPException(
             status_code=503,
-            detail="Secrets backend unavailable — cannot load stored config",
+            detail="Config backend unavailable — cannot load stored config",
         ) from exc

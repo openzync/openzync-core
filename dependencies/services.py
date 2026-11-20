@@ -81,18 +81,12 @@ async def get_webhook_service(
 ) -> WebhookService:
     """Dependency that yields an initialised WebhookService.
 
-    Wires in the webhook repository for endpoint CRUD plus the Transit
-    encryption manager (from ``app.state.openbao_client``) so signing
-    secrets are encrypted at rest.  Event emission uses ARQ job delivery
-    (not Svix).
+    Wires in the webhook repository for endpoint CRUD.  Signing secrets
+    are encrypted at rest via ``core.crypto`` (Fernet subkeys from
+    ``OZ_SECRET_KEY``).  Event emission uses ARQ job delivery (not Svix).
     """
-    from core.transit import TransitManager
-
-    bao_client = getattr(request.app.state, "openbao_client", None)
-    transit = TransitManager(bao_client) if bao_client is not None else None
     return WebhookService(
         repo=WebhookRepository(db),
-        transit=transit,
     )
 
 
@@ -159,14 +153,12 @@ async def get_auth_service(
     email_config = EmailConfig.from_settings(get_settings())
     email_service = EmailService(email_config)
     otp_service = OtpService(redis=redis_client, email_service=email_service)
-    bao_client = getattr(request.app.state, "openbao_client", None)
 
     return AuthService(
         repo=AuthRepository(db),
         otp_service=otp_service,
         redis=redis_client,
         email_service=email_service,
-        bao_client=bao_client,
         settings_repo=InstanceSettingsRepository(db),
     )
 
@@ -259,13 +251,12 @@ async def get_user_config_service(
     Returns:
         An initialised ``UserConfigService``.
     """
-    bao_client = getattr(request.app.state, "openbao_client", None)
     redis = getattr(request.app.state, "redis", None)
     return UserConfigService(
         user_repo=UserRepository(db),
-        bao_client=bao_client,
         redis=redis,
         auth_repo=AuthRepository(db),
+        db=db,
     )
 
 
@@ -304,7 +295,7 @@ def _make_graph_backend_resolver(
     Reuses ``workers.backend.resolve_graph_backend`` — the same
     resolution used by the enrichment workers — so the API path and the
     worker path share one implementation (dispatcher, per-user config via
-    OpenBao cache-first, SurrealDB pool only when configured, FalkorDB
+    DB cache-first, SurrealDB pool only when configured, FalkorDB
     client).  Resolution raises ``GraphBackendUnavailableError`` on
     failure; ``FactService.ingest_facts`` catches it and proceeds without
     graph sync (facts are the source of truth).
@@ -328,7 +319,6 @@ def _make_graph_backend_resolver(
             request.app.state, "surreal_connection_pool", None
         ),
         "falkordb_client": getattr(request.app.state, "falkordb_client", None),
-        "openbao_client": getattr(request.app.state, "openbao_client", None),
         "redis": getattr(request.app.state, "redis", None),
     }
 
@@ -349,9 +339,7 @@ async def get_memory_service(
     """Dependency that yields an initialised MemoryService.
 
     Wires up all repositories and Redis with the request-scoped DB session.
-    The Redis client is read from ``request.app.state.redis``. The OpenBao
-    client (if available) is passed through so PII config can be read from
-    org_config with a fallback to quotas.
+    The Redis client is read from ``request.app.state.redis``.
     """
     redis_client = getattr(request.app.state, "redis", None)
     if redis_client is None:
@@ -359,7 +347,6 @@ async def get_memory_service(
             "Redis client not found on app.state. "
             "Ensure init_redis() was called during the application lifespan."
         )
-    bao_client = getattr(request.app.state, "openbao_client", None)
     return MemoryService(
         db=db,
         redis_client=redis_client,
@@ -371,7 +358,6 @@ async def get_memory_service(
         webhook_service=webhook,
         blob_repo=EpisodeBlobRepository(db),
         project_repo=ProjectRepository(db),
-        bao_client=bao_client,
     )
 
 

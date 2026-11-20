@@ -25,31 +25,29 @@ class BlobIngestMixin:
 
     _db: Any
     _redis: Any
-    _bao_client: Any
     _blob_repo: Any
 
     async def _resolve_storage_config(self, user_id: UUID) -> dict[str, Any]:
-        """Resolve the org's blob storage config from OpenBao — fail loud.
+        """Resolve the user's blob storage config from the DB — fail loud.
 
-        The org's S3 settings are read with the app-level OpenBao client
-        (an AppRole login per call is both slow and needless) and the
-        app-level Redis client, so the 300 s org-config cache is used.
+        The user's S3 settings are read with the app-level Redis client,
+        so the 300 s org-config cache is used.
 
         A storage misconfiguration must never degrade to the shared dev
-        bucket: an org that configured its own bucket would silently have
-        its documents written to ``openzync-blobs`` instead.  Any failure
-        to read the org's config therefore raises
+        bucket: a user that configured their own bucket would silently have
+        documents written to ``openzync-blobs`` instead.  Any failure
+        to read the user's config therefore raises
         :class:`ExternalServiceError` (→ 502) rather than falling back to
         the defaults.
 
         Args:
-            user_id: The organization UUID.
+            user_id: The user UUID.
 
         Returns:
             Flattened storage config dict for ``BlobStorageConfig``.
 
         Raises:
-            ExternalServiceError: If the org's storage config cannot be read.
+            ExternalServiceError: If the user's storage config cannot be read.
         """
         from core.exceptions import ExternalServiceError
         from core.org_config import get_org_config
@@ -58,7 +56,7 @@ class BlobIngestMixin:
             org_cfg = await get_org_config(
                 user_id,
                 redis=self._redis,
-                bao_client=self._bao_client,
+                db=self._db,
             )
         except Exception as exc:
             logger.error(
@@ -67,7 +65,7 @@ class BlobIngestMixin:
                 exc_info=True,
             )
             raise ExternalServiceError(
-                f"Blob storage config for org {user_id} could not be read from OpenBao."
+                f"Blob storage config for user {user_id} could not be read from the DB."
             ) from exc
 
         # Platform defaults (the shared MinIO bucket of the compose stack)

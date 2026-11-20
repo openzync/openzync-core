@@ -494,6 +494,35 @@ class UserRepository:
         await self._db.refresh(user)
         return dict(user.config_override or {})
 
+    async def set_config_override(
+        self, user_id: UUID, config: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Replace the user's config override wholesale.
+
+        Same PK-scoping rationale as :meth:`get_config_override`
+        (no bypass — other users' rows stay invisible fail-closed).
+
+        Args:
+            user_id: The internal OpenZync user UUID.
+            config: The full override dict to store.
+
+        Returns:
+            The stored override dict.
+
+        Raises:
+            NotFoundError: If the user does not exist.
+        """
+        from core.exceptions import NotFoundError
+
+        result = await self._db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+        user.config_override = dict(config)
+        await self._db.flush()
+        await self._db.refresh(user)
+        return dict(user.config_override or {})
+
     # ── Update ──────────────────────────────────────────────────────────────
 
     async def update(

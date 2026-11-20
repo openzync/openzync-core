@@ -1,29 +1,20 @@
-"""Application configuration — populated exclusively from OpenBao at startup.
+"""Application configuration — read directly from ``OZ_*`` environment variables.
 
-System-level configuration (database URLs, secrets, tunables) is stored in
-OpenBao KV under the ``system/`` namespace and loaded at application startup
-via :func:`init_settings`.  The :class:`Settings` singleton is not available
-until :func:`init_settings` has been called.
+System-level configuration (database URLs, secrets, tunables) is a
+pydantic-settings :class:`Settings` BaseSettings: every field binds to its
+``OZ_*`` env var via ``validation_alias``.  The singleton is created lazily
+on first :func:`get_settings` call and fails fast when ``OZ_SECRET_KEY``
+(< 32 chars) or ``OZ_DATABASE_URL`` is missing.
 
-There is **no** module-level ``Settings()`` instantiation at import time.
-Access the singleton through :func:`get_settings` or the backward-compatible
-``from core.config import settings`` pattern.
-
-There is **no** env-var fallback.  If OpenBao is unreachable at startup, the
-process fails fast with :class:`OpenBaoConnectionError`.
+Per-user configuration (LLM, embeddings, graph, behaviour) is **not**
+stored here — use ``core.org_config.get_org_config()`` for those values
+(they live in ``users.config_override``).  Platform-wide non-secret
+tunables live in the platform root user's ``config_override`` — see
+``core.system_config``.
 
 Usage::
 
-    from core.config import BootstrapSettings, get_settings, init_settings
-    from core.openbao import OpenBaoClient
-
-    bootstrap = BootstrapSettings()
-    async with OpenBaoClient(
-        bootstrap.OPENBAO_ADDR,
-        bootstrap.OPENBAO_ROLE_ID,
-        bootstrap.OPENBAO_SECRET_ID,
-    ) as bao:
-        settings = await init_settings(bao)
+    from core.config import get_settings
 
     # At runtime:
     db_url = get_settings().DATABASE_URL
@@ -32,11 +23,10 @@ Usage::
 from __future__ import annotations
 
 import logging
-import secrets
-import uuid
 from typing import Any
+from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -45,7 +35,7 @@ logger = logging.getLogger(__name__)
 # Platform constants
 # ═══════════════════════════════════════════════════════════════════════════════
 
-PLATFORM_ORG_ID = uuid.UUID("00000000-0000-0000-0000-0000000000aa")
+PLATFORM_ORG_ID = UUID("00000000-0000-0000-0000-0000000000aa")
 """Fixed UUID of the platform (super-admin) organization.
 
 The platform org (``name="SYSTEM"``) and its root ``superadmin`` user are
@@ -57,94 +47,37 @@ never generated — so auth checks are deterministic and the setup is
 idempotent.
 """
 
-# Re-export init_settings so callers can do:
-#   from core.config import init_settings, BootstrapSettings
-# This import is safe at module level because ``core.openbao_settings`` only
-# imports ``core.config`` inside function bodies (no circular dependency).
-from core.openbao_settings import init_settings  # noqa: F401  — re-export
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Bootstrap settings (reaching OpenBao)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-class BootstrapSettings(BaseSettings):
-    """Minimal settings needed to reach OpenBao for the first time.
-
-    These values are read from **actual environment variables only** — there
-    is no ``.env`` file fallback.  They are never stored in OpenBao itself;
-    they bootstrap the connection.
-
-    In production, inject these via Docker environment variables, Kubernetes
-    Secrets, or your infrastructure's secrets manager.
-
-    Environment variables:
-        OZ_OPENBAO_ADDR: OpenBao server URL (default ``http://localhost:8200``).
-        OZ_OPENBAO_ROLE_ID: AppRole RoleID for authentication (required).
-        OZ_OPENBAO_SECRET_ID: AppRole SecretID for authentication (required).
-    """
-
-    OPENBAO_ADDR: str = Field(
-        default="http://localhost:8200",
-        description="OpenBao server URL.",
-        validation_alias="OZ_OPENBAO_ADDR",
-    )
-    OPENBAO_ROLE_ID: str = Field(
-        description="AppRole RoleID for OpenBao authentication.",
-        validation_alias="OZ_OPENBAO_ROLE_ID",
-    )
-    OPENBAO_SECRET_ID: str = Field(
-        description="AppRole SecretID for OpenBao authentication.",
-        validation_alias="OZ_OPENBAO_SECRET_ID",
-    )
-    OPENBAO_WORKER_ROLE_ID: str | None = Field(
-        default=None,
-        description="Optional worker-specific AppRole RoleID.",
-        validation_alias="OZ_OPENBAO_WORKER_ROLE_ID",
-    )
-    OPENBAO_WORKER_SECRET_ID: str | None = Field(
-        default=None,
-        description="Optional worker-specific AppRole SecretID.",
-        validation_alias="OZ_OPENBAO_WORKER_SECRET_ID",
-    )
-
-    model_config = SettingsConfigDict(
-        extra="ignore",
-        frozen=True,
-        # Intentionally no ``env_file`` — bootstrap settings are read from
-        # actual environment variables only (injected by the entrypoint or
-        # orchestrator).  A .env file would defeat the security property that
-        # AppRole credentials must never be committed to disk.
-    )
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Runtime settings model
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class Settings(BaseModel):
+class Settings(BaseSettings):
     """Single source of truth for all OpenZync system configuration.
 
-    Values are loaded from OpenBao KV (``system/`` namespace) at startup via
-    :func:`init_settings`.  An instance is created once and exposed through
-    :func:`get_settings`.  Do **not** instantiate ``Settings`` manually.
-
-    Secrets (``DATABASE_URL``, ``REDIS_URL``, ``SECRET_KEY``,
-    ``WEBHOOK_SIGNING_SECRET``) have **no defaults** — they are required and
-    must be present in OpenBao.  Non-sensitive tunables have sensible defaults
-    that can be overridden in OpenBao.
+    Values are read from ``OZ_*`` environment variables.  ``SECRET_KEY``
+    (min 32 chars) and ``DATABASE_URL`` have **no defaults** — the process
+    fails fast at startup when they are missing.  Non-sensitive tunables
+    have sensible defaults overridable via env.
 
     .. note::
 
         Per-org configuration (LLM, embeddings, graph, behaviour) is **not**
         stored here.  Use ``core.org_config.get_org_config()`` for those
-        values — they live in per-org OpenBao namespaces.
+        values — they live in ``users.config_override``.
     """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",
+        populate_by_name=True,
+    )
 
     # ── Database ──────────────────────────────────────────────────────────
     DATABASE_URL: str = Field(
         description="PostgreSQL connection string used by SQLAlchemy async engine.",
+        validation_alias="OZ_DATABASE_URL",
     )
     DB_POOL_SIZE: int = Field(
         default=4,
@@ -156,6 +89,7 @@ class Settings(BaseModel):
             "The default (4 + 1) keeps the Helm maximum (10 API + 5 worker "
             "replicas) at 75 connections, inside the Postgres default of 100."
         ),
+        validation_alias="OZ_DB_POOL_SIZE",
     )
     DB_MAX_OVERFLOW: int = Field(
         default=1,
@@ -166,40 +100,52 @@ class Settings(BaseModel):
             "requests queue.  Counted in the replicas x (pool_size + "
             "max_overflow) < max_connections budget."
         ),
+        validation_alias="OZ_DB_MAX_OVERFLOW",
     )
 
     # ── Redis / Caching ───────────────────────────────────────────────────
     REDIS_URL: str = Field(
         description="Redis connection string for caching, pub/sub, and RQ/ARQ.",
+        validation_alias="OZ_REDIS_URL",
     )
 
     # ── Secrets ───────────────────────────────────────────────────────────
     SECRET_KEY: str = Field(
         description=(
-            "Secret key used for signing JWTs and other cryptographic "
-            "operations.  Must be at least 32 characters in production."
+            "Secret key used for signing JWTs and deriving encryption "
+            "subkeys (see core.crypto).  Must be at least 32 characters."
         ),
         min_length=32,
+        validation_alias="OZ_SECRET_KEY",
     )
-    WEBHOOK_SIGNING_SECRET: str = Field(
+    SECRET_KEY_PREVIOUS: str | None = Field(
+        default=None,
         description=(
-            "Secret key for HMAC-SHA256 webhook signing. "
-            "Must be at least 32 characters. "
-            "Consumers use this to verify webhook authenticity."
+            "Previous OZ_SECRET_KEY value — decrypt-only, for the rotation "
+            "window.  Never used for encryption."
         ),
-        min_length=32,
+        validation_alias="OZ_SECRET_KEY_PREVIOUS",
+    )
+    # Deprecated: webhook signing uses per-endpoint secrets encrypted via
+    # core.crypto now.  Kept (empty default) so old env files still parse.
+    WEBHOOK_SIGNING_SECRET: str = Field(
+        default="",
+        description="(Deprecated — per-endpoint secrets are used instead.)",
+        validation_alias="OZ_WEBHOOK_SIGNING_SECRET",
     )
 
     # ── Metrics / Observability ───────────────────────────────────────────
     PROMETHEUS_URL: str = Field(
         default="http://localhost:9090",
         description="Prometheus server URL.  Used by the admin /metrics/summary endpoint.",
+        validation_alias="OZ_PROMETHEUS_URL",
     )
 
     # ── HTTP / Server ─────────────────────────────────────────────────────
     CORS_ORIGINS: str = Field(
         default="http://localhost:3000",
         description="Comma-separated list of allowed CORS origins.",
+        validation_alias="OZ_CORS_ORIGINS",
     )
     FRONTEND_URL: str = Field(
         default="http://localhost:3000",
@@ -207,6 +153,7 @@ class Settings(BaseModel):
             "Base URL of the frontend web app, used for invite email links "
             "(e.g. ``{FRONTEND_URL}/invite?token=...``)."
         ),
+        validation_alias="OZ_FRONTEND_URL",
     )
     HOSTS_ALLOWED: str = Field(
         default="localhost:8000",
@@ -216,6 +163,7 @@ class Settings(BaseModel):
             "(e.g. 'api.openzync.tech,localhost:3000'). "
             "Accepts '*' in development."
         ),
+        validation_alias="OZ_HOSTS_ALLOWED",
     )
     TRUSTED_PROXY_IPS: str = Field(
         default="127.0.0.1",
@@ -227,16 +175,19 @@ class Settings(BaseModel):
             "'*' is rejected — trusting every peer lets a client forge its "
             "own IP and bypass the rate limiters."
         ),
+        validation_alias="OZ_TRUSTED_PROXY_IPS",
     )
 
     # ── Environment & Observability ───────────────────────────────────────
     ENVIRONMENT: str = Field(
         default="development",
         description="Deployment environment.  Controls logging format, etc.",
+        validation_alias="OZ_ENVIRONMENT",
     )
     LOG_LEVEL: str = Field(
         default="INFO",
         description="Minimum log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).",
+        validation_alias="OZ_LOG_LEVEL",
     )
 
     # ── Concurrency ───────────────────────────────────────────────────────
@@ -245,6 +196,14 @@ class Settings(BaseModel):
         ge=1,
         le=64,
         description="Maximum number of worker threads/processes.",
+        validation_alias="OZ_MAX_WORKERS",
+    )
+    LOW_MAX_WORKERS: int = Field(
+        default=2,
+        ge=2,
+        le=32,
+        description="Concurrency floor for the low-priority queue worker.",
+        validation_alias="OZ_LOW_MAX_WORKERS",
     )
 
     # ── JWT ────────────────────────────────────────────────────────────────
@@ -253,28 +212,14 @@ class Settings(BaseModel):
         ge=1,
         le=1440,
         description="Access token TTL in minutes (default 30).",
+        validation_alias="OZ_JWT_ACCESS_TOKEN_TTL_MINUTES",
     )
     JWT_REFRESH_TOKEN_TTL_DAYS: int = Field(
         default=7,
         ge=1,
         le=90,
         description="Refresh token TTL in days (default 7).",
-    )
-
-    # ── Platform root credential ───────────────────────────────────────────
-    # The seeded root user's initial password.  There is deliberately NO
-    # static default: an unset OZ_ROOT_PASSWORD in OpenBao yields a random
-    # one-time password (fail-closed — no install ever shares a known
-    # credential), and the seed forces ``must_change_password=True`` so the
-    # root user sets a real password at first login.  Set OZ_ROOT_PASSWORD
-    # in OpenBao system config (via SYSTEM_KEY_MAPPING) BEFORE FIRST BOOT
-    # to choose the initial value explicitly — a random password generated
-    # on an earlier boot is already seeded and cannot be recovered.
-    # Never log the value itself.
-    OZ_ROOT_PASSWORD: str = Field(
-        default_factory=lambda: secrets.token_urlsafe(32),
-        min_length=16,
-        description="Initial password for the seeded platform root user.",
+        validation_alias="OZ_JWT_REFRESH_TOKEN_TTL_DAYS",
     )
 
     # ── FalkorDB (graph backend) ──────────────────────────────────────────
@@ -285,6 +230,7 @@ class Settings(BaseModel):
             "When set at system level, orgs share a single FalkorDB instance.  "
             "When None (default), per-org falkordb_url from org_config may be used."
         ),
+        validation_alias="OZ_FALKORDB_URL",
     )
     FALKORDB_MAX_CONNECTIONS: int = Field(
         default=10,
@@ -297,11 +243,13 @@ class Settings(BaseModel):
             "Budget: 15 max Helm replicas x 10 = 150 worst-case, inside "
             "an unknown external FalkorDB maxclients (compose pins none)."
         ),
+        validation_alias="OZ_FALKORDB_MAX_CONNECTIONS",
     )
     FALKORDB_SOCKET_TIMEOUT: int = Field(
         default=30,
         ge=1,
         description="Socket timeout in seconds for FalkorDB connections.",
+        validation_alias="OZ_FALKORDB_SOCKET_TIMEOUT",
     )
 
     # ── SurrealDB (graph backend — optional system-level) ─────────────────
@@ -314,6 +262,7 @@ class Settings(BaseModel):
             "from org identity.  When None (default), per-org surrealdb_* "
             "fields from org_config are used."
         ),
+        validation_alias="OZ_SURREALDB_URL",
     )
 
     # ── Embeddings (Ollama — sole embedder) ─────────────────────────────
@@ -324,6 +273,7 @@ class Settings(BaseModel):
             "(nomic-embed-text:v1.5 via /api/embed). System-level only — no "
             "per-org override, no model selection."
         ),
+        validation_alias="OZ_OLLAMA_EMBED_URL",
     )
 
     # ── Prompt Caching ────────────────────────────────────────────────────
@@ -419,9 +369,9 @@ class Settings(BaseModel):
     def _validate_cache_ttl(cls, v: str) -> str:
         """Validate cache TTL, falling back to default on invalid input.
 
-        OpenBao KV has no schema enforcement — a manual ``bao kv put``
-        could write any value. Rather than crashing the application on a
-        Pydantic ``ValidationError``, we silently fall back to the default
+        Env vars have no schema enforcement — a manual typo could write
+        any value. Rather than crashing the application on a Pydantic
+        ``ValidationError``, we silently fall back to the default
         of ``"5m"``.
         """
         if v in ("5m", "1h"):
@@ -436,32 +386,39 @@ class Settings(BaseModel):
     SMTP_HOST: str = Field(
         default="localhost",
         description="SMTP server hostname for sending transactional emails.",
+        validation_alias="OZ_SMTP_HOST",
     )
     SMTP_PORT: int = Field(
         default=587,
         ge=1,
         le=65535,
         description="SMTP server port (default 587 for STARTTLS).",
+        validation_alias="OZ_SMTP_PORT",
     )
     SMTP_USERNAME: str = Field(
         default="",
         description="SMTP username (empty = no auth).",
+        validation_alias="OZ_SMTP_USERNAME",
     )
     SMTP_PASSWORD: str = Field(
         default="",
         description="SMTP password (empty = no auth).",
+        validation_alias="OZ_SMTP_PASSWORD",
     )
     SMTP_FROM_ADDR: str = Field(
         default="noreply@openzync.tech",
         description="From: address for outgoing emails.",
+        validation_alias="OZ_SMTP_FROM_ADDR",
     )
     SMTP_USE_TLS: bool = Field(
         default=False,
         description="Use implicit TLS (SMTPS) on connect (port 465). Set false for STARTTLS (port 587).",
+        validation_alias="OZ_SMTP_USE_TLS",
     )
     SMTP_START_TLS: bool = Field(
         default=True,
         description="Use STARTTLS to upgrade to TLS after connect.",
+        validation_alias="OZ_SMTP_START_TLS",
     )
 
     # ── Rate Limiting ─────────────────────────────────────────────────────
@@ -469,21 +426,25 @@ class Settings(BaseModel):
         default=10,
         ge=1,
         description="Max requests per IP within the rate-limit window.",
+        validation_alias="OZ_RATE_LIMIT_IP_MAX",
     )
     RATE_LIMIT_WINDOW_SEC: int = Field(
         default=60,
         ge=1,
         description="Rate-limit window in seconds.",
+        validation_alias="OZ_RATE_LIMIT_WINDOW_SEC",
     )
 
     # ── Blob / File Upload Limits ────────────────────────────────────────
     MAX_BLOBS_PER_MESSAGE: int = Field(
         default=10,
         description="Maximum number of blobs that can be attached to a single message.",
+        validation_alias="OZ_MAX_BLOBS_PER_MESSAGE",
     )
     MAX_BLOBS_PER_REQUEST: int = Field(
         default=50,
         description="Maximum total blobs across all messages in one request.",
+        validation_alias="OZ_MAX_BLOBS_PER_REQUEST",
     )
 
     # ── Addons ───────────────────────────────────────────────────────────
@@ -493,6 +454,7 @@ class Settings(BaseModel):
             "Directory local addon sources must live under. "
             "Local installs outside it are rejected (422), as are symlinks."
         ),
+        validation_alias="OZ_ALLOWED_ADDON_SRC",
     )
 
 
@@ -501,44 +463,38 @@ class Settings(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _settings: Settings | None = None
-"""Module-level :class:`Settings` singleton, populated by a one-time init call."""
+"""Module-level :class:`Settings` singleton, populated lazily from env."""
 
 
 def set_settings(settings: Settings) -> None:
-    """Store the :class:`Settings` singleton (called once by :func:`init_settings`).
+    """Store the :class:`Settings` singleton (tests / explicit override).
 
     Args:
-        settings: A fully-populated ``Settings`` instance from OpenBao.
+        settings: A fully-populated ``Settings`` instance.
     """
     global _settings  # noqa: PLW0603  — intentional module-level state
     _settings = settings
 
 
 def get_settings() -> Settings:
-    """Return the initialised :class:`Settings` singleton.
+    """Return the :class:`Settings` singleton, creating it from env on first call.
 
     Returns:
         The module-level singleton.
 
     Raises:
-        RuntimeError: If :func:`init_settings` has not been called yet.
+        ValidationError: If required ``OZ_*`` env vars are missing or invalid
+            (fail-fast at startup).
     """
+    global _settings  # noqa: PLW0603  — intentional module-level state
     if _settings is None:
-        raise RuntimeError(
-            "Settings not initialised. Call init_settings(client) "
-            "before get_settings().",
-        )
+        _settings = Settings()  # type: ignore[call-arg]
     return _settings
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Backward-compatible ``from core.config import settings``
 # ═══════════════════════════════════════════════════════════════════════════════
-#
-# ``settings`` is not a module-level variable anymore — it is resolved via
-# ``__getattr__`` so that ``from core.config import settings`` still works
-# (it calls ``get_settings()`` under the hood) while avoiding instantiation
-# at import time.
 
 
 def __getattr__(name: str) -> Any:

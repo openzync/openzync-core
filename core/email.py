@@ -1,8 +1,8 @@
 """Email configuration — SMTP settings from runtime Settings.
 
 SMTP host, port, credentials, and sending address are read from the
-:class:`core.config.Settings` singleton, which is populated from OpenBao
-at startup.  This module provides the :class:`EmailConfig` typed config
+:class:`core.config.Settings` singleton, which is read from ``OZ_*``
+env vars at startup.  This module provides the :class:`EmailConfig` typed config
 object and a helper to build :class:`email.message.EmailMessage` instances.
 
 Usage::

@@ -1,9 +1,11 @@
 """User config service — per-user overrides over platform config.
 
-Resolution order: ``user override ⊕ system defaults ⊕
-OpenBao``, later layers only filling keys the earlier ones leave unset.
-System layer comes from OpenBao; the user layer is the
-``users.config_override`` JSONB column. No secrets are logged.
+Resolution order: ``user override ⊕ system defaults ⊕ stored org config``,
+later layers only filling keys the earlier ones leave unset.  The system
+layer comes from the platform root row; the org layer from the user's own
+``users.config_override`` row; the user layer is the same row's
+``config_override`` (kept as a separate accessor for the dashboard
+override UI).  No secrets are logged.
 """
 
 from __future__ import annotations
@@ -11,9 +13,10 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from core.dict_merge import deep_merge
 from core.exceptions import NotFoundError
-from core.openbao_exceptions import OpenBaoConnectionError
 from core.org_config import get_org_config
 from core.system_config import get_system_config
 from repositories.auth_repository import AuthRepository
@@ -25,32 +28,24 @@ class UserConfigService:
 
     Args:
         user_repo: Repository for ``users.config_override`` access.
-        bao_client: Authenticated OpenBao client (org/system layers).
-            Required — without it the org/system layers cannot resolve.
         redis: Optional async Redis client (org/system cache).
+        auth_repo: Injected auth repository (shares the request session).
+        db: Async DB session for org/system config reads.
     """
 
     def __init__(
         self,
         user_repo: UserRepository,
-        bao_client: Any | None = None,
         redis: Any | None = None,
         auth_repo: AuthRepository | None = None,
+        db: AsyncSession | None = None,
     ) -> None:
         self._user_repo = user_repo
-        self._bao_client = bao_client
         self._redis = redis
         # Injected (not constructed inline) so callers share the request
         # session and tests can substitute a fake.
         self._auth_repo = auth_repo or AuthRepository(user_repo.session)
-
-    def _bao(self) -> Any:
-        """Return the OpenBao client or fail loud (no silent degraded config)."""
-        if self._bao_client is None:
-            raise OpenBaoConnectionError(
-                "OpenBao client required for user effective-config reads"
-            )
-        return self._bao_client
+        self._db = db or user_repo.session
 
     async def get_override(self, user_id: UUID) -> dict[str, Any]:
         """Return the user's stored override (``{}`` when none).
@@ -82,7 +77,7 @@ class UserConfigService:
         return await self._user_repo.merge_config_override(user_id, patch)
 
     async def get_effective_config(self, user_id: UUID) -> dict[str, Any]:
-        """Resolve ``user ⊕ system`` for a dashboard user.
+        """Resolve ``user ⊕ system ⊕ org`` for a dashboard user.
 
         Every layer failure propagates — a silently dropped user layer
         would apply the wrong config, so the error is loud, not logged
@@ -92,29 +87,27 @@ class UserConfigService:
             user_id: The internal OpenZync user UUID.
 
         Returns:
-            The merged effective config dict actually applied.
+            The merged effective-config dict actually applied.
 
         Raises:
             NotFoundError: If the user does not exist.
-            OpenBaoConnectionError: If no OpenBao client is wired.
         """
         user = await self._auth_repo.get_user_by_id(user_id)
         if user is None:
             raise NotFoundError("Dashboard user not found.")
 
-        bao = self._bao()
-        # OpenBao layout: system-wide defaults live under the ``system/``
-        # namespace; per-user settings under ``org_<uuid>/config/`` keyed by
-        # the owner's own UUID (legacy namespace name, user scope).  No
-        # env-var fallback — unset keys stay ``None`` and callers decide.
-        system = await get_system_config(self._redis, bao)
+        # System-wide defaults live on the platform root row; per-user
+        # settings under ``users.config_override`` keyed by the user's own
+        # UUID.  No env-var fallback — unset keys stay ``None`` and callers
+        # decide.
+        system = await get_system_config(self._redis, self._db)
         effective: dict[str, Any] = deep_merge(
             {}, system.model_dump(exclude_none=True)
         )
         org = await get_org_config(
             user.id,
             redis=self._redis,
-            bao_client=bao,
+            db=self._db,
         )
         effective = deep_merge(effective, org.model_dump(exclude_none=True))
 

@@ -5,21 +5,16 @@
 #   1. builder — installs runtime dependencies into ~/.local
 #   2. runtime — minimal image that copies only the built artifacts + source
 #
-# Secret injection — OpenBao Agent sidecar pattern:
-#   This container does NOT bake secrets into the image. A sibling sidecar
-#   container (`openbao-agent-api`) authenticates to OpenBao via AppRole and
-#   renders the system config (DATABASE_URL, SECRET_KEY, REDIS_URL, etc.) as
-#   KEY=VALUE lines into /run/secrets/system.env on a shared tmpfs volume
-#   (`api-secrets`). The api entrypoint script waits for that file, sources it,
-#   then execs uvicorn. The api container therefore depends on the sidecar
-#   being healthy AND having successfully rendered secrets before it can start.
-#   Worker count is controlled via the UVICORN_WORKERS env var (sourced from
-#   the rendered secrets, defaults to 1).
+# Config — plain environment (no secrets manager, no sidecars):
+#   This container does NOT bake secrets into the image. All config arrives
+#   via the environment (compose env_file plus direct OZ_* entries). The
+#   entrypoint fail-fasts when OZ_DATABASE_URL / OZ_SECRET_KEY are unset,
+#   then execs uvicorn. Worker count is controlled via the UVICORN_WORKERS
+#   env var (defaults to 1).
 #
 # Usage:
 #   docker build -t openzync-api:latest -f services/api/Dockerfile .
-#   docker run -p 8000:8000 openzync-api:latest
-#   (with the openbao-agent-api sidecar + api-secrets tmpfs volume attached)
+#   docker run -p 8000:8000 -e OZ_DATABASE_URL=... -e OZ_SECRET_KEY=... openzync-api:latest
 # ──────────────────────────────────────────────────────────────────────────────
 
 FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS builder
@@ -41,8 +36,7 @@ RUN if [ -n "$APP_VERSION" ]; then export SETUPTOOLS_SCM_PRETEND_VERSION="$APP_V
 
 # Embeddings are served by the external Ollama service
 # (nomic-embed-text:v1.5 via /api/embed) — no weights are baked into this
-# image. The Ollama server address comes from the OpenBao system secret
-# (OZ_OLLAMA_EMBED_URL).
+# image. The Ollama server address comes from the OZ_OLLAMA_EMBED_URL env var.
 
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -57,7 +51,7 @@ RUN groupadd -r appuser && useradd -r -g appuser -d /home/appuser -m appuser \
 ARG APP_VERSION=""
 ENV OPENZYNC_VERSION=$APP_VERSION
 
-# Copy the entrypoint script — sources OpenBao Agent's rendered secrets,
+# Copy the entrypoint script — fail-fasts on missing required env,
 # then execs uvicorn so it becomes PID 1 and receives signals directly.
 # Copied before source so it lives in its own cache layer (rarely changes).
 COPY scripts/entrypoint_api.sh /entrypoint_api.sh
@@ -82,10 +76,10 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
     CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')" || exit 1
 
-# ENTRYPOINT runs the secret-wait + uvicorn-launch sequence as PID 1 (so the
+# ENTRYPOINT runs the env-check + uvicorn-launch sequence as PID 1 (so the
 # container receives SIGTERM directly for graceful shutdown). CMD is empty so
 # docker-compose `command:` overrides pass through as args to the entrypoint.
-# Worker count is controlled via the UVICORN_WORKERS env var rendered by the
-# OpenBao Agent sidecar (see scripts/entrypoint_api.sh).
+# Worker count is controlled via the UVICORN_WORKERS env var
+# (see scripts/entrypoint_api.sh).
 ENTRYPOINT ["/entrypoint_api.sh"]
 CMD []

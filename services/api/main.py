@@ -113,7 +113,7 @@ def create_app() -> FastAPI:
 
         # Aux-outage ledger — components that fail init record a reason
         # here instead of aborting boot.  /ready reports them as degraded;
-        # only Postgres/Redis/OpenBao (above) stay fail-fast.
+        # only Postgres/Redis (above) stay fail-fast.
         app.state.degraded: dict[str, str] = {}
 
         # Init SurrealDB per-org connection pool (optional — requires surrealdb).
@@ -153,42 +153,25 @@ def create_app() -> FastAPI:
                     extra={"url": settings.FALKORDB_URL, "error": str(exc)},
                 )
 
-        # ── Init OpenBao client for runtime config + Transit operations ────
-        # The bootstrap client in asgi.py loads system settings and is closed.
-        # This client persists for the app lifetime, handling org config
-        # lookups and Transit encryption. Credentials are read from env vars
-        # (injected by entrypoint sourcing system.env + AppRole file fallback).
-        from core.config import BootstrapSettings
-        from core.openbao import OpenBaoClient
-
-        _bootstrap = BootstrapSettings()
-        _bao = OpenBaoClient(
-            _bootstrap.OPENBAO_ADDR,
-            _bootstrap.OPENBAO_ROLE_ID,
-            _bootstrap.OPENBAO_SECRET_ID,
-            timeout=15.0,
-        )
-        await _bao.__aenter__()  # sets up httpx client + authenticates via AppRole
-        app.state.openbao_client = _bao
-        logger.info("openbao_client.initialised")
-
-        # ── Verify the webhook-secret Transit key (degraded, not fatal) ──
+        # ── Verify local crypto helper (degraded, not fatal) ────────────
         # Webhook signing encrypts at create/rotate time and decrypts at
-        # every emit — without this key webhook writes 502.  An aux
-        # outage degrades (loudly) instead of aborting boot; /ready
-        # reports it until Transit recovers.
-        from core.transit import TransitManager
-
+        # every emit via core.crypto (Fernet subkeys from OZ_SECRET_KEY).
+        # A missing key fails fast in get_settings() at import; an unusable
+        # helper degrades loudly instead of aborting boot — /ready reports
+        # it until crypto recovers.
         try:
-            await TransitManager(_bao).verify_webhook_secret_key()
+            from core import crypto as _crypto
+
+            _probe = _crypto.encrypt("webhook-secret", "startup", "probe")
+            _crypto.decrypt("webhook-secret", "startup", _probe)
         except Exception as exc:
-            app.state.degraded["transit"] = str(exc)
+            app.state.degraded["crypto"] = str(exc)
             logger.error(
-                "transit.key_verify_failed — degraded, webhooks 502",
+                "crypto.self_check_failed — degraded, webhooks 502",
                 exc_info=True,
             )
         else:
-            logger.info("transit.webhook_secret_key_verified")
+            logger.info("crypto.self_check_ok")
 
         # ⚠️ BREAKING: boot-time platform seeding removed — the root user is
         # created exactly once via public POST /v1/auth/setup, and /ready
@@ -295,8 +278,6 @@ def create_app() -> FastAPI:
         await admin_metrics.close_prom_client()
         if getattr(app.state, "falkordb_client", None) is not None:
             await app.state.falkordb_client.connection.aclose()
-        if getattr(app.state, "openbao_client", None) is not None:
-            await app.state.openbao_client.__aexit__(None, None, None)
         await app.state.surreal_connection_pool.close_all()
         await close_arq()
         await close_redis(redis_client)

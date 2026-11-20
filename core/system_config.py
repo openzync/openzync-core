@@ -1,33 +1,31 @@
-"""Platform system configuration — cache-first, OpenBao-authoritative.
+"""Platform system configuration — cache-first, DB-authoritative.
 
 Resolution order (mirrors ``core.org_config``):
 1. Redis cache (key ``system_config``, TTL 5 min) — performance
    optimisation only.  Cache failures are logged at ERROR but the request
-   continues to OpenBao.
-2. OpenBao KV (``system/`` namespace, ``config/data/system``) — the
-   authoritative source.  OpenBao failures propagate as hard errors.
+   continues to the DB.
+2. The platform root user's ``users.config_override`` (the authoritative
+   store, looked up via ``UserRepository.get_platform_root``).  DB failures
+   propagate as hard errors.
 
 Only the non-secret whitelist in :mod:`schemas.system_config` is ever
-read or written — the ``OZ_*`` secret keys sharing the same OpenBao path
-are never exposed.
+read or written — the ``OZ_*`` secret env vars are never exposed.
 
 ⚠️ BREAKING: org-creation policy keys are gone (single platform org).
 Registration is governed by ``instance_settings.registration_mode``.
-Defaults: all fields ``None`` when OpenBao has no record.
+Defaults: all fields ``None`` when the root row has no record.
 """
 
 from __future__ import annotations
 
 import logging
 from typing import Any
+from uuid import UUID
 
 import redis.asyncio  # noqa: TC002 — runtime import mirrors core/org_config.py
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.openbao import (
-    OpenBaoClient,  # noqa: TC001 — runtime import mirrors core/org_config.py
-)
-from core.openbao_exceptions import OpenBaoConnectionError
 from schemas.system_config import (
     SYSTEM_CONFIG_WHITELIST,
     SystemConfigResponse,
@@ -50,36 +48,50 @@ def _request_id() -> str:
     return structlog.contextvars.get_contextvars().get("request_id", "")
 
 
+async def _read_root_override(db: AsyncSession) -> tuple[UUID | None, dict[str, Any]]:
+    """Read the platform root user's id and ``config_override``.
+
+    Args:
+        db: Async DB session.
+
+    Returns:
+        A ``(root_id_or_None, override_dict)`` tuple.
+    """
+    from repositories.user_repository import UserRepository  # noqa: PLC0415 — lazy, avoids import cycle
+
+    root = await UserRepository(db).get_platform_root()
+    if root is None:
+        return None, {}
+    return root.id, dict(root.config_override or {})
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
 async def get_system_config(
     redis: redis.asyncio.Redis | None = None,
-    bao_client: OpenBaoClient | None = None,
+    db: AsyncSession | None = None,
     *,
     skip_cache: bool = False,
 ) -> SystemConfigResponse:
-    """Fetch the platform system config: cache → OpenBao.
+    """Fetch the platform system config: cache → DB.
 
-    Only whitelisted (non-secret) keys are returned.  When OpenBao has no
-    record — or a whitelisted key is absent — the field defaults to
+    Only whitelisted (non-secret) keys are returned.  When the root row has
+    no record — or a whitelisted key is absent — the field defaults to
     ``None`` (registration mode lives in ``instance_settings`` now).
 
     Args:
         redis: An optional async Redis client.  When ``None``, caching is
             skipped.
-        bao_client: An authenticated :class:`OpenBaoClient`.  **Required**.
-        skip_cache: If ``True``, bypass cache and always fetch from OpenBao.
+        db: Async DB session for the root-row read.  Required on a cache miss.
+        skip_cache: If ``True``, bypass cache and always fetch from the DB.
 
     Returns:
         A :class:`SystemConfigResponse` with the whitelisted fields.
 
     Raises:
-        OpenBaoConnectionError: If *bao_client* is ``None``.
+        RuntimeError: If *db* is ``None`` on a cache miss.
     """
-    if bao_client is None:
-        raise OpenBaoConnectionError("OpenBao client required for system config reads")
-
     # 1. Try cache (unless skip_cache is set)
     if not skip_cache and redis is not None:
         try:
@@ -93,9 +105,11 @@ async def get_system_config(
                 exc_info=True,
             )
 
-    # 2. Fetch from OpenBao — the raw dict may contain OZ_* secrets; only
+    # 2. Fetch from DB — the raw override may contain other keys; only
     #    the whitelist is read out of it, never the whole payload.
-    raw = await bao_client.read_system_config()
+    if db is None:
+        raise RuntimeError("get_system_config requires a DB session on cache miss")
+    _, raw = await _read_root_override(db)
     config = SystemConfigResponse(
         **{key: raw[key] for key in SYSTEM_CONFIG_WHITELIST if key in raw}
     )
@@ -120,12 +134,12 @@ async def get_system_config(
 
 async def update_system_config(
     update_data: SystemConfigUpdate | dict[str, Any],
-    bao_client: OpenBaoClient,
     redis: redis.asyncio.Redis | None = None,
+    db: AsyncSession | None = None,
 ) -> SystemConfigResponse:
-    """Update the platform system config in OpenBao, invalidate cache, re-read.
+    """Update the platform system config in the DB, invalidate cache, re-read.
 
-    Performs a deep merge onto the existing system secret.  Keys set to
+    Performs a shallow merge onto the root row's override.  Keys set to
     ``None`` are removed from the stored config (returning ``None`` on
     next read).  **Any key outside the whitelist is rejected** — a
     defensive second line behind the schema's ``extra="forbid"``, so a
@@ -134,14 +148,15 @@ async def update_system_config(
     Args:
         update_data: Fields to update.  Can be a
             :class:`SystemConfigUpdate` or a plain dict.
-        bao_client: An authenticated :class:`OpenBaoClient`.
         redis: An optional async Redis client (for cache invalidation).
+        db: Async DB session for the root-row write.  Required.
 
     Returns:
         The freshly stored config after the update.
 
     Raises:
-        ValidationError: If a key outside the whitelist is present.
+        ValidationError: If a key outside the whitelist is present, or the
+            platform root user does not exist yet (run setup first).
     """
     from core.exceptions import ValidationError
 
@@ -157,18 +172,30 @@ async def update_system_config(
             f"{', '.join(sorted(unknown))}."
         )
 
-    # 1. Read existing system secret (contains OZ_* keys — merge, never return)
-    existing = await bao_client.read_system_config()
+    if db is None:
+        raise RuntimeError("update_system_config requires a DB session")
+    from repositories.user_repository import UserRepository  # noqa: PLC0415 — lazy, avoids import cycle
 
-    # 2. Deep merge: provided keys override, None values remove
+    repo = UserRepository(db)
+    root = await repo.get_platform_root()
+    if root is None:
+        raise ValidationError(
+            "Platform root user does not exist yet — "
+            "complete POST /v1/auth/setup first."
+        )
+
+    # 1. Read existing root override
+    existing = dict(root.config_override or {})
+
+    # 2. Shallow merge: provided keys override, None values remove
     for key, value in update_dict.items():
         if value is None:
             existing.pop(key, None)
         else:
             existing[key] = value
 
-    # 3. Write to OpenBao (authoritative store)
-    await bao_client.write_system_config(existing)
+    # 3. Write to DB (authoritative store)
+    await repo.set_config_override(root.id, existing)
 
     # 4. Invalidate Redis cache
     if redis is not None:
@@ -181,9 +208,5 @@ async def update_system_config(
                 exc_info=True,
             )
 
-    # 5. Re-read from OpenBao (cache is cold — forces fresh read)
-    return await get_system_config(
-        redis=redis,
-        bao_client=bao_client,
-        skip_cache=True,
-    )
+    # 5. Re-read from DB (cache is cold — forces fresh read)
+    return await get_system_config(redis=redis, db=db, skip_cache=True)

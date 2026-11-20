@@ -21,23 +21,21 @@ class PIIRedactionMixin:
     """Fail-closed PII config fetch and message redaction."""
 
     _db: Any
-    _bao_client: Any
+    _redis: Any
 
     async def _get_org_pii_config(self, user_id: UUID) -> dict:
-        """Fetch PII configuration for an org — OpenBao only, fail-closed.
+        """Fetch PII configuration for a user — DB only, fail-closed.
 
         Any fetch failure raises ``PIIUnavailableError`` (→ 503 +
         ``Retry-After``) instead of falling back to a default: persisting
         content without a known redaction policy is worse than rejecting
-        the request.  The legacy ``organizations.quotas -> 'pii'`` fallback
-        was deleted (BREAKING for orgs that still store PII in quotas —
-        migrate them to OpenBao org config).
+        the request.
 
         A successful fetch with ``pii_mode`` unset means "not configured",
         which keeps the previous effective default of ``mask``.
 
         Args:
-            user_id: The organization UUID.
+            user_id: The user UUID.
 
         Returns:
             The PII config dict.
@@ -49,25 +47,7 @@ class PIIRedactionMixin:
         try:
             from core.org_config import get_org_config
 
-            if self._bao_client is not None:
-                org_cfg = await get_org_config(
-                    user_id, redis=None, bao_client=self._bao_client
-                )
-            else:
-                # Lazy temporary client — mirrors _process_blobs pattern.
-                from core.config import BootstrapSettings
-                from core.openbao import OpenBaoClient
-
-                bootstrap = BootstrapSettings()
-                async with OpenBaoClient(
-                    bootstrap.OPENBAO_ADDR,
-                    bootstrap.OPENBAO_ROLE_ID,
-                    bootstrap.OPENBAO_SECRET_ID,
-                    timeout=10.0,
-                ) as _tmp_bao:
-                    org_cfg = await get_org_config(
-                        user_id, redis=None, bao_client=_tmp_bao
-                    )
+            org_cfg = await get_org_config(user_id, redis=self._redis, db=self._db)
         except Exception as exc:
             logger.error(
                 "pii.fail_closed",

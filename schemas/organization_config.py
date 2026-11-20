@@ -24,7 +24,7 @@ LlmBackend = Literal["ollama", "openai", "openai_like", "azure", "anthropic"]
 # there is nothing left for a Literal to constrain.
 
 # ── System-managed field sets ──────────────────────────────────────────────
-# These fields are overridden at the system level (via OpenBao / env vars)
+# These fields are overridden at the system level (via OZ_* env vars)
 # and cannot be set through org_config when the corresponding system
 # setting is active.
 

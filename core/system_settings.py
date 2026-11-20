@@ -1,10 +1,9 @@
 """Platform system settings — read-only, superadmin-only, masked list + raw reveal.
 
-Reads the combined system secret (``system/`` namespace, ``config/data/system``)
-and exposes every key in :data:`core.openbao.SYSTEM_KEY_MAPPING` under masking
-rules that never leak credentials.  Mirrors ``core.system_config``'s OpenBao
-error propagation — OpenBao failures are hard errors.  No caching: the list is
-small, reads are cheap, and the endpoint is superadmin-only.
+Reads the ``OZ_*`` env-backed :class:`core.config.Settings` and exposes
+every known key under masking rules that never leak credentials.
+No caching: reads are local attribute lookups and the endpoint is
+superadmin-only.
 """
 
 from __future__ import annotations
@@ -13,7 +12,6 @@ import re
 from typing import Any
 
 from core.exceptions import NotFoundError
-from core.openbao import SYSTEM_KEY_MAPPING, OpenBaoClient
 from schemas.admin_system import (
     SYSTEM_SETTING_CATEGORIES,
     SystemSettingItem,
@@ -30,10 +28,10 @@ _MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
 _SECRET_KEYS: frozenset[str] = frozenset(
     {
         "OZ_SECRET_KEY",
+        "OZ_SECRET_KEY_PREVIOUS",
         "OZ_WEBHOOK_SIGNING_SECRET",
         "OZ_SMTP_PASSWORD",
         "OZ_SMTP_USERNAME",  # treated as a secret — pairs with the password
-        "OZ_ROOT_PASSWORD",
     }
 )
 
@@ -52,9 +50,13 @@ _USERINFO_RE = re.compile(r"://[^/@]+@")
 Userinfo never contains ``/`` or ``@``.
 """
 
+#: Every ``OZ_*`` key the settings endpoints may list/reveal.  Single
+#: source of truth — mirrors the ``Settings`` env bindings.
+SYSTEM_SETTINGS_KEYS: tuple[str, ...] = tuple(SYSTEM_SETTING_CATEGORIES)
+
 
 def _is_set(value: Any) -> bool:
-    """True unless the raw secret value is absent or an empty string."""
+    """True unless the raw value is absent or an empty string."""
     return value is not None and str(value) != ""
 
 
@@ -90,23 +92,33 @@ def _mask_value(key: str, value: str) -> str:
     return value
 
 
-async def list_system_settings(bao_client: OpenBaoClient) -> SystemSettingsResponse:
+def _read_raw() -> dict[str, Any]:
+    """Read every known ``OZ_*`` value from the env-backed settings.
+
+    Returns:
+        A dict of ``OZ_*`` key to raw value (``None`` when unset).
+    """
+    from core.config import get_settings  # noqa: PLC0415 — lazy, avoids import cycle
+
+    settings = get_settings()
+    raw: dict[str, Any] = {}
+    for key in SYSTEM_SETTINGS_KEYS:
+        field = key.removeprefix("OZ_")
+        raw[key] = getattr(settings, field, None)
+    return raw
+
+
+async def list_system_settings() -> SystemSettingsResponse:
     """List every known system setting with masked values.
 
-    Reads the combined system secret once and returns one item per key in
-    ``SYSTEM_KEY_MAPPING`` (mapping order).  Keys absent from the secret
-    report ``is_set=False`` with no value.
-
-    Args:
-        bao_client: An authenticated :class:`OpenBaoClient`.
+    Reads the env-backed settings once and returns one item per known key
+    (category order).  Keys that are unset report ``is_set=False`` with no
+    value.
 
     Returns:
         A :class:`SystemSettingsResponse` with all known keys, masked.
-
-    Raises:
-        OpenBaoConnectionError: If OpenBao is unreachable.
     """
-    raw = await bao_client.read_system_config()
+    raw = _read_raw()
     return SystemSettingsResponse(
         data=[
             SystemSettingItem(
@@ -117,32 +129,26 @@ async def list_system_settings(bao_client: OpenBaoClient) -> SystemSettingsRespo
                     _mask_value(key, str(raw[key])) if _is_set(raw.get(key)) else None
                 ),
             )
-            for key in SYSTEM_KEY_MAPPING
+            for key in SYSTEM_SETTINGS_KEYS
         ]
     )
 
 
-async def reveal_system_setting(
-    key: str,
-    bao_client: OpenBaoClient,
-) -> SystemSettingRevealResponse:
+async def reveal_system_setting(key: str) -> SystemSettingRevealResponse:
     """Return a single system setting's raw value.
 
     Args:
-        key: An ``OZ_*`` key from ``SYSTEM_KEY_MAPPING``.
-        bao_client: An authenticated :class:`OpenBaoClient`.
+        key: An ``OZ_*`` key from ``SYSTEM_SETTINGS_KEYS``.
 
     Returns:
         A :class:`SystemSettingRevealResponse` with the raw stored value.
 
     Raises:
-        NotFoundError: If *key* is unknown or not set in the system secret.
-        OpenBaoConnectionError: If OpenBao is unreachable.
+        NotFoundError: If *key* is unknown or not set.
     """
-    if key not in SYSTEM_KEY_MAPPING:
+    if key not in SYSTEM_SETTINGS_KEYS:
         raise NotFoundError(f"Unknown system setting key: {key}.")
-    raw = await bao_client.read_system_config()
-    value = raw.get(key)
+    value = _read_raw().get(key)
     if value is None:
         raise NotFoundError(f"System setting {key} is not set.")
     return SystemSettingRevealResponse(key=key, value=str(value))

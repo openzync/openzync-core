@@ -137,7 +137,7 @@ async def get_usage_stats(
 
     Args:
         request: FastAPI request (graph backend dispatcher + pools, plus
-            app-state OpenBao/Redis for user-config resolution inside the
+            app-state Redis/DB for user-config resolution inside the
             service).
         days: Look-back window in days (default 30 when no window provided, max 365).
             Ignored if from/to provided.

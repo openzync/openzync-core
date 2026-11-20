@@ -102,7 +102,7 @@ def _queue_queries() -> list[tuple[str, str]]:
 
     The API process cannot read the worker settings singleton (it is only
     initialised in the worker process), but both processes read
-    ``OZ_ENVIRONMENT`` from OpenBao, so the environment is the one value
+    ``OZ_ENVIRONMENT`` from env, so the environment is the one value
     needed to rebuild the label exactly.
 
     Returns:

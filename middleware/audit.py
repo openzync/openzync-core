@@ -50,7 +50,7 @@ async def _resolve_audit_body_capture(
 ) -> bool:
     """Resolve whether to capture the response body for this request.
 
-    Checks the user's stored config (via Redis cache, then OpenBao).  When
+    Checks the user's stored config (via Redis cache, then the DB).  When
     the field is not set for the user, defaults to ``False``.
 
     Args:
@@ -84,31 +84,20 @@ async def _resolve_audit_body_capture(
                     return bool(user_val)
         except Exception:
             logger.warning("audit.org_config_cache_read_failed", exc_info=True)
-            # Fall through to OpenBao — cache miss is acceptable, OpenBao is authoritative
+            # Fall through to the DB — cache miss is acceptable, the DB is
+            # authoritative
 
-    # Cache miss — resolve from OpenBao (post-response so user doesn't wait).
+    # Cache miss — resolve from the DB (post-response so the user doesn't wait).
     try:
         from core.org_config import get_org_config
 
-        bao_client = getattr(app.state, "openbao_client", None)
-        if bao_client is not None:
+        session_factory = getattr(app.state, "db_session_factory", None)
+        if session_factory is None:
+            return False
+        async with session_factory() as db:
             config = await get_org_config(
-                UUID(user_id), redis=redis, bao_client=bao_client, skip_cache=True
+                UUID(user_id), redis=redis, db=db, skip_cache=True
             )
-        else:
-            from core.config import BootstrapSettings
-            from core.openbao import OpenBaoClient
-
-            bootstrap = BootstrapSettings()
-            async with OpenBaoClient(
-                bootstrap.OPENBAO_ADDR,
-                bootstrap.OPENBAO_ROLE_ID,
-                bootstrap.OPENBAO_SECRET_ID,
-                timeout=10.0,
-            ) as _bao:
-                config = await get_org_config(
-                    UUID(user_id), redis=redis, bao_client=_bao, skip_cache=True
-                )
         return bool(config.audit_log_response_body) if config.audit_log_response_body is not None else False
     except Exception as exc:
         logger.error("audit.org_config_db_resolve_failed", exc_info=True)
