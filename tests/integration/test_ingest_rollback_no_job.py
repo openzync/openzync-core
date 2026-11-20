@@ -28,7 +28,7 @@ async def test_ingest_queue_fail_rolls_back(engine, redis_client) -> None:
     from schemas.memory import Message
     from services.memory_service import MemoryService
 
-    org_id = UUID("00000000-0000-0000-0000-000000000001")
+    user_id = UUID("00000000-0000-0000-0000-000000000001")
     async with AsyncSession(engine) as db:
         svc = MemoryService(db=db, redis_client=redis_client)
         svc._project_repo = AsyncMock()
@@ -43,7 +43,7 @@ async def test_ingest_queue_fail_rolls_back(engine, redis_client) -> None:
             pytest.raises(RuntimeError, match="commit failed"),
         ):
             await svc.ingest(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=UUID("00000000-0000-0000-0000-000000000003"),
                 created_by=UUID("00000000-0000-0000-0000-000000000002"),
                 session_external_id="sess-rollback",

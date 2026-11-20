@@ -51,7 +51,7 @@ async def require_project_membership(
     2. The API key is scoped to the requested project (403 if mismatch).
 
     Use this as the sole auth dependency for all ``/v1/projects/...``
-    endpoints — it replaces both ``require_org_id`` and a separate
+    endpoints — it replaces both ``require_user_id`` and a separate
     membership check.
 
     Raises:
@@ -59,8 +59,8 @@ async def require_project_membership(
         HTTPException 403: If the credential lacks project access.
         HTTPException 404: If the project does not exist.
     """
-    org_id: str | None = getattr(request.state, "org_id", None)
-    if org_id is None:
+    user_id: str | None = getattr(request.state, "user_id", None)
+    if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Organization context is required",
@@ -89,7 +89,7 @@ async def require_project_membership(
         # is 404, not silent access.
         repo = ProjectRepository(db)
         project = await repo.get_by_id(
-            organization_id=org_id,
+            user_id=UUID(user_id),
             project_id=project_id,
         )
         if project is None:
@@ -109,7 +109,7 @@ async def require_project_membership(
 
     repo = ProjectRepository(db)
     project = await repo.get_by_id(
-        organization_id=org_id,
+        user_id=UUID(user_id),
         project_id=project_id,
     )
     if project is None:

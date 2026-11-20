@@ -479,6 +479,22 @@ def _to_problem_json(request: Request, exc: AppError) -> JSONResponse:
     return response
 
 
+def _is_removed_backend_error(exc: ValueError) -> bool:
+    """Match the removed-postgres-backend validator message.
+
+    Args:
+        exc: The wrapped field-validator error.
+
+    Returns:
+        ``True`` when the message is the hardcoded removed-``postgres``
+        backend text (contains the ``410`` marker) from the graph-backend
+        validators in ``schemas/system_config.py`` /
+        ``schemas/organization_config.py``.
+    """
+    text = str(exc).lower()
+    return "postgres" in text and "410" in text
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Registration — call once during app creation
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -541,11 +557,11 @@ def register_exception_handlers(app: FastAPI) -> None:
         return _to_problem_json(request, exc)
 
     # ── Pydantic Validation → 410 unwrapping ─────────────────────────────
-    # Field validators raise ``GoneError`` (AppError + ValueError). Pydantic
-    # wraps ``ValueError`` as ``ValidationError`` → FastAPI converts to
-    # ``RequestValidationError`` (422). This handler unwraps the original
-    # ``GoneError`` from ``exc.errors()[*].ctx.error`` and returns 410
-    # Problem JSON so the client sees 410, not 422.
+    # Field validators raise plain ``ValueError`` (never ``GoneError``).
+    # Pydantic wraps it as a field error → FastAPI converts to
+    # ``RequestValidationError`` (422). This handler maps the removed-
+    # backend message back to a 410 problem JSON (legacy direct
+    # ``GoneError`` raises unwrap the same way).
     @app.exception_handler(RequestValidationError)
     async def request_validation_handler(
         request: Request, exc: RequestValidationError
@@ -555,6 +571,8 @@ def register_exception_handlers(app: FastAPI) -> None:
             inner = ctx.get("error")
             if isinstance(inner, GoneError):
                 return _to_problem_json(request, inner)
+            if isinstance(inner, ValueError) and _is_removed_backend_error(inner):
+                return _to_problem_json(request, GoneError(str(inner)))
         # Fallback to FastAPI's default 422 behaviour.
         from fastapi.exception_handlers import request_validation_exception_handler
 

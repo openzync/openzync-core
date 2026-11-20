@@ -2,8 +2,8 @@
 
 Sub-package layout (one responsibility per module)::
 
-    registration.py  signup + pending-org/admin creation
-    org_join.py      org-code join + email verification
+    registration.py  singleton-org signup (no org creation)
+    org_join.py      singleton-org join + email verification
     password.py      change / forgot / reset + strength check
     passwordless.py  email-OTP login
     session.py       login + MFA verify/enable/disable
@@ -20,7 +20,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from repositories.auth_repository import AuthRepository
-from repositories.organization_repository import OrganizationRepository
+from repositories.instance_settings_repository import InstanceSettingsRepository
 from services.auth.org_join import OrgJoinMixin
 from services.auth.password import PasswordMixin
 from services.auth.passwordless import PasswordlessMixin
@@ -54,11 +54,12 @@ class AuthService(
         repo: Repository for auth-related DB access.
         otp_service: OTP service for email verification and MFA.
         redis: Async Redis client for MFA session storage.
-        org_repo: Repository for organization lookups (org-code join).
         email_service: Optional email service for notification-only emails
             (e.g. password-change confirmation).  ``None`` skips notifications.
         bao_client: Optional OpenBao client for bootstrapping org namespaces
             during email verification.
+        settings_repo: Singleton settings row (registration mode).
+            Injected via ``dependencies.services.get_auth_service``.
     """
 
     def __init__(
@@ -66,16 +67,16 @@ class AuthService(
         repo: AuthRepository,
         otp_service: OtpService,
         redis: AsyncRedis,
-        org_repo: OrganizationRepository,
         email_service: EmailService | None = None,
         bao_client: OpenBaoClient | None = None,
+        settings_repo: InstanceSettingsRepository | None = None,
     ) -> None:
         self._repo = repo
         self._otp_service = otp_service
         self._redis = redis
-        self._org_repo = org_repo
         self._email_service = email_service
         self._bao_client = bao_client
+        self._settings_repo = settings_repo
 
 
 __all__ = ["AuthService"]

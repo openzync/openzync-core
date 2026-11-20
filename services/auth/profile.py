@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import TYPE_CHECKING, Any
+
+from sqlalchemy.exc import IntegrityError as _IntegrityError
 
 from core.exceptions import (
     AuthenticationError,
@@ -19,6 +22,7 @@ from schemas.auth import (
     DashboardUserResponse,
     UpdateProfileRequest,
 )
+from utils.pii import mask_email
 
 if TYPE_CHECKING:
     from models.user import User
@@ -31,7 +35,6 @@ class ProfileMixin:
     _repo: Any
     _otp_service: Any
     _redis: Any
-    _org_repo: Any
     _email_service: Any
     _bao_client: Any
 
@@ -76,7 +79,6 @@ class ProfileMixin:
             email=user.email or "",
             name=user.name,
             role=user.role if user.role is not None else "member",
-            organization_id=user.organization_id,
             is_email_verified=user.is_email_verified,
             mfa_enabled=user.mfa_enabled,
             must_change_password=bool(user.must_change_password),
@@ -134,9 +136,13 @@ class ProfileMixin:
                     raise ValidationError(
                         "This account does not have a password set."
                     )
+                # bcrypt blocks the event loop — offload to a worker thread.
                 from services import auth_service as _facade  # via facade (patchable)
-                if not _facade.verify_password(
-                    payload.current_password, user.password_hash
+
+                if not await asyncio.to_thread(
+                    _facade.verify_password,
+                    payload.current_password,
+                    user.password_hash,
                 ):
                     raise AuthenticationError("Current password is incorrect.")
             update_kwargs["email"] = payload.email
@@ -159,13 +165,19 @@ class ProfileMixin:
                 raise ValidationError(
                     "This account does not have a password set."
                 )
-            from services import auth_service as _facade  # via facade
-            if not _facade.verify_password(
-                payload.current_password, user.password_hash
+            # bcrypt blocks the event loop — offload to a worker thread.
+            from services import auth_service as _facade  # via facade (patchable)
+
+            if not await asyncio.to_thread(
+                _facade.verify_password,
+                payload.current_password,
+                user.password_hash,
             ):
                 raise AuthenticationError("Current password is incorrect.")
             self._validate_password(payload.new_password)
-            update_kwargs["password_hash"] = _facade.hash_password(payload.new_password)
+            update_kwargs["password_hash"] = await asyncio.to_thread(
+                _facade.hash_password, payload.new_password
+            )
             has_changes = True
 
             # Send password-change notification email
@@ -193,21 +205,29 @@ class ProfileMixin:
                     except Exception:
                         logger.warning(
                             "Failed to send password-change notification email",
-                            extra={"email": user_email[:3] + "**@" + user_email.split("@")[-1]},
+                            extra={"email": mask_email(user_email)},
                         )
 
         if has_changes:
-            user = await self._repo.update_dashboard_user(
-                user_id=user_id,
-                **update_kwargs,
-            )
+            try:
+                user = await self._repo.update_dashboard_user(
+                    user_id=user_id,
+                    **update_kwargs,
+                )
+            except _IntegrityError:
+                # Lost the unique-email race (pre-check passed, a concurrent
+                # write won the partial unique index) — same 409 as the
+                # pre-check, never a raw 500.
+                await self._repo.rollback()
+                raise ConflictError(
+                    "Email is already in use."
+                ) from None
 
         return DashboardUserResponse(
             id=user.id,
             email=user.email or "",
             name=user.name,
             role=user.role if user.role is not None else "member",
-            organization_id=user.organization_id,
             is_email_verified=user.is_email_verified,
             mfa_enabled=user.mfa_enabled,
             must_change_password=bool(user.must_change_password),

@@ -108,7 +108,7 @@ def sample_search_results() -> dict[str, Any]:
 
 def _build_mocked_retriever(
     db: AsyncSession,
-    org_id_val: UUID,
+    user_id_val: UUID,
     sample: dict[str, Any],
     *,
     org_config: OrgConfigBase | None = None,
@@ -122,7 +122,7 @@ def _build_mocked_retriever(
 
     Args:
         db: A mock async session.
-        org_id_val: Organisation UUID (for tenant isolation).
+        user_id_val: Organisation UUID (for tenant isolation).
         sample: The controlled search results to return.
         org_config: Optional org-level configuration.
         reranker: An optional re-ranker instance (real or mock).
@@ -132,7 +132,7 @@ def _build_mocked_retriever(
     """
     retriever = HybridRetriever(
         db=db,
-        org_id=org_id_val,
+        user_id=user_id_val,
         redis=None,
         graph_backends=[],
         org_config=org_config,
@@ -536,7 +536,7 @@ class TestContextAssemblyWithReranker:
         # our fully-mocked one
         service = ContextService(
             db=mock_db_session,
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             redis=None,
             graph_backends=[],
             org_config=org_config,
@@ -599,7 +599,7 @@ class TestContextAssemblyWithReranker:
 
         service = ContextService(
             db=mock_db_session,
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             redis=None,
             graph_backends=[],
             org_config=OrgConfigBase(reranker_backend=None),
@@ -653,7 +653,7 @@ class TestContextAssemblyWithReranker:
 
         service = ContextService(
             db=mock_db_session,
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             redis=None,
             graph_backends=[],
             org_config=OrgConfigBase(reranker_backend="sentence_transformers"),

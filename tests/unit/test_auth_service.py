@@ -47,7 +47,11 @@ class TestAuthService:
 
     @pytest.fixture
     def mock_repo(self) -> AsyncMock:
-        return AsyncMock(spec=AuthRepository)
+        repo = AsyncMock(spec=AuthRepository)
+        # signup/join bind the new user's RLS context (set_user_context)
+        # right after creation — the session must be awaitable.
+        repo.session = AsyncMock()
+        return repo
 
     @pytest.fixture
     def mock_otp(self) -> AsyncMock:
@@ -66,10 +70,11 @@ class TestAuthService:
         return AsyncMock()
 
     @pytest.fixture
-    def mock_org_repo(self) -> AsyncMock:
-        """Org repository mock — required by the AuthService constructor
-        (org-code join lookups).  Unused by the legacy flows under test."""
-        return AsyncMock()
+    def mock_settings_repo(self) -> AsyncMock:
+        """Registration-mode repo mock — pinned to ``open`` (legacy default)."""
+        repo = AsyncMock()
+        repo.get_registration_mode.return_value = "open"
+        return repo
 
     @pytest.fixture
     def service(
@@ -79,15 +84,15 @@ class TestAuthService:
         mock_redis: AsyncMock,
         mock_email_service: AsyncMock,
         mock_bao_client: AsyncMock,
-        mock_org_repo: AsyncMock,
+        mock_settings_repo: AsyncMock,
     ) -> AuthService:
         return AuthService(
             repo=mock_repo,
             otp_service=mock_otp,
             redis=mock_redis,
-            org_repo=mock_org_repo,
             email_service=mock_email_service,
             bao_client=mock_bao_client,
+            settings_repo=mock_settings_repo,
         )
 
     @pytest.fixture
@@ -97,15 +102,15 @@ class TestAuthService:
         mock_otp: AsyncMock,
         mock_redis: AsyncMock,
         mock_email_service: AsyncMock,
-        mock_org_repo: AsyncMock,
+        mock_settings_repo: AsyncMock,
     ) -> AuthService:
         return AuthService(
             repo=mock_repo,
             otp_service=mock_otp,
             redis=mock_redis,
-            org_repo=mock_org_repo,
             email_service=mock_email_service,
             bao_client=None,
+            settings_repo=mock_settings_repo,
         )
 
     @pytest.fixture
@@ -115,34 +120,30 @@ class TestAuthService:
         mock_otp: AsyncMock,
         mock_redis: AsyncMock,
         mock_bao_client: AsyncMock,
-        mock_org_repo: AsyncMock,
+        mock_settings_repo: AsyncMock,
     ) -> AuthService:
         return AuthService(
             repo=mock_repo,
             otp_service=mock_otp,
             redis=mock_redis,
-            org_repo=mock_org_repo,
             email_service=None,
             bao_client=mock_bao_client,
+            settings_repo=mock_settings_repo,
         )
 
     @pytest.fixture(autouse=True)
-    def _default_platform_policy(self) -> None:
-        """Default the platform policy to allow_all/both for legacy flows.
+    def _default_platform_policy(
+        self, mock_settings_repo: AsyncMock
+    ) -> None:
+        """Default registration mode to ``open`` for legacy flows.
 
-        ``signup``/``join_organization`` now consult the platform policy
-        via ``get_system_config`` before acting.  The legacy tests assert
-        pre-feature behaviour, so this fixture pins the backward-compatible
-        default (``allow_all``/``both``) and the policy-gate tests override
-        it explicitly.
+        ``signup``/``join_organization`` consult
+        ``instance_settings.registration_mode``.  The legacy tests assert
+        the open-registration behaviour, so pin it; the mode-gate tests
+        override ``mock_settings_repo.get_registration_mode`` explicitly.
         """
-        from schemas.system_config import SystemConfigResponse
-
-        with patch(
-            "services.auth_service.get_system_config",
-            new=AsyncMock(return_value=SystemConfigResponse()),
-        ):
-            yield
+        mock_settings_repo.get_registration_mode.return_value = "open"
+        yield
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -150,7 +151,7 @@ class TestAuthService:
         """Build a mock User-like object with configurable attributes."""
         user = MagicMock()
         user.id = kwargs.get("id", self.USER_ID)
-        user.organization_id = kwargs.get("organization_id", self.ORG_ID)
+        user.user_id = kwargs.get("user_id", self.ORG_ID)
         user.email = kwargs.get("email", "admin@acme.com")
         user.external_id = kwargs.get("email", "admin@acme.com")
         user.name = kwargs.get("name", "admin")
@@ -176,17 +177,13 @@ class TestAuthService:
         mock_repo: AsyncMock,
         mock_otp: AsyncMock,
     ) -> None:
-        """Signup creates org, creates user, and sends OTP."""
+        """Signup creates a live admin user and sends OTP (open mode)."""
         mock_repo.find_user_by_email.return_value = None
-        mock_repo.create_organization.return_value = MagicMock(
-            id=self.ORG_ID, name="Acme Corp"
-        )
         mock_repo.create_dashboard_user.return_value = self._make_mock_user()
 
         payload = SignupRequest(
             email="admin@acme.com",
             password="StrongPass1",  # noqa: S106 — test fixture
-            organization_name="Acme Corp",
         )
 
         result = await service.signup(payload)
@@ -195,16 +192,13 @@ class TestAuthService:
         assert result.email == "admin@acme.com"
 
         mock_repo.find_user_by_email.assert_awaited_once_with("admin@acme.com")
-        mock_repo.create_organization.assert_awaited_once_with(
-            name="Acme Corp"
-        )
         mock_repo.create_dashboard_user.assert_awaited_once_with(
-            organization_id=self.ORG_ID,
             email="admin@acme.com",
             password_hash=ANY,
             name="admin",
             role="admin",
             permissions=[],  # admin = wildcard via role
+            is_active=True,
         )
         mock_otp.generate_and_send.assert_awaited_once_with(
             email="admin@acme.com", purpose="signup"
@@ -223,14 +217,13 @@ class TestAuthService:
         payload = SignupRequest(
             email="admin@acme.com",
             password="StrongPass1",  # noqa: S106 — test fixture
-            organization_name="Acme Corp",
         )
 
         result = await service.signup(payload)
 
         assert "Verification code sent" in result.message
         assert result.email == "admin@acme.com"
-        mock_repo.create_organization.assert_not_awaited()
+        mock_repo.create_dashboard_user.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_signup_integrity_error_returns_generic_success(
@@ -241,14 +234,13 @@ class TestAuthService:
         """Concurrent duplicate signup (IntegrityError) also returns the
         generic success, rolls back the aborted transaction."""
         mock_repo.find_user_by_email.return_value = None
-        mock_repo.create_organization.side_effect = IntegrityError(
+        mock_repo.create_dashboard_user.side_effect = IntegrityError(
             "mock", "mock", "mock"
         )
 
         payload = SignupRequest(
             email="admin@acme.com",
             password="StrongPass1",  # noqa: S106 — test fixture
-            organization_name="Acme Corp",
         )
 
         result = await service.signup(payload)
@@ -268,15 +260,11 @@ class TestAuthService:
     ) -> None:
         """Signup returns an identical response for existing and new emails."""
         mock_repo.find_user_by_email.return_value = None
-        mock_repo.create_organization.return_value = MagicMock(
-            id=self.ORG_ID, name="Acme Corp"
-        )
         mock_repo.create_dashboard_user.return_value = self._make_mock_user()
 
         payload = SignupRequest(
             email="admin@acme.com",
             password="StrongPass1",  # noqa: S106 — test fixture
-            organization_name="Acme Corp",
         )
         fresh = await service.signup(payload)
 
@@ -288,221 +276,89 @@ class TestAuthService:
         assert existing.model_dump() == fresh.model_dump()
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Platform policy gates (superadmin layer)
+    # Registration-mode gates (instance_settings.registration_mode)
     # ═══════════════════════════════════════════════════════════════════════
 
-    def _policy_config(
-        self,
-        policy: str = "allow_all",
-        scope: str = "both",
-    ) -> object:
-        """Build a SystemConfigResponse for a given policy/scope."""
-        from schemas.system_config import SystemConfigResponse
-
-        return SystemConfigResponse(
-            org_creation_policy=policy,
-            approval_scope=scope,
-        )
-
     @pytest.mark.asyncio
-    async def test_signup_reject_all_raises_403(
+    async def test_signup_invite_only_raises_403(
         self,
         service: AuthService,
         mock_repo: AsyncMock,
+        mock_settings_repo: AsyncMock,
     ) -> None:
-        """reject_all blocks signup with 403 before any org creation."""
+        """invite_only blocks signup with 403 before any user creation."""
         from core.exceptions import AuthorizationError
+
+        mock_settings_repo.get_registration_mode.return_value = "invite_only"
 
         payload = SignupRequest(
             email="admin@acme.com",
             password="StrongPass1",  # noqa: S106 — test fixture
-            organization_name="Acme Corp",
         )
-        with (
-            patch(
-                "services.auth_service.get_system_config",
-                new=AsyncMock(
-                    return_value=self._policy_config(policy="reject_all"),
-                ),
-            ),
-            pytest.raises(AuthorizationError),
-        ):
+        with pytest.raises(AuthorizationError):
             await service.signup(payload)
 
-        mock_repo.create_organization.assert_not_awaited()
         mock_repo.create_dashboard_user.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_signup_approvals_public_signup_creates_pending_org(
+    async def test_signup_approval_creates_pending_member(
         self,
         service: AuthService,
         mock_repo: AsyncMock,
         mock_otp: AsyncMock,
-        mock_bao_client: AsyncMock,
+        mock_settings_repo: AsyncMock,
     ) -> None:
-        """approvals + public_signup scope → pending org + pending admin.
+        """approval mode → inactive member + PendingOrgResponse, no OTP.
 
-        Asserts the pending-path contract: org created with
-        status='pending', admin user with password_hash=None, and NO
-        namespace call, NO OTP.
+        Asserts the pending-path contract: member created inactive
+        (atomic — never a live-then-deactivate window), no OTP sent.
         """
         from schemas.auth import PendingOrgResponse
+
+        mock_settings_repo.get_registration_mode.return_value = "approval"
+        mock_repo.find_user_by_email.return_value = None
+        mock_repo.create_dashboard_user.return_value = self._make_mock_user()
 
         payload = SignupRequest(
             email="admin@acme.com",
             password="StrongPass1",  # noqa: S106 — test fixture
-            organization_name="Acme Corp",
         )
-        with patch(
-            "services.auth_service.get_system_config",
-            new=AsyncMock(
-                return_value=self._policy_config(
-                    policy="approvals", scope="public_signup"
-                ),
-            ),
-        ):
-            result = await service.signup(payload)
+        result = await service.signup(payload)
 
         assert isinstance(result, PendingOrgResponse)
         assert result.status == "pending"
 
-        mock_repo.create_organization.assert_awaited_once_with(
-            name="Acme Corp", status="pending"
-        )
         mock_repo.create_dashboard_user.assert_awaited_once()
-        # Pending admin — no password hash yet (set at invite-accept time).
-        assert (
-            mock_repo.create_dashboard_user.call_args.kwargs["password_hash"]
-            is None
-        )
-        # No OpenBao namespace, no OTP, no prompt seeding for pending orgs.
-        mock_bao_client.create_org_namespace.assert_not_awaited()
+        create_kwargs = mock_repo.create_dashboard_user.call_args.kwargs
+        assert create_kwargs["role"] == "member"
+        assert create_kwargs["is_active"] is False
+        # No OTP for pending accounts.
         mock_otp.generate_and_send.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_signup_approvals_duplicate_email_returns_generic_success(
+    async def test_signup_approval_duplicate_email_returns_generic_success(
         self,
         service: AuthService,
         mock_repo: AsyncMock,
+        mock_settings_repo: AsyncMock,
     ) -> None:
-        """Concurrent duplicate in the approvals path (IntegrityError) →
-        generic success + rollback — no pending org leaks, no 409, no
-        account enumeration."""
-        mock_repo.create_organization.side_effect = IntegrityError(
+        """Concurrent duplicate in the approval path (IntegrityError) →
+        generic success + rollback — no 409, no account enumeration."""
+        mock_settings_repo.get_registration_mode.return_value = "approval"
+        mock_repo.find_user_by_email.return_value = None
+        mock_repo.create_dashboard_user.side_effect = IntegrityError(
             "mock", "mock", "mock"
         )
 
         payload = SignupRequest(
             email="admin@acme.com",
             password="StrongPass1",  # noqa: S106 — test fixture
-            organization_name="Acme Corp",
         )
-        with patch(
-            "services.auth_service.get_system_config",
-            new=AsyncMock(
-                return_value=self._policy_config(
-                    policy="approvals", scope="public_signup"
-                ),
-            ),
-        ):
-            result = await service.signup(payload)
+        result = await service.signup(payload)
 
         assert "Verification code sent" in result.message
         mock_repo.rollback.assert_awaited_once()
-        mock_repo.create_organization.assert_awaited_once_with(
-            name="Acme Corp", status="pending"
-        )
 
-    @pytest.mark.asyncio
-    async def test_signup_allow_all_unchanged(
-        self,
-        service: AuthService,
-        mock_repo: AsyncMock,
-        mock_otp: AsyncMock,
-    ) -> None:
-        """allow_all keeps the live path — verified admin + OTP sent."""
-        mock_repo.find_user_by_email.return_value = None
-        mock_repo.create_organization.return_value = MagicMock(
-            id=self.ORG_ID, name="Acme Corp"
-        )
-        mock_repo.create_dashboard_user.return_value = self._make_mock_user()
-
-        payload = SignupRequest(
-            email="admin@acme.com",
-            password="StrongPass1",  # noqa: S106 — test fixture
-            organization_name="Acme Corp",
-        )
-        # Policy fixture defaults to allow_all already; assert explicitly.
-        with patch(
-            "services.auth_service.get_system_config",
-            new=AsyncMock(return_value=self._policy_config()),
-        ):
-            result = await service.signup(payload)
-
-        assert "Verification code sent" in result.message
-        mock_repo.create_organization.assert_awaited_once_with(
-            name="Acme Corp"
-        )
-        mock_otp.generate_and_send.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_signup_system_name_rejected(
-        self,
-        service: AuthService,
-        mock_repo: AsyncMock,
-    ) -> None:
-        """The reserved SYSTEM org name is rejected even under allow_all."""
-        from core.exceptions import ValidationError
-
-        payload = SignupRequest(
-            email="admin@acme.com",
-            password="StrongPass1",  # noqa: S106 — test fixture
-            organization_name="system",
-        )
-        with (
-            patch(
-                "services.auth_service.get_system_config",
-                new=AsyncMock(return_value=self._policy_config()),
-            ),
-            pytest.raises(ValidationError),
-        ):
-            await service.signup(payload)
-
-        mock_repo.create_organization.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_signup_approvals_without_public_signup_raises_403(
-        self,
-        service: AuthService,
-        mock_repo: AsyncMock,
-    ) -> None:
-        """approvals WITHOUT public_signup scope → 403, never live creation.
-
-        A non-selected channel is rejected — it must not fall through to
-        instant org creation nor create a pending row.
-        """
-        from core.exceptions import AuthorizationError
-
-        payload = SignupRequest(
-            email="admin@acme.com",
-            password="StrongPass1",  # noqa: S106 — test fixture
-            organization_name="Acme Corp",
-        )
-        with (
-            patch(
-                "services.auth_service.get_system_config",
-                new=AsyncMock(
-                    return_value=self._policy_config(
-                        policy="approvals", scope="in_app"
-                    ),
-                ),
-            ),
-            pytest.raises(AuthorizationError),
-        ):
-            await service.signup(payload)
-
-        mock_repo.create_organization.assert_not_awaited()
-        mock_repo.create_dashboard_user.assert_not_awaited()
 
     # ═══════════════════════════════════════════════════════════════════════
     # change_password()
@@ -551,9 +407,7 @@ class TestAuthService:
         mock_repo.revoke_all_refresh_tokens.assert_awaited_once_with(
             self.USER_ID
         )
-        mock_invalidate.assert_awaited_once_with(
-            mock_redis, user.organization_id, self.USER_ID
-        )
+        mock_invalidate.assert_awaited_once_with(mock_redis, self.USER_ID)
 
     @pytest.mark.asyncio
     async def test_change_password_wrong_old_password_raises(
@@ -700,7 +554,7 @@ class TestAuthService:
         assert result.access_token == "at"
         mock_repo.mark_email_verified.assert_awaited_once_with(self.USER_ID)
         mock_bao_client.create_org_namespace.assert_awaited_once_with(
-            self.ORG_ID
+            self.USER_ID
         )
 
     @pytest.mark.asyncio
@@ -710,23 +564,17 @@ class TestAuthService:
         mock_repo: AsyncMock,
         mock_otp: AsyncMock,
     ) -> None:
-        """Verify email without Bao client — skips namespace creation."""
+        """Verify email without Bao client — fail-loud (no silent skip)."""
+        from core.openbao_exceptions import OpenBaoConnectionError
+
         user = self._make_mock_user(is_email_verified=False)
         mock_repo.find_user_by_email.return_value = user
         mock_otp.verify.return_value = True
 
         payload = VerifyEmailRequest(email="admin@acme.com", otp="123456")
 
-        with patch.object(
-            service_no_bao, "issue_tokens"
-        ) as mock_issue:
-            mock_issue.return_value = TokenResponse(
-                access_token="at", refresh_token="rt", expires_in=1800
-            )
-            result = await service_no_bao.verify_email(payload)
-
-        assert result.access_token == "at"
-        mock_repo.mark_email_verified.assert_awaited_once_with(self.USER_ID)
+        with pytest.raises(OpenBaoConnectionError):
+            await service_no_bao.verify_email(payload)
 
     @pytest.mark.asyncio
     async def test_verify_email_already_verified_skips_db_update(
@@ -1251,7 +1099,6 @@ class TestAuthService:
         assert result.access_token == "at"  # noqa: S105 — test fixture
         mock_issue.assert_awaited_once_with(
             user_id=root.id,
-            organization_id=root.organization_id,
             role="superadmin",  # root's role claim comes from the DB row
         )
 
@@ -1314,7 +1161,7 @@ class TestAuthService:
         """Invalid MFA OTP raises AuthenticationError."""
         session_data = (
             '{"user_id":"00000000-0000-0000-0000-000000000002",'
-            '"org_id":"00000000-0000-0000-0000-000000000001",'
+            '"user_id":"00000000-0000-0000-0000-000000000001",'
             '"role":"admin","email":"session-bound@example.com"}'
         )
         mock_redis.get.return_value = session_data
@@ -1345,7 +1192,7 @@ class TestAuthService:
         """Valid MFA session and OTP issue JWT tokens."""
         session_data = (
             '{"user_id":"00000000-0000-0000-0000-000000000002",'
-            '"org_id":"00000000-0000-0000-0000-000000000001",'
+            '"user_id":"00000000-0000-0000-0000-000000000001",'
             '"role":"admin","email":"session-bound@example.com"}'
         )
         mock_redis.get.return_value = session_data
@@ -1537,7 +1384,7 @@ class TestAuthService:
         mock_stored = AsyncMock()
         mock_stored.id = uuid4()
         mock_stored.user_id = str(self.USER_ID)
-        mock_stored.organization_id = self.ORG_ID
+        mock_stored.user_id = self.ORG_ID
         mock_repo.revoke_refresh_token_if_current.return_value = True
         mock_repo.get_refresh_token_by_hash.return_value = mock_stored
         mock_repo.get_user_by_id.return_value = None
@@ -1558,7 +1405,7 @@ class TestAuthService:
         stored = AsyncMock()
         stored.id = old_token_id
         stored.user_id = str(self.USER_ID)
-        stored.organization_id = self.ORG_ID
+        stored.user_id = self.ORG_ID
         new_stored = AsyncMock()
         new_stored.id = new_token_id
 
@@ -1597,7 +1444,7 @@ class TestAuthService:
         presented = AsyncMock()
         presented.id = presented_id
         presented.user_id = str(self.USER_ID)
-        presented.organization_id = self.ORG_ID
+        presented.user_id = self.ORG_ID
         presented.rotated_by = successor_id
         successor = AsyncMock()
         successor.id = successor_id
@@ -1635,7 +1482,7 @@ class TestAuthService:
         stored = AsyncMock()
         stored.id = token_id
         stored.user_id = str(self.USER_ID)
-        stored.organization_id = self.ORG_ID
+        stored.user_id = self.ORG_ID
         stored.rotated_by = None
         new_stored = AsyncMock()
         new_stored.id = new_token_id
@@ -1678,7 +1525,7 @@ class TestAuthService:
         stored = AsyncMock()
         stored.id = uuid4()
         stored.user_id = str(self.USER_ID)
-        stored.organization_id = self.ORG_ID
+        stored.user_id = self.ORG_ID
         mock_repo.revoke_refresh_token_if_current.return_value = True
         mock_repo.get_refresh_token_by_hash.return_value = stored
         mock_repo.get_user_by_id.return_value = self._make_mock_user(
@@ -1997,7 +1844,6 @@ class TestAuthService:
         ):
             result = await service.issue_tokens(
                 user_id=self.USER_ID,
-                organization_id=self.ORG_ID,
                 role="admin",
             )
 
@@ -2010,7 +1856,6 @@ class TestAuthService:
         mock_repo.create_refresh_token.assert_awaited_once()
         call_kwargs = mock_repo.create_refresh_token.call_args.kwargs
         assert call_kwargs["user_id"] == self.USER_ID
-        assert call_kwargs["organization_id"] == self.ORG_ID
         assert call_kwargs["token_hash"] == service._hash_refresh_token(
             "raw-refresh"
         )
@@ -2049,7 +1894,6 @@ class TestAuthService:
         ):
             await service.issue_tokens(
                 user_id=self.USER_ID,
-                organization_id=self.ORG_ID,
                 role="admin",
             )
         assert captured["mcp"] is True
@@ -2070,7 +1914,6 @@ class TestAuthService:
         ):
             await service.issue_tokens(
                 user_id=self.USER_ID,
-                organization_id=self.ORG_ID,
                 role="admin",
             )
         assert captured["mcp"] is False
@@ -2091,7 +1934,7 @@ class TestAuthService:
         stored = AsyncMock()
         stored.id = old_token_id
         stored.user_id = str(self.USER_ID)
-        stored.organization_id = self.ORG_ID
+        stored.user_id = self.ORG_ID
         new_stored = AsyncMock()
         new_stored.id = uuid4()
 
@@ -2117,7 +1960,7 @@ class TestAuthService:
         stored2 = AsyncMock()
         stored2.id = uuid4()
         stored2.user_id = str(self.USER_ID)
-        stored2.organization_id = self.ORG_ID
+        stored2.user_id = self.ORG_ID
         new_stored2 = AsyncMock()
         new_stored2.id = uuid4()
         mock_repo.get_refresh_token_by_hash.side_effect = [stored2, new_stored2]

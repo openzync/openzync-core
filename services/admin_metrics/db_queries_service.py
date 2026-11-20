@@ -31,7 +31,7 @@ class DbMetricsQueriesService:
 
     async def episodes_per_day(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
         limit: int,
@@ -40,12 +40,12 @@ class DbMetricsQueriesService:
         """Daily episode counts over the window (project scope honored)."""
         _ = limit
         return await self._episodes_per_day_core(
-            org_id, start, end, project_id, "episodes_per_day"
+            user_id, start, end, project_id, "episodes_per_day"
         )
 
     async def messages_per_day(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
         limit: int,
@@ -54,12 +54,12 @@ class DbMetricsQueriesService:
         """Daily message counts — same query as episodes, alias response."""
         _ = limit
         return await self._episodes_per_day_core(
-            org_id, start, end, project_id, "messages_per_day"
+            user_id, start, end, project_id, "messages_per_day"
         )
 
     async def _episodes_per_day_core(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
         project_id: UUID | None,
@@ -69,7 +69,7 @@ class DbMetricsQueriesService:
         rows = [
             [str(day), count]
             for day, count in await self._repo.episodes_per_day(
-                org_id, start, end, project_id
+                user_id, start, end, project_id
             )
         ]
         params = {"from": start.isoformat(), "to": end.isoformat()}
@@ -77,7 +77,7 @@ class DbMetricsQueriesService:
 
     async def activity_per_day(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
         limit: int,
@@ -88,14 +88,14 @@ class DbMetricsQueriesService:
         _ = (limit, project_id)
         rows = [
             [str(day), count]
-            for day, count in await self._repo.activity_per_day(org_id, start, end)
+            for day, count in await self._repo.activity_per_day(user_id, start, end)
         ]
         params = {"from": start.isoformat(), "to": end.isoformat()}
         return build_result("activity_per_day", True, ["date", "count"], rows, params)
 
     async def entities_per_day(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
         limit: int,
@@ -107,9 +107,9 @@ class DbMetricsQueriesService:
         stats = GraphStatsService(self._db, backend)
         # Inventory: archived projects keep their entities, so they stay in scope.
         project_ids = await stats.resolve_project_ids(
-            org_id, project_id, include_archived=True
+            user_id, project_id, include_archived=True
         )
-        per_day = await stats.entity_counts_per_day(org_id, project_ids, start, end)
+        per_day = await stats.entity_counts_per_day(user_id, project_ids, start, end)
         # Row shape preserved: [[<midnight-UTC datetime str>, count]], newest first
         # (matches the old date_trunc PG output format).
         rows = [
@@ -124,7 +124,7 @@ class DbMetricsQueriesService:
 
     async def facts_per_day(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
         limit: int,
@@ -135,7 +135,7 @@ class DbMetricsQueriesService:
         rows = [
             [str(day), count]
             for day, count in await self._repo.facts_per_day(
-                org_id, start, end, project_id
+                user_id, start, end, project_id
             )
         ]
         params = {"from": start.isoformat(), "to": end.isoformat()}
@@ -143,7 +143,7 @@ class DbMetricsQueriesService:
 
     async def enrichment_progress(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
         limit: int,
@@ -155,7 +155,7 @@ class DbMetricsQueriesService:
         rows = [
             [status, count]
             for status, count in await self._repo.enrichment_progress(
-                org_id, project_id
+                user_id, project_id
             )
         ]
         labels = {
@@ -171,7 +171,7 @@ class DbMetricsQueriesService:
 
     async def top_projects_by_episodes(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
         limit: int,
@@ -184,7 +184,7 @@ class DbMetricsQueriesService:
         rows = [
             [name, count, is_archived]
             for name, count, is_archived in await self._repo.top_projects_by_episodes(
-                org_id, limit, project_id, include_archived
+                user_id, limit, project_id, include_archived
             )
         ]
         return build_result(
@@ -197,7 +197,7 @@ class DbMetricsQueriesService:
 
     async def top_users_by_messages(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
         limit: int,
@@ -211,7 +211,7 @@ class DbMetricsQueriesService:
         rows = [
             [display or str(user_id), count]
             for display, user_id, count in await self._repo.top_users_by_messages(
-                org_id, limit, project_id
+                user_id, limit, project_id
             )
         ]
         return build_result(
@@ -224,7 +224,7 @@ class DbMetricsQueriesService:
 
     async def queue_depth_over_time(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
         limit: int,
@@ -235,7 +235,7 @@ class DbMetricsQueriesService:
         rows = [
             [str(day), count]
             for day, count in await self._repo.queue_depth_over_time(
-                org_id, start, end, project_id
+                user_id, start, end, project_id
             )
         ]
         params = {"from": start.isoformat(), "to": end.isoformat()}

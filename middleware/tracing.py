@@ -206,9 +206,9 @@ class TracingMiddleware:
             request_id = (scope.get("state") or {}).get("request_id", "")
             span.set_attribute("HTTPRequestId", str(request_id))
 
-            org_id = (scope.get("state") or {}).get("org_id", None)
-            if org_id:
-                span.set_attribute("org_id", str(org_id))
+            user_id = (scope.get("state") or {}).get("user_id", None)
+            if user_id:
+                span.set_attribute("user_id", str(user_id))
 
             try:
                 await self.app(scope, receive, send_wrapper)

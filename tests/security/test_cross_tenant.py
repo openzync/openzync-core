@@ -211,10 +211,10 @@ class TestCrossTenantIsolation:
         assert ids_a.isdisjoint(ids_b), (
             f"Overlapping user IDs between orgs: {ids_a & ids_b}"
         )
-        org_ids_a = {u["organization_id"] for u in data_a}
-        org_ids_b = {u["organization_id"] for u in data_b}
-        assert len(org_ids_a) == 1 and len(org_ids_b) == 1
-        assert org_ids_a != org_ids_b
+        user_ids_a = {u["user_id"] for u in data_a}
+        user_ids_b = {u["user_id"] for u in data_b}
+        assert len(user_ids_a) == 1 and len(user_ids_b) == 1
+        assert user_ids_a != user_ids_b
 
     @pytest.mark.asyncio
     async def test_cross_org_update_and_delete_user_return_404(

@@ -55,7 +55,7 @@ class AuditLogRepository:
 
     async def create(
         self,
-        organization_id: UUID | None,
+        user_id: UUID | None,
         actor_id: str | None,
         actor_type: str | None,
         action: str,
@@ -67,7 +67,7 @@ class AuditLogRepository:
         """Insert a new audit log entry.
 
         Args:
-            organization_id: Organization UUID (nullable for unauthenticated actions).
+            user_id: Organization UUID (nullable for unauthenticated actions).
             actor_id: Identifier of the acting entity.
             actor_type: ``user``, ``api_key``, or ``system``.
             action: The action performed (e.g. ``session.create``).
@@ -80,7 +80,7 @@ class AuditLogRepository:
             The newly created ``AuditLog`` instance.
         """
         entry = AuditLog(
-            organization_id=organization_id,
+            user_id=user_id,
             actor_id=actor_id,
             actor_type=actor_type,
             action=action,
@@ -96,8 +96,8 @@ class AuditLogRepository:
         # admits it, so the writer must have enabled the RLS bypass (the ARQ
         # audit task does).  Without that bypass the insert is refused by
         # the database — loudly, never silently dropped.
-        if organization_id is not None:
-            await rls.set_tenant_context(self._db, organization_id)
+        if user_id is not None:
+            await rls.set_tenant_context(self._db, user_id)
         self._db.add(entry)
         await self._db.flush()
         await self._db.commit()
@@ -106,7 +106,7 @@ class AuditLogRepository:
 
     async def list(
         self,
-        organization_id: UUID | None,
+        user_id: UUID | None,
         *,
         action: str | None = None,
         actor_id: str | None = None,
@@ -127,7 +127,7 @@ class AuditLogRepository:
         ``status_code`` (``details->>status_code``), ``actor_id``.
 
         Args:
-            organization_id: Filter by org.  ``None`` means *platform-wide* —
+            user_id: Filter by org.  ``None`` means *platform-wide* —
                 the caller's own isolation (an RLS-bypass session) decides
                 what is visible.  A concrete UUID restricts the result to
                 that organization, including the exclusion of the
@@ -159,8 +159,8 @@ class AuditLogRepository:
         count_base = select(func.count(AuditLog.id))
 
         conditions = []
-        if organization_id is not None:
-            conditions.append(AuditLog.organization_id == organization_id)
+        if user_id is not None:
+            conditions.append(AuditLog.user_id == user_id)
         if action is not None:
             conditions.append(AuditLog.action == action)
         if actor_id is not None:

@@ -50,7 +50,7 @@ class TestAuditLogService:
         service, mock_repo = self._make_service()
 
         await service.log_action(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             actor_id=self.USER_ID,
             actor_type="user",
             action="session.create",
@@ -61,7 +61,7 @@ class TestAuditLogService:
         )
 
         mock_repo.create.assert_awaited_once_with(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             actor_id=self.USER_ID,
             actor_type="user",
             action="session.create",
@@ -77,7 +77,7 @@ class TestAuditLogService:
         service, mock_repo = self._make_service()
 
         await service.log_action(
-            organization_id=None,
+            user_id=None,
             actor_id=None,
             actor_type=None,
             action="system.health_check",
@@ -88,7 +88,7 @@ class TestAuditLogService:
         )
 
         mock_repo.create.assert_awaited_once_with(
-            organization_id=None,
+            user_id=None,
             actor_id=None,
             actor_type=None,
             action="system.health_check",
@@ -105,7 +105,7 @@ class TestAuditLogService:
 
         with pytest.raises(ValueError, match="Invalid actor_type"):
             await service.log_action(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 actor_id="bot-1",
                 actor_type="robot",  # not in valid set
                 action="session.create",
@@ -119,7 +119,7 @@ class TestAuditLogService:
 
         for actor_type in ("user", "api_key", "system"):
             await service.log_action(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 actor_id=f"id-{actor_type}",
                 actor_type=actor_type,
                 action="test.action",
@@ -140,7 +140,7 @@ class TestAuditLogService:
         mock_repo.list.return_value = ([mock_entry], 1)
 
         entries, total = await service.query_logs(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             action="session.create",
             limit=50,
             offset=0,
@@ -149,7 +149,7 @@ class TestAuditLogService:
         assert len(entries) == 1
         assert total == 1
         mock_repo.list.assert_awaited_once_with(
-            organization_id=self.ORG_ID,
+            self.ORG_ID,
             action="session.create",
             actor_id=None,
             actor_type=None,
@@ -172,12 +172,12 @@ class TestAuditLogService:
         spec = SortSpec(sort_by="created_at", sort_dir="desc")
 
         await service.query_logs(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             sort=spec,
         )
 
         mock_repo.list.assert_awaited_once_with(
-            organization_id=self.ORG_ID,
+            self.ORG_ID,
             action=None,
             actor_id=None,
             actor_type=None,
@@ -199,7 +199,7 @@ class TestAuditLogService:
         mock_repo.list.return_value = ([], 0)
 
         await service.query_logs(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             action="user.login",
             actor_id=self.USER_ID,
             actor_type="user",
@@ -210,7 +210,7 @@ class TestAuditLogService:
         )
 
         mock_repo.list.assert_awaited_once_with(
-            organization_id=self.ORG_ID,
+            self.ORG_ID,
             action="user.login",
             actor_id=self.USER_ID,
             actor_type="user",
@@ -232,7 +232,7 @@ class TestAuditLogService:
         mock_repo.list.return_value = ([], 0)
 
         entries, total = await service.query_logs(
-            organization_id=UUID("00000000-0000-0000-0000-000000000999"),
+            user_id=UUID("00000000-0000-0000-0000-000000000999"),
         )
 
         assert entries == []

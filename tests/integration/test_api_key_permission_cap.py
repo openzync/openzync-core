@@ -58,7 +58,7 @@ _PASSWORD = "Keycap-p@ss-1"  # noqa: S105 — test fixture password, not a real 
 _MEMBER_PERMS = ["project:manage", "project:read"]
 
 
-async def _seed_member(app: Any, org_id: UUID) -> UUID:
+async def _seed_member(app: Any, user_id: UUID) -> UUID:
     """Create a verified member dashboard user (test infra)."""
     from repositories.auth_repository import AuthRepository
     from utils.password import hash_password
@@ -66,7 +66,6 @@ async def _seed_member(app: Any, org_id: UUID) -> UUID:
     async with app.state.db_session_factory() as session:
         repo = AuthRepository(session)
         user = await repo.create_dashboard_user(
-            organization_id=org_id,
             email=_MEMBER_EMAIL,
             password_hash=hash_password(_PASSWORD),
             role="member",
@@ -100,7 +99,7 @@ class TestApiKeyPermissionCap:
     ) -> None:
         """Non-admin key with ``members:write`` → 422, nothing minted."""
         tenant = isolated_org_and_key
-        member_id = await _seed_member(isolated_app, tenant["org_id"])
+        member_id = await _seed_member(isolated_app, tenant["user_id"])
         project_id = tenant["project_id"]
 
         transport = asgi_transport(isolated_app)
@@ -140,7 +139,7 @@ class TestApiKeyPermissionCap:
     ) -> None:
         """Subset grant → 201 as-is; superset request → capped to actor set."""
         tenant = isolated_org_and_key
-        member_id = await _seed_member(isolated_app, tenant["org_id"])
+        member_id = await _seed_member(isolated_app, tenant["user_id"])
         project_id = tenant["project_id"]
 
         transport = asgi_transport(isolated_app)
@@ -222,7 +221,7 @@ class TestApiKeyPermissionCap:
             request = Request(scope)
             request.state.auth_type = "jwt"
             request.state.user_id = str(tenant["user_id"])
-            request.state.org_id = str(tenant["org_id"])
+            request.state.user_id = str(tenant["user_id"])
             with pytest.raises(HTTPException) as exc_info:
                 await get_actor_permissions(
                     request,

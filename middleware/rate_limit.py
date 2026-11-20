@@ -9,7 +9,7 @@ Two tiers of rate limiting are enforced:
 1. **IP-based** — for unauthenticated endpoints (health, docs, etc.).
    Key: ``rate:auth:{ip}`` — 10 requests per 60-second window.
 2. **Org-based** — for authenticated API endpoints.
-   Key: ``rate:api:{org_id}`` — rate determined by org quota or fallback.
+   Key: ``rate:api:{user_id}`` — rate determined by org quota or fallback.
 
 All responses include RFC 7807 body on 429.
 
@@ -123,7 +123,7 @@ def _get_client_ip(scope: Scope) -> str:
 
 async def _get_org_rate_limit(
     redis: aioredis.Redis,
-    org_id: str,
+    user_id: str,
 ) -> tuple[int, int]:
     """Retrieve rate-limit configuration for a given organization.
 
@@ -132,13 +132,13 @@ async def _get_org_rate_limit(
 
     Args:
         redis: Async Redis client.
-        org_id: The organization UUID string.
+        user_id: The organization UUID string.
 
     Returns:
         Tuple of ``(max_requests, window_seconds)``.
     """
     try:
-        quota_key = f"org:quota:{org_id}"
+        quota_key = f"org:quota:{user_id}"
         quota_data = await redis.hgetall(quota_key)
         if quota_data:
             max_req = int(quota_data.get("rate_limit_max", FALLBACK_ORG_RATE_LIMIT))
@@ -299,12 +299,12 @@ class RateLimitMiddleware:
         # Fail-closed: any Redis error below (org-quota read, window check)
         # rejects the request with 503 instead of passing it through.
         state = scope.get("state") or {}
-        org_id: str | None = state.get("org_id", None)
+        user_id: str | None = state.get("user_id", None)
 
         try:
-            if org_id:
-                max_req, window = await _get_org_rate_limit(redis, org_id)
-                rate_key = f"rate:api:{org_id}"
+            if user_id:
+                max_req, window = await _get_org_rate_limit(redis, user_id)
+                rate_key = f"rate:api:{user_id}"
             else:
                 client_ip = _get_client_ip(scope)
                 max_req = get_settings().RATE_LIMIT_IP_MAX

@@ -185,7 +185,7 @@ class UserResponse(BaseModel):
         metadata: User metadata JSON.
         role: Dashboard role — ``admin`` or ``member`` (from the
             ``users.role`` column).
-        organization_id: Tenant organization UUID.
+        user_id: Owner user UUID (self in the user-owned model).
         created_at: User creation timestamp (UTC).
         updated_at: Last update timestamp (UTC).
         is_deleted: Soft-delete flag. ``True`` during the 30-day GDPR grace period.
@@ -212,7 +212,7 @@ class UserResponse(BaseModel):
         ),
         examples=[["project:read", "project:write"]],
     )
-    organization_id: UUID = Field(..., description="Tenant organization UUID.")
+    user_id: UUID = Field(..., description="Owner user UUID (self-ID).")
     created_at: datetime = Field(..., description="User creation timestamp (UTC).")
     updated_at: datetime = Field(..., description="Last update timestamp (UTC).")
     is_deleted: bool = Field(

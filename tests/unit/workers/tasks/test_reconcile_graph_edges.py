@@ -34,7 +34,7 @@ QUEUE = "OpenZync:test:queue:low"
 def _edge_row(**overrides) -> SimpleNamespace:
     return SimpleNamespace(
         id=overrides.get("id", EDGE_ID),
-        organization_id=overrides.get("org", ORG_ID),
+        user_id=overrides.get("org", ORG_ID),
         project_id=overrides.get("project", PROJECT_ID),
         source_id=overrides.get("source", SRC_ENTITY),
         target_id=overrides.get("target", TGT_ENTITY),
@@ -88,7 +88,7 @@ class TestReconcileGraphEdges:
         job = enqueued[0]
         assert job["task"] == "expire_graph_edges"
         kwargs = job["kwargs"]
-        assert kwargs["org_id"] == str(ORG_ID)
+        assert kwargs["user_id"] == str(ORG_ID)
         assert kwargs["project_id"] == str(PROJECT_ID)
         assert kwargs["source_id"] == str(SRC_ENTITY)
         assert kwargs["target_id"] == str(TGT_ENTITY)
@@ -196,7 +196,7 @@ class TestReconcileGraphEdges:
 class TestReconcileGraphEdgesRls:
     """Cron RLS regression — cross-org scan bypasses RLS before querying.
 
-    The policies call ``current_setting('app.org_id')`` without
+    The policies call ``current_setting('app.user_id')`` without
     ``missing_ok``, which raises ``UndefinedObjectError`` when the GUC is
     unset on the worker session (every tick failed at boot).  The fix sets
     ``app.bypass_rls`` first; these tests pin that ordering.

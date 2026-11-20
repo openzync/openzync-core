@@ -1,4 +1,4 @@
-"""Per-org SurrealDB connection pool — created lazily, cached by org_id.
+"""Per-org SurrealDB connection pool — created lazily, cached by user_id.
 
 Each org gets its own ``AsyncSurreal`` connection using credentials from
 :class:`OrgConfigBase`.  Connections are created on first use and cached
@@ -13,7 +13,7 @@ Usage::
     from core.surreal_pool import SurrealConnectionPool
 
     pool = SurrealConnectionPool()
-    surreal = await pool.get_or_create(org_id, org_config)
+    surreal = await pool.get_or_create(user_id, org_config)
     # ... use surreal ...
     await pool.close_all()  # on shutdown
 """
@@ -82,20 +82,20 @@ class SurrealConnectionPool:
     """
 
     def __init__(self) -> None:
-        # ``_pool[org_id]`` = {"surreal": AsyncSurreal, "last_used": float}
+        # ``_pool[user_id]`` = {"surreal": AsyncSurreal, "last_used": float}
         self._pool: dict[UUID, dict] = {}
         self._locks: dict[UUID, asyncio.Lock] = {}
 
     async def get_or_create(
         self,
-        org_id: UUID,
+        user_id: UUID,
         org_config: OrgConfigBase,
         system_url: str | None = None,
     ) -> AsyncSurreal:
         """Return a cached ``AsyncSurreal`` for this org, or create one.
 
         Args:
-            org_id: The organisation UUID — used as the cache key.
+            user_id: The organisation UUID — used as the cache key.
             org_config: The per-org configuration containing SurrealDB
                 connection details (``surrealdb_url``, ``surrealdb_user``,
                 ``surrealdb_pass``, ``surrealdb_namespace``,
@@ -115,10 +115,10 @@ class SurrealConnectionPool:
         # ── Fast path: already connected ──────────────────────────────────
         # Idle entries past SURREAL_IDLE_TTL_S are closed + dropped here so
         # a dead-idle socket is never handed out (recreated below).
-        if org_id in self._pool:
-            conn = self._pool[org_id]
+        if user_id in self._pool:
+            conn = self._pool[user_id]
             if time.monotonic() - conn["last_used"] > SURREAL_IDLE_TTL_S:
-                await self._close_entry(org_id)
+                await self._close_entry(user_id)
             else:
                 conn["last_used"] = time.monotonic()
                 return conn["surreal"]
@@ -135,7 +135,7 @@ class SurrealConnectionPool:
             url = org_config.surrealdb_url
             if not url:
                 raise GraphBackendUnavailableError(
-                    f"Failed to connect to SurrealDB for organization {org_id}."
+                    f"Failed to connect to SurrealDB for organization {user_id}."
                 )
             username = org_config.surrealdb_user or DEFAULT_SURREALDB_USER
             password = org_config.surrealdb_pass or DEFAULT_SURREALDB_PASS
@@ -143,13 +143,13 @@ class SurrealConnectionPool:
             database = org_config.surrealdb_database or DEFAULT_SURREALDB_DATABASE
 
         # ── Per-org lock to prevent duplicate connections ─────────────────
-        if org_id not in self._locks:
-            self._locks[org_id] = asyncio.Lock()
+        if user_id not in self._locks:
+            self._locks[user_id] = asyncio.Lock()
 
-        async with self._locks[org_id]:
+        async with self._locks[user_id]:
             # Double-check after acquiring lock
-            if org_id in self._pool:
-                return self._pool[org_id]["surreal"]
+            if user_id in self._pool:
+                return self._pool[user_id]["surreal"]
 
             # Cap: evict the least-recently-used entry when full so the
             # pool can't grow one socket per org without bound.
@@ -158,7 +158,7 @@ class SurrealConnectionPool:
                 await self._close_entry(lru)
                 logger.info(
                     "surreal_pool.evicted_lru",
-                    extra={"org_id": str(lru)},
+                    extra={"user_id": str(lru)},
                 )
 
             # Create a new AsyncSurreal connection
@@ -168,23 +168,23 @@ class SurrealConnectionPool:
                     self._connect(surreal, username, password, namespace, database),
                     timeout=SURREAL_CONNECT_TIMEOUT_S,
                 )
-                self._pool[org_id] = {
+                self._pool[user_id] = {
                     "surreal": surreal,
                     "last_used": time.monotonic(),
                 }
                 logger.info(
                     "surreal_pool.connected",
-                    extra={"org_id": str(org_id)},
+                    extra={"user_id": str(user_id)},
                 )
                 return surreal
             except Exception as exc:
                 logger.error(
                     "surreal_pool.connect_failed",
-                    extra={"org_id": str(org_id), "error": str(exc)},
+                    extra={"user_id": str(user_id), "error": str(exc)},
                     exc_info=True,
                 )
                 raise GraphBackendUnavailableError(
-                    f"SurrealDB connection failed for organization {org_id}."
+                    f"SurrealDB connection failed for organization {user_id}."
                 ) from exc
 
     @staticmethod
@@ -203,9 +203,9 @@ class SurrealConnectionPool:
         })
         await surreal.use(namespace, database)
 
-    async def _close_entry(self, org_id: UUID) -> None:
+    async def _close_entry(self, user_id: UUID) -> None:
         """Close and drop one cached entry, logging (not raising) on failure."""
-        conn = self._pool.pop(org_id, None)
+        conn = self._pool.pop(user_id, None)
         if conn is None:
             return
         try:
@@ -213,7 +213,7 @@ class SurrealConnectionPool:
         except Exception as exc:
             logger.warning(
                 "surreal_pool.close_failed",
-                extra={"org_id": str(org_id), "error": str(exc)},
+                extra={"user_id": str(user_id), "error": str(exc)},
             )
 
     async def close_all(self) -> None:
@@ -224,17 +224,17 @@ class SurrealConnectionPool:
         connections from being closed.  The pool is cleared after all
         connections have been (attempted to be) closed.
         """
-        for org_id, conn in list(self._pool.items()):
+        for user_id, conn in list(self._pool.items()):
             try:
                 await conn["surreal"].close()
                 logger.info(
                     "surreal_pool.disconnected",
-                    extra={"org_id": str(org_id)},
+                    extra={"user_id": str(user_id)},
                 )
             except Exception as exc:
                 logger.warning(
                     "surreal_pool.close_failed",
-                    extra={"org_id": str(org_id), "error": str(exc)},
+                    extra={"user_id": str(user_id), "error": str(exc)},
                 )
         self._pool.clear()
         self._locks.clear()

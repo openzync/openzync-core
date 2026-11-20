@@ -92,14 +92,14 @@ class TestSupersessionConcurrency:
 
         results = await asyncio.gather(
             service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=USER_ID,
                 facts=[_payload("Alice likes hiking v1")],
                 now=NOW,
             ),
             service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=USER_ID,
                 facts=[_payload("Alice likes hiking v2")],

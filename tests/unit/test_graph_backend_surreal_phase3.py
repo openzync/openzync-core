@@ -91,7 +91,7 @@ class TestSurrealExpireRelationshipsMatching:
         assert params["target_id"] == RecordID("entity", str(TGT_ID))
         # Deterministic supersession instant — never time::now() in-band.
         assert params["at_time"] == T1.isoformat()
-        assert params["org_id"] == str(ORG_ID)
+        assert params["user_id"] == str(ORG_ID)
         assert params["project_id"] == str(PROJ_ID)
 
     async def test_idempotent_replay_returns_zero(

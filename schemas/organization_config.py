@@ -396,7 +396,7 @@ class OrgConfigBase(BaseModel):
 
 
 class UpdateOrgConfigRequest(BaseModel):
-    """Request body for ``PATCH /admin/organizations/{org_id}/config``.
+    """Request body for ``PATCH /admin/organizations/{user_id}/config``.
 
     Same shape as ``OrgConfigBase`` — every field is optional, only provided
     fields are updated.  Set a field to ``null`` to remove it (the caller
@@ -441,9 +441,10 @@ class UpdateOrgConfigRequest(BaseModel):
     def _reject_postgres(cls, v: str | None) -> str | None:
         """Hard-reject `postgres` — removed in v1.1.0, returns 410 Gone."""
         if v == "postgres":
-            from core.exceptions import GoneError
-
-            raise GoneError(
+            # Plain ValueError (never GoneError): pydantic wraps it as a
+            # field error and the RequestValidationError handler in
+            # core/exceptions.py maps this message to a 410 problem JSON.
+            raise ValueError(
                 "PostgreSQL graph backend deprecated — gone, removed in v1.1.0. "
                 "Migrate to `falkordb` (410)."
             )

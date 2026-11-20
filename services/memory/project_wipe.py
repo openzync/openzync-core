@@ -23,7 +23,7 @@ class ProjectWipeMixin:
 
     async def delete_project_memory(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         *,
         confirm: str,
@@ -38,7 +38,7 @@ class ProjectWipeMixin:
         recorded as a destructive-action audit log entry.
 
         Args:
-            org_id: The authenticated organization UUID.
+            user_id: The authenticated organization UUID.
             project_id: The project UUID.
             confirm: Must equal ``str(project_id)`` — proves intent.
             actor_id: The authenticated user's UUID (audit attribution).
@@ -67,7 +67,7 @@ class ProjectWipeMixin:
         # ⚠️ Org gate: the wipe must not touch a project outside the
         # caller's organization. get_by_id is org-scoped and excludes
         # archived projects, so cross-org/archived/missing all 404 here.
-        project = await self._project_repo.get_by_id(org_id, project_id)
+        project = await self._project_repo.get_by_id(user_id, project_id)
         if project is None:
             raise NotFoundError(
                 message=f"Project {project_id} not found",
@@ -75,10 +75,10 @@ class ProjectWipeMixin:
             )
 
         episodes_deleted = await self._episode_repo.soft_delete_by_project(
-            project_id, org_id
+            project_id, user_id
         )
         facts_deleted = await self._fact_repo.soft_delete_by_project(
-            project_id, org_id
+            project_id, user_id
         )
 
         # ── Commit before touching S3 ───────────────────────────────────
@@ -98,12 +98,12 @@ class ProjectWipeMixin:
         blobs_deleted = 0
         last_id: UUID | None = None
         try:
-            storage_config = await self._resolve_storage_config(org_id)
+            storage_config = await self._resolve_storage_config(user_id)
         except Exception:
             logger.exception(
                 "memory.wipe_storage_config_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                 },
             )
@@ -124,7 +124,7 @@ class ProjectWipeMixin:
                 logger.exception(
                     "memory.wipe_blob_delete_failed",
                     extra={
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                         "page_size": len(page),
                     },
@@ -136,7 +136,7 @@ class ProjectWipeMixin:
             "memory.project_memory_deleted",
             extra={
                 "project_id": str(project_id),
-                "org_id": str(org_id),
+                "user_id": str(user_id),
                 "episodes_deleted": episodes_deleted,
                 "facts_deleted": facts_deleted,
                 "blobs_deleted": blobs_deleted,
@@ -146,7 +146,7 @@ class ProjectWipeMixin:
         from services.audit_log_service import AuditLogService
 
         await AuditLogService(self._db).log_action(
-            organization_id=org_id,
+            user_id=user_id,
             actor_id=str(actor_id),
             actor_type="user",
             action="memory.wipe",

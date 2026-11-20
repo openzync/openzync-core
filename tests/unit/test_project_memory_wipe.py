@@ -80,7 +80,7 @@ class TestWipeStorageFailureLoud:
             pytest.raises(ExternalServiceError, match="unreadable"),
         ):
             await service.delete_project_memory(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJECT_ID,
                 confirm=str(PROJECT_ID),
                 actor_id=USER_ID,

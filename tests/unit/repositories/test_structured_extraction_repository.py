@@ -36,7 +36,7 @@ class TestStructuredExtractionRepository:
         ext = MagicMock()
         ext.id = overrides.get("id", uuid4())
         ext.episode_id = overrides.get("episode_id", self.EPISODE_ID)
-        ext.organization_id = overrides.get("organization_id", self.ORG_ID)
+        ext.user_id = overrides.get("user_id", self.ORG_ID)
         ext.schema_name = overrides.get("schema_name", "test_schema")
         ext.result = overrides.get("result", {"field": "value"})
         ext.created_at = overrides.get("created_at")
@@ -59,7 +59,7 @@ class TestStructuredExtractionRepository:
         mock_db.execute.return_value = mock_result
 
         rows, next_cursor = await repo.get_by_session(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             session_id=self.SESSION_ID,
             sort_by="sequence_number",
             sort_dir="asc",
@@ -77,7 +77,7 @@ class TestStructuredExtractionRepository:
         mock_db.execute.return_value = mock_result
 
         rows, next_cursor = await repo.get_by_session(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             session_id=self.SESSION_ID,
             sort_by="sequence_number",
             sort_dir="asc",
@@ -98,7 +98,7 @@ class TestStructuredExtractionRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_episode(
-            org_id=self.ORG_ID, episode_id=self.EPISODE_ID
+            user_id=self.ORG_ID, episode_id=self.EPISODE_ID
         )
 
         assert result == extraction
@@ -112,7 +112,7 @@ class TestStructuredExtractionRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_episode(
-            org_id=self.ORG_ID, episode_id=self.EPISODE_ID
+            user_id=self.ORG_ID, episode_id=self.EPISODE_ID
         )
 
         assert result is None
@@ -128,7 +128,7 @@ class TestStructuredExtractionRepository:
         mock_db.execute.return_value = mock_result
 
         count = await repo.count_for_session(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
+            user_id=self.ORG_ID, session_id=self.SESSION_ID
         )
 
         assert count == 5
@@ -142,7 +142,7 @@ class TestStructuredExtractionRepository:
         mock_db.execute.return_value = mock_result
 
         count = await repo.count_for_session(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
+            user_id=self.ORG_ID, session_id=self.SESSION_ID
         )
 
         assert count == 0

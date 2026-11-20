@@ -68,7 +68,7 @@ def _otp_hash(code: str) -> str:
 
 async def _seed_dashboard_user(
     app: Any,
-    org_id: UUID,
+    user_id: UUID,
     email: str,
     *,
     mfa: bool = False,
@@ -80,7 +80,6 @@ async def _seed_dashboard_user(
     async with app.state.db_session_factory() as session:
         repo = AuthRepository(session)
         user = await repo.create_dashboard_user(
-            organization_id=org_id,
             email=email,
             password_hash=hash_password(_PASSWORD),
             role="member",
@@ -105,7 +104,6 @@ async def _login(app: Any, email: str) -> Any:
 async def _mfa_token_for(
     app: Any,
     redis_client: Any,
-    org_id: UUID,
     user_id: UUID,
     email: str,
 ) -> str:
@@ -133,7 +131,6 @@ async def _mfa_token_for(
             json.dumps(
                 {
                     "user_id": str(user_id),
-                    "org_id": str(org_id),
                     "role": "member",
                     "email": email,
                 }
@@ -175,12 +172,12 @@ class TestMfaEmailBinding:
         ``mfa_verify`` checks it against the session-bound victim email,
         so verification fails and no tokens are issued.
         """
-        org_id = isolated_org_and_key["org_id"]
+        user_id = isolated_org_and_key["user_id"]
         victim_id = await _seed_dashboard_user(
-            isolated_app, org_id, _VICTIM_EMAIL, mfa=True
+            isolated_app, user_id, _VICTIM_EMAIL, mfa=True
         )
         token = await _mfa_token_for(
-            isolated_app, redis_client, org_id, victim_id, _VICTIM_EMAIL
+            isolated_app, redis_client, victim_id, _VICTIM_EMAIL
         )
 
         await redis_client.setex(
@@ -206,13 +203,13 @@ class TestMfaEmailBinding:
         redis_client: Any,
     ) -> None:
         """Correct session-bound email + OTP → 200 with a token pair."""
-        org_id = isolated_org_and_key["org_id"]
+        user_id = isolated_org_and_key["user_id"]
         victim_id = await _seed_dashboard_user(
-            isolated_app, org_id, _VICTIM_EMAIL, mfa=True
+            isolated_app, user_id, _VICTIM_EMAIL, mfa=True
         )
         # Fresh session — a verify attempt single-use burns the token.
         token = await _mfa_token_for(
-            isolated_app, redis_client, org_id, victim_id, _VICTIM_EMAIL
+            isolated_app, redis_client, victim_id, _VICTIM_EMAIL
         )
         await redis_client.setex(
             f"otp:v1:mfa:{_VICTIM_EMAIL}:hash", 600, _otp_hash(_VICTIM_OTP)

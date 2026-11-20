@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -32,7 +33,6 @@ class SessionMixin:
     _repo: Any
     _otp_service: Any
     _redis: Any
-    _org_repo: Any
     _email_service: Any
     _bao_client: Any
 
@@ -62,7 +62,10 @@ class SessionMixin:
                 "This user does not have password authentication enabled."
             )
 
-        if not _facade.verify_password(payload.password, user.password_hash):
+        # bcrypt blocks the event loop — offload to a worker thread.
+        if not await asyncio.to_thread(
+            _facade.verify_password, payload.password, user.password_hash
+        ):
             raise AuthenticationError("Invalid email or password.")
 
         if not user.is_active or user.is_deleted:
@@ -89,7 +92,6 @@ class SessionMixin:
             redis_key = f"mfa:session:{session_token}"
             session_data = {
                 "user_id": str(user.id),
-                "org_id": str(user.organization_id),
                 "role": role,
                 # Bound at creation: the OTP is verified against this address,
                 # never against caller-supplied input (stops session fixation
@@ -110,7 +112,7 @@ class SessionMixin:
         # ── Normal login (MFA disabled) ──────────────────────────────────────
         tokens = await self.issue_tokens(
             user_id=user.id,
-            organization_id=user.organization_id,
+
             role=role,
         )
         return LoginResponse(
@@ -175,12 +177,11 @@ class SessionMixin:
 
         # Issue tokens
         user_id = uuid.UUID(session_data["user_id"])
-        org_id = uuid.UUID(session_data["org_id"])
         role = session_data["role"]
 
         return await self.issue_tokens(
             user_id=user_id,
-            organization_id=org_id,
+
             role=role,
         )
     # ── MFA enable / disable ───────────────────────────────────────────────
@@ -207,8 +208,9 @@ class SessionMixin:
         if user is None:
             raise NotFoundError("Dashboard user not found.")
         from services import auth_service as _facade  # via facade (patchable)
-        if user.password_hash is None or not _facade.verify_password(
-            payload.password, user.password_hash,
+        # bcrypt blocks the event loop — offload to a worker thread.
+        if user.password_hash is None or not await asyncio.to_thread(
+            _facade.verify_password, payload.password, user.password_hash,
         ):
             raise AuthenticationError("Current password is incorrect.")
 
@@ -246,8 +248,9 @@ class SessionMixin:
         if user is None:
             raise NotFoundError("Dashboard user not found.")
         from services import auth_service as _facade  # via facade (patchable)
-        if user.password_hash is None or not _facade.verify_password(
-            payload.password, user.password_hash,
+        # bcrypt blocks the event loop — offload to a worker thread.
+        if user.password_hash is None or not await asyncio.to_thread(
+            _facade.verify_password, payload.password, user.password_hash,
         ):
             raise AuthenticationError("Current password is incorrect.")
 

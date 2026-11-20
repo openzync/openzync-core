@@ -1,8 +1,10 @@
-"""Organization model — top-level tenant entity.
+"""Organization model — inert legacy tenant entity.
 
-Each organization owns users, API keys, extraction schemas, and org settings.
-Isolation between organizations is enforced via RLS policies keyed on
-``organization_id`` throughout the schema.
+Kept only so the ``organizations`` table stays mapped: migration 0070
+drops only the dead join-code policies, NOT this table. The table drop
+is deferred beyond 0070. No new code may reference this model —
+ownership is user-scoped (RLS ``user_isolation`` policies keyed on
+``app.user_id``).
 """
 
 import uuid
@@ -11,11 +13,17 @@ from sqlalchemy import Boolean, CheckConstraint, String, Text, UniqueConstraint,
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from core.config import PLATFORM_ORG_ID
 from models.base import Base, TimestampMixin
 
 
 class Organization(TimestampMixin, Base):
     """A tenant organization in the OpenZync platform.
+
+    Single platform org — there is no ``DELETE /organizations`` endpoint
+    and no service-layer delete; all ``organizations.id`` FKs are
+    ``ON DELETE RESTRICT`` so a stray SQL delete fails loudly instead of
+    wiping tenant rows.
 
     Attributes:
         id: UUID primary key, generated server-side via gen_random_uuid().
@@ -38,7 +46,7 @@ class Organization(TimestampMixin, Base):
             ``POST /v1/auth/join`` rejects the code with 403.
     """
 
-    __tablename__ = "organizations"
+    __tablename__ = "organizations"  # inert: kept mapped; drop deferred beyond 0070.
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,
@@ -46,8 +54,8 @@ class Organization(TimestampMixin, Base):
         server_default=func.gen_random_uuid(),
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    # Org lifecycle — pending orgs await superadmin approval and are
-    # excluded from tenant-facing lookups (get_by_code filters on it).
+    # Org lifecycle — retained for history.  Single platform org: only
+    # ``approved`` rows exist; status is kept for the quarantine audit trail.
     status: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
@@ -85,9 +93,12 @@ class Organization(TimestampMixin, Base):
     org_code: Mapped[str] = mapped_column(
         String(24),
         nullable=False,
-        comment="Join code for POST /v1/auth/join — plaintext by product decision.",
+        comment="Legacy join-code column (self-registration removed; admin toggle deleted). Plaintext by product decision.",
     )
-    # Org-code self-registration toggle — False ⇒ POST /v1/auth/join returns 403.
+    # Legacy self-registration toggle — the admin GET/PATCH endpoints were
+    # removed (the gate was inert: signup/join consult registration_mode,
+    # never this flag).  Column retained for the NOT NULL constraint;
+    # always FALSE on the platform row.
     join_enabled: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -105,8 +116,13 @@ class Organization(TimestampMixin, Base):
 
     @property
     def is_platform(self) -> bool:
-        """Derived platform marker — the platform org is always named SYSTEM."""
-        return self.name == "SYSTEM"
+        """Derived platform marker — the platform org is the fixed-ID row.
+
+        Compares ``id`` against ``PLATFORM_ORG_ID`` (renames do not
+        affect identity — the old ``name == "SYSTEM"`` check went stale
+        the moment bootstrap naming became operator-chosen).
+        """
+        return self.id == PLATFORM_ORG_ID
 
     def __repr__(self) -> str:
         return (

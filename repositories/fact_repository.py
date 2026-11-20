@@ -88,7 +88,7 @@ class FactRepository:
     async def create(
         self,
         user_id: UUID,
-        organization_id: UUID,
+
         project_id: UUID,
         content: str,
         subject: str | None = None,
@@ -106,7 +106,7 @@ class FactRepository:
 
         Args:
             user_id: FK to the user who created the fact.
-            organization_id: Denormalized org ID for RLS.
+
             project_id: Denormalized project ID for project isolation.
             content: Human-readable fact statement.
             subject: Subject entity of the triple.
@@ -131,7 +131,7 @@ class FactRepository:
         """
         fact = Fact(
             user_id=user_id,
-            organization_id=organization_id,
+
             project_id=project_id,
             content=content,
             subject=subject,
@@ -154,7 +154,7 @@ class FactRepository:
     async def create_or_skip(
         self,
         user_id: UUID,
-        organization_id: UUID,
+
         project_id: UUID,
         content: str,
         subject: str | None = None,
@@ -190,7 +190,7 @@ class FactRepository:
             .values(
                 id=func.gen_random_uuid(),
                 user_id=user_id,
-                organization_id=organization_id,
+
                 project_id=project_id,
                 content=content,
                 subject=subject,
@@ -220,13 +220,13 @@ class FactRepository:
         self,
         fact_id: UUID,
         *,
-        organization_id: UUID | None = None,
+        user_id: UUID | None = None,
     ) -> Fact | None:
         """Fetch a single fact by primary key.
 
         Args:
             fact_id: The fact's UUID.
-            organization_id: Optional tenant filter for defense-in-depth.
+            user_id: Optional tenant filter for defense-in-depth.
 
         Returns:
             The matching :class:`Fact`, or ``None`` if not found.
@@ -234,8 +234,8 @@ class FactRepository:
         from sqlalchemy import select
 
         stmt = select(Fact).where(Fact.id == fact_id)
-        if organization_id is not None:
-            stmt = stmt.where(Fact.organization_id == organization_id)
+        if user_id is not None:
+            stmt = stmt.where(Fact.user_id == user_id)
 
         result = await self._db.execute(stmt)
         return result.scalar_one_or_none()
@@ -244,7 +244,7 @@ class FactRepository:
 
     async def batch_create(
         self,
-        organization_id: UUID,
+
         project_id: UUID,
         user_id: UUID,
         facts: list[dict],
@@ -257,7 +257,7 @@ class FactRepository:
         ``INSERT…ON CONFLICT`` with ``returning()`` to fetch generated IDs.
 
         Args:
-            organization_id: Denormalized org ID for RLS.
+
             project_id: Denormalized project ID for project isolation.
             user_id: FK to the user who created the facts.
             facts: List of dicts, each with optional keys: ``subject``,
@@ -320,7 +320,6 @@ class FactRepository:
             rows.append(
                 {
                     "user_id": user_id,
-                    "organization_id": organization_id,
                     "project_id": project_id,
                     "content": content,
                     "subject": subject,
@@ -361,7 +360,6 @@ class FactRepository:
                     "input_count": len(facts),
                     "user_id": str(user_id),
                     "project_id": str(project_id),
-                    "organization_id": str(organization_id),
                 },
             )
             raise
@@ -383,7 +381,6 @@ class FactRepository:
                 "skipped_count": skipped,
                 "user_id": str(user_id),
                 "project_id": str(project_id),
-                "organization_id": str(organization_id),
                 "on_conflict": on_conflict,
             },
         )
@@ -392,7 +389,7 @@ class FactRepository:
 
     async def batch_create_or_skip(
         self,
-        organization_id: UUID,
+
         project_id: UUID,
         user_id: UUID,
         source_episode_id: UUID,
@@ -408,7 +405,7 @@ class FactRepository:
         silently skipped.
 
         Args:
-            organization_id: Denormalized org ID for RLS.
+
             project_id: Denormalized project ID for project isolation.
             user_id: FK to the user who created the facts.
             source_episode_id: FK back to the source episode.
@@ -463,7 +460,7 @@ class FactRepository:
             rows.append(
                 {
                     "user_id": user_id,
-                    "organization_id": organization_id,
+                    "user_id": user_id,
                     "project_id": project_id,
                     "content": f.get("content") or f"{subject} {predicate} {obj}",
                     "subject": subject,
@@ -530,7 +527,7 @@ class FactRepository:
 
     async def find_conflicting_active_for_update(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         match_keys: list[tuple[UUID | str, str, UUID | str]],
         now: datetime,
@@ -549,7 +546,7 @@ class FactRepository:
         skipped.
 
         Args:
-            org_id: Tenant scope for multi-tenant isolation.
+            user_id: Tenant scope for multi-tenant isolation.
             project_id: Project scope.
             match_keys: One identity per incoming fact (deduplicated by
                 the caller before calling).
@@ -580,7 +577,7 @@ class FactRepository:
 
         stmt = (
             select(Fact)
-            .where(Fact.organization_id == org_id)
+            .where(Fact.user_id == user_id)
             .where(Fact.project_id == project_id)
             .where(_effective_at_clause(now))
             .where(or_(*key_conditions))
@@ -591,7 +588,7 @@ class FactRepository:
 
     async def find_retracted_by_match_keys(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         match_keys: list[tuple[UUID | str, str, UUID | str]],
     ) -> list[Fact]:
@@ -610,7 +607,7 @@ class FactRepository:
         rows (``invalid_at`` NULL) never match.
 
         Args:
-            org_id: Tenant scope for multi-tenant isolation.
+            user_id: Tenant scope for multi-tenant isolation.
             project_id: Project scope.
             match_keys: One identity per incoming fact (deduplicated by
                 the caller before calling).
@@ -639,7 +636,7 @@ class FactRepository:
 
         stmt = (
             select(Fact)
-            .where(Fact.organization_id == org_id)
+            .where(Fact.user_id == user_id)
             .where(Fact.project_id == project_id)
             .where(Fact.invalid_at.is_not(None))
             .where(or_(*key_conditions))
@@ -718,7 +715,7 @@ class FactRepository:
     async def record_invalidation_event(
         self,
         *,
-        organization_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         old_fact_id: UUID,
         new_fact_id: UUID | None = None,
@@ -736,7 +733,7 @@ class FactRepository:
         constraint ``ck_fact_invalidation_events_kind``).
 
         Args:
-            organization_id: Denormalized tenant scope for RLS.
+            user_id: Denormalized tenant scope for RLS.
             project_id: Project scope.
             old_fact_id: The fact that stopped being current.
             new_fact_id: The fact that replaced it, if any.
@@ -746,7 +743,7 @@ class FactRepository:
             source_episode_id: Episode that drove the invalidation, if any.
         """
         event = FactInvalidationEvent(
-            organization_id=organization_id,
+            user_id=user_id,
             project_id=project_id,
             old_fact_id=old_fact_id,
             new_fact_id=new_fact_id,
@@ -762,7 +759,7 @@ class FactRepository:
         self,
         fact_id: UUID,
         *,
-        organization_id: UUID | None = None,
+        user_id: UUID | None = None,
         limit: int = 50,
         offset: int = 0,
         sort: SortSpec | None = None,
@@ -776,7 +773,7 @@ class FactRepository:
 
         Args:
             fact_id: The fact whose lineage to fetch.
-            organization_id: Optional tenant filter for defense-in-depth.
+            user_id: Optional tenant filter for defense-in-depth.
             limit: Maximum results (capped at 200).
             offset: Number of results to skip (for pagination).
             sort: Validated sort spec (``at_time`` only).
@@ -825,9 +822,9 @@ class FactRepository:
             .limit(effective_limit)
             .offset(offset)
         )
-        if organization_id is not None:
+        if user_id is not None:
             stmt = stmt.where(
-                FactInvalidationEvent.organization_id == organization_id
+                FactInvalidationEvent.user_id == user_id
             )
 
         result = await self._db.execute(stmt)
@@ -850,7 +847,7 @@ class FactRepository:
         self,
         project_id: UUID,
         *,
-        organization_id: UUID | None = None,
+        user_id: UUID | None = None,
     ) -> list[Fact]:
         """Return all facts effective at the current time for a project.
 
@@ -862,7 +859,7 @@ class FactRepository:
 
         Args:
             project_id: The project to fetch facts for.
-            organization_id: Optional tenant filter for defense-in-depth.
+            user_id: Optional tenant filter for defense-in-depth.
 
         Returns:
             List of active ``Fact`` ORM instances effective at now.
@@ -875,8 +872,8 @@ class FactRepository:
             .where(_effective_at_clause(datetime.now(UTC)))
             .order_by(Fact.valid_from.asc().nullsfirst())
         )
-        if organization_id is not None:
-            stmt = stmt.where(Fact.organization_id == organization_id)
+        if user_id is not None:
+            stmt = stmt.where(Fact.user_id == user_id)
 
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
@@ -886,7 +883,7 @@ class FactRepository:
         project_id: UUID,
         timestamp: datetime,
         *,
-        organization_id: UUID | None = None,
+        user_id: UUID | None = None,
         limit: int = 50,
         offset: int = 0,
         sort: SortSpec | None = None,
@@ -916,7 +913,7 @@ class FactRepository:
             project_id: Project scope.
             timestamp: Point in time to query.  Facts whose valid range
                 contains this timestamp are returned.
-            organization_id: Optional tenant filter for defense-in-depth.
+            user_id: Optional tenant filter for defense-in-depth.
             limit: Maximum number of results to return (capped at 200).
             offset: Number of results to skip (for pagination).
             sort: Validated sort spec.
@@ -958,8 +955,8 @@ class FactRepository:
             .limit(effective_limit)
             .offset(offset)
         )
-        if organization_id is not None:
-            stmt = stmt.where(Fact.organization_id == organization_id)
+        if user_id is not None:
+            stmt = stmt.where(Fact.user_id == user_id)
 
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
@@ -970,7 +967,7 @@ class FactRepository:
         start: datetime,
         end: datetime,
         *,
-        organization_id: UUID | None = None,
+        user_id: UUID | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[Fact]:
@@ -997,7 +994,7 @@ class FactRepository:
             start: Start of the query range (inclusive per ``'[)'``
                 semantics).
             end: End of the query range (exclusive per ``'[)'`` semantics).
-            organization_id: Optional tenant filter for defense-in-depth.
+            user_id: Optional tenant filter for defense-in-depth.
             limit: Maximum number of results to return (capped at 200).
             offset: Number of results to skip (for pagination).
 
@@ -1025,8 +1022,8 @@ class FactRepository:
             .limit(effective_limit)
             .offset(offset)
         )
-        if organization_id is not None:
-            stmt = stmt.where(Fact.organization_id == organization_id)
+        if user_id is not None:
+            stmt = stmt.where(Fact.user_id == user_id)
 
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
@@ -1036,7 +1033,7 @@ class FactRepository:
     async def get_fact_predicate_counts(
         self,
         project_id: UUID,
-        organization_id: UUID,
+        user_id: UUID,
         effective_at: datetime,
     ) -> list[Any]:
         """Count effective facts per (subject entity, predicate).
@@ -1047,7 +1044,7 @@ class FactRepository:
 
         Args:
             project_id: Project scope.
-            organization_id: Tenant scope (defense-in-depth alongside RLS).
+            user_id: Tenant scope (defense-in-depth alongside RLS).
             effective_at: Point in time for the bitemporal validity filter.
 
         Returns:
@@ -1066,7 +1063,7 @@ class FactRepository:
             )
             .where(
                 Fact.project_id == project_id,
-                Fact.organization_id == organization_id,
+                Fact.user_id == user_id,
                 Fact.subject_entity_id.is_not(None),
                 _effective_at_clause(effective_at),
             )
@@ -1080,18 +1077,18 @@ class FactRepository:
     # ── Soft Delete by User ──────────────────────────────────────────────────
 
     async def soft_delete_by_project(
-        self, project_id: UUID, organization_id: UUID
+        self, project_id: UUID, user_id: UUID
     ) -> int:
         """Soft-delete all facts for a project by setting ``invalid_at``.
 
         Uses the ORM ``update()`` construct rather than raw SQL so that
         SQLAlchemy's column-level ``onupdate`` hook fires for
-        ``updated_at`` on each row. The ``organization_id`` predicate is
+        ``updated_at`` on each row. The ``user_id`` predicate is
         defense-in-depth alongside the service-layer org gate.
 
         Args:
             project_id: The project's UUID.
-            organization_id: Tenant scope — only rows in this org are touched.
+            user_id: Tenant scope — only rows in this org are touched.
 
         Returns:
             Number of facts invalidated.
@@ -1100,7 +1097,7 @@ class FactRepository:
         result = await self._db.execute(
             update(Fact)
             .where(Fact.project_id == project_id)
-            .where(Fact.organization_id == organization_id)
+            .where(Fact.user_id == user_id)
             .where(Fact.invalid_at.is_(None))
             .values(invalid_at=now, updated_at=now)
         )
@@ -1111,7 +1108,7 @@ class FactRepository:
 
     async def list_by_session(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         limit: int = 50,
         cursor: str | None = None,
@@ -1128,7 +1125,7 @@ class FactRepository:
         they cannot be scoped to a session.
 
         Args:
-            organization_id: Tenant scope.
+            user_id: Tenant scope.
             session_id: The session to fetch facts for.
             limit: Max results (1–200).
             cursor: Opaque base64 cursor from a previous page.
@@ -1191,7 +1188,7 @@ class FactRepository:
                    f.subject_entity_id, f.object_entity_id,
                    f.valid_from, f.valid_to, f.invalid_at
             FROM facts f
-            WHERE f.organization_id = :org_id
+            WHERE f.user_id = :user_id
               AND f.source_episode_id IN (
                   SELECT e.id FROM episodes e
                   WHERE e.session_id = :session_id AND e.is_deleted = false
@@ -1202,7 +1199,7 @@ class FactRepository:
         """
 
         params: dict[str, Any] = {
-            "org_id": organization_id,
+            "user_id": user_id,
             "session_id": session_id,
             "limit": effective_limit,
             "effective_at": now,
@@ -1276,7 +1273,7 @@ class FactRepository:
     # ── Vector Search ─────────────────────────────────────────────────────────
 
     async def search_by_vector(
-        self, embedding: list[float], project_id: UUID, org_id: UUID, limit: int = 50
+        self, embedding: list[float], project_id: UUID, user_id: UUID, limit: int = 50
     ) -> list[dict[str, Any]]:
         """Search facts by vector similarity (pgvector cosine distance).
 
@@ -1287,7 +1284,7 @@ class FactRepository:
         Args:
             embedding: The query embedding vector.
             project_id: Scope results to this project.
-            org_id: Tenant scope for multi-tenant isolation.
+            user_id: Tenant scope for multi-tenant isolation.
             limit: Maximum results (capped at 200).
 
         Returns:
@@ -1304,7 +1301,7 @@ class FactRepository:
                        1 - (embedding <=> :embedding) AS score
                 FROM facts
                 WHERE project_id = :project_id
-                  AND organization_id = :org_id
+                  AND user_id = :user_id
                   AND embedding IS NOT NULL
                   AND (invalid_at IS NULL OR invalid_at > :effective_at)
                   AND (valid_from IS NULL OR valid_from <= :effective_at)
@@ -1316,7 +1313,7 @@ class FactRepository:
             {
                 "embedding": embedding,
                 "project_id": project_id,
-                "org_id": org_id,
+                "user_id": user_id,
                 "limit": effective_limit,
                 "effective_at": now,
             },
@@ -1340,7 +1337,7 @@ class FactRepository:
         self,
         query: str,
         project_id: UUID,
-        org_id: UUID,
+        user_id: UUID,
         limit: int = 50,
         effective_at: datetime | None = None,
     ) -> list[dict[str, Any]]:
@@ -1353,7 +1350,7 @@ class FactRepository:
         Args:
             query: Raw search text (no special syntax needed).
             project_id: Scope results to this project.
-            org_id: Tenant scope for multi-tenant isolation.
+            user_id: Tenant scope for multi-tenant isolation.
             limit: Maximum results (capped at 200).
             effective_at: As-of instant for the validity predicate
                 (``None`` → now). Threaded through by hybrid retrieval so
@@ -1380,7 +1377,7 @@ class FactRepository:
                        valid_from, valid_to, invalid_at, created_at
                 FROM facts
                 WHERE project_id = :project_id
-                  AND organization_id = :org_id
+                  AND user_id = :user_id
                   AND to_tsvector('english', content)
                       @@ plainto_tsquery('english', :query)
                   AND (invalid_at IS NULL OR invalid_at > :effective_at)
@@ -1393,7 +1390,7 @@ class FactRepository:
             {
                 "query": query,
                 "project_id": project_id,
-                "org_id": org_id,
+                "user_id": user_id,
                 "limit": effective_limit,
                 "effective_at": effective,
             },

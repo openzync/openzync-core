@@ -62,7 +62,7 @@ async def _inc_invalidated_total(count: int) -> None:
 
 
 async def _purge_project_context(
-    cache_service: CacheService, org_id: UUID, project_id: UUID
+    cache_service: CacheService, user_id: UUID, project_id: UUID
 ) -> None:
     """Post-commit context-cache purge wrapper.
 
@@ -71,13 +71,13 @@ async def _purge_project_context(
 
     Args:
         cache_service: The cache service to purge through.
-        org_id: Tenant scope (cache key prefix).
+        user_id: Tenant scope (cache key prefix).
         project_id: Project scope (cache key prefix).
     """
-    await cache_service.invalidate_project_context(str(org_id), str(project_id))
+    await cache_service.invalidate_project_context(str(user_id), str(project_id))
     # Bump the generation too: versioned ctx:..:v{gen} keys minted after the
     # SCAN+DEL must not reuse the pre-purge generation.
-    await cache_service.bump_context_version(str(org_id), str(project_id))
+    await cache_service.bump_context_version(str(user_id), str(project_id))
 
 class PostCommitEffectsMixin:
     """Composed into :class:`FactInvalidationService`."""
@@ -105,7 +105,7 @@ class PostCommitEffectsMixin:
     def _make_webhook_effect(
         self,
         *,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         old_id: UUID,
         new_id: UUID | None,
@@ -123,7 +123,7 @@ class PostCommitEffectsMixin:
         untouched.
 
         Args:
-            org_id: Tenant scope (webhook recipients).
+            user_id: Tenant scope (webhook recipients).
             project_id: Project scope (payload only).
             old_id: Superseded/invalidated fact ID (payload only).
             new_id: Replacing fact ID, or ``None`` for a retraction-style
@@ -146,7 +146,7 @@ class PostCommitEffectsMixin:
             "new_fact_id": str(new_id) if new_id is not None else None,
             "triple": triple,
             "project_id": str(project_id),
-            "org_id": str(org_id),
+            "user_id": str(user_id),
         }
         if reason is not None:
             payload["reason"] = reason
@@ -171,11 +171,11 @@ class PostCommitEffectsMixin:
                 # RLS-scoped, so bind the session to the emitting org
                 # before it reads — an un-bound session matches no rows and
                 # the event would be silently dropped.
-                await rls.init_context(fresh, str(org_id))
+                await rls.init_context(fresh, str(user_id))
                 service = WebhookService(repo=WebhookRepository(fresh))
             try:
                 await service.emit(
-                    organization_id=org_id,
+                    user_id=user_id,
                     event_type=event_type,
                     payload=payload,
                 )
@@ -187,7 +187,7 @@ class PostCommitEffectsMixin:
     def _make_graph_sync_effect(
         self,
         *,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         events: list[SupersessionEvent],
         at_time: datetime,
@@ -205,7 +205,7 @@ class PostCommitEffectsMixin:
         is already durable and unaffected.
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: Project scope.
             events: Supersession transitions recorded during ingest.
             at_time: The supersession instant (deterministic).
@@ -237,7 +237,7 @@ class PostCommitEffectsMixin:
                         # tables — they are RLS-protected, so an
                         # uninitialised session would silently match no
                         # rows and the expiry would be a no-op.
-                        await rls.init_context(fresh, str(org_id))
+                        await rls.init_context(fresh, str(user_id))
                         rebuilt.append(
                             PostgresGraphBackend(
                                 db=fresh,
@@ -249,7 +249,7 @@ class PostCommitEffectsMixin:
                 await GraphEdgeSyncService(
                     backends=rebuilt, arq_pool=sync.arq_pool
                 ).sync_supersessions(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=project_id,
                     events=events,
                     at_time=at_time,

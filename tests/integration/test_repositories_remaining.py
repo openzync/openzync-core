@@ -43,10 +43,10 @@ async def _seed_user_and_session(engine) -> tuple[UUID, UUID]:
         user_repo = UserRepository(db)
         session_repo = SessionRepository(db)
         user = await user_repo.create(
-            organization_id=ORG_ID, external_id="repo_test_user",
+            external_id="repo_test_user",
         )
         session = await session_repo.create(
-            organization_id=ORG_ID, project_id=PROJECT_ID, created_by=user.id,
+            user_id=user.id, project_id=PROJECT_ID, created_by=user.id,
             external_id="repo_test_session",
         )
         return user.id, session.id
@@ -56,10 +56,9 @@ async def _seed_episode(engine, user_id: UUID, session_id: UUID) -> UUID:
     async with AsyncSession(engine) as db:
         ep_repo = EpisodeRepository(db)
         episodes = await ep_repo.batch_create(
-            organization_id=ORG_ID,
+            
             project_id=PROJECT_ID,
             session_id=session_id,
-            user_id=user_id,
             messages=[{"role": "user", "content": "test episode", "metadata": {}}],
         )
         return episodes[0].id
@@ -76,7 +75,7 @@ class TestApiKeyRepository:
         async with AsyncSession(engine) as db:
             repo = ApiKeyRepository(db)
             key = await repo.create(
-                organization_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJECT_ID,
                 key_hash="hash123", salt="salty", prefix="oz_test_",
                 lookup_hash="lookup123", name="Test Key",
@@ -104,7 +103,7 @@ class TestApiKeyRepository:
         async with AsyncSession(engine) as db:
             repo = ApiKeyRepository(db)
             key = await repo.create(
-                organization_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJECT_ID,
                 key_hash="h2", salt="s2",
                 prefix="oz_test_", lookup_hash="l2", name="Key 2",
@@ -134,7 +133,7 @@ class TestApiKeyRepository:
         async with AsyncSession(engine) as db:
             repo = ApiKeyRepository(db)
             key = await repo.create(
-                organization_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJECT_ID,
                 key_hash="h3", salt="s3",
                 prefix="oz_test_", lookup_hash="l3", name="Key 3",
@@ -145,7 +144,7 @@ class TestApiKeyRepository:
 
             # Cannot revoke with wrong project_id
             key2 = await repo.create(
-                organization_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJECT_ID,
                 key_hash="h4", salt="s4",
                 prefix="oz_test_", lookup_hash="l4", name="Key 4",
@@ -165,7 +164,7 @@ class TestApiKeyRepository:
         async with AsyncSession(engine) as db:
             repo = ApiKeyRepository(db)
             key = await repo.create(
-                organization_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJECT_ID,
                 key_hash="h5", salt="s5",
                 prefix="oz_test_", lookup_hash="l5", name="Key 5",
@@ -189,7 +188,6 @@ class TestAuthRepository:
             repo = AuthRepository(db)
             user = await repo.create_dashboard_user(
                 email="test@openzync.tech", password_hash="hash",
-                organization_id=ORG_ID,
             )
             assert user.id is not None
             assert user.email == "test@openzync.tech"
@@ -199,7 +197,6 @@ class TestAuthRepository:
             repo = AuthRepository(db)
             await repo.create_dashboard_user(
                 email="findme@openzync.tech", password_hash="hash",
-                organization_id=ORG_ID,
             )
             user = await repo.find_user_by_email("findme@openzync.tech")
             assert user is not None
@@ -208,8 +205,11 @@ class TestAuthRepository:
     async def test_create_refresh_token(self, engine) -> None:
         async with AsyncSession(engine) as db:
             repo = AuthRepository(db)
+            user = await repo.create_dashboard_user(
+                email="rt_creator@openzync.tech", password_hash="hash",
+            )
             token = await repo.create_refresh_token(
-                user_id=str(uuid4()), organization_id=ORG_ID,
+                user_id=user.id,
                 token_hash="tok_hash", expires_at=datetime.now(),
             )
             assert token.id is not None
@@ -218,7 +218,7 @@ class TestAuthRepository:
         async with AsyncSession(engine) as db:
             repo = AuthRepository(db)
             token = await repo.create_refresh_token(
-                user_id=str(uuid4()), organization_id=ORG_ID,
+                user_id=ORG_ID,
                 token_hash="revoke_hash", expires_at=datetime.now(),
             )
             assert token.is_revoked is False
@@ -247,7 +247,7 @@ class TestFactRepository:
         async with AsyncSession(engine) as db:
             repo = FactRepository(db)
             fact = await repo.create(
-                user_id=user_id, organization_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJECT_ID,
                 content="Python is great", subject="Python",
                 predicate="is", obj="great", confidence=0.95,
@@ -260,7 +260,7 @@ class TestFactRepository:
         async with AsyncSession(engine) as db:
             repo = FactRepository(db)
             await repo.create(
-                user_id=user_id, organization_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJECT_ID,
                 content="Delete me", subject="X", predicate="is", obj="Y",
             )
@@ -288,7 +288,7 @@ class TestExtractionSchemaRepository:
         async with AsyncSession(engine) as db:
             repo = ExtractionSchemaRepository(db)
             schema = await repo.create(
-                org_id=ORG_ID, name="test-schema",
+                user_id=ORG_ID, name="test-schema",
                 json_schema={"type": "object", "properties": {"name": {"type": "string"}}},
             )
             assert schema.id is not None
@@ -307,7 +307,7 @@ class TestExtractionSchemaRepository:
         async with AsyncSession(engine) as db:
             repo = ExtractionSchemaRepository(db)
             schema = await repo.create(
-                org_id=ORG_ID, name="update-schema",
+                user_id=ORG_ID, name="update-schema",
                 json_schema={"type": "object"},
             )
             updated = await repo.update(

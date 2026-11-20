@@ -61,7 +61,7 @@ class TestPrometheusMetrics:
         assert worker_tasks_total._labelnames == ("task_type", "status")
         assert worker_task_duration_seconds._labelnames == ("task_type",)
         assert worker_queue_depth._labelnames == ("queue_name",)
-        assert worker_tasks_per_org._labelnames == ("org_id", "task_type", "status")
+        assert worker_tasks_per_org._labelnames == ("user_id", "task_type", "status")
 
     def test_histogram_buckets(self) -> None:
         """Task duration histogram uses expected bucket boundaries."""
@@ -90,7 +90,7 @@ class TestOnJobEnd:
         ctx: dict = {
             "job_id": "j-1",
             "task_type": "enrich",
-            "org_id": "org-1",
+            "user_id": "org-1",
             "trace_id": "t-1",
             "runtime": 3.5,
         }
@@ -111,7 +111,7 @@ class TestOnJobEnd:
             mock_dur.labels.return_value.observe.assert_called_once_with(3.5)
 
             mock_org.labels.assert_called_once_with(
-                org_id="org-1",
+                user_id="org-1",
                 task_type="enrich",
                 status="success",
             )
@@ -133,7 +133,7 @@ class TestOnJobEnd:
                 task_type="unknown", status="success"
             )
             mock_org.labels.assert_called_once_with(
-                org_id="unknown",
+                user_id="unknown",
                 task_type="unknown",
                 status="success",
             )
@@ -150,7 +150,7 @@ class TestOnJobEnd:
         ctx: dict = {
             "job_id": "j-1",
             "task_type": "deliver_webhook",
-            "org_id": "org-1",
+            "user_id": "org-1",
             "trace_id": "t-1",
             "runtime": 1.25,
             "status": "failure",
@@ -169,7 +169,7 @@ class TestOnJobEnd:
             )
             mock_total.labels.return_value.inc.assert_called_once()
             mock_org.labels.assert_called_once_with(
-                org_id="org-1",
+                user_id="org-1",
                 task_type="deliver_webhook",
                 status="failure",
             )
@@ -183,7 +183,7 @@ class TestOnJobEnd:
         ctx: dict = {
             "job_id": "j-1",
             "task_type": "embed_episode",
-            "org_id": "org-1",
+            "user_id": "org-1",
             "runtime": 0.5,
             "status": "success",
         }
@@ -200,22 +200,22 @@ class TestOnJobEnd:
                 status="success",
             )
             mock_org.labels.assert_called_once_with(
-                org_id="org-1",
+                user_id="org-1",
                 task_type="embed_episode",
                 status="success",
             )
 
     @pytest.mark.asyncio
-    async def test_task_type_and_org_id_are_read_from_the_ctx(self) -> None:
+    async def test_task_type_and_user_id_are_read_from_the_ctx(self) -> None:
         """The task type and org id come from the ctx, not from a default.
 
         ``with_task_metrics`` writes them onto the shared ARQ ctx dict;
         ``on_job_end`` must read them back instead of reporting every job
-        as ``task_type="unknown"`` / ``org_id="unknown"``.
+        as ``task_type="unknown"`` / ``user_id="unknown"``.
         """
         from services.worker.worker import on_job_end
 
-        ctx: dict = {"task_type": "deliver_webhook", "org_id": "org-42"}
+        ctx: dict = {"task_type": "deliver_webhook", "user_id": "org-42"}
 
         with (
             patch("services.worker.worker.worker_tasks_total") as mock_total,
@@ -229,7 +229,7 @@ class TestOnJobEnd:
                 status="success",
             )
             mock_org.labels.assert_called_once_with(
-                org_id="org-42",
+                user_id="org-42",
                 task_type="deliver_webhook",
                 status="success",
             )
@@ -546,17 +546,15 @@ class TestRlsScopedSessionFactory:
         # context cannot outlive the transaction and cannot be carried
         # onto the connection the next task picks up.
         assert str(sql) == (
-            "SELECT set_config('app.org_id', :org_id, true), "
-            "set_config('app.bypass_rls', :bypass_rls, true), "
-            "set_config('app.lookup_code', :lookup_code, true)"
+            "SELECT set_config('app.user_id', :user_id, true), "
+            "set_config('app.bypass_rls', :bypass_rls, true)"
         )
         # An empty tenant — the pool fails closed instead of leaking the
         # previous task's org into this one.
         assert params == {
-            "org_id": "",
+            "user_id": "",
             # The bypass is pinned off and any stale lookup code is cleared.
             "bypass_rls": "false",
-            "lookup_code": "",
         }
 
     @pytest.mark.asyncio

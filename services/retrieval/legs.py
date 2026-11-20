@@ -76,7 +76,7 @@ class LegDispatchMixin:
         """
         extra = {
             "leg": leg_name,
-            "org_id": str(self._org_id),
+            "user_id": str(self._org_id),
             "project_id": str(project_id),
         }
         if self._session_factory is None:

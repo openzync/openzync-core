@@ -39,7 +39,7 @@ def _is_retryable(exc: Exception) -> bool:
 async def embed_episode(
     ctx: object,
     episode_id: str,
-    org_id: str,
+    user_id: str,
     project_id: str,
     content: str | None = None,
     trace_id: str = "",
@@ -55,7 +55,7 @@ async def embed_episode(
     Args:
         ctx: ARQ worker context (unused — required by ARQ contract).
         episode_id: UUID of the episode to embed.
-        org_id: UUID of the owning organisation (for observability / RLS).
+        user_id: UUID of the owning organisation (for observability / RLS).
         project_id: UUID of the project for project scoping (observability).
         content: Legacy payload from older enqueues.  ``None`` (the new
             default) loads the text from the episode row instead.
@@ -85,7 +85,7 @@ async def embed_episode(
     logger.info(
         "embed_episode.started",
         episode_id=episode_id,
-        org_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         trace_id=trace_id,
     )
@@ -118,7 +118,7 @@ async def embed_episode(
             try:
                 # Bind the session to the tenant before the first org-scoped
                 # query — under enforced RLS an unbound session sees no rows.
-                await rls.set_tenant_context(db, org_id)
+                await rls.set_tenant_context(db, user_id)
                 episode_repo = EpisodeRepository(db)
                 episode = await episode_repo.get_by_id(uuid.UUID(episode_id))
                 if episode is None:
@@ -145,12 +145,12 @@ async def embed_episode(
                 # row counts as archived). Early return sets no bits, so
                 # un-archiving resumes via reconcile or retry.
                 if await ProjectRepository(db).is_archived(
-                    uuid.UUID(org_id), uuid.UUID(project_id)
+                    uuid.UUID(user_id), uuid.UUID(project_id)
                 ):
                     logger.info(
                         "embed_episode.project_archived_skipping",
                         episode_id=episode_id,
-                        org_id=org_id,
+                        user_id=user_id,
                         project_id=project_id,
                     )
                     return
@@ -173,7 +173,7 @@ async def embed_episode(
         # ── 4. Re-acquire row lock, recheck bit, then write ──────────
         async with session_factory() as db:
             try:
-                await rls.set_tenant_context(db, org_id)
+                await rls.set_tenant_context(db, user_id)
                 episode_repo = EpisodeRepository(db)
                 # Acquire the row lock first — concurrent same-episode
                 # writers serialize here.  The bit is then rechecked on a
@@ -203,12 +203,12 @@ async def embed_episode(
                     )
                     return
                 if await ProjectRepository(db).is_archived(
-                    uuid.UUID(org_id), uuid.UUID(project_id)
+                    uuid.UUID(user_id), uuid.UUID(project_id)
                 ):
                     logger.info(
                         "embed_episode.project_archived_skipping",
                         episode_id=episode_id,
-                        org_id=org_id,
+                        user_id=user_id,
                         project_id=project_id,
                     )
                     return

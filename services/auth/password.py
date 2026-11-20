@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import Any
@@ -11,11 +12,13 @@ from core.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from core.rls import set_user_context
 from schemas.auth import (
     ChangePasswordRequest,
     TokenResponse,
 )
 from schemas.email import OtpResponse, ResetPasswordRequest
+from utils.pii import mask_email
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +28,6 @@ class PasswordMixin:
     _repo: Any
     _otp_service: Any
     _redis: Any
-    _org_repo: Any
     _email_service: Any
     _bao_client: Any
 
@@ -63,13 +65,18 @@ class PasswordMixin:
             raise ValidationError(
                 "This account does not have a password set."
             )
+        # bcrypt blocks the event loop — offload to a worker thread.
         from services import auth_service as _facade  # via facade (patchable)
-        if not _facade.verify_password(payload.old_password, user.password_hash):
+
+        if not await asyncio.to_thread(
+            _facade.verify_password, payload.old_password, user.password_hash
+        ):
             raise AuthenticationError("Current password is incorrect.")
 
-        from services import auth_service as _facade  # via facade (patchable)
         self._validate_password(payload.new_password)
-        new_hash = _facade.hash_password(payload.new_password)
+        new_hash = await asyncio.to_thread(
+            _facade.hash_password, payload.new_password
+        )
 
         await self._repo.update_dashboard_user(
             user_id=user_id,
@@ -79,17 +86,14 @@ class PasswordMixin:
         # Rotate the refresh-token family — every prior session is dead,
         # including the one that logged the default credential in.
         await self._repo.revoke_all_refresh_tokens(user_id)
-        await _facade.invalidate_must_change_password(
-            self._redis, user.organization_id, user_id
-        )
+        await _facade.invalidate_must_change_password(self._redis, user.id)
 
         logger.info(
             "auth.password_changed",
             extra={"user_id": str(user_id)},
         )
         return await self.issue_tokens(
-            user_id=user_id,
-            organization_id=user.organization_id,
+            user_id=user.id,
             role=user.role if user.role is not None else "member",
         )
     # ── Password reset ─────────────────────────────────────────────────────
@@ -111,7 +115,7 @@ class PasswordMixin:
         if user is None or user.password_hash is None:
             logger.warning(
                 "security.forgot_password_unknown_email",
-                extra={"email": email},
+                extra={"email": mask_email(email)},
             )
             return OtpResponse(
                 message="If an account exists with this email, "
@@ -157,9 +161,9 @@ class PasswordMixin:
                 "Please request a new code.",
             )
 
-        # Bind the session to the caller's tenant — the password update and
-        # the refresh-token revocation below are org-scoped.
-        await self._org_repo.set_tenant_context(user.organization_id)
+        # Bind the session to the caller's user — the password update and
+        # the refresh-token revocation below are user-scoped.
+        await set_user_context(self._repo.session, user.id)
 
         # Verify OTP
         verified = await self._otp_service.verify(
@@ -174,9 +178,13 @@ class PasswordMixin:
             )
 
         # Validate and hash new password
-        from services import auth_service as _facade  # via facade (patchable)
         self._validate_password(payload.new_password)
-        new_hash = _facade.hash_password(payload.new_password)
+        # bcrypt blocks the event loop — offload to a worker thread.
+        from services import auth_service as _facade  # via facade (patchable)
+
+        new_hash = await asyncio.to_thread(
+            _facade.hash_password, payload.new_password
+        )
 
         # Update password hash
         await self._repo.update_dashboard_user(
@@ -201,25 +209,15 @@ class PasswordMixin:
     def _validate_password(password: str) -> None:
         """Validate password meets minimum strength requirements.
 
+        Thin delegate to :func:`utils.password.validate_password_strength`
+        (kept so existing mixin call sites are unchanged).
+
         Args:
             password: The plaintext password.
 
         Raises:
             ValidationError: If the password is too weak.
         """
-        if len(password) < 8:
-            raise ValidationError(
-                "Password must be at least 8 characters long."
-            )
-        if not any(c.isupper() for c in password):
-            raise ValidationError(
-                "Password must contain at least one uppercase letter."
-            )
-        if not any(c.islower() for c in password):
-            raise ValidationError(
-                "Password must contain at least one lowercase letter."
-            )
-        if not any(c.isdigit() for c in password):
-            raise ValidationError(
-                "Password must contain at least one digit."
-            )
+        from utils.password import validate_password_strength
+
+        validate_password_strength(password)

@@ -7,7 +7,6 @@ graph backend (fail-soft to zeros) for node counts.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,28 +17,25 @@ from repositories.admin_stats_repository import AdminStatsRepository
 from schemas.admin_stats import OrgStatsResponse, UsageStatsResponse
 from services.graph_stats_service import GraphStatsService
 
-if TYPE_CHECKING:
-    from schemas.organization_config import OrgConfigBase
-
 
 class AdminStatsService:
-    """Orchestrates org/usage stats for the admin dashboard."""
+    """Orchestrates user/usage stats for the admin dashboard."""
 
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
         self._repo = AdminStatsRepository(db)
 
-    async def get_org_stats(
+    async def get_platform_stats(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
     ) -> OrgStatsResponse:
-        """Return windowed aggregate counts for the organization.
+        """Return windowed aggregate counts for the platform.
 
         Args:
-            org_id: Authenticated organization ID.
+            user_id: Authenticated user ID.
             start: Window start (inclusive).
             end_exclusive: Window end (exclusive), or ``None`` for open-ended.
             project_id: Optional project scope.
@@ -48,42 +44,45 @@ class AdminStatsService:
             OrgStatsResponse with windowed aggregate counts.
         """
         return OrgStatsResponse(
-            organization_id=org_id,
+            user_id=user_id,
+
             total_episodes=await self._repo.count_episodes(
-                org_id, start, end_exclusive, project_id
+                user_id, start, end_exclusive, project_id
             ),
             total_sessions=await self._repo.count_sessions(
-                org_id, start, end_exclusive, project_id
+                user_id, start, end_exclusive, project_id
             ),
             total_facts=await self._repo.count_facts(
-                org_id, start, end_exclusive, project_id
+                user_id, start, end_exclusive, project_id
             ),
             total_extractions=await self._repo.count_extractions(
-                org_id, start, end_exclusive, project_id
+                user_id, start, end_exclusive, project_id
             ),
             total_observations=await self._repo.count_observations(
-                org_id, start, end_exclusive, project_id
+                user_id, start, end_exclusive, project_id
             ),
             total_classifications=await self._repo.count_classifications(
-                org_id, start, end_exclusive, project_id
+                user_id, start, end_exclusive, project_id
             ),
         )
 
     async def get_usage_stats(
         self,
         request: Request,
-        org_config: OrgConfigBase,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
     ) -> list[UsageStatsResponse]:
-        """Return daily usage counts for the organization, newest first.
+        """Return daily usage counts for the user, newest first.
+
+        Resolves the user's stored config internally (for graph backend
+        selection) from app-state OpenBao/Redis — no extra caller wiring.
 
         Args:
-            request: FastAPI request (graph backend dispatcher + pools).
-            org_config: Org config (graph backend selection).
-            org_id: Authenticated organization ID.
+            request: FastAPI request (graph backend dispatcher + pools,
+                app-state OpenBao/Redis for user-config resolution).
+            user_id: Authenticated user ID.
             start: Window start (inclusive).
             end_exclusive: Window end (exclusive), or ``None`` for open-ended.
             project_id: Optional project scope.
@@ -92,6 +91,14 @@ class AdminStatsService:
             List of daily usage data points, newest first.
         """
         daily_counts: dict[str, dict[str, int]] = {}
+
+        from core.org_config import get_org_config as _get_org_config
+
+        bao_client = getattr(request.app.state, "openbao_client", None)
+        redis = getattr(request.app.state, "redis", None)
+        user_config = await _get_org_config(
+            user_id, redis=redis, bao_client=bao_client
+        )
 
         def _ensure(date_str: str) -> dict[str, int]:
             return daily_counts.setdefault(
@@ -114,52 +121,52 @@ class AdminStatsService:
                 _ensure(date_str)[key] = count
 
         _merge(
-            await self._repo.episodes_per_day(org_id, start, end_exclusive, project_id),
+            await self._repo.episodes_per_day(user_id, start, end_exclusive, project_id),
             "episode_count",
         )
         _merge(
-            await self._repo.sessions_per_day(org_id, start, end_exclusive, project_id),
+            await self._repo.sessions_per_day(user_id, start, end_exclusive, project_id),
             "session_count",
         )
         _merge(
-            await self._repo.facts_per_day(org_id, start, end_exclusive, project_id),
+            await self._repo.facts_per_day(user_id, start, end_exclusive, project_id),
             "fact_count",
         )
         _merge(
             await self._repo.extractions_per_day(
-                org_id, start, end_exclusive, project_id
+                user_id, start, end_exclusive, project_id
             ),
             "extraction_count",
         )
         _merge(
             await self._repo.observations_per_day(
-                org_id, start, end_exclusive, project_id
+                user_id, start, end_exclusive, project_id
             ),
             "observation_count",
         )
         _merge(
             await self._repo.classifications_per_day(
-                org_id, start, end_exclusive, project_id
+                user_id, start, end_exclusive, project_id
             ),
             "classification_count",
         )
 
         # Daily node counts (graph entities — backend-backed, not the PG stub).
         backend = await resolve_graph_backend_fail_soft(
-            request, org_config, org_id, self._db, "admin_stats"
+            request, user_config, user_id, self._db, "admin_stats"
         )
         stats = GraphStatsService(self._db, backend)
         node_project_ids = await stats.resolve_project_ids(
-            org_id, project_id, include_archived=True
+            user_id, project_id, include_archived=True
         )
         node_per_day = await stats.entity_counts_per_day(
-            org_id, node_project_ids, start, end_exclusive
+            user_id, node_project_ids, start, end_exclusive
         )
         for node_day, node_count in node_per_day.items():
             _ensure(node_day)["node_count"] = node_count
 
         _merge(
-            await self._repo.edges_per_day(org_id, start, end_exclusive, project_id),
+            await self._repo.edges_per_day(user_id, start, end_exclusive, project_id),
             "edge_count",
         )
 

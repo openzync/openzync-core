@@ -65,7 +65,7 @@ class TestEntityRepository:
         }
 
         result = await repo.upsert_entity(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             name="Test Entity",
             entity_type="Person",
@@ -87,7 +87,7 @@ class TestEntityRepository:
         mock_backend.create_entity.return_value = existing
 
         result = await repo.upsert_entity(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             name="Test Entity",
             entity_type="Person",
@@ -105,7 +105,7 @@ class TestEntityRepository:
 
         with pytest.raises(GraphBackendUnavailableError):
             await repo.upsert_entity(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 name="Test",
                 entity_type="Person",
@@ -121,7 +121,7 @@ class TestEntityRepository:
         mock_backend.search_entities.return_value = entities
 
         result = await repo.get_entity_by_name(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             name="Alice",
         )
@@ -135,7 +135,7 @@ class TestEntityRepository:
         mock_backend.search_entities.return_value = []
 
         result = await repo.get_entity_by_name(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             name="Unknown",
         )
@@ -152,7 +152,7 @@ class TestEntityRepository:
         mock_backend.search_entities.return_value = entities
 
         result = await repo.get_entity_by_name(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             name="Alice",
         )
@@ -168,7 +168,7 @@ class TestEntityRepository:
 
         with pytest.raises(GraphBackendUnavailableError):
             await repo.get_entity_by_name(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 name="Test",
             )
@@ -183,7 +183,7 @@ class TestEntityRepository:
         mock_backend.get_entity.return_value = entity
 
         result = await repo.get_entity_by_id(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             entity_id=self.ENTITY_ID,
         )
@@ -197,7 +197,7 @@ class TestEntityRepository:
         mock_backend.get_entity.return_value = None
 
         result = await repo.get_entity_by_id(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             entity_id=self.ENTITY_ID,
         )
@@ -212,7 +212,7 @@ class TestEntityRepository:
 
         with pytest.raises(GraphBackendUnavailableError):
             await repo.get_entity_by_id(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 entity_id=self.ENTITY_ID,
             )
@@ -237,7 +237,7 @@ class TestEntityRepository:
             subject="Alice",
             predicate="knows",
             obj="Bob",
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
         )
 
@@ -254,7 +254,7 @@ class TestEntityRepository:
             subject="Unknown",
             predicate="knows",
             obj="Bob",
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
         )
 
@@ -271,7 +271,7 @@ class TestEntityRepository:
             subject="Alice",
             predicate="knows",
             obj="Unknown",
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
         )
 
@@ -291,6 +291,6 @@ class TestEntityRepository:
                 subject="Alice",
                 predicate="knows",
                 obj="Bob",
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
             )

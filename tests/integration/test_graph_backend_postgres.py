@@ -60,8 +60,8 @@ def setup_module() -> None:
     driver_url = url.replace("postgresql://", "postgresql+asyncpg://")
     _run_alembic_upgrade(driver_url)
 
-    # Seed the well-known test organization and project so FK constraints
-    # (graph_entities.organization_id → organizations.id) are satisfied.
+    # Seed the well-known test user and project so FK constraints
+    # (graph_entities.user_id → users.id) are satisfied.
     from sqlalchemy import create_engine as create_sync_engine
     from sqlalchemy import text
 
@@ -70,15 +70,15 @@ def setup_module() -> None:
     with sync_engine.begin() as conn:
         conn.execute(
             text(
-                "INSERT INTO organizations (id, name, org_code) "
+                "INSERT INTO users (id, external_id, name) "
                 "VALUES ('00000000-0000-0000-0000-000000000001', "
-                "'Test Org', 'testorg01') "
+                "'pg-backend-test-user', 'PG Backend Test User') "
                 "ON CONFLICT (id) DO NOTHING"
             )
         )
         conn.execute(
             text(
-                "INSERT INTO projects (id, organization_id, name) "
+                "INSERT INTO projects (id, user_id, name) "
                 "VALUES ('00000000-0000-0000-0000-000000000002', "
                 "'00000000-0000-0000-0000-000000000001', 'Test Project') "
                 "ON CONFLICT (id) DO NOTHING"
@@ -170,13 +170,12 @@ async def _create_test_episode(
 
     await db.execute(
         sa_text(
-            "INSERT INTO users (id, organization_id, external_id, name, email, is_active) "
-            "VALUES (:id, :org_id, :ext, :name, :email, TRUE) "
+            "INSERT INTO users (id, external_id, name, email, is_active) "
+            "VALUES (:id, :ext, :name, :email, TRUE) "
             "ON CONFLICT (id) DO NOTHING"
         ),
         {
             "id": str(uid),
-            "org_id": str(ORG_ID),
             "ext": f"ep-user-{uid}",
             "name": "ep-test-user",
             "email": f"{uid}@test.local",
@@ -184,29 +183,27 @@ async def _create_test_episode(
     )
     await db.execute(
         sa_text(
-            "INSERT INTO sessions (id, user_id, organization_id, project_id, external_id) "
-            "VALUES (:id, :uid, :org_id, :proj_id, :ext) "
+            "INSERT INTO sessions (id, user_id, project_id, external_id) "
+            "VALUES (:id, :uid, :proj_id, :ext) "
             "ON CONFLICT (id) DO NOTHING"
         ),
         {
             "id": str(sid),
             "uid": str(uid),
-            "org_id": str(ORG_ID),
             "proj_id": str(PROJ_ID),
             "ext": f"ep-session-{sid}",
         },
     )
     await db.execute(
         sa_text(
-            "INSERT INTO episodes (id, session_id, user_id, role, content, organization_id, project_id) "
-            "VALUES (:id, :sid, :uid, 'user', 'test', :org_id, :proj_id) "
+            "INSERT INTO episodes (id, session_id, user_id, role, content, project_id) "
+            "VALUES (:id, :sid, :uid, 'user', 'test', :proj_id) "
             "ON CONFLICT (id) DO NOTHING"
         ),
         {
             "id": str(eid),
             "sid": str(sid),
             "uid": str(uid),
-            "org_id": str(ORG_ID),
             "proj_id": str(PROJ_ID),
         },
     )
@@ -222,7 +219,7 @@ async def _create_test_entity(
 ) -> dict[str, Any]:
     """Helper to create an entity and return it."""
     return await backend.create_entity(
-        org_id=ORG_ID,
+        user_id=ORG_ID,
         project_id=PROJ_ID,
         name=name,
         entity_type=entity_type,
@@ -239,7 +236,7 @@ async def _create_test_relationship(
 ) -> dict[str, Any]:
     """Helper to create a relationship."""
     return await backend.create_relationship(
-        org_id=ORG_ID,
+        user_id=ORG_ID,
         project_id=PROJ_ID,
         source_id=source_id,
         target_id=target_id,
@@ -307,7 +304,7 @@ class TestEntityCrud:
         entity_id = UUID(entity["id"])
 
         updated = await backend.update_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             entity_id=entity_id,
             name="Updated",
@@ -320,7 +317,7 @@ class TestEntityCrud:
         """update_entity raises NotFoundError for missing entity."""
         with pytest.raises(NotFoundError):
             await backend.update_entity(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 entity_id=uuid4(),
                 name="Ghost",
@@ -482,7 +479,7 @@ class TestEntityEpisodeLinking:
         entity = await _create_test_entity(backend, name="Linked")
         episode_id = await _create_test_episode(db)
         result = await backend.link_entity_to_episode(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             episode_id=episode_id,
             entity_id=UUID(entity["id"]),
@@ -498,14 +495,14 @@ class TestEntityEpisodeLinking:
         episode_id = await _create_test_episode(db)
 
         await backend.link_entity_to_episode(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             episode_id=episode_id,
             entity_id=entity_id,
         )
         # Second call should be a no-op
         await backend.link_entity_to_episode(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             episode_id=episode_id,
             entity_id=entity_id,
@@ -690,7 +687,7 @@ class TestObservations:
         """upsert_observation creates and returns observation dict."""
         entity = await _create_test_entity(backend, name="Observed")
         obs = await backend.upsert_observation(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             subject_entity_id=UUID(entity["id"]),
             observation_type="co_occurrence",
@@ -708,7 +705,7 @@ class TestObservations:
         eid = UUID(entity["id"])
 
         await backend.upsert_observation(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             subject_entity_id=eid,
             observation_type="test_type",
@@ -717,7 +714,7 @@ class TestObservations:
         )
 
         obs2 = await backend.upsert_observation(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             subject_entity_id=eid,
             observation_type="test_type",
@@ -734,7 +731,7 @@ class TestObservations:
         eid = UUID(entity["id"])
 
         await backend.upsert_observation(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             subject_entity_id=eid,
             observation_type="type_a",
@@ -742,7 +739,7 @@ class TestObservations:
             confidence=0.5,
         )
         await backend.upsert_observation(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             subject_entity_id=eid,
             observation_type="type_b",
@@ -825,7 +822,7 @@ class TestTraversal:
         t2 = now  # query as-of — after t1
 
         await backend.create_relationship(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             source_id=src_id,
             target_id=tgt_id,
@@ -870,7 +867,7 @@ class TestTraversal:
         # between creation and the invalidation instant — with the default
         # valid_from=now() the edge legitimately did not exist at a past as-of.
         await backend.create_relationship(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             source_id=src_id,
             target_id=tgt_id,

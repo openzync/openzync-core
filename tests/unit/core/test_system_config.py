@@ -3,7 +3,8 @@
 Covers:
 - whitelist: a secret key in the update body is rejected (422 at schema
   level, ValidationError at the core level for plain dicts).
-- defaults: empty OpenBao record → allow_all / both.
+- defaults: empty OpenBao record → all None (registration mode lives in
+  ``instance_settings`` now).
 - cache: read populates the cache; update invalidates it and re-reads
   fresh from OpenBao.
 - secrets are never part of the response.
@@ -19,8 +20,6 @@ from pydantic import ValidationError
 from core.exceptions import ValidationError as AppValidationError
 from core.system_config import get_system_config, update_system_config
 from schemas.system_config import (
-    ApprovalScope,
-    OrgCreationPolicy,
     SystemConfigResponse,
     SystemConfigUpdate,
 )
@@ -34,7 +33,7 @@ class TestSystemConfigSchema:
     def test_secret_key_in_update_body_rejected_422(self) -> None:
         """A secret key (openai_api_key) fails schema validation (→ 422)."""
         with pytest.raises(ValidationError):
-            SystemConfigUpdate(org_creation_policy="approvals", openai_api_key="sk-123")
+            SystemConfigUpdate(llm_model="x", openai_api_key="sk-123")  # type: ignore[call-arg]
 
     def test_secret_key_variants_rejected(self) -> None:
         """Every secret-shaped key is rejected by construction."""
@@ -49,10 +48,11 @@ class TestSystemConfigSchema:
                 SystemConfigUpdate(**{secret: "x"})  # type: ignore[arg-type]
 
     def test_defaults(self) -> None:
-        """SystemConfigResponse defaults to allow_all / both."""
+        """SystemConfigResponse defaults to all None."""
         cfg = SystemConfigResponse()
-        assert cfg.org_creation_policy == OrgCreationPolicy.allow_all
-        assert cfg.approval_scope == ApprovalScope.both
+        assert cfg.llm_backend is None
+        assert cfg.llm_model is None
+        assert cfg.graph_backend is None
 
 
 class TestGetSystemConfig:
@@ -60,16 +60,16 @@ class TestGetSystemConfig:
 
     @pytest.mark.asyncio
     async def test_defaults_when_openbao_empty(self) -> None:
-        """No OpenBao record → backward-compatible defaults."""
+        """No OpenBao record → all-None defaults."""
         redis = AsyncMock()
         bao = AsyncMock()
         bao.read_system_config.return_value = {}
 
         cfg = await get_system_config(redis, bao)
 
-        assert cfg.org_creation_policy == OrgCreationPolicy.allow_all
-        assert cfg.approval_scope == ApprovalScope.both
+        assert cfg.llm_backend is None
         assert cfg.llm_model is None
+        assert cfg.graph_backend is None
 
     @pytest.mark.asyncio
     async def test_whitelisted_keys_returned_secrets_never(self) -> None:
@@ -77,8 +77,7 @@ class TestGetSystemConfig:
         redis = AsyncMock()
         bao = AsyncMock()
         bao.read_system_config.return_value = {
-            "org_creation_policy": "approvals",
-            "approval_scope": "in_app",
+            "llm_backend": "openai",
             "llm_model": "gpt-4o-mini",
             "OZ_DATABASE_URL": "postgresql://secret",
             "openai_api_key": "sk-secret",
@@ -87,8 +86,7 @@ class TestGetSystemConfig:
 
         cfg = await get_system_config(redis, bao)
 
-        assert cfg.org_creation_policy == OrgCreationPolicy.approvals
-        assert cfg.approval_scope == ApprovalScope.in_app
+        assert cfg.llm_backend == "openai"
         assert cfg.llm_model == "gpt-4o-mini"
         # Secrets never surface in the response model — by construction.
         assert "openai_api_key" not in SystemConfigResponse.model_fields
@@ -100,14 +98,14 @@ class TestGetSystemConfig:
         """A warm cache short-circuits the OpenBao read."""
         redis = AsyncMock()
         redis.get.return_value = SystemConfigResponse(
-            org_creation_policy="approvals",
-            approval_scope="public_signup",
+            llm_backend="openai",
+            graph_backend="falkordb",
         ).model_dump_json()
         bao = AsyncMock()
 
         cfg = await get_system_config(redis, bao)
 
-        assert cfg.org_creation_policy == OrgCreationPolicy.approvals
+        assert cfg.llm_backend == "openai"
         bao.read_system_config.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -116,7 +114,7 @@ class TestGetSystemConfig:
         redis = AsyncMock()
         redis.get.return_value = None
         bao = AsyncMock()
-        bao.read_system_config.return_value = {"org_creation_policy": "reject_all"}
+        bao.read_system_config.return_value = {"llm_model": "gpt-4o-mini"}
 
         await get_system_config(redis, bao)
 
@@ -124,7 +122,7 @@ class TestGetSystemConfig:
         cache_key, ttl, payload = redis.setex.call_args.args
         assert cache_key == "system_config"
         assert ttl == 300
-        assert "reject_all" in payload
+        assert "gpt-4o-mini" in payload
         # The raw OpenBao payload never lands in the cache verbatim.
         assert "OZ_" not in payload
 
@@ -147,21 +145,21 @@ class TestUpdateSystemConfig:
             "core.system_config.get_system_config",
             new=AsyncMock(
                 return_value=SystemConfigResponse(
-                    org_creation_policy="approvals",
+                    llm_backend="openai",
                     llm_model="gpt-4o-mini",
                 ),
             ),
         ) as mock_get:
             result = await update_system_config(
                 SystemConfigUpdate(
-                    org_creation_policy="approvals",
+                    llm_backend="openai",
                     llm_model="gpt-4o-mini",
                 ),
                 bao,
                 redis,
             )
 
-        assert result.org_creation_policy == OrgCreationPolicy.approvals
+        assert result.llm_backend == "openai"
         # Merge preserved the unrelated OZ_ key
         written = bao.write_system_config.call_args.args[0]
         assert written["OZ_SECRET_KEY"] == "keep-me"  # noqa: S105 — test fixture secret

@@ -63,7 +63,7 @@ class UserSummaryService:
 
     # ── Rate limiting ──────────────────────────────────────────────────────────
 
-    async def _check_rate_limit(self, org_id: UUID, user_id: UUID) -> bool:
+    async def _check_rate_limit(self, user_id: UUID) -> bool:
         """Enforce a 5-minute cooldown between summary generations per user.
 
         Uses Redis ``SET NX EX`` (``SET`` if not exists, TTL = 300 s).
@@ -71,7 +71,7 @@ class UserSummaryService:
         already exists (rate limited).
 
         Args:
-            org_id: Organization UUID (scoping key).
+            user_id: Organization UUID (scoping key).
             user_id: User UUID (scoping key).
 
         Returns:
@@ -85,7 +85,7 @@ class UserSummaryService:
             raise CacheUnavailableError(
                 "Redis is required for user summary rate limiting."
             )
-        key = f"ratelimit:summary:{org_id}:{user_id}"
+        key = f"ratelimit:summary:{user_id}"
         ok = await self._redis.set(key, "1", nx=True, ex=300)
         return bool(ok)
 
@@ -93,7 +93,6 @@ class UserSummaryService:
 
     async def trigger_generation(
         self,
-        org_id: UUID,
         user_id: UUID,
     ) -> UserSummaryTriggerResponse:
         """Enqueue a background user summary generation job.
@@ -103,7 +102,7 @@ class UserSummaryService:
         immediately with a ``processing`` status.
 
         Args:
-            org_id: Organization UUID (tenant scope).
+            user_id: Organization UUID (tenant scope).
             user_id: User UUID to generate a summary for.
 
         Returns:
@@ -113,7 +112,7 @@ class UserSummaryService:
             RateLimitError: If a generation was already triggered within the
                 last 5 minutes for this user.
         """
-        if not await self._check_rate_limit(org_id, user_id):
+        if not await self._check_rate_limit(user_id):
             raise RateLimitError(
                 "Summary generation rate limited. "
                 "Please wait 5 minutes before trying again.",
@@ -124,7 +123,6 @@ class UserSummaryService:
         await self._arq.enqueue(
             "generate_user_summary",
             queue_name=get_queue_name(get_settings().ENVIRONMENT, ARQ_QUEUE),
-            org_id=str(org_id),
             user_id=str(user_id),
             trace_id=str(uuid.uuid4()),
         )
@@ -138,13 +136,12 @@ class UserSummaryService:
 
     async def get_summary(
         self,
-        org_id: UUID,
         user_id: UUID,
     ) -> UserSummaryResponse | None:
         """Fetch the currently stored summary for a user.
 
         Args:
-            org_id: Organization UUID (tenant scope).
+            user_id: Organization UUID (tenant scope).
             user_id: User UUID to fetch the summary for.
 
         Returns:
@@ -152,9 +149,9 @@ class UserSummaryService:
             or ``None`` if no summary has been generated yet.
         """
         # Tenant isolation is enforced at the repository layer: the query is
-        # scoped by ``organization_id`` AND ``user_id`` (defense in depth).
+        # scoped by ``user_id`` AND ``user_id`` (defense in depth).
         summary, updated_at = await self._user_repo.get_summary(
-            organization_id=org_id,
+
             user_id=user_id,
         )
         if summary is None:
@@ -169,13 +166,12 @@ class UserSummaryService:
 
     async def get_instructions(
         self,
-        org_id: UUID,
         user_id: UUID,
     ) -> list[dict[str, str]]:
         """Fetch custom instructions scoped to ``user_summary`` for this user.
 
         Args:
-            org_id: Organization UUID (tenant scope).
+            user_id: Organization UUID (tenant scope).
             user_id: User UUID (target of the instructions).
 
         Returns:
@@ -183,7 +179,7 @@ class UserSummaryService:
             alphabetically by name.  Empty list when no instructions exist.
         """
         raw = await self._ci_repo.get_by_scope(
-            org_id=org_id,
+            user_id=user_id,
             scope="user_summary",
             target_id=user_id,
         )
@@ -191,18 +187,17 @@ class UserSummaryService:
 
     async def set_instructions(
         self,
-        org_id: UUID,
         user_id: UUID,
         instructions: list[dict[str, str]],
     ) -> list[dict[str, str]]:
         """Atomically replace all custom instructions for this scope + target.
 
         Deletes all existing ``user_summary`` instructions for
-        ``(org_id, user_id)`` and bulk-inserts the new ones in a single
+        ``(user_id, user_id)`` and bulk-inserts the new ones in a single
         transaction.
 
         Args:
-            org_id: Organization UUID (tenant scope).
+            user_id: Organization UUID (tenant scope).
             user_id: User UUID (target of the instructions).
             instructions: List of ``{"name": ..., "text": ...}`` dicts.
                 Each name must be unique within this scope + target.
@@ -222,7 +217,7 @@ class UserSummaryService:
                 detail={"duplicates": dupes},
             )
         raw = await self._ci_repo.set_by_scope(
-            org_id=org_id,
+            user_id=user_id,
             scope="user_summary",
             target_id=user_id,
             instructions=instructions,
@@ -231,17 +226,16 @@ class UserSummaryService:
 
     async def delete_instructions(
         self,
-        org_id: UUID,
         user_id: UUID,
     ) -> None:
         """Delete all custom instructions for this scope + target.
 
         Args:
-            org_id: Organization UUID (tenant scope).
+            user_id: Organization UUID (tenant scope).
             user_id: User UUID (target of the instructions).
         """
         await self._ci_repo.delete_by_scope(
-            org_id=org_id,
+            user_id=user_id,
             scope="user_summary",
             target_id=user_id,
         )

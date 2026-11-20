@@ -1,7 +1,7 @@
 """Project service — orchestrates project and project member lifecycle.
 
 Handles creation, discovery, membership management, and archiving of
-project workspaces.  All methods are scoped to an ``organization_id``
+project workspaces.  All methods are scoped to an ``user_id``
 for tenant isolation.
 """
 
@@ -46,7 +46,7 @@ class ProjectService:
 
     async def create_project(
         self,
-        organization_id: UUID,
+
         user_id: UUID | None,
         payload: CreateProjectRequest,
     ) -> ProjectResponse:
@@ -58,7 +58,7 @@ class ProjectService:
         the dashboard.
 
         Args:
-            organization_id: Tenant scope.
+
             user_id: The creating user (becomes the initial owner), or
                 ``None`` for API-key-authenticated requests.
             payload: Name, optional description, and optional metadata.
@@ -72,7 +72,7 @@ class ProjectService:
         """
         # Check for duplicate names within the org
         existing = await self._repo.get_by_name(
-            organization_id=organization_id,
+            user_id=user_id,
             name=payload.name,
         )
         if existing is not None:
@@ -85,7 +85,7 @@ class ProjectService:
             )
 
         project = await self._repo.create(
-            organization_id=organization_id,
+            user_id=user_id,
             name=payload.name,
             created_by=user_id,
             description=payload.description,
@@ -103,7 +103,7 @@ class ProjectService:
         logger.info(
             "project_service.project_created",
             extra={
-                "org_id": str(organization_id),
+                "user_id": str(user_id),
                 "project_id": str(project.id),
                 "project_name": payload.name,
                 "created_by": str(user_id) if user_id else None,
@@ -124,7 +124,7 @@ class ProjectService:
 
     async def get_project(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         project_id: UUID,
     ) -> ProjectResponse:
         """Get a single project by ID.
@@ -132,7 +132,7 @@ class ProjectService:
         Raises:
             NotFoundError: If the project does not exist.
         """
-        project = await self._repo.get_by_id(organization_id, project_id)
+        project = await self._repo.get_by_id(user_id, project_id)
         if project is None:
             raise NotFoundError(
                 message=f"Project {project_id} not found",
@@ -151,7 +151,7 @@ class ProjectService:
 
     async def list_projects(
         self,
-        organization_id: UUID,
+
         user_id: UUID | None,
         limit: int = 50,
         offset: int = 0,
@@ -178,7 +178,7 @@ class ProjectService:
         ``pinned_at`` when ``pinned_only``).
 
         Args:
-            organization_id: Tenant scope.
+
             user_id: The authenticated user's UUID, or ``None`` for
                 API-key-authenticated requests.
             limit: Maximum results per page (capped at 200).
@@ -199,10 +199,10 @@ class ProjectService:
 
         pinned_ids: set[UUID] = set()
         if user_id is not None:
-            pinned_ids = await self._pin_repo.get_pinned_ids(organization_id, user_id)
+            pinned_ids = await self._pin_repo.get_pinned_ids(user_id)
             if pinned_only:
                 projects = await self._pin_repo.list_pinned_projects(
-                    organization_id=organization_id,
+
                     user_id=user_id,
                     limit=limit,
                     offset=offset,
@@ -226,7 +226,7 @@ class ProjectService:
                 ]
 
         projects = await self._repo.list(
-            organization_id=organization_id,
+
             user_id=user_id,
             limit=limit,
             offset=offset,
@@ -255,7 +255,7 @@ class ProjectService:
 
     async def update_project(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         payload: UpdateProjectRequest,
     ) -> ProjectResponse:
@@ -267,7 +267,7 @@ class ProjectService:
         """
         if payload.name is not None:
             existing = await self._repo.get_by_name(
-                organization_id=organization_id,
+                user_id=user_id,
                 name=payload.name,
             )
             if existing is not None and existing.id != project_id:
@@ -277,7 +277,7 @@ class ProjectService:
                 )
 
         project = await self._repo.update(
-            organization_id=organization_id,
+
             project_id=project_id,
             name=payload.name,
             description=payload.description,
@@ -303,7 +303,7 @@ class ProjectService:
 
     async def archive_project(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         project_id: UUID,
     ) -> None:
         """Archive a project (soft-delete, preserves data).
@@ -311,7 +311,7 @@ class ProjectService:
         Raises:
             NotFoundError: If the project does not exist.
         """
-        project = await self._repo.archive(organization_id, project_id)
+        project = await self._repo.archive(user_id, project_id)
         if project is None:
             raise NotFoundError(
                 message=f"Project {project_id} not found",
@@ -323,7 +323,7 @@ class ProjectService:
         logger.info(
             "project_service.project_archived",
             extra={
-                "org_id": str(organization_id),
+                "user_id": str(user_id),
                 "project_id": str(project_id),
                 "pins_removed": freed,
             },
@@ -331,7 +331,7 @@ class ProjectService:
 
     async def unarchive_project(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         project_id: UUID,
     ) -> ProjectResponse:
         """Restore an archived project.
@@ -341,7 +341,7 @@ class ProjectService:
         used here.
 
         Args:
-            organization_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: The project to restore.
 
         Returns:
@@ -350,7 +350,7 @@ class ProjectService:
         Raises:
             NotFoundError: If the project does not exist.
         """
-        project = await self._repo.unarchive(organization_id, project_id)
+        project = await self._repo.unarchive(user_id, project_id)
         if project is None:
             raise NotFoundError(
                 message=f"Project {project_id} not found",
@@ -361,7 +361,7 @@ class ProjectService:
         logger.info(
             "project_service.project_unarchived",
             extra={
-                "org_id": str(organization_id),
+                "user_id": str(user_id),
                 "project_id": str(project_id),
             },
         )
@@ -380,7 +380,7 @@ class ProjectService:
 
     async def pin_project(
         self,
-        organization_id: UUID,
+
         user_id: UUID,
         project_id: UUID,
     ) -> None:
@@ -390,7 +390,7 @@ class ProjectService:
         member, already pinned (no-op), pin limit (``MAX_PINS``).
 
         Args:
-            organization_id: Tenant scope.
+
             user_id: The user pinning the project.
             project_id: The project to pin.
 
@@ -399,7 +399,7 @@ class ProjectService:
                 or the user is not a member.
             ValidationError: If the user already has ``MAX_PINS`` pins.
         """
-        project = await self._repo.get_by_id(organization_id, project_id)
+        project = await self._repo.get_by_id(user_id, project_id)
         if project is None:
             raise NotFoundError(
                 message=f"Project {project_id} not found",
@@ -416,10 +416,10 @@ class ProjectService:
                 message=f"Membership not found for user {user_id}",
                 detail={"user_id": str(user_id)},
             )
-        if await self._pin_repo.is_pinned(organization_id, user_id, project_id):
+        if await self._pin_repo.is_pinned(user_id, project_id):
             return
         pinned = await self._pin_repo.pin_if_under_limit(
-            organization_id, user_id, project_id, MAX_PINS
+            user_id, project_id, MAX_PINS
         )
         if pinned is None:
             raise ValidationError(
@@ -430,33 +430,31 @@ class ProjectService:
         logger.info(
             "project_service.project_pinned",
             extra={
-                "org_id": str(organization_id),
-                "project_id": str(project_id),
                 "user_id": str(user_id),
+                "project_id": str(project_id),
             },
         )
 
     async def unpin_project(
         self,
-        organization_id: UUID,
+
         user_id: UUID,
         project_id: UUID,
     ) -> None:
         """Remove a user's pin on a project (no-op if absent).
 
         Args:
-            organization_id: Tenant scope.
+
             user_id: The user unpinning the project.
             project_id: The project to unpin.
         """
-        await self._pin_repo.unpin(organization_id, user_id, project_id)
+        await self._pin_repo.unpin(user_id, project_id)
 
         logger.info(
             "project_service.project_unpinned",
             extra={
-                "org_id": str(organization_id),
-                "project_id": str(project_id),
                 "user_id": str(user_id),
+                "project_id": str(project_id),
             },
         )
 
@@ -593,7 +591,7 @@ class ProjectService:
         return UserResponse.model_validate(
             {
                 "id": user.id,
-                "organization_id": user.organization_id,
+                "user_id": user.id,
                 "external_id": user.external_id,
                 "name": user.name,
                 "email": user.email,

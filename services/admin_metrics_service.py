@@ -40,7 +40,7 @@ class AdminMetricsService:
         self,
         request: Request,
         org_config: OrgConfigBase,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
     ) -> MetricsSummaryResponse:
@@ -53,7 +53,7 @@ class AdminMetricsService:
         Args:
             request: FastAPI request (graph backend dispatcher + pools).
             org_config: Org config (graph backend selection).
-            org_id: Authenticated organization ID.
+            user_id: Authenticated organization ID.
             start: Window start.
             end: Window end.
 
@@ -62,19 +62,19 @@ class AdminMetricsService:
             intact when Prometheus is unreachable.
         """
         backend = await resolve_graph_backend_fail_soft(
-            request, org_config, org_id, self._db, "admin_metrics"
+            request, org_config, user_id, self._db, "admin_metrics"
         )
         episode_stats, graph_stats, user_count = await self._fetch_db_counts(
-            org_id, backend
+            user_id, backend
         )
         try:
             perf = await self._prom.get_summary(
-                org_id=str(org_id), start=start, end=end
+                user_id=str(user_id), start=start, end=end
             )
         except MetricsUnavailableError as exc:
             logger.warning(
                 "admin_metrics.prometheus_degraded",
-                org_id=str(org_id),
+                user_id=str(user_id),
                 error=str(exc),
             )
             return MetricsSummaryResponse(
@@ -90,12 +90,12 @@ class AdminMetricsService:
         return perf
 
     async def _fetch_db_counts(
-        self, org_id: UUID, backend: GraphBackend | None
+        self, user_id: UUID, backend: GraphBackend | None
     ) -> tuple[EpisodeStats, GraphStats, int]:
         """Run all DB count queries for the admin summary.
 
         Args:
-            org_id: Organization UUID for tenant isolation.
+            user_id: Organization UUID for tenant isolation.
             backend: Resolved graph backend for entity counts (``None`` →
                 zeros, degraded).
 
@@ -103,14 +103,14 @@ class AdminMetricsService:
             Tuple of (EpisodeStats, GraphStats, user_count).
         """
         repo = self._repo
-        episodes_total = await repo.count_episodes_total(org_id)
-        episodes_24h = await repo.count_episodes_24h(org_id)
-        episodes_archived = await repo.count_episodes_archived(org_id)
-        episodes_enrichable = await repo.count_episodes_enrichable(org_id)
-        episodes_in_progress = await repo.count_episodes_in_progress(org_id)
-        episodes_pending = await repo.count_episodes_pending(org_id)
-        episodes_fully_enriched = await repo.count_episodes_fully_enriched(org_id)
-        episodes_with_embeddings = await repo.count_episodes_with_embeddings(org_id)
+        episodes_total = await repo.count_episodes_total(user_id)
+        episodes_24h = await repo.count_episodes_24h(user_id)
+        episodes_archived = await repo.count_episodes_archived(user_id)
+        episodes_enrichable = await repo.count_episodes_enrichable(user_id)
+        episodes_in_progress = await repo.count_episodes_in_progress(user_id)
+        episodes_pending = await repo.count_episodes_pending(user_id)
+        episodes_fully_enriched = await repo.count_episodes_fully_enriched(user_id)
+        episodes_with_embeddings = await repo.count_episodes_with_embeddings(user_id)
 
         episode_stats = EpisodeStats(
             added_total=episodes_total,
@@ -132,14 +132,14 @@ class AdminMetricsService:
         # inventory, so archived projects are included here.
         stats = GraphStatsService(self._db, backend)
         project_ids = await stats.resolve_project_ids(
-            org_id, None, include_archived=True
+            user_id, None, include_archived=True
         )
-        entities_total, entities_24h = await stats.entity_totals(org_id, project_ids)
+        entities_total, entities_24h = await stats.entity_totals(user_id, project_ids)
         graph_stats = GraphStats(
             entities_total=entities_total,
             entities_24h=entities_24h,
             relationships_total=0,  # GraphRelationship model TBD
         )
 
-        users_total = await repo.count_users_total(org_id)
+        users_total = await repo.count_users_total(user_id)
         return episode_stats, graph_stats, users_total

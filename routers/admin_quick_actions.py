@@ -41,17 +41,17 @@ class QuickActionsResponse(BaseModel):
 )
 async def list_quick_actions(
     service: QuickActionsService = Depends(get_quick_actions_service),
-    org_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_permission("members:read")),
 ) -> QuickActionsResponse:
     """Return a prioritized list of quick actions based on org state.
 
     Args:
         service: Quick actions service (injected).
-        org_id: Authenticated organization ID (from JWT).
+        user_id: Authenticated organization ID (from JWT).
         _user_id: Authenticated dashboard user ID (ensures JWT auth).
 
     Returns:
         QuickActionsResponse with ordered list of actions.
     """
-    actions = await service.get_actions(UUID(org_id))
+    actions = await service.get_actions(UUID(user_id))
     return QuickActionsResponse(actions=[QuickActionItem(**a) for a in actions])

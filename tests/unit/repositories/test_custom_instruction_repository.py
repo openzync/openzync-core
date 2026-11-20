@@ -32,7 +32,7 @@ class TestCustomInstructionRepository:
     def _mock_instruction(self, **overrides: object) -> MagicMock:
         inst = MagicMock()
         inst.id = overrides.get("id", uuid4())
-        inst.organization_id = overrides.get("organization_id", self.ORG_ID)
+        inst.user_id = overrides.get("user_id", self.ORG_ID)
         inst.scope = overrides.get("scope", "extraction")
         inst.target_id = overrides.get("target_id")
         inst.name = overrides.get("name", "test-instruction")
@@ -54,7 +54,7 @@ class TestCustomInstructionRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_scope(
-            org_id=self.ORG_ID, scope="extraction"
+            user_id=self.ORG_ID, scope="extraction"
         )
 
         assert result == instructions
@@ -69,7 +69,7 @@ class TestCustomInstructionRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_scope(
-            org_id=self.ORG_ID, scope="user_summary", target_id=self.TARGET_ID
+            user_id=self.ORG_ID, scope="user_summary", target_id=self.TARGET_ID
         )
 
         assert result == instructions
@@ -83,7 +83,7 @@ class TestCustomInstructionRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_scope(
-            org_id=self.ORG_ID, scope="nonexistent"
+            user_id=self.ORG_ID, scope="nonexistent"
         )
 
         assert result == []
@@ -104,7 +104,7 @@ class TestCustomInstructionRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.set_by_scope(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             scope="extraction",
             target_id=None,
             instructions=instructions,
@@ -123,7 +123,7 @@ class TestCustomInstructionRepository:
         mock_db.execute.return_value = MagicMock()
 
         result = await repo.set_by_scope(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             scope="extraction",
             target_id=None,
             instructions=[],
@@ -143,7 +143,7 @@ class TestCustomInstructionRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.set_by_scope(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             scope="user_summary",
             target_id=self.TARGET_ID,
             instructions=instructions,
@@ -160,7 +160,7 @@ class TestCustomInstructionRepository:
         mock_db.execute.return_value = MagicMock()
 
         await repo.delete_by_scope(
-            org_id=self.ORG_ID, scope="extraction"
+            user_id=self.ORG_ID, scope="extraction"
         )
 
         mock_db.execute.assert_awaited_once()
@@ -173,7 +173,7 @@ class TestCustomInstructionRepository:
         mock_db.execute.return_value = MagicMock()
 
         await repo.delete_by_scope(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             scope="user_summary",
             target_id=self.TARGET_ID,
         )
@@ -189,7 +189,7 @@ class TestCustomInstructionRepository:
         mock_db.flush.return_value = None
 
         await repo.delete_by_scope(
-            org_id=self.ORG_ID, scope="nonexistent"
+            user_id=self.ORG_ID, scope="nonexistent"
         )
 
         mock_db.execute.assert_awaited_once()

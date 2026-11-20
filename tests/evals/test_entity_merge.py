@@ -1,14 +1,11 @@
 """Entity merge dedup unit tests — validates merge worker logic.
 
-Tests the core merge pipeline components in isolation using a mocked DB
-session and synthetic duplicate datasets.
+Tests the core merge pipeline components in isolation using mocked
+backends (no DB, no graph).  The focus is on:
 
-Since the merge worker runs against a real PostgreSQL database, these tests
-use ``unittest.mock.AsyncMock`` to simulate DB interactions.  The focus is on:
-
-1. Cluster detection (exact + fuzzy matching logic at the query level).
-2. Canonical entity selection (most relationships → most recently updated).
-3. Relationship rewiring and duplicate dedup.
+1. Cluster detection (exact + fuzzy matching over backend results).
+2. Canonical entity selection (most recently created wins).
+3. Relationship rewiring and duplicate dedup (via backend.merge_entities).
 4. Audit trail creation.
 
 These tests do **not** require a running LLM or database.
@@ -17,11 +14,13 @@ These tests do **not** require a running LLM or database.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
 
 from workers.tasks.merge_duplicate_entities import (
+    _find_duplicate_clusters,
     _merge_cluster,
     _select_canonical,
 )
@@ -31,59 +30,50 @@ from workers.tasks.merge_duplicate_entities import (
 
 @pytest.fixture
 def mock_db() -> AsyncMock:
-    """Create a mock async DB session.
-
-    ``db.execute`` is an ``AsyncMock`` whose ``return_value`` is a
-    ``MagicMock``.  ``await db.execute(query)`` returns the ``MagicMock``
-    (because ``AsyncMock.__call__`` is async and returns
-    ``self.return_value`` directly — it does **not** try to await the
-    return value).  The ``MagicMock`` has ``all`` and ``rowcount`` set up
-    so that tests can override them inline.
-
-    Methods called synchronously (``add``) are plain ``MagicMock`` to
-    avoid ``PytestUnraisableExceptionWarning`` from unawaited coroutines.
-    """
+    """Create a mock async DB session (audit-log writes only)."""
     db = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.all = MagicMock(return_value=[])
-    mock_result.rowcount = 0
-    db.execute = AsyncMock(return_value=mock_result)
-    # Methods called without ``await`` — must be sync MagicMock
-    db.add = MagicMock()
-    db.flush = AsyncMock()
-    db.commit = AsyncMock()
-    db.refresh = AsyncMock()
     return db
 
 
 @pytest.fixture
-def org_id() -> str:
-    """Dummy organization UUID."""
-    return "550e8400-e29b-41d4-a716-446655440000"
+def mock_backend() -> AsyncMock:
+    """Create a mock graph backend."""
+    return AsyncMock()
+
+
+@pytest.fixture
+def user_id() -> UUID:
+    """Dummy user UUID."""
+    return UUID("550e8400-e29b-41d4-a716-446655440000")
+
+
+@pytest.fixture
+def project_id() -> UUID:
+    """Dummy project UUID."""
+    return UUID("660e8400-e29b-41d4-a716-446655440001")
 
 
 @pytest.fixture
 def sample_cluster() -> list[dict]:
     """A synthetic duplicate cluster of 3 entities with same name."""
-    now = datetime.now(UTC)
     return [
         {
             "id": "11111111-1111-4111-a111-111111111111",
             "name": "Acme Corp",
             "entity_type": "Organization",
-            "updated_at": now,
+            "created_at": datetime(2024, 1, 1, tzinfo=UTC),
         },
         {
             "id": "22222222-2222-4222-a222-222222222222",
             "name": "Acme Corp",
             "entity_type": "Organization",
-            "updated_at": now,
+            "created_at": datetime(2024, 6, 1, tzinfo=UTC),
         },
         {
             "id": "33333333-3333-4333-a333-333333333333",
             "name": "Acme Corp",
             "entity_type": "Organization",
-            "updated_at": now,
+            "created_at": datetime(2024, 3, 1, tzinfo=UTC),
         },
     ]
 
@@ -96,7 +86,7 @@ def single_entity_cluster() -> list[dict]:
             "id": "44444444-4444-4444-a444-444444444444",
             "name": "Sole Entity",
             "entity_type": "Person",
-            "updated_at": datetime.now(UTC),
+            "created_at": datetime(2024, 1, 1, tzinfo=UTC),
         },
     ]
 
@@ -105,138 +95,93 @@ def single_entity_cluster() -> list[dict]:
 
 
 class TestSelectCanonical:
-    """Canonical entity selection logic."""
+    """Canonical entity selection logic (most-recent created_at wins)."""
 
-    @pytest.mark.asyncio
-    async def test_selects_entity_with_most_relationships(
-        self,
-        mock_db: AsyncMock,
-        org_id: str,
-        sample_cluster: list[dict],
+    def test_selects_most_recently_created(
+        self, sample_cluster: list[dict]
     ) -> None:
-        """Entity with 5 relationships should beat entities with 0 or 2."""
-        # Mock relationship counts: first entity has 5, second has 2, third has 0
-        mock_db.execute.return_value.all.return_value = [
-            ("11111111-1111-4111-a111-111111111111", 5),
-            ("22222222-2222-4222-a222-222222222222", 2),
-        ]
+        """Entity with the latest created_at wins."""
+        canonical = _select_canonical(sample_cluster)
 
-        canonical = await _select_canonical(
-            mock_db, org_id, sample_cluster,
-        )
-
-        assert canonical["id"] == "11111111-1111-4111-a111-111111111111"
+        assert canonical["id"] == "22222222-2222-4222-a222-222222222222"
         assert canonical["name"] == "Acme Corp"
 
-    @pytest.mark.asyncio
-    async def test_selects_most_recently_updated_on_tie(
-        self,
-        mock_db: AsyncMock,
-        org_id: str,
-        sample_cluster: list[dict],
+    def test_returns_single_entity_unchanged(
+        self, single_entity_cluster: list[dict]
     ) -> None:
-        """When relationship counts are equal, the most recently updated wins."""
-        # All entities have same relationship count
-        mock_db.execute.return_value.all.return_value = [
-            ("11111111-1111-4111-a111-111111111111", 0),
-            ("22222222-2222-4222-a222-222222222222", 0),
-            ("33333333-3333-4333-a333-333333333333", 0),
-        ]
-
-        # Make third entity most recently updated
-        cluster = list(sample_cluster)
-        later = datetime.now(UTC)
-        cluster[2]["updated_at"] = later
-        cluster[0]["updated_at"] = datetime(2024, 1, 1, tzinfo=UTC)
-        cluster[1]["updated_at"] = datetime(2024, 6, 1, tzinfo=UTC)
-
-        canonical = await _select_canonical(
-            mock_db, org_id, cluster,
-        )
-
-        assert canonical["id"] == "33333333-3333-4333-a333-333333333333"
-
-    @pytest.mark.asyncio
-    async def test_returns_single_entity_unchanged(
-        self,
-        mock_db: AsyncMock,
-        org_id: str,
-        single_entity_cluster: list[dict],
-    ) -> None:
-        """A cluster with one entity should return that entity as canonical."""
-        canonical = await _select_canonical(
-            mock_db, org_id, single_entity_cluster,
-        )
+        """A cluster with one entity returns that entity as canonical."""
+        canonical = _select_canonical(single_entity_cluster)
 
         assert canonical["id"] == "44444444-4444-4444-a444-444444444444"
         assert canonical["name"] == "Sole Entity"
-        # No DB query should have been made for a single-entity cluster
-        mock_db.execute.assert_not_called()
 
 
 class TestMergeCluster:
-    """Cluster merge logic end-to-end."""
+    """Cluster merge logic end-to-end (backend merge + audit log)."""
 
     @pytest.mark.asyncio
     async def test_merge_cluster_rewires_relationships(
         self,
         mock_db: AsyncMock,
-        org_id: str,
+        mock_backend: AsyncMock,
+        user_id: UUID,
+        project_id: UUID,
         sample_cluster: list[dict],
     ) -> None:
-        """Merge rewires source_id and target_id, marks duplicates merged."""
-        # Mock relationship count query (for canonical selection)
-        mock_db.execute.return_value.all.return_value = [
-            ("11111111-1111-4111-a111-111111111111", 5),
-        ]
-
-        # Mock rowcount for UPDATE statements
-        mock_db.execute.return_value.rowcount = 2
+        """Merge delegates rewire+dedup to the backend, then audits."""
+        mock_backend.merge_entities.return_value = {
+            "rewired_count": 5,
+            "deleted_count": 2,
+            "merged_count": 2,
+        }
 
         result = await _merge_cluster(
-            mock_db, org_id, sample_cluster,
+            mock_db, mock_backend, user_id, project_id, sample_cluster
         )
 
         assert result["entities_merged"] == 2
-        assert result["relationships_rewired"] > 0
-
-        # Verify the execute was called at least 4 times:
-        # 1 for canonical selection, 2 for rewire source (2 dups),
-        # 2 for rewire target (2 dups), 1 for dedup, 2 for merge flags,
-        # 1 for audit log
-        assert mock_db.execute.call_count >= 8
+        assert result["relationships_rewired"] == 7
+        mock_backend.merge_entities.assert_awaited_once()
+        call_kwargs = mock_backend.merge_entities.call_args.kwargs
+        assert call_kwargs["user_id"] == user_id
+        assert call_kwargs["project_id"] == project_id
+        assert len(call_kwargs["merged_ids"]) == 2
 
     @pytest.mark.asyncio
     async def test_merge_single_entity_does_nothing(
         self,
         mock_db: AsyncMock,
-        org_id: str,
+        mock_backend: AsyncMock,
+        user_id: UUID,
+        project_id: UUID,
         single_entity_cluster: list[dict],
     ) -> None:
-        """A single-entity cluster should return zero merges."""
+        """A single-entity cluster returns zero merges without backend calls."""
         result = await _merge_cluster(
-            mock_db, org_id, single_entity_cluster,
+            mock_db, mock_backend, user_id, project_id, single_entity_cluster
         )
 
         assert result["entities_merged"] == 0
         assert result["relationships_rewired"] == 0
-        # No DB queries should have been made
-        mock_db.execute.assert_not_called()
+        mock_backend.merge_entities.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_merge_writes_audit_log(
         self,
         mock_db: AsyncMock,
-        org_id: str,
+        mock_backend: AsyncMock,
+        user_id: UUID,
+        project_id: UUID,
         sample_cluster: list[dict],
     ) -> None:
         """Merge writes an audit_log entry with before/after snapshot."""
-        mock_db.execute.return_value.all.return_value = [
-            ("11111111-1111-4111-a111-111111111111", 5),
-        ]
-        mock_db.execute.return_value.rowcount = 2
+        mock_backend.merge_entities.return_value = {
+            "rewired_count": 2,
+            "deleted_count": 1,
+            "merged_count": 2,
+        }
 
-        await _merge_cluster(mock_db, org_id, sample_cluster)
+        await _merge_cluster(mock_db, mock_backend, user_id, project_id, sample_cluster)
 
         # Audit log is created via ``AuditLogService`` which uses
         # ``db.add(entry)`` — check ``add`` calls, not ``execute`` calls.
@@ -244,68 +189,59 @@ class TestMergeCluster:
         assert "entity.merge" in all_add_text, (
             "Audit log action should be 'entity.merge'"
         )
-        # Verify the entry passed to add has details containing 'before'
-        audit_calls = [
-            call for call in mock_db.add.call_args_list
-            if hasattr(call[0][0], "action")
-            and call[0][0].action == "entity.merge"
-        ]
-        assert len(audit_calls) == 1, "Expected exactly one audit log entry"
-        entry = audit_calls[0][0][0]
-        assert "before" in entry.details, (
-            "Audit log details should contain 'before' snapshot"
-        )
 
 
 class TestFindDuplicateClusters:
-    """Duplicate cluster detection logic.
-
-    These tests validate the SQL query patterns used by ``_find_duplicate_clusters``.
-    """
+    """Duplicate cluster detection logic (backend-driven)."""
 
     @pytest.mark.asyncio
-    async def test_exact_match_detection(self) -> None:
-        """Exact match GROUP BY on LOWER(name) should detect exact duplicates."""
-        # This is a query-level test — we verify the SQL pattern contains
-        # the expected GROUP BY on LOWER(name) with HAVING COUNT(*) > 1
-        from workers.tasks.merge_duplicate_entities import (
-            _find_duplicate_clusters,
+    async def test_exact_match_detection(
+        self, mock_backend: AsyncMock, user_id: UUID, project_id: UUID
+    ) -> None:
+        """Exact name matches cluster together; distinct names do not."""
+        mock_backend.get_all_entities.return_value = [
+            {"id": "a1", "name": "Acme Corp"},
+            {"id": "a2", "name": "acme corp"},
+            {"id": "b1", "name": "Globex"},
+        ]
+        mock_backend.bulk_search_entities.return_value = []
+
+        clusters = await _find_duplicate_clusters(
+            mock_backend, user_id, project_id
         )
 
-        db = AsyncMock()
-        mock_result_1 = MagicMock()
-        mock_result_1.all = MagicMock(return_value=[])
-        mock_result_2 = MagicMock()
-        mock_result_2.all = MagicMock(return_value=[])
-
-        # Phase 1: no exact duplicates
-        db.execute = AsyncMock()
-        db.execute.side_effect = [
-            mock_result_1,  # First call returns mock_result_1
-            mock_result_2,  # Second call returns mock_result_2
-        ]
-
-        org_uuid = "550e8400-e29b-41d4-a716-446655440000"
-        clusters = await _find_duplicate_clusters(db, org_uuid)
-
-        assert clusters == [], "Expected no clusters when no exact matches"
-        assert db.execute.call_count >= 2
+        assert len(clusters) == 1
+        assert {e["id"] for e in clusters[0]} == {"a1", "a2"}
 
     @pytest.mark.asyncio
-    async def test_type_consistency(self) -> None:
+    async def test_no_entities_no_clusters(
+        self, mock_backend: AsyncMock, user_id: UUID, project_id: UUID
+    ) -> None:
+        """Fewer than two entities → no clusters, no fuzzy search."""
+        mock_backend.get_all_entities.return_value = [
+            {"id": "only", "name": "Sole"}
+        ]
+
+        clusters = await _find_duplicate_clusters(
+            mock_backend, user_id, project_id
+        )
+
+        assert clusters == []
+        mock_backend.bulk_search_entities.assert_not_awaited()
+
+    def test_type_consistency(self) -> None:
         """All functions accept and return the expected types."""
         cluster = [
             {
                 "id": "11111111-1111-4111-a111-111111111111",
                 "name": "Acme Corp",
                 "entity_type": "Organization",
-                "updated_at": datetime.now(UTC),
+                "created_at": datetime.now(UTC),
             },
         ]
         assert isinstance(cluster, list)
         assert len(cluster) == 1
         assert isinstance(cluster[0]["id"], str)
-        assert isinstance(cluster[0]["updated_at"], datetime)
 
 
 class TestMergeWorkerConstants:

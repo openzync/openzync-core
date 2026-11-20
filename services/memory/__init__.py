@@ -58,7 +58,7 @@ class MemoryService(
 ):
     """Service layer for message ingestion and memory management.
 
-    ``org_id`` is passed as a parameter to ``ingest()`` and
+    ``user_id`` is passed as a parameter to ``ingest()`` and
     ``delete_user_memory()``, not stored on the instance — every public
     method explicitly accepts tenant context for auditability.
 

@@ -101,7 +101,7 @@ class SupersessionEvent:
 class EdgeExpiryCommand:
     """One edge-expiry unit: the triple key + the deterministic instant."""
 
-    org_id: UUID
+    user_id: UUID
     project_id: UUID
     source_id: UUID
     target_id: UUID
@@ -175,7 +175,7 @@ def make_supersession_event(
 def compute_expiry_commands(
     events: list[SupersessionEvent],
     *,
-    org_id: UUID,
+    user_id: UUID,
     project_id: UUID,
     at_time: datetime,
 ) -> list[EdgeExpiryCommand]:
@@ -183,7 +183,7 @@ def compute_expiry_commands(
 
     Args:
         events: The supersession transitions recorded during ingest.
-        org_id: Tenant scope.
+        user_id: Tenant scope.
         project_id: Project scope.
         at_time: The supersession instant (deterministic, never a fresh
             clock read).
@@ -202,7 +202,7 @@ def compute_expiry_commands(
         # Case 1 (no successor) or case 2 (successor, different key).
         commands.append(
             EdgeExpiryCommand(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=project_id,
                 source_id=event.old_edge_key.source_id,
                 target_id=event.old_edge_key.target_id,
@@ -251,7 +251,7 @@ class GraphEdgeSyncService:
     async def sync_supersessions(
         self,
         *,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         events: list[SupersessionEvent],
         at_time: datetime,
@@ -269,7 +269,7 @@ class GraphEdgeSyncService:
         durable and unaffected).
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: Project scope.
             events: Supersession transitions recorded during ingest.
             at_time: The supersession instant (deterministic).
@@ -281,7 +281,7 @@ class GraphEdgeSyncService:
         if not events or not self._backends:
             return
         commands = compute_expiry_commands(
-            events, org_id=org_id, project_id=project_id, at_time=at_time
+            events, user_id=user_id, project_id=project_id, at_time=at_time
         )
         if not commands:
             return
@@ -290,7 +290,7 @@ class GraphEdgeSyncService:
             if isinstance(backend, PostgresGraphBackend):
                 for command in commands:
                     await backend.expire_relationships_matching(
-                        org_id=command.org_id,
+                        user_id=command.user_id,
                         project_id=command.project_id,
                         source_id=command.source_id,
                         target_id=command.target_id,
@@ -321,7 +321,7 @@ class GraphEdgeSyncService:
                 await arq_pool.enqueue(
                     EXPIRE_GRAPH_EDGES_TASK,
                     queue_name=qname,
-                    org_id=str(command.org_id),
+                    user_id=str(command.user_id),
                     project_id=str(command.project_id),
                     source_id=str(command.source_id),
                     target_id=str(command.target_id),
@@ -333,7 +333,7 @@ class GraphEdgeSyncService:
             logger.error(
                 "graph_edge_sync.enqueue_failed",
                 extra={
-                    "org_id": str(commands[0].org_id),
+                    "user_id": str(commands[0].user_id),
                     "project_id": str(commands[0].project_id),
                     "task": EXPIRE_GRAPH_EDGES_TASK,
                     "command_count": len(commands),
@@ -345,5 +345,5 @@ class GraphEdgeSyncService:
                     f"Failed to enqueue {EXPIRE_GRAPH_EDGES_TASK} for "
                     f"{len(commands)} edge(s): {exc}"
                 ),
-                detail={"org_id": str(commands[0].org_id)},
+                detail={"user_id": str(commands[0].user_id)},
             ) from exc

@@ -58,7 +58,7 @@ class DedupClaimMixin:
         self,
         idempotency_key: str,
         body_hash: str,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
     ) -> IngestMemoryResponse | None:
         """Return the replay response for a duplicate key, if any.
@@ -66,7 +66,7 @@ class DedupClaimMixin:
         Args:
             idempotency_key: Client-supplied idempotency key.
             body_hash: SHA-256 of the canonical request body.
-            org_id: Tenant scope (log context).
+            user_id: Tenant scope (log context).
             project_id: Project scope (log context).
 
         Returns:
@@ -78,7 +78,7 @@ class DedupClaimMixin:
         from services.idempotency_service import IdempotencyStatus
 
         result = await self._idem.check_idempotency_key(
-            idempotency_key, body_hash, str(org_id)
+            idempotency_key, body_hash, str(user_id)
         )
         if (
             result.status == IdempotencyStatus.REPLAY
@@ -88,7 +88,7 @@ class DedupClaimMixin:
                 "memory.idempotency_replay",
                 extra={
                     "idempotency_key": idempotency_key[:16] + "...",
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                 },
             )
@@ -101,7 +101,7 @@ class DedupClaimMixin:
 
     async def _claim_batch(
         self,
-        org_id: UUID,
+        user_id: UUID,
         created_by: UUID,
         session_id: UUID,
         msgs: list[dict[str, Any]],
@@ -114,7 +114,7 @@ class DedupClaimMixin:
         winner's response instead of inserting.
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             created_by: Attributing user.
             session_id: Target session.
             msgs: Canonical message dicts for hashing.
@@ -125,11 +125,11 @@ class DedupClaimMixin:
             when this attempt lost and must return the winner's response.
         """
         content_hash = self._idem.compute_content_hash(
-            str(org_id), str(created_by), str(session_id), msgs
+            str(user_id), str(session_id), msgs
         )
         try:
             _peek = await self._idem.check_content_hash(
-                str(org_id), str(created_by), str(session_id), msgs
+                str(user_id), str(session_id), msgs
             )
         except Exception:
             _peek = None
@@ -153,8 +153,7 @@ class DedupClaimMixin:
         # through to the atomic claim below, the sole arbiter.
         job_id = uuid4()
         claim = await self._idem.claim_content_hash(
-            str(org_id),
-            str(created_by),
+            str(user_id),
             str(session_id),
             msgs,
             payload=_encode_claim_payload(job_id, len(msgs)),
@@ -191,7 +190,7 @@ class DedupClaimMixin:
                 },
             )
             await self._idem.release_content_hash(
-                str(org_id), str(created_by), str(session_id), msgs
+                str(user_id), str(session_id), msgs
             )
             return IngestMemoryResponse(
                 job_id=str(prior_job_id) if prior_job_id else None,

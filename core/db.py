@@ -29,7 +29,7 @@ Then in routers:
 
 ``get_db`` itself is re-exported from :mod:`dependencies.db` for backward
 compatibility — both import paths resolve to the same RLS-aware dependency,
-which applies the tenant isolation context (``app.org_id`` /
+which applies the tenant isolation context (``app.user_id`` /
 ``app.bypass_rls``) and handles commit/rollback per request.
 """
 

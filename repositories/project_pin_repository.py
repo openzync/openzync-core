@@ -1,6 +1,6 @@
 """Project pin repository — all database access for ProjectPins.
 
-Every query is scoped to an ``organization_id``. The repository returns
+Every query is scoped to an ``user_id``. The repository returns
 ORM models only — no business logic, no schema construction.
 """
 
@@ -35,11 +35,11 @@ class ProjectPinRepository:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
-    async def get_pinned_ids(self, organization_id: UUID, user_id: UUID) -> set[UUID]:
+    async def get_pinned_ids(self, user_id: UUID) -> set[UUID]:
         """Return the IDs of all projects pinned by a user in an org.
 
         Args:
-            organization_id: Tenant scope.
+
             user_id: The user whose pins to fetch.
 
         Returns:
@@ -47,17 +47,17 @@ class ProjectPinRepository:
         """
         result = await self._db.execute(
             select(ProjectPin.project_id).where(
-                ProjectPin.organization_id == organization_id,
+                ProjectPin.user_id == user_id,
                 ProjectPin.user_id == user_id,
             )
         )
         return set(result.scalars().all())
 
-    async def count_for_user(self, organization_id: UUID, user_id: UUID) -> int:
+    async def count_for_user(self, user_id: UUID) -> int:
         """Count how many projects a user has pinned in an org.
 
         Args:
-            organization_id: Tenant scope.
+
             user_id: The user whose pins to count.
 
         Returns:
@@ -65,19 +65,18 @@ class ProjectPinRepository:
         """
         result = await self._db.execute(
             select(func.count(ProjectPin.id)).where(
-                ProjectPin.organization_id == organization_id,
                 ProjectPin.user_id == user_id,
             )
         )
         return result.scalar() or 0
 
     async def is_pinned(
-        self, organization_id: UUID, user_id: UUID, project_id: UUID
+        self, user_id: UUID, project_id: UUID
     ) -> bool:
         """Check whether a user has pinned a project.
 
         Args:
-            organization_id: Tenant scope.
+
             user_id: The user to check.
             project_id: The project to check.
 
@@ -86,7 +85,6 @@ class ProjectPinRepository:
         """
         result = await self._db.execute(
             select(ProjectPin.id).where(
-                ProjectPin.organization_id == organization_id,
                 ProjectPin.user_id == user_id,
                 ProjectPin.project_id == project_id,
             )
@@ -94,7 +92,7 @@ class ProjectPinRepository:
         return result.scalar_one_or_none() is not None
 
     async def pin(
-        self, organization_id: UUID, user_id: UUID, project_id: UUID
+        self, user_id: UUID, project_id: UUID
     ) -> ProjectPin:
         """Create a pin row (idempotent on duplicate).
 
@@ -105,7 +103,7 @@ class ProjectPinRepository:
         500 for a double-pin race.
 
         Args:
-            organization_id: Tenant scope.
+
             user_id: The user pinning.
             project_id: The project to pin.
 
@@ -113,7 +111,7 @@ class ProjectPinRepository:
             The new or pre-existing ProjectPin.
         """
         pin = ProjectPin(
-            organization_id=organization_id,
+
             user_id=user_id,
             project_id=project_id,
         )
@@ -124,7 +122,6 @@ class ProjectPinRepository:
         except IntegrityError:
             result = await self._db.execute(
                 select(ProjectPin).where(
-                    ProjectPin.organization_id == organization_id,
                     ProjectPin.user_id == user_id,
                     ProjectPin.project_id == project_id,
                 )
@@ -138,14 +135,14 @@ class ProjectPinRepository:
 
     async def pin_if_under_limit(
         self,
-        organization_id: UUID,
+
         user_id: UUID,
         project_id: UUID,
         limit: int,
     ) -> ProjectPin | None:
         """Pin a project only if the user is under the pin limit.
 
-        A transaction-scoped advisory lock on ``(organization_id, user_id)``
+        A transaction-scoped advisory lock on ``(user_id, user_id)``
         serializes concurrent pins for the same user (READ COMMITTED alone
         lets two ``INSERT ... WHERE count < limit`` statements both see the
         same count), followed by a single ``INSERT ... SELECT ... WHERE
@@ -155,7 +152,7 @@ class ProjectPinRepository:
         (idempotent).
 
         Args:
-            organization_id: Tenant scope.
+
             user_id: The user pinning.
             project_id: The project to pin.
             limit: Maximum pins per user per org (passed by the service).
@@ -172,14 +169,13 @@ class ProjectPinRepository:
         await self._db.execute(
             select(
                 func.pg_advisory_xact_lock(
-                    func.hashtext(f"project_pins:{organization_id}:{user_id}")
+                    func.hashtext(f"project_pins:{user_id}")
                 )
             )
         )
         pin_count = (
             select(func.count(ProjectPin.id))
             .where(
-                ProjectPin.organization_id == organization_id,
                 ProjectPin.user_id == user_id,
             )
             .scalar_subquery()
@@ -187,9 +183,9 @@ class ProjectPinRepository:
         stmt = (
             insert(ProjectPin)
             .from_select(
-                ["organization_id", "user_id", "project_id"],
+                ["user_id", "user_id", "project_id"],
                 select(
-                    literal(organization_id, type_=Uuid),
+                    literal(user_id, type_=Uuid),
                     literal(user_id, type_=Uuid),
                     literal(project_id, type_=Uuid),
                 ).where(pin_count < limit),
@@ -203,7 +199,6 @@ class ProjectPinRepository:
         except IntegrityError:
             result = await self._db.execute(
                 select(ProjectPin).where(
-                    ProjectPin.organization_id == organization_id,
                     ProjectPin.user_id == user_id,
                     ProjectPin.project_id == project_id,
                 )
@@ -214,12 +209,12 @@ class ProjectPinRepository:
             return existing
 
     async def unpin(
-        self, organization_id: UUID, user_id: UUID, project_id: UUID
+        self, user_id: UUID, project_id: UUID
     ) -> bool:
         """Delete a pin row.
 
         Args:
-            organization_id: Tenant scope.
+
             user_id: The user unpinning.
             project_id: The project to unpin.
 
@@ -229,7 +224,6 @@ class ProjectPinRepository:
         result = await self._db.execute(
             delete(ProjectPin)
             .where(
-                ProjectPin.organization_id == organization_id,
                 ProjectPin.user_id == user_id,
                 ProjectPin.project_id == project_id,
             )
@@ -257,7 +251,7 @@ class ProjectPinRepository:
 
     async def list_pinned_projects(
         self,
-        organization_id: UUID,
+
         user_id: UUID,
         limit: int = 50,
         offset: int = 0,
@@ -270,7 +264,7 @@ class ProjectPinRepository:
         ``created_at``, ``updated_at``.
 
         Args:
-            organization_id: Tenant scope.
+
             user_id: The user whose pinned projects to list.
             limit: Maximum results per page (capped at 200).
             offset: Number of results to skip.
@@ -287,9 +281,8 @@ class ProjectPinRepository:
             select(Project)
             .join(ProjectPin, Project.id == ProjectPin.project_id)
             .where(
-                ProjectPin.organization_id == organization_id,
                 ProjectPin.user_id == user_id,
-                Project.organization_id == organization_id,
+                Project.user_id == user_id,
                 Project.is_archived.is_(False),
             )
             .order_by(

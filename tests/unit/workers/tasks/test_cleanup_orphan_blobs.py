@@ -69,7 +69,7 @@ class TestCleanupOrphanBlobs:
 
             from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 
-            result = await cleanup_orphan_blobs(ctx=self._ctx(db), org_id=_ORG_ID)
+            result = await cleanup_orphan_blobs(ctx=self._ctx(db), user_id=_ORG_ID)
 
             assert result == len(blobs)
             mock_svc.delete_blobs.assert_called_once()
@@ -98,7 +98,7 @@ class TestCleanupOrphanBlobs:
 
             from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 
-            result = await cleanup_orphan_blobs(ctx=self._ctx(db), org_id=_ORG_ID)
+            result = await cleanup_orphan_blobs(ctx=self._ctx(db), user_id=_ORG_ID)
 
             assert result == 0
 
@@ -133,7 +133,7 @@ class TestCleanupOrphanBlobs:
 
             result = await cleanup_orphan_blobs(
                 ctx=self._ctx(db),
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 episode_id=_EPISODE_ID,
             )
 
@@ -171,7 +171,7 @@ class TestCleanupOrphanBlobs:
             from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 
             with pytest.raises(Exception, match="S3 unavailable"):
-                await cleanup_orphan_blobs(ctx=self._ctx(db), org_id=_ORG_ID)
+                await cleanup_orphan_blobs(ctx=self._ctx(db), user_id=_ORG_ID)
 
     @pytest.mark.asyncio
     async def test_blobs_refrenced_by_episodes_not_deleted(self) -> None:
@@ -195,7 +195,7 @@ class TestCleanupOrphanBlobs:
 
             from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 
-            result = await cleanup_orphan_blobs(ctx=self._ctx(db), org_id=_ORG_ID)
+            result = await cleanup_orphan_blobs(ctx=self._ctx(db), user_id=_ORG_ID)
 
             assert result == 0
             mock_repo.get_orphaned_blobs.assert_called_once()
@@ -214,7 +214,7 @@ class TestCleanupOrphanBlobs:
             from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 
             with pytest.raises(Exception):
-                await cleanup_orphan_blobs(ctx=self._ctx(db), org_id=_ORG_ID)
+                await cleanup_orphan_blobs(ctx=self._ctx(db), user_id=_ORG_ID)
 
     # ── Coverage gap: trace_id, engine, bao_client paths ───────────────────
 
@@ -250,7 +250,7 @@ class TestCleanupOrphanBlobs:
 
             result = await cleanup_orphan_blobs(
                 ctx=self._ctx(db),
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 trace_id="test-trace-001",
             )
 
@@ -312,7 +312,7 @@ class TestCleanupOrphanBlobs:
 
             result = await cleanup_orphan_blobs(
                 ctx=ctx,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
             )
 
             assert result == len(blobs)
@@ -361,7 +361,7 @@ class TestCleanupOrphanBlobs:
 
             result = await cleanup_orphan_blobs(
                 ctx={},
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
             )
 
             assert result == len(blobs)
@@ -413,7 +413,7 @@ class TestCleanupOrphanBlobs:
 
             result = await cleanup_orphan_blobs(
                 ctx=ctx,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
             )
 
             assert result == len(blobs)
@@ -465,7 +465,7 @@ class TestCleanupOrphanBlobs:
 
             result = await cleanup_orphan_blobs(
                 ctx=ctx,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
             )
 
             assert result == len(blobs)
@@ -553,8 +553,8 @@ class TestCleanupOrphanBlobs:
         # Each org's tenant was bound through ``core.rls`` — the binding is
         # remembered on the session, so the per-org commit re-applies it
         # instead of leaving the session un-tenanted.
-        assert set(self._bound_org_ids(db)) == {str(org_1), str(org_2)}
-        assert db.rls_context.org_id == str(org_2)
+        assert set(self._bound_user_ids(db)) == {str(org_1), str(org_2)}
+        assert db.rls_context.user_id == str(org_2)
 
     @pytest.mark.asyncio
     async def test_discovery_all_orgs_fail_raises(self) -> None:
@@ -658,7 +658,7 @@ class TestCleanupOrphanBlobs:
         assert result["orgs_processed"] == 2
         assert result["orgs_failed"] == 0
         assert result["blobs_cleaned"] == 3
-        assert set(self._bound_org_ids(db)) == {str(org_1), str(org_2)}
+        assert set(self._bound_user_ids(db)) == {str(org_1), str(org_2)}
 
     @pytest.mark.asyncio
     async def test_discovery_org_failure_rolls_back_transaction(self) -> None:
@@ -725,16 +725,16 @@ class TestCleanupOrphanBlobs:
         db.commit.assert_called_once()
 
     @staticmethod
-    def _bound_org_ids(db: AsyncMock) -> list[str]:
+    def _bound_user_ids(db: AsyncMock) -> list[str]:
         """The tenants bound on the session, in order.
 
         Only the non-empty bindings count: the discovery scan binds an
         empty tenant (it runs under the bypass).
         """
         return [
-            call.args[1]["org_id"]
+            call.args[1]["user_id"]
             for call in db.execute.call_args_list
             if len(call.args) > 1
             and isinstance(call.args[1], dict)
-            and call.args[1].get("org_id")
+            and call.args[1].get("user_id")
         ]

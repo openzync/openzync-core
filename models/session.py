@@ -25,8 +25,8 @@ class Session(TimestampMixin, Base):
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True, default=uuid.uuid4, server_default=func.gen_random_uuid(),
     )
-    organization_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="CASCADE"),
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -34,11 +34,6 @@ class Session(TimestampMixin, Base):
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        comment="The user who created this session (attribution only — ownership is via project).",
     )
     external_id: Mapped[str] = mapped_column(Text, nullable=False)
     # 'metadata' is reserved by SQLAlchemy — use trailing underscore for the

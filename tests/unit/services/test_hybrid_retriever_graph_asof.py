@@ -26,7 +26,7 @@ QUERY_TIME = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
 def _service(backends: list[AsyncMock] | None = None) -> HybridRetriever:
     return HybridRetriever(
         db=AsyncMock(),
-        org_id=ORG_ID,
+        user_id=ORG_ID,
         graph_backends=backends or [],
     )
 
@@ -44,7 +44,7 @@ class TestGraphBFSSearchAsOf:
         await service._graph_bfs_search("who reports to Alice", PROJECT_ID, query_time=QUERY_TIME)
 
         backend.retrieve_graph.assert_awaited_once_with(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJECT_ID,
             query="who reports to Alice",
             as_of=QUERY_TIME,
@@ -60,7 +60,7 @@ class TestGraphBFSSearchAsOf:
         await service._graph_bfs_search("query", PROJECT_ID)
 
         backend.retrieve_graph.assert_awaited_once_with(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJECT_ID,
             query="query",
             as_of=None,

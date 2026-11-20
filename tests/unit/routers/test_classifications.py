@@ -20,7 +20,7 @@ from dependencies.project_auth import require_project_membership
 from routers.classifications import _get_classification_service, router
 from schemas.classifications import ClassificationResponse
 
-ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 PROJECT_ID = UUID("00000000-0000-0000-0000-000000000003")
 SESSION_ID = UUID("00000000-0000-0000-0000-000000000004")
@@ -42,7 +42,7 @@ def _stub_permission_gate() -> None:
     ``require_permission("project:write")`` — closures created at router
     import time that cannot be keyed in ``dependency_overrides``.  Patching
     ``dependencies.auth._check_permission`` (the shared decision function)
-    stubs the gate while keeping the ``require_org_id`` chain intact.  The
+    stubs the gate while keeping the ``require_user_id`` chain intact.  The
     real gate matrix is covered by ``test_admin_gate_matrix.py``.
     """
     with patch("dependencies.auth._check_permission", new=AsyncMock()):
@@ -55,7 +55,7 @@ def _create_app(mock_service: AsyncMock) -> FastAPI:
 
     @app.middleware("http")
     async def _mock_auth(request, call_next):
-        request.state.org_id = str(ORG_ID)
+        request.state.user_id = str(USER_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "jwt"
         response = await call_next(request)
@@ -112,7 +112,7 @@ async def test_list_classifications_success() -> None:
     assert body["data"][0]["confidence"] == 0.95
 
     mock_service.get_classifications_for_session.assert_awaited_once_with(
-        org_id=ORG_ID,
+        user_id=USER_ID,
         session_id=SESSION_ID,
         project_id=PROJECT_ID,
         sort=SortSpec(None, "asc"),
@@ -174,7 +174,7 @@ async def test_get_episode_classification_success() -> None:
     assert body["episode_id"] == str(EPISODE_ID)
 
     mock_service.get_classification_for_episode.assert_awaited_once_with(
-        org_id=ORG_ID,
+        user_id=USER_ID,
         episode_id=EPISODE_ID,
     )
 

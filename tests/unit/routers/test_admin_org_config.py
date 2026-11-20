@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.auth import (
     get_dashboard_user,
-    require_org_id,
+    require_user_id,
 )
 from dependencies.db import get_db
 from routers.admin_org_config import _get_config_service, router
@@ -25,7 +25,7 @@ from schemas.organization_config import (
 )
 from services.org_config_service import OrgConfigService
 
-ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 
 
@@ -35,16 +35,16 @@ def _mock_org_admin_role(monkeypatch) -> None:
 
     GET is gated by ``require_permission("configuration:read")`` and
     PATCH/PUT by ``require_permission("configuration:write")``; both JWT
-    paths funnel into ``core.rbac.get_org_role`` via
+    paths funnel into ``core.rbac.get_user_role`` via
     ``dependencies.auth._check_permission``.  Patching the role lookup to
     ``"admin"`` keeps the JWT/db/redis dependency chain intact while mocking
     only the role source of truth.
     """
 
-    async def _fake_get_org_role(redis, db, org_id, user_id) -> str:
+    async def _fake_get_user_role(redis, db, user_id) -> str:
         return "admin"
 
-    monkeypatch.setattr("dependencies.auth.get_org_role", _fake_get_org_role)
+    monkeypatch.setattr("dependencies.auth.get_user_role", _fake_get_user_role)
 
 
 def _create_app() -> tuple[FastAPI, AsyncMock]:
@@ -55,7 +55,7 @@ def _create_app() -> tuple[FastAPI, AsyncMock]:
 
     @app.middleware("http")
     async def _mock_auth(request, call_next):
-        request.state.org_id = str(ORG_ID)
+        request.state.user_id = str(USER_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "jwt"
         request.state.api_key_permissions = []
@@ -63,7 +63,7 @@ def _create_app() -> tuple[FastAPI, AsyncMock]:
         return response
 
     app.dependency_overrides[get_db] = lambda: db_mock
-    app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+    app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
     app.dependency_overrides[get_dashboard_user] = lambda: str(USER_ID)
 
     app.include_router(router)
@@ -144,7 +144,7 @@ async def test_get_org_config_success() -> None:
     assert body["stored"]["llm_backend"] == "ollama"
     assert body["stored"]["llm_model"] == "llama3"
     assert body["system_managed_fields"] == []
-    mock_service.get_config_response.assert_awaited_once_with(ORG_ID)
+    mock_service.get_config_response.assert_awaited_once_with(USER_ID)
 
 
 @pytest.mark.asyncio
@@ -288,7 +288,7 @@ async def test_get_config_401_unauthenticated() -> None:
     """GET /admin/org/config returns 401 when unauthenticated."""
     app = FastAPI()
     # Set up app state so get_db and _get_config_service resolve successfully.
-    # require_org_id will raise 401 naturally because no middleware sets org_id.
+    # require_user_id will raise 401 naturally because no middleware sets user_id.
     app.state.db_session_factory = AsyncMock()
     app.state.openbao_client = AsyncMock()
     app.state.redis = AsyncMock()
@@ -314,14 +314,14 @@ async def test_patch_config_requires_scope() -> None:
 
     @app.middleware("http")
     async def _mock_auth(request, call_next):
-        request.state.org_id = str(ORG_ID)
+        request.state.user_id = str(USER_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "api_key"
         request.state.api_key_permissions = ["project:read"]  # No configuration:write
         response = await call_next(request)
         return response
 
-    app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+    app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
     # require_permission("configuration:write") will check the key's
     # permission list and find only ["project:read"] → 403.
     app.include_router(router)

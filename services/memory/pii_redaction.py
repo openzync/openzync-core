@@ -23,7 +23,7 @@ class PIIRedactionMixin:
     _db: Any
     _bao_client: Any
 
-    async def _get_org_pii_config(self, org_id: UUID) -> dict:
+    async def _get_org_pii_config(self, user_id: UUID) -> dict:
         """Fetch PII configuration for an org — OpenBao only, fail-closed.
 
         Any fetch failure raises ``PIIUnavailableError`` (→ 503 +
@@ -37,7 +37,7 @@ class PIIRedactionMixin:
         which keeps the previous effective default of ``mask``.
 
         Args:
-            org_id: The organization UUID.
+            user_id: The organization UUID.
 
         Returns:
             The PII config dict.
@@ -51,7 +51,7 @@ class PIIRedactionMixin:
 
             if self._bao_client is not None:
                 org_cfg = await get_org_config(
-                    org_id, redis=None, bao_client=self._bao_client
+                    user_id, redis=None, bao_client=self._bao_client
                 )
             else:
                 # Lazy temporary client — mirrors _process_blobs pattern.
@@ -66,12 +66,12 @@ class PIIRedactionMixin:
                     timeout=10.0,
                 ) as _tmp_bao:
                     org_cfg = await get_org_config(
-                        org_id, redis=None, bao_client=_tmp_bao
+                        user_id, redis=None, bao_client=_tmp_bao
                     )
         except Exception as exc:
             logger.error(
                 "pii.fail_closed",
-                extra={"org_id": str(org_id), "trace_id": trace_id},
+                extra={"user_id": str(user_id), "trace_id": trace_id},
                 exc_info=True,
             )
             raise PIIUnavailableError("pii_unavailable") from exc
@@ -79,7 +79,7 @@ class PIIRedactionMixin:
         if org_cfg is None:
             logger.error(
                 "pii.fail_closed",
-                extra={"org_id": str(org_id), "trace_id": trace_id},
+                extra={"user_id": str(user_id), "trace_id": trace_id},
             )
             raise PIIUnavailableError("pii_unavailable")
 
@@ -101,7 +101,7 @@ class PIIRedactionMixin:
         mask_service: PIIService,
         content: str,
         *,
-        org_id: UUID,
+        user_id: UUID,
         trace_id: str,
     ) -> str:
         """Redact PII from message content, fail-closed.
@@ -117,7 +117,7 @@ class PIIRedactionMixin:
             pii_service: The org-configured PII service (shared).
             mask_service: The mask-mode fallback for block downgrades (shared).
             content: The raw message content.
-            org_id: The organization UUID (log context only).
+            user_id: The organization UUID (log context only).
             trace_id: The request trace ID (log context only).
 
         Returns:
@@ -133,7 +133,7 @@ class PIIRedactionMixin:
                 redacted, _, _ = await mask_service.process_message(content)
                 logger.info(
                     "memory.pii_blocked_redacted",
-                    extra={"org_id": str(org_id), "trace_id": trace_id},
+                    extra={"user_id": str(user_id), "trace_id": trace_id},
                 )
             return redacted
         except PIIUnavailableError:
@@ -141,13 +141,13 @@ class PIIRedactionMixin:
         except Exception as exc:
             logger.error(
                 "pii.fail_closed",
-                extra={"org_id": str(org_id), "trace_id": trace_id},
+                extra={"user_id": str(user_id), "trace_id": trace_id},
             )
             raise PIIUnavailableError("pii_unavailable") from exc
 
     async def _redact_episodes(
         self,
-        org_id: UUID,
+        user_id: UUID,
         episode_dicts: list[dict[str, Any]],
         job_id: UUID,
     ) -> None:
@@ -159,14 +159,14 @@ class PIIRedactionMixin:
         ``PIIUnavailableError`` and nothing is persisted.
 
         Args:
-            org_id: The organization UUID.
+            user_id: The organization UUID.
             episode_dicts: Mutable per-message dicts (``content`` redacted
                 in place).
             job_id: Ingest job ID (trace fallback).
         """
         from services.pii_service import PIIService
 
-        pii_config_raw = await self._get_org_pii_config(org_id)
+        pii_config_raw = await self._get_org_pii_config(user_id)
         pii_mode = (
             pii_config_raw.get("mode", "mask")
             if isinstance(pii_config_raw, dict)
@@ -192,7 +192,7 @@ class PIIRedactionMixin:
                     pii_service,
                     mask_service,
                     msg_dict["content"],
-                    org_id=org_id,
+                    user_id=user_id,
                     trace_id=trace_id,
                 )
 

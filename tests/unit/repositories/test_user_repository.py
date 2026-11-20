@@ -34,7 +34,7 @@ class TestUserRepository:
     def _mock_user(self, **overrides: object) -> MagicMock:
         u = MagicMock()
         u.id = overrides.get("id", self.USER_ID)
-        u.organization_id = overrides.get("organization_id", self.ORG_ID)
+        u.user_id = overrides.get("user_id", self.ORG_ID)
         u.external_id = overrides.get("external_id", "ext-001")
         u.name = overrides.get("name", "Alice")
         u.email = overrides.get("email", "alice@example.com")
@@ -57,7 +57,6 @@ class TestUserRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.create(
-            organization_id=self.ORG_ID,
             external_id="ext-002",
             name="Bob",
             email="bob@example.com",
@@ -78,7 +77,7 @@ class TestUserRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.create(
-            organization_id=self.ORG_ID, external_id="ext-003"
+            external_id="ext-003"
         )
 
         assert result is not None
@@ -94,7 +93,6 @@ class TestUserRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.create_or_get_by_external_id(
-            organization_id=self.ORG_ID,
             external_id="ext-004",
             name="Carol",
         )
@@ -118,7 +116,6 @@ class TestUserRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.create_or_get_by_external_id(
-            organization_id=self.ORG_ID,
             external_id="ext-005",
             name="Dave",
         )
@@ -142,7 +139,6 @@ class TestUserRepository:
 
         with pytest.raises(NotFoundError, match="Failed to get-or-create"):
             await repo.create_or_get_by_external_id(
-                organization_id=self.ORG_ID,
                 external_id="ext-006",
             )
 
@@ -158,7 +154,7 @@ class TestUserRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_external_id(
-            organization_id=self.ORG_ID, external_id="ext-001"
+            external_id="ext-001"
         )
 
         assert result == user
@@ -172,7 +168,7 @@ class TestUserRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_external_id(
-            organization_id=self.ORG_ID, external_id="nonexistent"
+            external_id="nonexistent"
         )
 
         assert result is None
@@ -189,7 +185,7 @@ class TestUserRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_uuid(
-            organization_id=self.ORG_ID, user_id=self.USER_ID
+            user_id=self.USER_ID
         )
 
         assert result == user
@@ -203,7 +199,7 @@ class TestUserRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_uuid(
-            organization_id=self.ORG_ID, user_id=uuid4()
+            user_id=uuid4()
         )
 
         assert result is None
@@ -222,7 +218,7 @@ class TestUserRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.update(
-            organization_id=self.ORG_ID,
+            
             user_id=self.USER_ID,
             update_fields={"name": "New Name"},
         )
@@ -242,7 +238,7 @@ class TestUserRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.update(
-            organization_id=self.ORG_ID,
+            
             user_id=self.USER_ID,
             update_fields={"metadata": {"key2": None, "key3": "val3"}},
         )
@@ -259,7 +255,7 @@ class TestUserRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.update(
-            organization_id=self.ORG_ID,
+            
             user_id=self.USER_ID,
             update_fields={"name": "Nope"},
         )
@@ -280,7 +276,7 @@ class TestUserRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.soft_delete(
-            organization_id=self.ORG_ID, user_id=self.USER_ID
+            user_id=self.USER_ID
         )
 
         assert result is not None
@@ -297,7 +293,7 @@ class TestUserRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.soft_delete(
-            organization_id=self.ORG_ID, user_id=self.USER_ID
+            user_id=self.USER_ID
         )
 
         assert result is None
@@ -314,7 +310,7 @@ class TestUserRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.hard_delete(
-            organization_id=self.ORG_ID, user_id=self.USER_ID
+            user_id=self.USER_ID
         )
 
         assert result is True
@@ -330,7 +326,7 @@ class TestUserRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.hard_delete(
-            organization_id=self.ORG_ID, user_id=self.USER_ID
+            user_id=self.USER_ID
         )
 
         assert result is False
@@ -347,7 +343,7 @@ class TestUserRepository:
         mock_result.scalars.return_value.all.return_value = users
         mock_db.execute.return_value = mock_result
 
-        result, cursor = await repo.list(organization_id=self.ORG_ID)
+        result, cursor = await repo.list(user_id=self.ORG_ID)
 
         assert result == users
         assert cursor is None
@@ -361,7 +357,7 @@ class TestUserRepository:
         mock_db.execute.return_value = mock_result
 
         result, cursor = await repo.list(
-            organization_id=self.ORG_ID, search="alice"
+            user_id=self.ORG_ID, search="alice"
         )
 
         assert result == []
@@ -375,7 +371,7 @@ class TestUserRepository:
         mock_db.execute.return_value = mock_result
 
         result, cursor = await repo.list(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             created_after=datetime(2024, 1, 1),
             created_before=datetime(2024, 12, 31),
         )
@@ -397,7 +393,7 @@ class TestUserRepository:
         mock_db.execute.return_value = mock_result
 
         result, cursor = await repo.list(
-            organization_id=self.ORG_ID, cursor=valid_cursor
+            user_id=self.ORG_ID, cursor=valid_cursor
         )
 
         assert result == []
@@ -414,7 +410,7 @@ class TestUserRepository:
         mock_db.execute.return_value = mock_result
 
         result, cursor = await repo.list(
-            organization_id=self.ORG_ID, limit=1
+            user_id=self.ORG_ID, limit=1
         )
 
         assert len(result) == 1
@@ -430,7 +426,7 @@ class TestUserRepository:
         mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
-        result, cursor = await repo.list(organization_id=self.ORG_ID)
+        result, cursor = await repo.list(user_id=self.ORG_ID)
 
         assert result == []
         assert cursor is None
@@ -511,7 +507,7 @@ class TestUserRepository:
         mock_db.execute.return_value = mock_result
 
         summary, updated_at = await repo.get_summary(
-            organization_id=self.ORG_ID,
+            
             user_id=self.USER_ID,
         )
 
@@ -527,7 +523,7 @@ class TestUserRepository:
         mock_db.execute.return_value = mock_result
 
         summary, updated_at = await repo.get_summary(
-            organization_id=self.ORG_ID,
+            
             user_id=self.USER_ID,
         )
 
@@ -544,7 +540,7 @@ class TestUserRepository:
         mock_result.scalar.return_value = 7
         mock_db.execute.return_value = mock_result
 
-        count = await repo.count_active(organization_id=self.ORG_ID)
+        count = await repo.count_active(user_id=self.ORG_ID)
 
         assert count == 7
 
@@ -556,7 +552,7 @@ class TestUserRepository:
         mock_result.scalar.return_value = 0
         mock_db.execute.return_value = mock_result
 
-        count = await repo.count_active(organization_id=self.ORG_ID)
+        count = await repo.count_active(user_id=self.ORG_ID)
 
         assert count == 0
 
@@ -571,7 +567,7 @@ class TestUserRepository:
         mock_db.execute.return_value = mock_result
 
         exists = await repo.exists_by_external_id(
-            organization_id=self.ORG_ID, external_id="ext-001"
+            external_id="ext-001"
         )
 
         assert exists is True
@@ -585,7 +581,7 @@ class TestUserRepository:
         mock_db.execute.return_value = mock_result
 
         exists = await repo.exists_by_external_id(
-            organization_id=self.ORG_ID, external_id="nonexistent"
+            external_id="nonexistent"
         )
 
         assert exists is False

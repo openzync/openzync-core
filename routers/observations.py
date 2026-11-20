@@ -89,13 +89,13 @@ async def list_observations(
 ) -> ObservationListResponse:
     """List observations for the current project.
 
-    The ``project_id`` is extracted from the URL path and the ``org_id``
-    from ``request.state.org_id`` (set by the auth middleware).
+    The ``project_id`` is extracted from the URL path and the ``user_id``
+    from ``request.state.user_id`` (set by the auth middleware).
     """
-    org_id = UUID(request.state.org_id)
+    user_id = UUID(request.state.user_id)
     project_id = UUID(request.path_params["project_id"])
     return await service.get_observations(
-        org_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         subject_entity_id=subject_entity_id,
         observation_type=observation_type,

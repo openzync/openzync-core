@@ -44,9 +44,9 @@ async def global_search(
     ),
     db: AsyncSession = Depends(get_db),
     user_id: UUID = Depends(get_current_user_id),
-    # require_permission already depends on require_org_id and returns it —
-    # no separate org_id dependency needed.
-    org_id: str = Depends(require_permission("project:read")),
+    _perm: str = Depends(require_permission("project:read")),  # noqa: B008
+    # require_permission already depends on require_user_id and returns it —
+    # no separate user_id dependency needed.
 ) -> GlobalSearchResponse:
     """Search across the organization for projects, users, and sessions.
 
@@ -62,13 +62,12 @@ async def global_search(
         limit: Maximum results to return (1–50, default 10).
         sort: Result order — ``relevance`` or ``recent``.
         db: An async SQLAlchemy session (injected).
-        org_id: The authenticated organization ID (injected).
         user_id: The authenticated user's UUID (injected).
 
     Returns:
         A :class:`GlobalSearchResponse` with matching results and the
         original query string.
     """
-    service = GlobalSearchService(db, UUID(org_id), user_id)
+    service = GlobalSearchService(db, user_id)
     results = await service.search(query, limit=limit, sort=sort)
     return GlobalSearchResponse(results=results, query=query)

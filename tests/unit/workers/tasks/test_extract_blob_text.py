@@ -689,7 +689,7 @@ class TestExtractBlobText:
             await extract_blob_text(
                 ctx=ctx,
                 blob_id=_BLOB_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 episode_id=_EPISODE_ID,
                 storage_key=_STORAGE_KEY,
@@ -724,7 +724,7 @@ class TestExtractBlobText:
             await extract_blob_text(
                 ctx=ctx,
                 blob_id=_BLOB_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 episode_id=_EPISODE_ID,
                 storage_key=_STORAGE_KEY,
@@ -761,7 +761,7 @@ class TestExtractBlobText:
             await extract_blob_text(
                 ctx=ctx,
                 blob_id=_BLOB_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 episode_id=_EPISODE_ID,
                 storage_key=_STORAGE_KEY,
@@ -829,7 +829,7 @@ class TestExtractBlobText:
             await extract_blob_text(
                 ctx=ctx,
                 blob_id=_BLOB_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 episode_id=_EPISODE_ID,
                 storage_key=_STORAGE_KEY,
@@ -894,7 +894,7 @@ class TestExtractBlobText:
             await extract_blob_text(
                 ctx=ctx,
                 blob_id=_BLOB_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 episode_id=_EPISODE_ID,
                 storage_key=_STORAGE_KEY,
@@ -947,7 +947,7 @@ class TestExtractBlobText:
                 await extract_blob_text(
                     ctx=ctx,
                     blob_id=_BLOB_ID,
-                    org_id=_ORG_ID,
+                    user_id=_ORG_ID,
                     project_id=_PROJECT_ID,
                     episode_id=_EPISODE_ID,
                     storage_key=_STORAGE_KEY,
@@ -988,7 +988,7 @@ class TestExtractBlobText:
             await extract_blob_text(
                 ctx=ctx,
                 blob_id=_BLOB_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 episode_id=_EPISODE_ID,
                 storage_key=_STORAGE_KEY,
@@ -1039,7 +1039,7 @@ class TestExtractBlobText:
             result = await extract_blob_text(
                 ctx=ctx,
                 blob_id=_BLOB_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 episode_id=_EPISODE_ID,
                 storage_key=_STORAGE_KEY,
@@ -1085,7 +1085,7 @@ class TestExtractBlobText:
             await extract_blob_text(
                 ctx=ctx,
                 blob_id=_BLOB_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 episode_id=_EPISODE_ID,
                 storage_key=_STORAGE_KEY,
@@ -1136,7 +1136,7 @@ class TestExtractBlobText:
                 await extract_blob_text(
                     ctx=ctx,
                     blob_id=_BLOB_ID,
-                    org_id=_ORG_ID,
+                    user_id=_ORG_ID,
                     project_id=_PROJECT_ID,
                     episode_id=_EPISODE_ID,
                     storage_key=_STORAGE_KEY,
@@ -1169,7 +1169,7 @@ class TestExtractBlobText:
                 await extract_blob_text(
                     ctx=ctx,
                     blob_id=_BLOB_ID,
-                    org_id=_ORG_ID,
+                    user_id=_ORG_ID,
                     project_id=_PROJECT_ID,
                     episode_id=_EPISODE_ID,
                     storage_key=_STORAGE_KEY,
@@ -1236,7 +1236,7 @@ class TestExtractBlobTextCtxObject:
             await extract_blob_text(
                 ctx=FakeCtx(),
                 blob_id=_BLOB_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 episode_id=_EPISODE_ID,
                 storage_key=_STORAGE_KEY,

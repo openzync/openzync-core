@@ -33,7 +33,7 @@ class TestProjectRepository:
     def _mock_project(self, **overrides: object) -> MagicMock:
         p = MagicMock()
         p.id = overrides.get("id", self.PROJECT_ID)
-        p.organization_id = overrides.get("organization_id", self.ORG_ID)
+        p.user_id = overrides.get("user_id", self.ORG_ID)
         p.name = overrides.get("name", "Test Project")
         p.description = overrides.get("description", "A test project")
         p.created_by = overrides.get("created_by", self.USER_ID)
@@ -62,7 +62,7 @@ class TestProjectRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.create(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             name="New Project",
             created_by=self.USER_ID,
             description="desc",
@@ -83,7 +83,7 @@ class TestProjectRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.create(
-            organization_id=self.ORG_ID, name="Minimal"
+            user_id=self.ORG_ID, name="Minimal"
         )
 
         assert result is not None
@@ -100,7 +100,7 @@ class TestProjectRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_id(
-            organization_id=self.ORG_ID, project_id=self.PROJECT_ID
+            user_id=self.ORG_ID, project_id=self.PROJECT_ID
         )
 
         assert result == project
@@ -114,7 +114,7 @@ class TestProjectRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_id(
-            organization_id=self.ORG_ID, project_id=self.PROJECT_ID
+            user_id=self.ORG_ID, project_id=self.PROJECT_ID
         )
 
         assert result is None
@@ -131,7 +131,7 @@ class TestProjectRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_name(
-            organization_id=self.ORG_ID, name="My Project"
+            user_id=self.ORG_ID, name="My Project"
         )
 
         assert result == project
@@ -145,7 +145,7 @@ class TestProjectRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_name(
-            organization_id=self.ORG_ID, name="Nonexistent"
+            user_id=self.ORG_ID, name="Nonexistent"
         )
 
         assert result is None
@@ -162,7 +162,7 @@ class TestProjectRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.list(
-            organization_id=self.ORG_ID, user_id=None
+            user_id=None
         )
 
         assert result == projects
@@ -176,7 +176,7 @@ class TestProjectRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.list(
-            organization_id=self.ORG_ID, user_id=self.USER_ID
+            user_id=self.USER_ID
         )
 
         assert result == []
@@ -190,7 +190,7 @@ class TestProjectRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.list(
-            organization_id=self.ORG_ID, user_id=None, limit=10, offset=5
+            user_id=None, limit=10, offset=5
         )
 
         assert result == []
@@ -209,7 +209,7 @@ class TestProjectRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.update(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             name="Updated",
             description="New desc",
@@ -231,7 +231,7 @@ class TestProjectRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.update(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             name="Only Name",
         )
@@ -248,7 +248,7 @@ class TestProjectRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.update(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             name="Nope",
         )
@@ -267,7 +267,7 @@ class TestProjectRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.archive(
-            organization_id=self.ORG_ID, project_id=self.PROJECT_ID
+            user_id=self.ORG_ID, project_id=self.PROJECT_ID
         )
 
         assert result is not None
@@ -284,7 +284,7 @@ class TestProjectRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.archive(
-            organization_id=self.ORG_ID, project_id=self.PROJECT_ID
+            user_id=self.ORG_ID, project_id=self.PROJECT_ID
         )
 
         assert result is None
@@ -299,7 +299,7 @@ class TestProjectRepository:
         mock_result.scalar.return_value = 5
         mock_db.execute.return_value = mock_result
 
-        count = await repo.count_active(organization_id=self.ORG_ID)
+        count = await repo.count_active(user_id=self.ORG_ID)
 
         assert count == 5
 
@@ -311,7 +311,7 @@ class TestProjectRepository:
         mock_result.scalar.return_value = 0
         mock_db.execute.return_value = mock_result
 
-        count = await repo.count_active(organization_id=self.ORG_ID)
+        count = await repo.count_active(user_id=self.ORG_ID)
 
         assert count == 0
 

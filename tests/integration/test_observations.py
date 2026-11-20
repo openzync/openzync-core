@@ -51,11 +51,11 @@ class TestObservationBackend:
             await db.execute(
                 sa_text(
                     "INSERT INTO graph_entities "
-                    "(id, organization_id, project_id, name, entity_type) "
-                    "VALUES (:id, :org_id, :proj_id, :name, 'test') "
+                    "(id, user_id, project_id, name, entity_type) "
+                    "VALUES (:id, :user_id, :proj_id, :name, 'test') "
                     "ON CONFLICT (id) DO NOTHING"
                 ),
-                {"id": eid, "org_id": ORG_ID, "proj_id": PROJECT_ID,
+                {"id": eid, "user_id": ORG_ID, "proj_id": PROJECT_ID,
                  "name": name},
             )
         await db.flush()
@@ -66,11 +66,11 @@ class TestObservationBackend:
         await db.execute(
             sa_text(
                 "INSERT INTO graph_entities "
-                "(id, organization_id, project_id, name, entity_type) "
-                "VALUES (:id, :org_id, :proj_id, :name, 'test') "
+                "(id, user_id, project_id, name, entity_type) "
+                "VALUES (:id, :user_id, :proj_id, :name, 'test') "
                 "ON CONFLICT (id) DO NOTHING"
             ),
-            {"id": eid, "org_id": ORG_ID, "proj_id": PROJECT_ID, "name": name},
+            {"id": eid, "user_id": ORG_ID, "proj_id": PROJECT_ID, "name": name},
         )
         await db.flush()
 
@@ -91,7 +91,7 @@ class TestObservationBackend:
         async def _test(db: AsyncSession, backend: PostgresGraphBackend) -> None:
             await self._seed_entity(db, self._ENTITY_A, "Alice")
             await backend.upsert_observation(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
@@ -113,7 +113,7 @@ class TestObservationBackend:
             await self._seed_entity(db, self._ENTITY_A, "Alice")
             # First insert
             await backend.upsert_observation(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
@@ -123,7 +123,7 @@ class TestObservationBackend:
             )
             # Second upsert with different content — same dedup key
             await backend.upsert_observation(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
@@ -147,7 +147,7 @@ class TestObservationBackend:
 
             # Entity-level: related_entity_id is NULL
             await backend.upsert_observation(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.CO_OCCURRENCE),
@@ -157,7 +157,7 @@ class TestObservationBackend:
             )
             # Pair-level: related_entity_id is set
             await backend.upsert_observation(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.CO_OCCURRENCE),
@@ -179,14 +179,14 @@ class TestObservationBackend:
             await self._seed_entity(db, self._ENTITY_B, "Bob")
 
             await backend.upsert_observation(
-                org_id=ORG_ID, project_id=PROJECT_ID,
+                user_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
                 content="Alice pattern.", confidence=0.8,
                 related_entity_id=None,
             )
             await backend.upsert_observation(
-                org_id=ORG_ID, project_id=PROJECT_ID,
+                user_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_B,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
                 content="Bob pattern.", confidence=0.7,
@@ -213,14 +213,14 @@ class TestObservationBackend:
             await self._seed_entity(db, self._ENTITY_A, "Alice")
 
             await backend.upsert_observation(
-                org_id=ORG_ID, project_id=PROJECT_ID,
+                user_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
                 content="Temporal", confidence=0.8,
                 related_entity_id=None,
             )
             await backend.upsert_observation(
-                org_id=ORG_ID, project_id=PROJECT_ID,
+                user_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.BEHAVIORAL_PATTERN),
                 content="Behavioral", confidence=0.7,
@@ -251,7 +251,7 @@ class TestObservationBackend:
 
             # Observation: Alice → Bob
             await backend.upsert_observation(
-                org_id=ORG_ID, project_id=PROJECT_ID,
+                user_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.CO_OCCURRENCE),
                 content="Alice with Bob.", confidence=0.8,
@@ -278,14 +278,14 @@ class TestObservationBackend:
 
             # Upsert two distinct observations
             await backend.upsert_observation(
-                org_id=ORG_ID, project_id=PROJECT_ID,
+                user_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
                 content="Obs 1", confidence=0.5,
                 related_entity_id=None,
             )
             await backend.upsert_observation(
-                org_id=ORG_ID, project_id=PROJECT_ID,
+                user_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_B,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
                 content="Obs 2", confidence=0.5,
@@ -293,7 +293,7 @@ class TestObservationBackend:
             )
             # Third upsert with same dedup key as first — update, not insert
             await backend.upsert_observation(
-                org_id=ORG_ID, project_id=PROJECT_ID,
+                user_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
                 content="Obs 1 updated", confidence=0.6,
@@ -350,6 +350,19 @@ class TestObservationServicePipeline:
           - X → Y ``works_with`` (valid)
           - X → Z ``mentions`` (valid)
         """
+        # All rows share ORG_ID (the scan's user_id) so backend/service
+        # queries filtered by that user see them under user_isolation RLS.
+        _USER_ID = ORG_ID
+        _SESSION_ID = uuid4()
+        await db.execute(
+            sa_text(
+                "INSERT INTO users (id, external_id, name, "
+                "role, is_active) VALUES (:uid, :eid, :name, "
+                "'member', true) ON CONFLICT (id) DO NOTHING"
+            ),
+            {"uid": _USER_ID,
+             "eid": f"test-user-{_USER_ID}", "name": "Pipeline Test User"},
+        )
         # ── Entities ───────────────────────────────────────────────────────
         for eid, name, etype in [
             (self._ENTITY_X, "UserX", "user"),
@@ -359,34 +372,23 @@ class TestObservationServicePipeline:
             await db.execute(
                 sa_text(
                     "INSERT INTO graph_entities "
-                    "(id, organization_id, project_id, name, entity_type) "
-                    "VALUES (:id, :org_id, :proj_id, :name, :etype) "
+                    "(id, user_id, project_id, name, entity_type) "
+                    "VALUES (:id, :user_id, :proj_id, :name, :etype) "
                     "ON CONFLICT (id) DO NOTHING"
                 ),
-                {"id": eid, "org_id": ORG_ID, "proj_id": PROJECT_ID,
+                {"id": eid, "user_id": _USER_ID, "proj_id": PROJECT_ID,
                  "name": name, "etype": etype},
             )
 
-        # ── Seed a user + session for episode FK references ────────────────
-        _USER_ID = uuid4()
-        _SESSION_ID = uuid4()
+        # ── Seed the session for episode FK references ───────────────────
         await db.execute(
             sa_text(
-                "INSERT INTO users (id, organization_id, external_id, name, "
-                "role, is_active) VALUES (:uid, :org_id, :eid, :name, "
-                "'member', true) ON CONFLICT (id) DO NOTHING"
-            ),
-            {"uid": _USER_ID, "org_id": ORG_ID,
-             "eid": f"test-user-{_USER_ID}", "name": "Pipeline Test User"},
-        )
-        await db.execute(
-            sa_text(
-                "INSERT INTO sessions (id, organization_id, project_id, "
-                "user_id, external_id, is_active) "
-                "VALUES (:sid, :org_id, :proj_id, :uid, :eid, true) "
+                "INSERT INTO sessions (id, user_id, project_id, "
+                "external_id, is_active) "
+                "VALUES (:sid, :uid, :proj_id, :eid, true) "
                 "ON CONFLICT (id) DO NOTHING"
             ),
-            {"sid": _SESSION_ID, "org_id": ORG_ID, "proj_id": PROJECT_ID,
+            {"sid": _SESSION_ID, "proj_id": PROJECT_ID,
              "uid": _USER_ID, "eid": "test-session"},
         )
 
@@ -398,16 +400,16 @@ class TestObservationServicePipeline:
             await db.execute(
                 sa_text(
                     "INSERT INTO episodes "
-                    "(id, organization_id, project_id, session_id, "
-                    " user_id, role, content, token_count, "
+                    "(id, user_id, project_id, session_id, "
+                    " role, content, token_count, "
                     " sequence_number, enrichment_status, "
                     " created_at, updated_at) "
-                    "VALUES (:id, :org_id, :proj_id, :sid, :uid, "
+                    "VALUES (:id, :uid, :proj_id, :sid, "
                     " 'user', :content, 0, :seq, 127, "
                     " :created_at, :created_at) "
                     "ON CONFLICT (id) DO NOTHING"
                 ),
-                {"id": eid, "org_id": ORG_ID, "proj_id": PROJECT_ID,
+                {"id": eid, "proj_id": PROJECT_ID,
                  "sid": _SESSION_ID, "uid": _USER_ID,
                  "content": f"Episode {idx}", "seq": idx,
                  "created_at": created_at},
@@ -476,20 +478,20 @@ class TestObservationServicePipeline:
                 await db.execute(
                     sa_text(
                         "INSERT INTO facts "
-                        "(id, user_id, organization_id, project_id, "
+                        "(id, user_id, project_id, "
                         " source_episode_id, subject_entity_id, "
                         " subject, predicate, object, "
                         " content, confidence, "
                         " valid_from, created_at, updated_at) "
-                        "VALUES (:id, :user_id, :org_id, :proj_id, "
+                        "VALUES (:id, :uid, :proj_id, "
                         " :ep_id, :subj_entity, "
                         " :subj_str, :pred, :obj, "
                         " :content, 1.0, "
                         " NOW(), NOW(), NOW()) "
                         "ON CONFLICT (id) DO NOTHING"
                     ),
-                    {"id": uuid4(), "user_id": _USER_ID,
-                     "org_id": ORG_ID, "proj_id": PROJECT_ID,
+                    {"id": uuid4(), "uid": _USER_ID,
+                     "proj_id": PROJECT_ID,
                      "ep_id": ep_id, "subj_entity": subj,
                      "subj_str": subj.hex, "pred": pred, "obj": obj,
                      "content": f"{pred}: {obj}"},
@@ -500,28 +502,28 @@ class TestObservationServicePipeline:
             await db.execute(
                 sa_text(
                     "INSERT INTO graph_relationships "
-                    "(id, organization_id, project_id, "
+                    "(id, user_id, project_id, "
                     " source_id, target_id, relationship_type, "
                     " created_at, updated_at) "
-                    "VALUES (:id, :org_id, :proj_id, "
+                    "VALUES (:id, :user_id, :proj_id, "
                     " :src, :tgt, :rtype, NOW(), NOW()) "
                     "ON CONFLICT (id) DO NOTHING"
                 ),
-                {"id": uuid4(), "org_id": ORG_ID, "proj_id": PROJECT_ID,
+                {"id": uuid4(), "user_id": ORG_ID, "proj_id": PROJECT_ID,
                  "src": self._ENTITY_X, "tgt": self._ENTITY_Y,
                  "rtype": "works_with"},
             )
             await db.execute(
                 sa_text(
                     "INSERT INTO graph_relationships "
-                    "(id, organization_id, project_id, "
+                    "(id, user_id, project_id, "
                     " source_id, target_id, relationship_type, "
                     " created_at, updated_at) "
-                    "VALUES (:id, :org_id, :proj_id, "
+                    "VALUES (:id, :user_id, :proj_id, "
                     " :src, :tgt, :rtype, NOW(), NOW()) "
                     "ON CONFLICT (id) DO NOTHING"
                 ),
-                {"id": uuid4(), "org_id": ORG_ID, "proj_id": PROJECT_ID,
+                {"id": uuid4(), "user_id": ORG_ID, "proj_id": PROJECT_ID,
                  "src": self._ENTITY_X, "tgt": self._ENTITY_Z,
                  "rtype": "mentions"},
             )
@@ -555,7 +557,7 @@ class TestObservationServicePipeline:
 
             counts = await service.run_full_project_scan(
                 project_id=PROJECT_ID,
-                organization_id=ORG_ID,
+                user_id=ORG_ID,
                 llm_backend=None,  # Use template descriptions
             )
 

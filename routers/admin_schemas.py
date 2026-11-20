@@ -59,7 +59,7 @@ def _get_schema_service(
 async def create_schema(
     payload: CreateExtractionSchemaRequest,
     service: SchemaService = Depends(_get_schema_service),
-    org_id: str = Depends(require_permission("configuration:write")),
+    user_id: str = Depends(require_permission("configuration:write")),
 ) -> ExtractionSchemaResponse:
     """Create a new extraction or classification schema.
 
@@ -68,7 +68,7 @@ async def create_schema(
     follow the expected classification label structure.
     """
     return await service.create_schema(
-        org_id=UUID(org_id),
+        user_id=UUID(user_id),
         payload=payload,
     )
 
@@ -96,7 +96,7 @@ async def list_schemas(
         description="Sort direction (default desc).",
     ),
     service: SchemaService = Depends(_get_schema_service),
-    org_id: str = Depends(require_permission("configuration:read")),
+    user_id: str = Depends(require_permission("configuration:read")),
 ) -> ExtractionSchemaListResponse:
     """List all schemas for the authenticated organization.
 
@@ -104,7 +104,7 @@ async def list_schemas(
     ``is_active`` status.
     """
     schemas = await service.list_schemas(
-        org_id=UUID(org_id),
+        user_id=UUID(user_id),
         schema_type=type,
         is_active=is_active,
         sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
@@ -124,7 +124,7 @@ async def preview_schema_extraction(
     request: Request,
     service: SchemaService = Depends(_get_schema_service),
     org_config: OrgConfigBase = Depends(get_org_config_dep),
-    org_id: str = Depends(require_permission("configuration:read")),
+    user_id: str = Depends(require_permission("configuration:read")),
 ) -> PreviewExtractionResponse:
     """Preview structured extraction against a candidate schema.
 
@@ -138,7 +138,7 @@ async def preview_schema_extraction(
         sample_text=payload.sample_text,
         prompt_template=payload.prompt_template,
         llm_config=org_config.to_llm_config_dict(),
-        org_id=UUID(org_id),
+        user_id=UUID(user_id),
         session_factory=request.app.state.db_session_factory,
     )
 
@@ -151,7 +151,7 @@ async def preview_schema_extraction(
 )
 async def list_schema_templates(
     service: SchemaService = Depends(_get_schema_service),
-    org_id: str = Depends(require_permission("configuration:read")),
+    user_id: str = Depends(require_permission("configuration:read")),
 ) -> list[SchemaTemplateResponse]:
     """List the static starter schema templates.
 
@@ -169,11 +169,11 @@ async def list_schema_templates(
 async def get_schema(
     schema_id: UUID,
     service: SchemaService = Depends(_get_schema_service),
-    org_id: str = Depends(require_permission("configuration:read")),
+    user_id: str = Depends(require_permission("configuration:read")),
 ) -> ExtractionSchemaResponse:
     """Get a single schema by ID.  Scoped to the authenticated organization."""
     return await service.get_schema(
-        org_id=UUID(org_id),
+        user_id=UUID(user_id),
         schema_id=schema_id,
     )
 
@@ -187,7 +187,7 @@ async def update_schema(
     schema_id: UUID,
     payload: UpdateExtractionSchemaRequest,
     service: SchemaService = Depends(_get_schema_service),
-    org_id: str = Depends(require_permission("configuration:write")),
+    user_id: str = Depends(require_permission("configuration:write")),
 ) -> ExtractionSchemaResponse:
     """Update an existing schema.
 
@@ -195,7 +195,7 @@ async def update_schema(
     Name uniqueness is enforced within the organization.
     """
     return await service.update_schema(
-        org_id=UUID(org_id),
+        user_id=UUID(user_id),
         schema_id=schema_id,
         payload=payload,
     )
@@ -209,7 +209,7 @@ async def update_schema(
 async def delete_schema(
     schema_id: UUID,
     service: SchemaService = Depends(_get_schema_service),
-    org_id: str = Depends(require_permission("configuration:write")),
+    user_id: str = Depends(require_permission("configuration:write")),
 ) -> Response:
     """Soft-delete a schema (set ``is_active`` to ``false``).
 
@@ -220,7 +220,7 @@ async def delete_schema(
     # a JSON `null` body on the 204, which uvicorn rejects and rolls back
     # the delete in get_db teardown after 204 headers flush.
     await service.delete_schema(
-        org_id=UUID(org_id),
+        user_id=UUID(user_id),
         schema_id=schema_id,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -54,7 +54,7 @@ class SessionService:
 
     async def create_session(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         created_by: UUID,
         external_id: str,
@@ -63,7 +63,7 @@ class SessionService:
         """Create a new session within a project.
 
         Args:
-            organization_id: The organization UUID for tenant isolation.
+            user_id: The organization UUID for tenant isolation.
             project_id: The project UUID the session belongs to.
             created_by: The UUID of the user creating the session.
             external_id: Caller-defined session identifier (unique per project).
@@ -78,7 +78,7 @@ class SessionService:
         """
         # Check for duplicates before inserting.
         existing = await self._repo.get_by_external_id(
-            organization_id, project_id, external_id
+            user_id, project_id, external_id
         )
         if existing is not None:
             raise ConflictError(
@@ -86,7 +86,7 @@ class SessionService:
             )
 
         session = await self._repo.create(
-            organization_id=organization_id,
+            user_id=user_id,
             project_id=project_id,
             created_by=created_by,
             external_id=external_id,
@@ -105,7 +105,7 @@ class SessionService:
 
         if self._webhook_service:
             await self._webhook_service.emit(
-                organization_id=organization_id,
+                user_id=user_id,
                 event_type=EventType.SESSION_CREATED,
                 payload={
                     "session_id": str(session.id),
@@ -122,12 +122,12 @@ class SessionService:
     # ── Get ─────────────────────────────────────────────────────────────────
 
     async def get_session(
-        self, org_id: UUID, session_id: UUID, project_id: UUID | None = None
+        self, user_id: UUID, session_id: UUID, project_id: UUID | None = None
     ) -> SessionResponse:
         """Get session by UUID with aggregate statistics.
 
         Args:
-            org_id: The organization UUID for tenant isolation.
+            user_id: The organization UUID for tenant isolation.
             session_id: The session's UUID.
             project_id: Optional project UUID for intra-org isolation.
 
@@ -138,13 +138,13 @@ class SessionService:
             NotFoundError: Session not found or soft-deleted.
         """
         session = await self._repo.get_by_uuid(
-            org_id, session_id, project_id=project_id
+            user_id, session_id, project_id=project_id
         )
         if session is None:
             raise NotFoundError(f"Session {session_id} not found")
 
         stats = await self._repo.get_stats(session_id)
-        observation_count = await self._repo.get_observation_count(org_id, project_id) if project_id else 0
+        observation_count = await self._repo.get_observation_count(user_id, project_id) if project_id else 0
 
         return SessionResponse.model_validate(
             session_to_dict(
@@ -157,12 +157,12 @@ class SessionService:
         )
 
     async def get_session_by_external_id(
-        self, org_id: UUID, project_id: UUID, external_id: str
+        self, user_id: UUID, project_id: UUID, external_id: str
     ) -> SessionResponse:
         """Get a session within a project by its external_id.
 
         Args:
-            org_id: The organization UUID for tenant isolation.
+            user_id: The organization UUID for tenant isolation.
             project_id: The project UUID.
             external_id: The caller-defined session identifier.
 
@@ -173,7 +173,7 @@ class SessionService:
             NotFoundError: Session not found or soft-deleted.
         """
         session = await self._repo.get_by_external_id(
-            org_id, project_id, external_id
+            user_id, project_id, external_id
         )
         if session is None:
             raise NotFoundError(
@@ -182,7 +182,7 @@ class SessionService:
             )
 
         stats = await self._repo.get_stats(session.id)
-        observation_count = await self._repo.get_observation_count(org_id, project_id)
+        observation_count = await self._repo.get_observation_count(user_id, project_id)
 
         return SessionResponse.model_validate(
             session_to_dict(
@@ -195,7 +195,7 @@ class SessionService:
 
     async def get_session_by_uuid(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         project_id: UUID | None = None,
     ) -> SessionResponse:
@@ -205,7 +205,7 @@ class SessionService:
         external_id resolution.
 
         Args:
-            org_id: The organization UUID for tenant isolation.
+            user_id: The organization UUID for tenant isolation.
             session_id: The session's UUID.
             project_id: Optional project UUID for intra-org isolation.
 
@@ -215,13 +215,13 @@ class SessionService:
         Raises:
             NotFoundError: Session not found or soft-deleted.
         """
-        return await self.get_session(org_id, session_id, project_id=project_id)
+        return await self.get_session(user_id, session_id, project_id=project_id)
 
     # ── List ────────────────────────────────────────────────────────────────
 
     async def list_sessions(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         limit: int = 50,
         cursor: str | None = None,
@@ -234,7 +234,7 @@ class SessionService:
         Default order ``created_at DESC``.
 
         Args:
-            org_id: The organization UUID for tenant isolation.
+            user_id: The organization UUID for tenant isolation.
             project_id: The project UUID.
             limit: Maximum items per page (1–200).
             cursor: Opaque base64 cursor from a previous page.
@@ -251,7 +251,7 @@ class SessionService:
             raise ValidationError("limit must be between 1 and 200")
 
         sessions, next_cursor = await self._repo.list(
-            org_id=org_id,
+            user_id=user_id,
             project_id=project_id,
             limit=limit,
             cursor=cursor,
@@ -261,7 +261,7 @@ class SessionService:
 
         # Batch-load message and fact counts — one query instead of N+1.
         session_ids = [s.id for s in sessions]
-        stats = await self._repo.batch_get_stats(session_ids, org_id) if session_ids else {}
+        stats = await self._repo.batch_get_stats(session_ids, user_id) if session_ids else {}
 
         items = [
             SessionListResponse.model_validate(
@@ -284,7 +284,7 @@ class SessionService:
 
     async def get_messages(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         limit: int = 100,
         cursor: str | None = None,
@@ -298,7 +298,7 @@ class SessionService:
         an alt without breaking the default.
 
         Args:
-            org_id: The organization UUID for tenant isolation.
+            user_id: The organization UUID for tenant isolation.
             session_id: The session's UUID.
             limit: Maximum items per page (1–500).
             cursor: Opaque base64 cursor from a previous page.
@@ -317,13 +317,13 @@ class SessionService:
 
         # Verify the session exists before fetching messages.
         session = await self._repo.get_by_uuid(
-            org_id, session_id, project_id=project_id
+            user_id, session_id, project_id=project_id
         )
         if session is None:
             raise NotFoundError(f"Session {session_id} not found")
 
         messages, next_cursor = await self._repo.get_messages(
-            org_id=org_id,
+            user_id=user_id,
             session_id=session_id,
             limit=limit,
             cursor=cursor,
@@ -371,12 +371,12 @@ class SessionService:
     # ── Delete ──────────────────────────────────────────────────────────────
 
     async def delete_session(
-        self, org_id: UUID, session_id: UUID, project_id: UUID | None = None
+        self, user_id: UUID, session_id: UUID, project_id: UUID | None = None
     ) -> None:
         """Soft-delete a session, scoped to org and optionally project.
 
         Args:
-            org_id: The organization UUID for tenant isolation.
+            user_id: The organization UUID for tenant isolation.
             session_id: The session's UUID.
             project_id: Optional project UUID for intra-org isolation.
 
@@ -384,7 +384,7 @@ class SessionService:
             NotFoundError: Session not found or already deleted.
         """
         session = await self._repo.soft_delete(
-            org_id, session_id, project_id=project_id
+            user_id, session_id, project_id=project_id
         )
         if session is None:
             raise NotFoundError(f"Session {session_id} not found")
@@ -399,7 +399,7 @@ class SessionService:
 
         if self._webhook_service:
             await self._webhook_service.emit(
-                organization_id=org_id,
+                user_id=user_id,
                 event_type=EventType.SESSION_CLOSED,
                 payload={
                     "session_id": str(session_id),

@@ -65,6 +65,12 @@ flows that cannot know their tenant up front:
     after the tenant context is known and is therefore org-scoped like
     every other write.)
 
+NOTE (single platform org): signup no longer creates orgs and join no
+longer presents codes, so ``org_anon_insert`` and the
+``org_join_code_lookup`` SELECT policy below are dead policies kept for
+backward-compat (RLS unit tests assert their shape).  Do not build new
+flows on them; removal waits on the test contracts.
+
 The ``audit_logs`` policy is tightened as well: it no longer admits the
 organization-less rows (the platform-level audit trail of unauthenticated
 requests) to a tenant-bound session, and the application layer filters the
@@ -341,10 +347,22 @@ def downgrade() -> None:
         admit_null_org=True,
     )
 
+    # 0061 drops ``prompt_templates`` (its downgrade is a deliberate no-op),
+    # so a full ``downgrade base`` from ≥0061 must skip tables that no longer
+    # exist. Downgrade-only guard — the upgrade path is untouched.
+    existing = {
+        row[0]
+        for row in op.get_bind().exec_driver_sql(
+            "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+        )
+    }
+
     for table in _all_policy_tables():
-        op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
+        if table in existing:
+            op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
 
     # Restore "no RLS at all" for the five tables this revision added.
     for table in _ADDED_ORG_SCOPED_TABLES:
-        op.execute(f"DROP POLICY IF EXISTS org_isolation_{table} ON {table}")
-        op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+        if table in existing:
+            op.execute(f"DROP POLICY IF EXISTS org_isolation_{table} ON {table}")
+            op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")

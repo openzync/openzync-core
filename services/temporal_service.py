@@ -96,7 +96,7 @@ class TemporalValidationService:
         self,
         project_id: UUID,
         *,
-        organization_id: UUID | None = None,
+        user_id: UUID | None = None,
     ) -> list[dict[str, Any]]:
         """Scan all non-invalidated facts in a project for overlapping triples
         across different source episodes.
@@ -108,7 +108,7 @@ class TemporalValidationService:
 
         Args:
             project_id: The project to scan.
-            organization_id: Optional tenant filter for defense-in-depth.
+            user_id: Optional tenant filter for defense-in-depth.
 
         Returns:
             A list of warning dicts, each with ``code``, ``message``, and
@@ -118,7 +118,7 @@ class TemporalValidationService:
 
         facts = await self._fact_repo.get_all_active_for_project(
             project_id=project_id,
-            organization_id=organization_id,
+
         )
 
         # Group by (subject, predicate, object)
@@ -185,7 +185,7 @@ class TemporalValidationService:
         self,
         project_id: UUID,
         *,
-        organization_id: UUID | None = None,
+        user_id: UUID | None = None,
     ) -> list[dict[str, Any]]:
         """Scan all non-invalidated facts for invalid temporal ranges.
 
@@ -197,7 +197,7 @@ class TemporalValidationService:
 
         Args:
             project_id: The project to scan.
-            organization_id: Optional tenant filter for defense-in-depth.
+            user_id: Optional tenant filter for defense-in-depth.
 
         Returns:
             A list of warning dicts, empty if no issues found.
@@ -208,7 +208,7 @@ class TemporalValidationService:
 
         facts = await self._fact_repo.get_all_active_for_project(
             project_id=project_id,
-            organization_id=organization_id,
+
         )
 
         for fact in facts:

@@ -29,7 +29,7 @@ class Fact(TimestampMixin, Base):
     Attributes:
         id: UUID primary key.
         user_id: Foreign key to the owning user.
-        organization_id: Denormalized organization ID for RLS enforcement.
+        user_id: Denormalized organization ID for RLS enforcement.
         content: Human-readable fact statement (e.g., "Alice likes hiking").
         subject: The subject of the triple (e.g., "Alice").
         predicate: The relationship/predicate (e.g., "likes").
@@ -74,12 +74,6 @@ class Fact(TimestampMixin, Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         # index defined explicitly in __table_args__ below
-    )
-    organization_id: Mapped[uuid.UUID] = mapped_column(
-        # No FK constraint — this is denormalized for RLS performance
-        # Must be kept in sync with the user's organization_id at write time
-        # ⚠️ data integrity is application-enforced, not DB-enforced
-        nullable=False,
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     subject: Mapped[str | None] = mapped_column(Text, nullable=True)

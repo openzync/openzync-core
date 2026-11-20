@@ -8,7 +8,7 @@ Usage::
 
     async with OpenBaoClient(addr, role_id, secret_id) as bao:
         config = await bao.read_system_config()
-        await bao.write_org_config(org_id, {"llm_api_key": "sk-..."})
+        await bao.write_org_config(user_id, {"llm_api_key": "sk-..."})
 """
 
 from __future__ import annotations
@@ -741,33 +741,33 @@ class OpenBaoClient:
     # ═════════════════════════════════════════════════════════════════════════
 
     @staticmethod
-    def _org_ns(org_id: UUID, parent: str = "") -> str:
+    def _org_ns(user_id: UUID, parent: str = "") -> str:
         """Build the namespace path for an organisation.
 
         Args:
-            org_id: Organisation UUID.
+            user_id: Organisation UUID.
             parent: Parent namespace to prepend (e.g. ``system/``).
                     Defaults to the client's namespace.
 
         Returns:
             Namespace string (e.g. ``system/org_<uuid>/``).
         """
-        return f"{parent}{ORG_NAMESPACE_PREFIX}{org_id}/"
+        return f"{parent}{ORG_NAMESPACE_PREFIX}{user_id}/"
 
-    async def read_org_config(self, org_id: UUID) -> dict[str, Any]:
+    async def read_org_config(self, user_id: UUID) -> dict[str, Any]:
         """Read all configuration keys for an organisation.
 
         Same pattern as :meth:`read_system_config` but scoped to the
         organisation's own namespace.
 
         Args:
-            org_id: Organisation UUID.
+            user_id: Organisation UUID.
 
         Returns:
             Flat dict of key/value pairs, or empty dict if no config
             exists yet.
         """
-        ns = self._org_ns(org_id, parent=self._namespace or "")
+        ns = self._org_ns(user_id, parent=self._namespace or "")
         try:
             keys = await self._kv_list(f"{KV_MOUNT}/metadata/", namespace=ns)
         except OpenBaoSecretNotFoundError:
@@ -785,7 +785,7 @@ class OpenBaoClient:
 
     async def write_org_config(
         self,
-        org_id: UUID,
+        user_id: UUID,
         config: dict[str, Any],
     ) -> None:
         """Write organisation-level configuration key/value pairs.
@@ -797,7 +797,7 @@ class OpenBaoClient:
         rather than written.
 
         Args:
-            org_id: Organisation UUID.
+            user_id: Organisation UUID.
             config: Flat dict of key/value pairs.  ``None`` values
                 trigger deletion.
         """
@@ -806,9 +806,9 @@ class OpenBaoClient:
         # first config write without a namespace.  Ensure it exists — idempotent
         # no-op when already present.  Verified: the AppRole token can create
         # org namespaces.
-        await self.create_org_namespace(org_id)
+        await self.create_org_namespace(user_id)
 
-        ns = self._org_ns(org_id, parent=self._namespace or "")
+        ns = self._org_ns(user_id, parent=self._namespace or "")
         for key, value in config.items():
             path = f"{KV_MOUNT}/data/{key}"
             if value is None:
@@ -816,7 +816,7 @@ class OpenBaoClient:
             else:
                 await self._kv_write(path, {"value": value}, namespace=ns)
 
-    async def create_org_namespace(self, org_id: UUID) -> None:
+    async def create_org_namespace(self, user_id: UUID) -> None:
         """Bootstrap a namespace for a new organisation.
 
         Creates the ``org_<uuid>`` namespace and enables a KV v2 secrets
@@ -826,10 +826,10 @@ class OpenBaoClient:
         already exist, they are silently skipped.
 
         Args:
-            org_id: Organisation UUID.
+            user_id: Organisation UUID.
         """
-        ns_name = f"{ORG_NAMESPACE_PREFIX}{org_id}"
-        ns_path = self._org_ns(org_id, parent=self._namespace or "")
+        ns_name = f"{ORG_NAMESPACE_PREFIX}{user_id}"
+        ns_path = self._org_ns(user_id, parent=self._namespace or "")
         # Create namespace under system/ so AppRole token (scoped to system/)
         # can operate within org_<uuid>/ via X-Vault-Namespace header.
         await self.create_namespace(ns_name, parent="system/")
@@ -838,15 +838,15 @@ class OpenBaoClient:
         await self.enable_kv_v2(KV_MOUNT, namespace=ns_path, use_root_token=True)
         logger.debug("org namespace ensured: %s", ns_name)
 
-    async def delete_org_namespace(self, org_id: UUID) -> None:
+    async def delete_org_namespace(self, user_id: UUID) -> None:
         """Tear down the namespace for an organisation.
 
         Deletes the ``org_<uuid>`` namespace and all secrets within it.
 
         Args:
-            org_id: Organisation UUID.
+            user_id: Organisation UUID.
         """
-        ns_name = f"{ORG_NAMESPACE_PREFIX}{org_id}"
+        ns_name = f"{ORG_NAMESPACE_PREFIX}{user_id}"
         await self.delete_namespace(ns_name)
 
     # ═════════════════════════════════════════════════════════════════════════

@@ -67,7 +67,7 @@ async def test_setup_full_flow(
     async with isolated_app.state.db_session_factory() as session:
         org = await OrganizationRepository(session).get_platform_org()
         assert org is not None
-        assert org.name == "SYSTEM"
+        assert org.name == "Platform"
         root = await UserRepository(session).get_platform_root()
         assert root is not None
         assert root.role == "superadmin"

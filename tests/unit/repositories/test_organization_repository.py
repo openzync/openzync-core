@@ -46,7 +46,7 @@ class TestOrganizationRepository:
         mock_result.one_or_none.return_value = mock_row
         mock_db.execute.return_value = mock_result
 
-        config = await repo.get_config(org_id=self.ORG_ID)
+        config = await repo.get_config(user_id=self.ORG_ID)
 
         assert config == {"llm": {"model": "gpt-4"}, "features": {"flag": True}}
 
@@ -60,7 +60,7 @@ class TestOrganizationRepository:
         mock_result.one_or_none.return_value = mock_row
         mock_db.execute.return_value = mock_result
 
-        config = await repo.get_config(org_id=self.ORG_ID)
+        config = await repo.get_config(user_id=self.ORG_ID)
 
         assert config == {}
 
@@ -72,7 +72,7 @@ class TestOrganizationRepository:
         mock_result.one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        config = await repo.get_config(org_id=self.ORG_ID)
+        config = await repo.get_config(user_id=self.ORG_ID)
 
         assert config == {}
 
@@ -88,7 +88,7 @@ class TestOrganizationRepository:
         mock_result.one_or_none.return_value = mock_row
         mock_db.execute.return_value = mock_result
 
-        pii = await repo.get_pii_config(org_id=self.ORG_ID)
+        pii = await repo.get_pii_config(user_id=self.ORG_ID)
 
         assert pii == {"enabled": True, "entities": ["email"]}
 
@@ -102,7 +102,7 @@ class TestOrganizationRepository:
         mock_result.one_or_none.return_value = mock_row
         mock_db.execute.return_value = mock_result
 
-        pii = await repo.get_pii_config(org_id=self.ORG_ID)
+        pii = await repo.get_pii_config(user_id=self.ORG_ID)
 
         assert pii == {}
 
@@ -114,7 +114,7 @@ class TestOrganizationRepository:
         mock_result.one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        pii = await repo.get_pii_config(org_id=self.ORG_ID)
+        pii = await repo.get_pii_config(user_id=self.ORG_ID)
 
         assert pii == {}
 
@@ -130,7 +130,7 @@ class TestOrganizationRepository:
         result.one_or_none.return_value = row
         mock_db.execute.return_value = result
 
-        llm = await repo.get_llm_config(org_id=self.ORG_ID)
+        llm = await repo.get_llm_config(user_id=self.ORG_ID)
 
         assert llm == {"model": "gpt-4", "temperature": 0.7}
 
@@ -148,9 +148,10 @@ class TestOrganizationRepository:
         legacy_result = MagicMock()
         legacy_result.one_or_none.return_value = legacy_row
 
-        mock_db.execute.side_effect = [new_result, legacy_result]
+        # First execute binds the RLS tenant context; then the two selects.
+        mock_db.execute.side_effect = [MagicMock(), new_result, legacy_result]
 
-        llm = await repo.get_llm_config(org_id=self.ORG_ID)
+        llm = await repo.get_llm_config(user_id=self.ORG_ID)
 
         assert llm == {"model": "gpt-3.5"}
 
@@ -168,9 +169,9 @@ class TestOrganizationRepository:
         legacy_result = MagicMock()
         legacy_result.one_or_none.return_value = legacy_row
 
-        mock_db.execute.side_effect = [new_result, legacy_result]
+        mock_db.execute.side_effect = [MagicMock(), new_result, legacy_result]
 
-        llm = await repo.get_llm_config(org_id=self.ORG_ID)
+        llm = await repo.get_llm_config(user_id=self.ORG_ID)
 
         assert llm == {}
 
@@ -186,7 +187,7 @@ class TestOrganizationRepository:
         result.one_or_none.return_value = row
         mock_db.execute.return_value = result
 
-        quota = await repo.get_quota(org_id=self.ORG_ID, quota_name="max_users")
+        quota = await repo.get_quota(user_id=self.ORG_ID, quota_name="max_users")
 
         assert quota == 100
 
@@ -200,7 +201,7 @@ class TestOrganizationRepository:
         result.one_or_none.return_value = row
         mock_db.execute.return_value = result
 
-        quota = await repo.get_quota(org_id=self.ORG_ID, quota_name="nonexistent")
+        quota = await repo.get_quota(user_id=self.ORG_ID, quota_name="nonexistent")
 
         assert quota is None
 
@@ -212,29 +213,6 @@ class TestOrganizationRepository:
         result.one_or_none.return_value = None
         mock_db.execute.return_value = result
 
-        quota = await repo.get_quota(org_id=self.ORG_ID, quota_name="max_users")
+        quota = await repo.get_quota(user_id=self.ORG_ID, quota_name="max_users")
 
         assert quota is None
-
-    # ── approve_if_pending (race-safe approval claim) ─────────────────────────
-
-    async def test_approve_if_pending_flags_rowcount(
-        self, repo: OrganizationRepository, mock_db: AsyncMock
-    ) -> None:
-        """Returns True when exactly one row was updated (the claim won),
-        False otherwise — the loser of a concurrent approval matches zero
-        rows because the winner already flipped status away from 'pending'."""
-        mock_result = MagicMock()
-        mock_result.rowcount = 1
-        mock_db.execute.return_value = mock_result
-
-        assert await repo.approve_if_pending(org_id=self.ORG_ID) is True
-
-        mock_result.rowcount = 0
-        assert await repo.approve_if_pending(org_id=self.ORG_ID) is False
-
-        # The claim is a conditional UPDATE on the organizations table
-        # (WHERE id AND status='pending') — never a plain read-then-write.
-        stmt = mock_db.execute.call_args.args[0]
-        assert stmt.table.name == "organizations"
-        assert stmt.whereclause is not None

@@ -17,7 +17,7 @@ class PerEpisodeEnqueueMixin:
         self,
         arq_pool: Any,
         job_id: str,
-        org_id: str,
+        user_id: str,
         project_id: str,
         session_id: str,
         trace_id: str,
@@ -46,7 +46,7 @@ class PerEpisodeEnqueueMixin:
         Args:
             arq_pool: The ARQ Redis pool.
             job_id: The composite job ID for this ingestion.
-            org_id: The organization UUID string.
+            user_id: The organization UUID string.
             project_id: The project UUID string.
             session_id: The session UUID string.
             trace_id: Request trace ID for end-to-end correlation.
@@ -81,7 +81,7 @@ class PerEpisodeEnqueueMixin:
                     task_name,
                     queue_name=qname,
                     episode_id=episode_id,
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=project_id,
                     trace_id=trace_id,
                     **extra,

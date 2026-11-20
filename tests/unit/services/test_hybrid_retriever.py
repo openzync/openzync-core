@@ -40,7 +40,7 @@ class TestHybridRetriever:
         real LLM backend.
         """
         mock_db = AsyncMock()
-        service = HybridRetriever(db=mock_db, org_id=self.ORG_ID)
+        service = HybridRetriever(db=mock_db, user_id=self.ORG_ID)
         service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
         return service, mock_db
 
@@ -531,7 +531,7 @@ class TestHybridRetriever:
         mock_db = AsyncMock()
         service = HybridRetriever(
             db=mock_db,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             reranker=mock_reranker,
         )
         service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
@@ -564,7 +564,7 @@ class TestHybridRetriever:
         mock_db = AsyncMock()
         service = HybridRetriever(
             db=mock_db,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             reranker=mock_reranker,
             org_config=mock_org_config,
         )
@@ -615,7 +615,7 @@ class TestHybridRetriever:
         mock_db = AsyncMock()
         service = HybridRetriever(
             db=mock_db,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             reranker=mock_reranker,
         )
         service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
@@ -645,7 +645,7 @@ class TestHybridRetriever:
         mock_db = AsyncMock()
         service = HybridRetriever(
             db=mock_db,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             reranker=mock_reranker,
         )
         service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
@@ -679,7 +679,7 @@ class TestEmbedQuery:
 
     def _make_service(self) -> tuple[HybridRetriever, AsyncMock]:
         mock_db = AsyncMock()
-        service = HybridRetriever(db=mock_db, org_id=self.ORG_ID)
+        service = HybridRetriever(db=mock_db, user_id=self.ORG_ID)
         return service, mock_db
 
     @pytest.mark.asyncio
@@ -786,7 +786,7 @@ class TestEmbedQuery:
         embedder = AsyncMock(return_value=[embedding])
         service = HybridRetriever(
             db=AsyncMock(),
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             org_config=mock_org_config,
         )
 
@@ -814,7 +814,7 @@ class TestVectorSearch:
 
     def _make_service(self) -> tuple[HybridRetriever, AsyncMock]:
         mock_db = AsyncMock()
-        service = HybridRetriever(db=mock_db, org_id=self.ORG_ID)
+        service = HybridRetriever(db=mock_db, user_id=self.ORG_ID)
         return service, mock_db
 
     @pytest.mark.asyncio
@@ -949,7 +949,7 @@ class TestGraphBFSSearch:
         mock_db = AsyncMock()
         return HybridRetriever(
             db=mock_db,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             graph_backends=graph_backends,
         )
 
@@ -1043,7 +1043,7 @@ class TestExecuteRankedQuery:
 
     def _make_service(self) -> tuple[HybridRetriever, AsyncMock]:
         mock_db = AsyncMock()
-        service = HybridRetriever(db=mock_db, org_id=self.ORG_ID)
+        service = HybridRetriever(db=mock_db, user_id=self.ORG_ID)
         return service, mock_db
 
     @pytest.mark.asyncio
@@ -1127,7 +1127,7 @@ class TestBM25Search:
 
     def _make_service(self) -> tuple[HybridRetriever, AsyncMock]:
         mock_db = AsyncMock()
-        service = HybridRetriever(db=mock_db, org_id=self.ORG_ID)
+        service = HybridRetriever(db=mock_db, user_id=self.ORG_ID)
         return service, mock_db
 
     @pytest.mark.asyncio
@@ -1163,7 +1163,7 @@ class TestBM25Search:
             mock_repo_cls.return_value.search_by_bm25.assert_awaited_once_with(
                 query="test",
                 project_id=self.PROJECT_ID,
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 limit=20,
                 effective_at=None,
             )

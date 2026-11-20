@@ -37,7 +37,7 @@ async def test_cross_session_fact_history_404(engine, redis_client) -> None:
         with pytest.raises(NotFoundError):
             await svc.get_fact_history(
                 uuid4(),
-                organization_id=UUID("00000000-0000-0000-0000-000000000001"),
+                user_id=UUID("00000000-0000-0000-0000-000000000001"),
                 project_id=UUID("00000000-0000-0000-0000-000000000003"),
             )
         fact_repo.get_fact_history.assert_not_awaited()

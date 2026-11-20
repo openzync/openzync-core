@@ -7,14 +7,14 @@ Dual-mode authentication flow:
 2. Compute unsalted lookup hash via ``compute_lookup_hash``.
 3. Check Redis cache at ``auth:key:{lookup_hash}`` (TTL: 300 s).
 4. On miss, query ``api_keys`` table, verify salted hash.
-5. Set ``request.state.org_id``, ``request.state.api_key_permissions``.
+5. Set ``request.state.user_id``, ``request.state.api_key_permissions``.
 6. Set PostgreSQL RLS context.
 
 **JWT mode** (for dashboard users):
 1. Bearer token is a three-segment JWT (starts with ``eyJ``).
 2. Verify signature with ``OZ_SECRET_KEY`` (HS256).
-3. Extract ``sub`` (user_id), ``org_id``, ``role`` claims.
-4. Set ``request.state.org_id``, ``request.state.user_id``,
+3. Extract ``sub`` (user_id), ``user_id``, ``role`` claims.
+4. Set ``request.state.user_id``, ``request.state.user_id``,
    ``request.state.role``, ``request.state.auth_type = "jwt"``.
 
 Public endpoints (``/health``, ``/docs``, ``/v1/auth/*``, etc.) pass
@@ -302,7 +302,7 @@ async def _cache_key_in_redis(
     Args:
         redis: Async Redis client.
         lookup_hash: Unsalted SHA-256 hex digest of the API key.
-        data: Auth data dict (``org_id``, ``permissions``) to cache.
+        data: Auth data dict (``user_id``, ``permissions``) to cache.
         ttl: TTL in seconds (default: 300).
     """
     cache_key = f"{AUTH_CACHE_PREFIX}{lookup_hash}"
@@ -419,7 +419,7 @@ async def _query_key_from_db(
         lookup_hash: Unsalted SHA-256 hex digest of the API key.
 
     Returns:
-        Dict with ``id``, ``org_id``, ``permissions``, ``key_hash``,
+        Dict with ``id``, ``user_id``, ``permissions``, ``key_hash``,
         ``salt``, ``is_revoked``, ``expires_at`` if found, or ``None``.
     """
     async with db_factory() as session, session.begin():
@@ -431,7 +431,7 @@ async def _query_key_from_db(
 
     return {
         "id": str(api_key.id),
-        "org_id": str(api_key.organization_id),
+        "user_id": str(api_key.user_id),
         "project_id": str(api_key.project_id) if api_key.project_id else None,
         "created_by": str(api_key.created_by) if api_key.created_by else None,
         "permissions": list(api_key.permissions),
@@ -471,7 +471,7 @@ def _verify_jwt_and_set_state(
 ) -> dict | None:
     """Verify a JWT token and populate the request state dict.
 
-    Extracts ``sub`` (user_id), ``org_id``, and ``role`` from the JWT
+    Extracts ``sub`` (user_id), ``user_id``, and ``role`` from the JWT
     claims and writes them into ``state``.  Also enforces the
     must-change-password gate: an access token whose ``mcp`` claim is
     truthy is rejected with 403 (except on the exempt paths) and no auth
@@ -504,8 +504,9 @@ def _verify_jwt_and_set_state(
         }
 
     # Validate required claims
+    # User ownership only (org scoping removed). A legacy ``user_id`` claim
+    # is accepted but ignored.
     user_id: str | None = payload.get("sub")
-    org_id: str | None = payload.get("org_id")
     role: str | None = payload.get("role", "member")
     token_type: str | None = payload.get("type")
 
@@ -517,11 +518,11 @@ def _verify_jwt_and_set_state(
             "path": path,
         }
 
-    if not user_id or not org_id:
+    if not user_id:
         return {
             "status": 401,
             "title": "Invalid Token Claims",
-            "detail": "JWT must contain 'sub' (user_id) and 'org_id' claims.",
+            "detail": "JWT must contain 'sub' (user_id) claim.",
             "path": path,
         }
 
@@ -539,12 +540,11 @@ def _verify_jwt_and_set_state(
         }
 
     state["auth_type"] = "jwt"
-    state["org_id"] = org_id
     state["user_id"] = user_id
     state["role"] = role
     # Informational only — JWT sessions are not API keys, and nothing reads
     # this key for JWT.  JWT permission checks are done in dependencies.auth
-    # via get_org_role / get_effective_permissions, never from this state key.
+    # via get_user_role / get_effective_permissions, never from this state key.
     state["api_key_permissions"] = []
 
     return None
@@ -586,7 +586,7 @@ class AuthMiddleware:
     - ``scope["app"].state.db_session_factory`` — an ``async_sessionmaker``.
 
     It sets the following keys on ``scope["state"]``:
-    - ``org_id`` — the authenticated organization's UUID (or ``None``).
+    - ``user_id`` — the authenticated organization's UUID (or ``None``).
     - ``user_id`` — the JWT user's UUID, or the API key's ``created_by``
       user UUID (``None`` if either is absent).
     - ``role`` — user role string (JWT only; ``None`` for API key).
@@ -619,7 +619,6 @@ class AuthMiddleware:
 
         # ── Initialise state defaults ────────────────────────────────────
         scope["state"] = {
-            "org_id": None,
             "user_id": None,
             "role": None,
             "auth_type": None,
@@ -749,8 +748,8 @@ class AuthMiddleware:
                         )
                         return
                     scope["state"]["auth_type"] = "api_key"
-                    scope["state"]["org_id"] = cached["org_id"]
-                    scope["state"]["user_id"] = cached.get("created_by")
+                    scope["state"]["user_id"] = cached["user_id"]
+                    scope["state"]["created_by"] = cached.get("created_by")
                     scope["state"]["api_key_permissions"] = cached["permissions"]
                     scope["state"]["api_key_project_id"] = cached.get("project_id")
                     scope["state"]["api_key_id"] = cached.get("api_key_id")
@@ -918,13 +917,13 @@ class AuthMiddleware:
                 return
 
         # ── Set request state ────────────────────────────────────────────
-        org_id_val: str = key_data["org_id"]
+        user_id_val: str = key_data["user_id"]
         permissions: list[str] = key_data["permissions"]
         created_by: str | None = key_data.get("created_by")
 
         scope["state"]["auth_type"] = "api_key"
-        scope["state"]["org_id"] = org_id_val
-        scope["state"]["user_id"] = created_by  # None if key has no creator
+        scope["state"]["user_id"] = user_id_val
+        scope["state"]["created_by"] = created_by  # None if key has no creator
         scope["state"]["api_key_permissions"] = permissions
         scope["state"]["api_key_project_id"] = key_data.get("project_id")
         scope["state"]["api_key_id"] = key_data["id"]
@@ -949,7 +948,7 @@ class AuthMiddleware:
                     redis,
                     lookup_hash,
                     {
-                        "org_id": org_id_val,
+                        "user_id": user_id_val,
                         "permissions": permissions,
                         "project_id": key_data.get("project_id"),
                         "created_by": created_by,

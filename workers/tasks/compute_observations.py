@@ -18,7 +18,7 @@ Idempotency:
     Two layers:
     1. Per-episode bit 6 check (inside this worker).
     2. Per-project pending marker with a 1h TTL
-       (``observations:pending:{org_id}:{project_id}``), set by
+       (``observations:pending:{user_id}:{project_id}``), set by
        ``link_entities_to_episode`` on enqueue and deleted by this worker at
        the start of each run — one full-scan run clears the need.
 """
@@ -49,7 +49,7 @@ def _is_retryable(exc: Exception) -> bool:
 async def compute_observations(
     ctx: object,
     episode_id: str,
-    org_id: str,
+    user_id: str,
     project_id: str,
     trace_id: str = "",
 ) -> None:
@@ -60,7 +60,7 @@ async def compute_observations(
     to ``graph_observations``.
 
     Pipeline:
-        1. Set RLS context (``app.org_id``) for org-scoped DB work.
+        1. Set RLS context (``app.user_id``) for org-scoped DB work.
         2. Clear the per-project pending-observations marker.
         3. Resolve the graph backend — skip cleanly if disabled for the org.
         4. Check bit 6 — skip if already set (idempotent).
@@ -76,7 +76,7 @@ async def compute_observations(
     Args:
         ctx: ARQ worker context (provides ``db_engine``, ``redis``).
         episode_id: UUID of the triggering episode.
-        org_id: UUID of the owning organization.
+        user_id: UUID of the owning organization.
         project_id: UUID of the project for project scoping.
         trace_id: Request trace ID for end-to-end correlation.
 
@@ -103,7 +103,7 @@ async def compute_observations(
     logger.info(
         "compute_observations.started",
         episode_id=episode_id,
-        org_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         trace_id=trace_id,
     )
@@ -131,37 +131,37 @@ async def compute_observations(
     try:
         async with session_factory() as db:
             # ── 1. Set RLS context ──────────────────────────────────────────
-            # All DB work below is org-scoped via the ``app.org_id`` GUC —
+            # All DB work below is org-scoped via the ``app.user_id`` GUC —
             # without it the RLS policies filter out the project's rows and
             # the full scan silently finds nothing.  The binding is
             # remembered by the session, so the commit below re-applies it.
-            await rls.set_tenant_context(db, org_id)
+            await rls.set_tenant_context(db, user_id)
 
             # ── 2. Clear the pending-observations marker ────────────────────
             # One full-scan run clears the need for everything ingested before
             # it; episodes ingested after this point set a fresh marker via
             # ``link_entities_to_episode`` and trigger a new run.
-            marker_key = f"observations:pending:{org_id}:{project_id}"
+            marker_key = f"observations:pending:{user_id}:{project_id}"
             redis = ctx.get("redis") if isinstance(ctx, dict) else None
             if redis is not None:
                 await redis.delete(marker_key)
             else:
                 logger.warning(
                     "compute_observations.redis_marker_not_cleared",
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=project_id,
                 )
 
             # ── 3. Resolve graph backend + instantiate service ──────────────
             episode_repo = EpisodeRepository(db)
             ctx_dict: dict = ctx if isinstance(ctx, dict) else {}
-            backend = await resolve_graph_backend(ctx_dict, UUID(org_id), db)
+            backend = await resolve_graph_backend(ctx_dict, UUID(user_id), db)
             if backend is None:
                 # Graph disabled for this org — skip cleanly. Bit 6 is not
                 # set, so a later run can still pick this episode up.
                 logger.info(
                     "compute_observations.graph_disabled_skipping",
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=project_id,
                     episode_id=episode_id,
                 )
@@ -194,11 +194,11 @@ async def compute_observations(
             # Archived-project guard: pause-and-resume. Fail-closed
             # (missing row counts as archived). Early return sets no
             # bits, so un-archiving resumes via reconcile or retry.
-            if await ProjectRepository(db).is_archived(UUID(org_id), UUID(project_id)):
+            if await ProjectRepository(db).is_archived(UUID(user_id), UUID(project_id)):
                 logger.info(
                     "compute_observations.project_archived_skipping",
                     episode_id=episode_id,
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=project_id,
                 )
                 return
@@ -207,7 +207,7 @@ async def compute_observations(
             # The service runs a full project scan, not just per-episode.
             # ON CONFLICT DO UPDATE prevents duplicate observations.
             pid = UUID(project_id)
-            oid = UUID(org_id)
+            oid = UUID(user_id)
 
             # Try to get LLM backend for content generation (optional).
             llm_backend = await _maybe_get_llm_backend(ctx)
@@ -219,7 +219,7 @@ async def compute_observations(
 
             counts = await service.run_full_project_scan(
                 project_id=pid,
-                organization_id=oid,
+                user_id=oid,
                 llm_backend=llm_backend,
             )
 

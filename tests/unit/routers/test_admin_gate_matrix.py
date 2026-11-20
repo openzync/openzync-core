@@ -7,7 +7,7 @@ builds the app with the **real** ``require_permission`` /
 ``require_permission_or_self`` dependency chain and instead patches the
 infrastructure underneath it:
 
-- ``dependencies.auth.get_org_role`` -> ``"member"`` (the role lookup that
+- ``dependencies.auth.get_user_role`` -> ``"member"`` (the role lookup that
   the real gate consults; see the same patch pattern in
   ``test_admin_org_code.py::_make_member_app`` and
   ``test_rbac.py::TestRequirePermission``),
@@ -18,7 +18,7 @@ infrastructure underneath it:
 
 Contract asserted per endpoint:
 - member JWT  -> 403  (permission check denies)
-- no auth     -> 401  (``require_org_id`` denies)
+- no auth     -> 401  (``require_user_id`` denies)
 
 Plus:
 - member ON SELF for the ``require_permission_or_self`` endpoints -> 200.
@@ -35,167 +35,32 @@ router sources):
 - ``GET /v1/auth/registration-status`` — PUBLIC by design (registration
   policy drives the signup UI).
 """
-
 from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
-
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-
 from core.config import PLATFORM_ORG_ID
 from core.exceptions import register_exception_handlers
-from dependencies.auth import (
-    require_superadmin,
-)
+from dependencies.auth import require_superadmin
 from dependencies.db import get_db
-from routers import (
-    admin,
-    admin_invites,
-    admin_metrics,
-    admin_org_code,
-    admin_org_config,
-    admin_organizations,
-    admin_quick_actions,
-    admin_schemas,
-    admin_stats,
-    admin_system,
-    admin_webhooks,
-    audit_log,
-    users,
-)
-from routers.admin import _get_admin_org_service
-from routers.admin_org_code import _get_org_service
+from routers import admin_invites, admin_metrics, admin_org_config, admin_organizations, admin_quick_actions, admin_schemas, admin_stats, admin_system, admin_webhooks, audit_log, users
 from routers.admin_schemas import _get_schema_service
 from routers.users import get_user_summary_service
-from schemas.extraction_schemas import (
-    PreviewExtractionResponse,
-    SchemaTemplateResponse,
-)
-from schemas.organizations import CreateOrgResponse
+from schemas.extraction_schemas import PreviewExtractionResponse, SchemaTemplateResponse
 from schemas.user_summary import UserSummaryResponse
-from services.organization_service import OrgCodeInfo
+ORG_ID = UUID('00000000-0000-0000-0000-000000000001')
+MEMBER_USER_ID = UUID('00000000-0000-0000-0000-000000000002')
+OTHER_USER_ID = UUID('00000000-0000-0000-0000-000000000003')
+ENDPOINT_ID = UUID('00000000-0000-0000-0000-000000000004')
+SCHEMA_ID = UUID('00000000-0000-0000-0000-000000000005')
+SUPERADMIN_USER_ID = UUID('00000000-0000-0000-0000-0000000000bb')
+ALL_ROUTERS = [audit_log.router, admin_org_config.router, admin_webhooks.router, admin_organizations.router, admin_stats.router, admin_metrics.router, admin_quick_actions.router, admin_schemas.router, admin_invites.router, admin_system.router, users.router]
+ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [('GET', '/v1/admin/audit-logs', {}, {}), ('GET', '/admin/org/config', {}, {}), ('PATCH', '/admin/org/config', {}, {}), ('PUT', '/admin/org/config', {}, {}), ('POST', '/admin/org/config/test', {}, {}), ('GET', '/v1/admin/webhooks', {}, {}), ('GET', '/v1/admin/webhooks/{endpoint_id}', {'endpoint_id': str(ENDPOINT_ID)}, {}), ('POST', '/v1/admin/webhooks', {}, {}), ('PATCH', '/v1/admin/webhooks/{endpoint_id}', {'endpoint_id': str(ENDPOINT_ID)}, {}), ('DELETE', '/v1/admin/webhooks/{endpoint_id}', {'endpoint_id': str(ENDPOINT_ID)}, {}), ('GET', '/admin/org/custom-instructions', {}, {}), ('PUT', '/admin/org/custom-instructions', {}, {}), ('DELETE', '/admin/org/custom-instructions', {}, {}), ('GET', '/v1/admin/stats', {}, {}), ('GET', '/v1/admin/stats/usage', {}, {}), ('GET', '/metrics/summary', {}, {}), ('GET', '/metrics/batch', {}, {'days': '7'}), ('GET', '/metrics/targets', {}, {}), ('GET', '/v1/admin/quick-actions', {}, {}), ('POST', '/v1/admin/schemas', {}, {}), ('GET', '/v1/admin/schemas', {}, {}), ('GET', '/v1/admin/schemas/templates', {}, {}), ('POST', '/v1/admin/schemas/preview', {}, {}), ('GET', '/v1/admin/schemas/{schema_id}', {'schema_id': str(SCHEMA_ID)}, {}), ('PUT', '/v1/admin/schemas/{schema_id}', {'schema_id': str(SCHEMA_ID)}, {}), ('DELETE', '/v1/admin/schemas/{schema_id}', {'schema_id': str(SCHEMA_ID)}, {}), ('POST', '/v1/users', {}, {}), ('GET', '/v1/users', {}, {}), ('GET', '/v1/users/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('PATCH', '/v1/users/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('DELETE', '/v1/users/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('POST', '/v1/users/{user_id}/summary', {'user_id': str(OTHER_USER_ID)}, {}), ('PUT', '/v1/users/{user_id}/summary-instructions', {'user_id': str(OTHER_USER_ID)}, {}), ('DELETE', '/v1/users/{user_id}/summary-instructions', {'user_id': str(OTHER_USER_ID)}, {}), ('POST', '/v1/admin/users/invite', {}, {}), ('DELETE', '/v1/admin/users/invites/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('GET', '/v1/users/{user_id}/summary', {'user_id': str(OTHER_USER_ID)}, {}), ('GET', '/v1/users/{user_id}/summary-instructions', {'user_id': str(OTHER_USER_ID)}, {}), ('GET', '/admin/system/config', {}, {}), ('PATCH', '/admin/system/config', {}, {}), ('GET', '/admin/system/settings', {}, {}), ('POST', '/admin/system/settings/{key}/reveal', {'key': 'OZ_DATABASE_URL'}, {}), ('PATCH', '/admin/system/users/{user_id}/role', {'user_id': str(OTHER_USER_ID)}, {})]
+_MUTATING_METHODS = frozenset({'POST', 'PATCH', 'PUT'})
 
-ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
-MEMBER_USER_ID = UUID("00000000-0000-0000-0000-000000000002")
-OTHER_USER_ID = UUID("00000000-0000-0000-0000-000000000003")
-ENDPOINT_ID = UUID("00000000-0000-0000-0000-000000000004")
-SCHEMA_ID = UUID("00000000-0000-0000-0000-000000000005")
-SUPERADMIN_USER_ID = UUID("00000000-0000-0000-0000-0000000000bb")
-
-ALL_ROUTERS = [
-    audit_log.router,
-    admin.router,
-    admin_org_code.router,
-    admin_org_config.router,
-    admin_webhooks.router,
-    admin_organizations.router,
-    admin_stats.router,
-    admin_metrics.router,
-    admin_quick_actions.router,
-    admin_schemas.router,
-    admin_invites.router,
-    admin_system.router,
-    users.router,
-]
-
-# ── Endpoint table ────────────────────────────────────────────────────────────
-# (method, path_template, path_params, query_params)
-# ``{user_id}`` in the or_self entries resolves to OTHER_USER_ID (member
-# attempting to read another user's data -> 403).
-
-ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [
-    # audit logs
-    ("GET", "/v1/admin/audit-logs", {}, {}),
-    # org join code
-    ("GET", "/admin/org/org-code", {}, {}),
-    ("PATCH", "/admin/org/org-code", {}, {}),
-    ("POST", "/admin/org/org-code/regenerate", {}, {}),
-    # org config (PATCH/PUT gate via require_scope("admin:write"))
-    ("GET", "/admin/org/config", {}, {}),
-    ("PATCH", "/admin/org/config", {}, {}),
-    ("PUT", "/admin/org/config", {}, {}),
-    ("POST", "/admin/org/config/test", {}, {}),
-    # webhooks (GET /events is public — excluded)
-    ("GET", "/v1/admin/webhooks", {}, {}),
-    ("GET", "/v1/admin/webhooks/{endpoint_id}", {"endpoint_id": str(ENDPOINT_ID)}, {}),
-    ("POST", "/v1/admin/webhooks", {}, {}),
-    ("PATCH", "/v1/admin/webhooks/{endpoint_id}", {"endpoint_id": str(ENDPOINT_ID)}, {}),
-    ("DELETE", "/v1/admin/webhooks/{endpoint_id}", {"endpoint_id": str(ENDPOINT_ID)}, {}),
-    # organizations — custom-instructions (all require_org_admin)
-    ("GET", "/admin/org/custom-instructions", {}, {}),
-    ("PUT", "/admin/org/custom-instructions", {}, {}),
-    ("DELETE", "/admin/org/custom-instructions", {}, {}),
-    # stats
-    ("GET", "/v1/admin/stats/org", {}, {}),
-    ("GET", "/v1/admin/stats/usage", {}, {}),
-    # metrics (real prefix /metrics — see routers/admin_metrics.py)
-    ("GET", "/metrics/summary", {}, {}),
-    ("GET", "/metrics/batch", {}, {"days": "7"}),
-    ("GET", "/metrics/targets", {}, {}),
-    # quick actions
-    ("GET", "/v1/admin/quick-actions", {}, {}),
-    # extraction schemas (require_org_admin / require_scope("admin"))
-    ("POST", "/v1/admin/schemas", {}, {}),
-    ("GET", "/v1/admin/schemas", {}, {}),
-    ("GET", "/v1/admin/schemas/templates", {}, {}),
-    ("POST", "/v1/admin/schemas/preview", {}, {}),
-    ("GET", "/v1/admin/schemas/{schema_id}", {"schema_id": str(SCHEMA_ID)}, {}),
-    ("PUT", "/v1/admin/schemas/{schema_id}", {"schema_id": str(SCHEMA_ID)}, {}),
-    ("DELETE", "/v1/admin/schemas/{schema_id}", {"schema_id": str(SCHEMA_ID)}, {}),
-    # users — admin-gated mutations
-    ("POST", "/v1/users", {}, {}),
-    ("GET", "/v1/users", {}, {}),
-    ("GET", "/v1/users/{user_id}", {"user_id": str(OTHER_USER_ID)}, {}),
-    ("PATCH", "/v1/users/{user_id}", {"user_id": str(OTHER_USER_ID)}, {}),
-    ("DELETE", "/v1/users/{user_id}", {"user_id": str(OTHER_USER_ID)}, {}),
-    ("POST", "/v1/users/{user_id}/summary", {"user_id": str(OTHER_USER_ID)}, {}),
-    ("PUT", "/v1/users/{user_id}/summary-instructions", {"user_id": str(OTHER_USER_ID)}, {}),
-    ("DELETE", "/v1/users/{user_id}/summary-instructions", {"user_id": str(OTHER_USER_ID)}, {}),
-    # users — invite flow (admin only)
-    ("POST", "/v1/admin/users/invite", {}, {}),
-    (
-        "DELETE",
-        "/v1/admin/users/invites/{user_id}",
-        {"user_id": str(OTHER_USER_ID)},
-        {},
-    ),
-    # users — require_permission_or_self: member on ANOTHER user
-    ("GET", "/v1/users/{user_id}/summary", {"user_id": str(OTHER_USER_ID)}, {}),
-    ("GET", "/v1/users/{user_id}/summary-instructions", {"user_id": str(OTHER_USER_ID)}, {}),
-    # platform superadmin — POST /admin/organizations (re-gated bootstrap)
-    ("POST", "/admin/organizations", {}, {}),
-    # platform superadmin — /admin/system/*
-    ("GET", "/admin/system/config", {}, {}),
-    ("PATCH", "/admin/system/config", {}, {}),
-    ("GET", "/admin/system/settings", {}, {}),
-    ("POST", "/admin/system/settings/{key}/reveal", {"key": "OZ_DATABASE_URL"}, {}),
-    ("GET", "/admin/system/orgs", {}, {}),
-    ("GET", "/admin/system/orgs/{org_id}/members", {"org_id": str(ORG_ID)}, {}),
-    ("GET", "/admin/system/orgs/{org_id}/config", {"org_id": str(ORG_ID)}, {}),
-    ("PATCH", "/admin/system/orgs/{org_id}/config", {"org_id": str(ORG_ID)}, {}),
-    ("POST", "/admin/system/orgs/{org_id}/approve", {"org_id": str(ORG_ID)}, {}),
-    ("POST", "/admin/system/orgs/{org_id}/reject", {"org_id": str(ORG_ID)}, {}),
-    (
-        "PATCH",
-        "/admin/system/orgs/{org_id}/members/{user_id}/role",
-        {"org_id": str(ORG_ID), "user_id": str(OTHER_USER_ID)},
-        {},
-    ),
-]
-
-_MUTATING_METHODS = frozenset({"POST", "PATCH", "PUT"})
-
-
-def _make_app(
-    *,
-    authenticated: bool,
-    auth_org_id: str | None = None,
-    auth_user_id: str | None = None,
-    auth_role: str = "member",
-) -> FastAPI:
+def _make_app(*, authenticated: bool, auth_user_id: str | None=None, auth_role: str='member') -> FastAPI:
     """Build the app with the real permission-gate dependency chain.
 
     ``authenticated=True`` adds middleware that sets a member JWT session
@@ -203,161 +68,74 @@ def _make_app(
     ``test_admin_org_code.py::_make_member_app``).  The gate dependencies
     are NEVER overridden — only their infrastructure is mocked.
 
-    ``auth_org_id``/``auth_user_id``/``auth_role`` customise the session
+    ``auth_user_id``/``auth_user_id``/``auth_role`` customise the session
     (used by the superadmin-200 test, which must present the platform org
     and the ``superadmin`` role).
     """
     app = FastAPI()
     register_exception_handlers(app)
     app.state.redis = AsyncMock()
-    app.state.openbao_client = AsyncMock()  # org-config service dep
-    # Preview router reads request.app.state.db_session_factory; None means
-    # unmetered preview in the service layer — set here so the harness,
-    # not the gate, is what the 403/401 matrix exercises.
+    app.state.openbao_client = AsyncMock()
     app.state.db_session_factory = None
     app.dependency_overrides[get_db] = lambda: AsyncMock()
-    # get_user_summary_service is declared BEFORE the gate in the summary
-    # handlers' signatures and calls core.arq.get_arq() (RuntimeError when
-    # uninitialised) — mock it so the gate is what decides the outcome.
     app.dependency_overrides[get_user_summary_service] = lambda: AsyncMock()
-    # Same for get_invite_service: it pulls get_auth_service (Redis on
-    # app.state) and must not execute before the gate rejects.
     from dependencies.services import get_invite_service
-
     app.dependency_overrides[get_invite_service] = lambda: AsyncMock()
-    # Same for the org-config dependency used by POST /preview: it reads
-    # OpenBao/Redis infrastructure that the harness mocks at app.state.
-    # Overriding it with seeded defaults keeps the gate as the decider.
     from dependencies.org_config import get_org_config as get_org_config_dep
     from schemas.organization_config import OrgConfigBase
-
     app.dependency_overrides[get_org_config_dep] = lambda: OrgConfigBase()
-
     if authenticated:
 
-        @app.middleware("http")
+        @app.middleware('http')
         async def _member_jwt(request, call_next):
-            request.state.org_id = auth_org_id or str(ORG_ID)
+            request.state.user_id = auth_user_id or str(ORG_ID)
             request.state.user_id = auth_user_id or str(MEMBER_USER_ID)
-            request.state.auth_type = "jwt"
+            request.state.auth_type = 'jwt'
             request.state.role = auth_role
             request.state.api_key_permissions = []
             return await call_next(request)
-
     for router in ALL_ROUTERS:
         app.include_router(router)
     return app
 
-
 def _request_path(path_template: str, path_params: dict) -> str:
     return path_template.format(**path_params)
 
-
-# ── Member JWT -> 403 ─────────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    ("method", "path_template", "path_params", "query_params"),
-    ADMIN_GATED_ENDPOINTS,
-    ids=[f"{m} {p}" for m, p, _pp, _q in ADMIN_GATED_ENDPOINTS],
-)
+@pytest.mark.parametrize(('method', 'path_template', 'path_params', 'query_params'), ADMIN_GATED_ENDPOINTS, ids=[f'{m} {p}' for m, p, _pp, _q in ADMIN_GATED_ENDPOINTS])
 @pytest.mark.asyncio
-async def test_member_jwt_denied_403(
-    method: str,
-    path_template: str,
-    path_params: dict,
-    query_params: dict,
-) -> None:
+async def test_member_jwt_denied_403(method: str, path_template: str, path_params: dict, query_params: dict) -> None:
     """A member JWT gets 403 on every permission-gated endpoint (real gate)."""
     app = _make_app(authenticated=True)
     path = _request_path(path_template, path_params)
-
-    with (
-        patch(
-            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
-        ),
-        patch(
-            "dependencies.auth.get_effective_permissions",
-            new=AsyncMock(return_value=frozenset()),
-        ),
-    ):
+    with patch('dependencies.auth.get_user_role', new=AsyncMock(return_value='member')), patch('dependencies.auth.get_effective_permissions', new=AsyncMock(return_value=frozenset())):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.request(
-                method,
-                path,
-                json={} if method in _MUTATING_METHODS else None,
-                params=query_params,
-            )
+        async with AsyncClient(transport=transport, base_url='http://test') as client:
+            resp = await client.request(method, path, json={} if method in _MUTATING_METHODS else None, params=query_params)
+    assert resp.status_code == 403, f'{method} {path} returned {resp.status_code} for a member JWT — permission gate missing or bypassed'
 
-    assert resp.status_code == 403, (
-        f"{method} {path} returned {resp.status_code} for a member JWT — "
-        "permission gate missing or bypassed"
-    )
-
-
-# ── No auth -> 401 ─────────────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    ("method", "path_template", "path_params", "query_params"),
-    ADMIN_GATED_ENDPOINTS,
-    ids=[f"{m} {p}" for m, p, _pp, _q in ADMIN_GATED_ENDPOINTS],
-)
+@pytest.mark.parametrize(('method', 'path_template', 'path_params', 'query_params'), ADMIN_GATED_ENDPOINTS, ids=[f'{m} {p}' for m, p, _pp, _q in ADMIN_GATED_ENDPOINTS])
 @pytest.mark.asyncio
-async def test_unauthenticated_denied_401(
-    method: str,
-    path_template: str,
-    path_params: dict,
-    query_params: dict,
-) -> None:
+async def test_unauthenticated_denied_401(method: str, path_template: str, path_params: dict, query_params: dict) -> None:
     """No authentication gets 401 on every admin-gated endpoint."""
     app = _make_app(authenticated=False)
     path = _request_path(path_template, path_params)
-
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.request(
-            method,
-            path,
-            json={} if method in _MUTATING_METHODS else None,
-            params=query_params,
-        )
-
-    assert resp.status_code == 401, (
-        f"{method} {path} returned {resp.status_code} with no auth — "
-        "require_org_id gate missing or bypassed"
-    )
-
-
-# ── require_permission_or_self: member ON SELF -> 200 ──────────────────────────
-
+    async with AsyncClient(transport=transport, base_url='http://test') as client:
+        resp = await client.request(method, path, json={} if method in _MUTATING_METHODS else None, params=query_params)
+    assert resp.status_code == 401, f'{method} {path} returned {resp.status_code} with no auth — require_user_id gate missing or bypassed'
 
 @pytest.mark.asyncio
 async def test_member_self_summary_200() -> None:
     """A member may read their OWN summary (or_self passes without permission)."""
     app = _make_app(authenticated=True)
     service = AsyncMock()
-    service.get_summary.return_value = UserSummaryResponse(
-        user_id=MEMBER_USER_ID, summary="self summary", updated_at=None,
-    )
+    service.get_summary.return_value = UserSummaryResponse(user_id=MEMBER_USER_ID, summary='self summary', updated_at=None)
     app.dependency_overrides[get_user_summary_service] = lambda: service
-
-    with (
-        patch(
-            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
-        ),
-        patch(
-            "dependencies.auth.get_effective_permissions",
-            new=AsyncMock(return_value=frozenset()),
-        ),
-    ):
+    with patch('dependencies.auth.get_user_role', new=AsyncMock(return_value='member')), patch('dependencies.auth.get_effective_permissions', new=AsyncMock(return_value=frozenset())):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(f"/v1/users/{MEMBER_USER_ID}/summary")
-
+        async with AsyncClient(transport=transport, base_url='http://test') as client:
+            resp = await client.get(f'/v1/users/{MEMBER_USER_ID}/summary')
     assert resp.status_code == 200, resp.text
-
 
 @pytest.mark.asyncio
 async def test_member_self_summary_instructions_200() -> None:
@@ -366,146 +144,39 @@ async def test_member_self_summary_instructions_200() -> None:
     service = AsyncMock()
     service.get_instructions.return_value = []
     app.dependency_overrides[get_user_summary_service] = lambda: service
-
-    with (
-        patch(
-            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
-        ),
-        patch(
-            "dependencies.auth.get_effective_permissions",
-            new=AsyncMock(return_value=frozenset()),
-        ),
-    ):
+    with patch('dependencies.auth.get_user_role', new=AsyncMock(return_value='member')), patch('dependencies.auth.get_effective_permissions', new=AsyncMock(return_value=frozenset())):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(
-                f"/v1/users/{MEMBER_USER_ID}/summary-instructions",
-            )
-
+        async with AsyncClient(transport=transport, base_url='http://test') as client:
+            resp = await client.get(f'/v1/users/{MEMBER_USER_ID}/summary-instructions')
     assert resp.status_code == 200, resp.text
-
-
-# ── Positive control: admin role passes (harness is sound) ────────────────────
-
-
-@pytest.mark.asyncio
-async def test_admin_role_passes_org_code_200() -> None:
-    """Admin role gets 200 through the REAL gate — 403s above are role-driven."""
-    app = _make_app(authenticated=True)
-    service = AsyncMock()
-    service.get_org_code.return_value = OrgCodeInfo("K7M2Q9X4", True)
-    app.dependency_overrides[_get_org_service] = lambda: service
-
-    with patch(
-        "dependencies.auth.get_org_role", new=AsyncMock(return_value="admin"),
-    ):
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/admin/org/org-code")
-
-    assert resp.status_code == 200
-    assert resp.json() == {"org_code": "K7M2Q9X4", "join_enabled": True}
-
-
-# ── Positive control: superadmin passes the re-gated bootstrap ────────────────
-
-
-@pytest.mark.asyncio
-async def test_superadmin_role_passes_bootstrap_201() -> None:
-    """Superadmin JWT gets 201 through the REAL gate on POST /admin/organizations.
-
-    Proves the re-gated bootstrap endpoint rejects without a superadmin
-    token (403/401 above) and succeeds with one.
-    """
-    app = _make_app(
-        authenticated=True,
-        auth_org_id=str(PLATFORM_ORG_ID),
-        auth_user_id=str(SUPERADMIN_USER_ID),
-        auth_role="superadmin",
-    )
-    service = AsyncMock()
-    service.create_organization.return_value = CreateOrgResponse(
-        organization_id=UUID("00000000-0000-0000-0000-0000000000cc"),
-        organization_name="Acme Corp",
-    )
-    app.dependency_overrides[_get_admin_org_service] = lambda: service
-
-    with patch(
-        "dependencies.auth.get_org_role",
-        new=AsyncMock(return_value="superadmin"),
-    ):
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
-                "/admin/organizations",
-                json={"name": "Acme Corp"},
-            )
-
-    assert resp.status_code == 201, resp.text
-    assert resp.json()["organization_name"] == "Acme Corp"
-    service.create_organization.assert_awaited_once()
-
-
-# ── Positive controls: schema templates + preview (admin passes) ─────────────
-
 
 @pytest.mark.asyncio
 async def test_admin_role_passes_schema_templates_200() -> None:
     """Admin role gets 200 through the REAL gate on GET /templates."""
     app = _make_app(authenticated=True)
-    # list_templates is sync in prod — a MagicMock (not AsyncMock) stub.
     service = MagicMock()
-    service.list_templates.return_value = [
-        SchemaTemplateResponse(
-            key="invoice",
-            name="Invoice",
-            description="Invoice template",
-            json_schema={"type": "object"},
-            sample_text="sample",
-        )
-    ]
+    service.list_templates.return_value = [SchemaTemplateResponse(key='invoice', name='Invoice', description='Invoice template', json_schema={'type': 'object'}, sample_text='sample')]
     app.dependency_overrides[_get_schema_service] = lambda: service
-
-    with patch(
-        "dependencies.auth.get_org_role", new=AsyncMock(return_value="admin"),
-    ):
+    with patch('dependencies.auth.get_user_role', new=AsyncMock(return_value='admin')):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/v1/admin/schemas/templates")
-
+        async with AsyncClient(transport=transport, base_url='http://test') as client:
+            resp = await client.get('/v1/admin/schemas/templates')
     assert resp.status_code == 200, resp.text
-    assert resp.json()[0]["key"] == "invoice"
-
+    assert resp.json()[0]['key'] == 'invoice'
 
 @pytest.mark.asyncio
 async def test_admin_role_passes_schema_preview_200() -> None:
     """Admin role gets 200 through the REAL gate on POST /preview."""
     app = _make_app(authenticated=True)
     service = AsyncMock()
-    service.preview_extraction.return_value = PreviewExtractionResponse(
-        data={}, validation_errors=[],
-    )
+    service.preview_extraction.return_value = PreviewExtractionResponse(data={}, validation_errors=[])
     app.dependency_overrides[_get_schema_service] = lambda: service
-
-    with patch(
-        "dependencies.auth.get_org_role", new=AsyncMock(return_value="admin"),
-    ):
+    with patch('dependencies.auth.get_user_role', new=AsyncMock(return_value='admin')):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
-                "/v1/admin/schemas/preview",
-                json={
-                    "json_schema": {"type": "object"},
-                    "sample_text": "hello world",
-                },
-            )
-
+        async with AsyncClient(transport=transport, base_url='http://test') as client:
+            resp = await client.post('/v1/admin/schemas/preview', json={'json_schema': {'type': 'object'}, 'sample_text': 'hello world'})
     assert resp.status_code == 200, resp.text
     service.preview_extraction.assert_awaited_once()
-
-
-# ── Coverage guard: matrix must match every actually-gated route ──────────────
-
 
 def _admin_gate_on_route(route) -> bool:
     """True if the route declares a permission-gate dependency.
@@ -518,23 +189,18 @@ def _admin_gate_on_route(route) -> bool:
         call = dep.call
         if call in (require_superadmin,):
             return True
-        if getattr(call, "__name__", "") in (
-            "_permission_checker",
-            "_permission_or_self_checker",
-        ):
+        if getattr(call, '__name__', '') in ('_permission_checker', '_permission_or_self_checker'):
             return True
     return False
-
 
 def _introspect_gated_routes() -> set[tuple[str, str]]:
     gated: set[tuple[str, str]] = set()
     for router in ALL_ROUTERS:
         for route in router.routes:
-            if hasattr(route, "dependant") and _admin_gate_on_route(route):
+            if hasattr(route, 'dependant') and _admin_gate_on_route(route):
                 method = next(iter(route.methods))
                 gated.add((method, route.path))
     return gated
-
 
 def test_matrix_covers_every_admin_gated_route() -> None:
     """The matrix and the routers' real gates agree exactly.
@@ -542,19 +208,9 @@ def test_matrix_covers_every_admin_gated_route() -> None:
     Fails if a new permission-gated endpoint is added without a matrix
     entry, or if a matrix entry points at a route that is no longer gated.
     """
-    matrix = {
-        (method, path_template)
-        for method, path_template, _path_params, _query_params in ADMIN_GATED_ENDPOINTS
-    }
+    matrix = {(method, path_template) for method, path_template, _path_params, _query_params in ADMIN_GATED_ENDPOINTS}
     gated = _introspect_gated_routes()
-
     missing_from_matrix = gated - matrix
     stale_matrix_entries = matrix - gated
-    assert not missing_from_matrix, (
-        "permission-gated endpoints NOT covered by the matrix: "
-        f"{sorted(missing_from_matrix)}"
-    )
-    assert not stale_matrix_entries, (
-        "matrix entries with no permission-gated route (endpoint removed or "
-        f"gate deleted): {sorted(stale_matrix_entries)}"
-    )
+    assert not missing_from_matrix, f'permission-gated endpoints NOT covered by the matrix: {sorted(missing_from_matrix)}'
+    assert not stale_matrix_entries, f'matrix entries with no permission-gated route (endpoint removed or gate deleted): {sorted(stale_matrix_entries)}'

@@ -9,6 +9,11 @@ Backfill: every existing organization receives a fresh random code, then
 the column is set NOT NULL with a unique index.  Codes are 8 chars from a
 confusion-free alphabet (``core/org_codes``).
 
+NOTE (single platform org): join codes are dead — ``POST /v1/auth/join``
+and signup are governed by ``instance_settings.registration_mode`` and
+``repositories`` mint a random placeholder for the legacy NOT NULL
+column.  The column stays for the constraint only; see 0067.
+
 RLS: the ``organizations`` table carries row-level security policies keyed
 on ``app.bypass_rls``/``app.org_id`` (migrations/0001).  The migration sets
 ``app.bypass_rls = 'true'`` session-locally so the backfill UPDATE is not
@@ -21,15 +26,32 @@ Create Date: 2026-08-08
 
 from __future__ import annotations
 
+import secrets
+
 import sqlalchemy as sa
 from alembic import op
-
-from core.org_codes import generate_org_code
 
 revision: str = "0044"
 down_revision: str | None = "0043"
 branch_labels: str | None = None
 depends_on: str | None = None
+
+ORG_CODE_ALPHABET: str = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+"""Confusion-free alphabet — excludes I, O, L, 0, 1 (was ``core.org_codes``)."""
+
+ORG_CODE_LENGTH: int = 8
+"""Length of generated org codes (in characters)."""
+
+
+def generate_org_code() -> str:
+    """Generate a fresh 8-char join code.
+
+    Inlined copy of the deleted ``core.org_codes.generate_org_code`` —
+    migrations must be self-contained and never import app code, which
+    evolves while history must not. Behavior identical: ``secrets.choice``
+    over the confusion-free alphabet.
+    """
+    return "".join(secrets.choice(ORG_CODE_ALPHABET) for _ in range(ORG_CODE_LENGTH))
 
 
 def upgrade() -> None:

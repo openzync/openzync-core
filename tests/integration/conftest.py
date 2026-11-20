@@ -150,7 +150,15 @@ async def engine():
         if not result.scalar():
             await conn.execute(
                 text(
-                    "INSERT INTO projects (id, organization_id, name) "
+                    "INSERT INTO users (id, external_id, name, role) "
+                    "VALUES ('00000000-0000-0000-0000-000000000001', "
+                    "'bootstrap-user', 'Bootstrap User', 'admin') "
+                    "ON CONFLICT (id) DO NOTHING"
+                )
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO projects (id, user_id, name) "
                     "VALUES ('00000000-0000-0000-0000-000000000002', "
                     "'00000000-0000-0000-0000-000000000001', "
                     "'Integration Test Project')"
@@ -299,7 +307,7 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
     5. Create a project-scoped API key via the JWT (owner-gated).
 
     Returns:
-        Dict with ``org_id``, ``user_id``, ``jwt``, ``project_id`` and
+        Dict with ``user_id``, ``user_id``, ``jwt``, ``project_id`` and
         ``api_key`` — all created through the real API/middleware.
     """
     from datetime import timedelta
@@ -316,13 +324,13 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
         app.state.db_session_factory() as session,
         session.begin(),
     ):
-        org_id = uuid4()
+        user_id = uuid4()
         await session.execute(
             _sql(
                 "INSERT INTO organizations (id, name, org_code) "
                 "VALUES (:id, :name, :code)"
             ),
-            {"id": org_id, "name": org_name, "code": f"boot_{uuid4().hex[:8]}"},
+            {"id": user_id, "name": org_name, "code": f"boot_{uuid4().hex[:8]}"},
         )
 
     # ── Insert the user row directly (test infra, not a public API) ───
@@ -331,7 +339,6 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
         session.begin(),
     ):
         user = await UserRepository(session).create(
-            organization_id=org_id,
             external_id=f"bootstrap_{uuid4().hex[:8]}",
             role="admin",
         )
@@ -341,7 +348,7 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
     jwt_token = create_jwt_token(
         data={
             "sub": str(user_id),
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "role": "admin",
             "type": "access",
         },
@@ -376,7 +383,7 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
 
     client.headers.pop("Authorization")
     return {
-        "org_id": org_id,
+        "user_id": user_id,
         "user_id": user_id,
         "jwt": jwt_token,
         "project_id": project_id,
@@ -476,10 +483,13 @@ async def db_session(engine) -> AsyncGenerator[None, None]:
         # created by the session-scoped engine fixture and relied on by
         # many integration tests, e.g. test_user_repository.py).
         for stmt in (
+            "INSERT INTO users (id, external_id, name, role) "
+            "VALUES ('00000000-0000-0000-0000-000000000001', "
+            "'bootstrap-user', 'Bootstrap User', 'admin') ON CONFLICT (id) DO NOTHING",
             "INSERT INTO organizations (id, name, org_code) "
             "VALUES ('00000000-0000-0000-0000-000000000001', "
             "'Bootstrap Org', 'bootstrap01') ON CONFLICT (id) DO NOTHING",
-            "INSERT INTO projects (id, organization_id, name) "
+            "INSERT INTO projects (id, user_id, name) "
             "VALUES ('00000000-0000-0000-0000-000000000002', "
             "'00000000-0000-0000-0000-000000000001', "
             "'Integration Test Project') ON CONFLICT (id) DO NOTHING",

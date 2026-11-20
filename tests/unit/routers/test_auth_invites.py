@@ -21,7 +21,8 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from core.exceptions import NotFoundError, register_exception_handlers
-from dependencies.services import get_invite_service
+from dependencies.db import get_db
+from dependencies.services import get_auth_throttle, get_invite_service
 from routers.auth import router
 from schemas.auth import InviteInfoResponse, TokenResponse
 
@@ -31,13 +32,16 @@ ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 def _create_app() -> tuple[FastAPI, AsyncMock]:
     """Minimal app with the auth router and the invite service mocked.
 
-    Note: no auth middleware and no throttle override — these two
-    endpoints must not declare any auth/throttle dependency (public).
+    Note: no auth middleware — these two endpoints are public (the token
+    IS the credential).  The throttle dependency IS declared (public but
+    throttled), so it is overridden with a mock here.
     """
     app = FastAPI()
     register_exception_handlers(app)
     service_mock = AsyncMock()
     app.dependency_overrides[get_invite_service] = lambda: service_mock
+    app.dependency_overrides[get_auth_throttle] = lambda: AsyncMock()
+    app.dependency_overrides[get_db] = lambda: AsyncMock()
     app.include_router(router)
     return app, service_mock
 
@@ -47,10 +51,9 @@ def _create_app() -> tuple[FastAPI, AsyncMock]:
 
 @pytest.mark.asyncio
 async def test_invite_info_200() -> None:
-    """Valid token → 200 with org name + invitee identity."""
+    """Valid token → 200 with invitee identity (no org name)."""
     app, service_mock = _create_app()
     service_mock.get_invite_info.return_value = InviteInfoResponse(
-        org_name="Acme Corp",
         email="alice@acme.com",
         name="Alice Johnson",
     )
@@ -64,7 +67,6 @@ async def test_invite_info_200() -> None:
 
     assert resp.status_code == 200
     assert resp.json() == {
-        "org_name": "Acme Corp",
         "email": "alice@acme.com",
         "name": "Alice Johnson",
     }

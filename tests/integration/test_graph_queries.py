@@ -122,7 +122,7 @@ class TestGraphNodes:
             backend = FalkorGraphBackend(client=client)
             for name in names:
                 await backend.create_entity(
-                    org_id=isolated_org_and_key["org_id"],
+                    user_id=isolated_org_and_key["user_id"],
                     project_id=isolated_project_id,
                     name=name,
                     entity_type="Person",

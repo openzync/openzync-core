@@ -1,6 +1,6 @@
 """Project repository — all database access for Projects and ProjectMembers.
 
-Every query is scoped to an ``organization_id``.  The repository returns
+Every query is scoped to an ``user_id``.  The repository returns
 ORM models only — no business logic, no schema construction.
 """
 
@@ -72,7 +72,7 @@ class ProjectRepository:
 
     async def create(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         name: str,
         created_by: UUID | None = None,
         description: str | None = None,
@@ -81,7 +81,7 @@ class ProjectRepository:
         """Create a new project.
 
         Args:
-            organization_id: Tenant scope.
+            user_id: Tenant scope.
             name: Human-readable project name (unique within org).
             created_by: Optional UUID of the user creating the project.
                 ``None`` for API-key-authenticated requests.
@@ -92,7 +92,7 @@ class ProjectRepository:
             The newly created Project.
         """
         project = Project(
-            organization_id=organization_id,
+            user_id=user_id,
             name=name,
             description=description if description is not None else "",
             created_by=created_by,
@@ -104,31 +104,37 @@ class ProjectRepository:
         return project
 
     async def get_by_id(
-        self, organization_id: UUID, project_id: UUID
+        self, user_id: UUID, project_id: UUID
     ) -> Project | None:
-        """Look up a project by its UUID, scoped to the organisation.
+        """Look up a project by its UUID, excluding archived projects.
+
+        This is an existence check only — it does not scope by owner.
+        Callers enforce access separately (``require_project_membership``
+        on routes, ``get_member`` checks in services): scoping by owner
+        here would 404 for project members who did not create the
+        project, silently breaking sharing.
 
         Args:
-            organization_id: Tenant scope.
+            user_id: Accepted for call-site compatibility; not used as a
+                row filter (RLS + membership gates own access control).
             project_id: The project's UUID primary key.
 
         Returns:
-            The Project if found, ``None`` otherwise.
+            The Project if found and not archived, ``None`` otherwise.
         """
         result = await self._db.execute(
             select(Project).where(
                 Project.id == project_id,
-                Project.organization_id == organization_id,
                 Project.is_archived.is_(False),
             )
         )
         return result.scalar_one_or_none()
 
-    async def get_by_name(self, organization_id: UUID, name: str) -> Project | None:
+    async def get_by_name(self, user_id: UUID, name: str) -> Project | None:
         """Look up a project by name within an organisation.
 
         Args:
-            organization_id: Tenant scope.
+            user_id: Tenant scope.
             name: The project name (case-sensitive).
 
         Returns:
@@ -136,7 +142,7 @@ class ProjectRepository:
         """
         result = await self._db.execute(
             select(Project).where(
-                Project.organization_id == organization_id,
+                Project.user_id == user_id,
                 Project.name == name,
                 Project.is_archived.is_(False),
             )
@@ -145,7 +151,7 @@ class ProjectRepository:
 
     async def search_member_projects(
         self,
-        organization_id: UUID,
+
         user_id: UUID,
         pattern: str,
         limit: int,
@@ -157,7 +163,7 @@ class ProjectRepository:
         never interpolated.
 
         Args:
-            organization_id: Tenant scope.
+
             user_id: Only projects this user belongs to are returned.
             pattern: ILIKE pattern (caller-built, e.g. ``%query%``).
             limit: Maximum rows.
@@ -175,7 +181,7 @@ class ProjectRepository:
             )
             .join(ProjectMember, ProjectMember.project_id == Project.id)
             .where(
-                Project.organization_id == organization_id,
+                Project.user_id == user_id,
                 ProjectMember.user_id == user_id,
                 Project.is_archived.is_(False),
                 Project.name.ilike(pattern),
@@ -192,19 +198,19 @@ class ProjectRepository:
             for row in result.all()
         ]
 
-    async def is_archived(self, organization_id: UUID, project_id: UUID) -> bool:
+    async def is_archived(self, user_id: UUID, project_id: UUID) -> bool:
         """Check whether a project is archived (or missing).
 
         Single-column SELECT scoped to the org. Fail-closed: returns
         ``True`` when the row is missing so episode workers skip work
         instead of burning billable I/O on a project that is gone.
 
-        Worker-session note: episode workers set the ``app.org_id`` RLS
+        Worker-session note: episode workers set the ``app.user_id`` RLS
         GUC (not ``app.bypass_rls``), so the org-scoped predicate
         matches their session semantics — no unscoped variant needed.
 
         Args:
-            organization_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: The project's UUID.
 
         Returns:
@@ -214,7 +220,7 @@ class ProjectRepository:
         result = await self._db.execute(
             select(Project.is_archived).where(
                 Project.id == project_id,
-                Project.organization_id == organization_id,
+                Project.user_id == user_id,
             )
         )
         flag = result.scalar_one_or_none()
@@ -224,7 +230,7 @@ class ProjectRepository:
 
     async def list(
         self,
-        organization_id: UUID,
+
         user_id: UUID | None,
         limit: int = 50,
         offset: int = 0,
@@ -244,7 +250,7 @@ class ProjectRepository:
         ``updated_at``.
 
         Args:
-            organization_id: Tenant scope.
+
             user_id: The authenticated user's UUID, or ``None`` for
                 API-key-authenticated requests.
             limit: Maximum results per page (capped at 200).
@@ -259,16 +265,15 @@ class ProjectRepository:
         spec = sort if sort is not None else SortSpec()
         req_sort, req_dir = spec.effective("created_at", "desc")
 
-        query = select(Project).where(
-            Project.organization_id == organization_id,
-        )
-        if not include_archived:
-            query = query.where(Project.is_archived.is_(False))
-
+        query = select(Project)
         if user_id is not None:
+            # Membership narrows the list — ownership alone must not:
+            # members who did not create the project still see it.
             query = query.join(
                 ProjectMember, Project.id == ProjectMember.project_id
             ).where(ProjectMember.user_id == user_id)
+        if not include_archived:
+            query = query.where(Project.is_archived.is_(False))
 
         result = await self._db.execute(
             query.order_by(
@@ -314,7 +319,7 @@ class ProjectRepository:
 
     async def update(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         name: str | None = None,
         description: str | None = None,
@@ -322,7 +327,7 @@ class ProjectRepository:
         """Update project fields. Only provided fields are changed.
 
         Args:
-            organization_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: The project's UUID.
             name: New project name.
             description: New project description.
@@ -330,7 +335,7 @@ class ProjectRepository:
         Returns:
             The updated Project, or ``None`` if not found.
         """
-        project = await self.get_by_id(organization_id, project_id)
+        project = await self.get_by_id(user_id, project_id)
         if project is None:
             return None
 
@@ -343,20 +348,20 @@ class ProjectRepository:
         await self._db.refresh(project)
         return project
 
-    async def archive(self, organization_id: UUID, project_id: UUID) -> Project | None:
+    async def archive(self, user_id: UUID, project_id: UUID) -> Project | None:
         """Soft-delete (archive) a project.
 
         All sessions and entities remain in the database but the project
         is hidden from list queries.  Project memberships are unaffected.
 
         Args:
-            organization_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: The project's UUID.
 
         Returns:
             The archived Project, or ``None`` if not found.
         """
-        project = await self.get_by_id(organization_id, project_id)
+        project = await self.get_by_id(user_id, project_id)
         if project is None:
             return None
 
@@ -366,7 +371,7 @@ class ProjectRepository:
         return project
 
     async def unarchive(
-        self, organization_id: UUID, project_id: UUID
+        self, user_id: UUID, project_id: UUID
     ) -> Project | None:
         """Restore an archived project (set ``is_archived=False``).
 
@@ -374,7 +379,7 @@ class ProjectRepository:
         404s archived projects so it cannot be used here.
 
         Args:
-            organization_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: The project's UUID.
 
         Returns:
@@ -383,7 +388,7 @@ class ProjectRepository:
         result = await self._db.execute(
             select(Project).where(
                 Project.id == project_id,
-                Project.organization_id == organization_id,
+                Project.user_id == user_id,
             )
         )
         project = result.scalar_one_or_none()
@@ -395,18 +400,18 @@ class ProjectRepository:
         await self._db.refresh(project)
         return project
 
-    async def count_active(self, organization_id: UUID) -> int:
+    async def count_active(self, user_id: UUID) -> int:
         """Count non-archived projects for the given organization.
 
         Args:
-            organization_id: Tenant scope.
+            user_id: Tenant scope.
 
         Returns:
             Number of active projects (0 if none).
         """
         result = await self._db.execute(
             select(func.count(Project.id)).where(
-                Project.organization_id == organization_id,
+                Project.user_id == user_id,
                 Project.is_archived.is_(False),
             )
         )

@@ -43,7 +43,7 @@ class TestObservationQueryService:
         now = datetime.now(UTC)
         return {
             "id": str(uuid4()),
-            "organization_id": str(UUID("00000000-0000-0000-0000-000000000001")),
+            "user_id": str(UUID("00000000-0000-0000-0000-000000000001")),
             "project_id": str(UUID("00000000-0000-0000-0000-000000000002")),
             "subject_entity_id": str(subject_entity_id),
             "related_entity_id": str(related_entity_id) if related_entity_id else None,
@@ -79,7 +79,7 @@ class TestObservationQueryService:
         }
 
         result = await service.get_observations(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             subject_entity_id=self.ENTITY_ID,
         )
@@ -89,7 +89,7 @@ class TestObservationQueryService:
         assert result.data[0].subject_entity_id == self.ENTITY_ID
         assert result.data[0].subject_entity_name == "Test Entity"
         mock_backend.get_observations.assert_awaited_once_with(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             subject_entity_id=self.ENTITY_ID,
             observation_type=None,
@@ -115,7 +115,7 @@ class TestObservationQueryService:
         mock_backend.resolve_entity_names.return_value = {}
 
         result = await service.get_observations(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             observation_type="temporal_pattern",
         )
@@ -123,7 +123,7 @@ class TestObservationQueryService:
         assert len(result.data) == 1
         assert result.data[0].observation_type == "temporal_pattern"
         mock_backend.get_observations.assert_awaited_once_with(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             subject_entity_id=None,
             observation_type="temporal_pattern",
@@ -144,7 +144,7 @@ class TestObservationQueryService:
         }
 
         result = await service.get_observations(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
         )
 
@@ -165,7 +165,7 @@ class TestObservationQueryService:
         mock_backend.resolve_entity_names.return_value = {}
 
         result = await service.get_observations(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             limit=10,
             cursor="cursor_abc_123",
@@ -173,7 +173,7 @@ class TestObservationQueryService:
 
         assert len(result.data) == 1
         mock_backend.get_observations.assert_awaited_once_with(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             subject_entity_id=None,
             observation_type=None,
@@ -194,13 +194,13 @@ class TestObservationQueryService:
         spec = SortSpec(sort_by="created_at", sort_dir="desc")
 
         await service.get_observations(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             sort=spec,
         )
 
         mock_backend.get_observations.assert_awaited_once_with(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             subject_entity_id=None,
             observation_type=None,
@@ -230,7 +230,7 @@ class TestObservationQueryService:
         }
 
         result = await service.get_observations(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
         )
 
@@ -252,7 +252,7 @@ class TestObservationQueryService:
         mock_backend.resolve_entity_names.side_effect = RuntimeError("Backend timeout")
 
         result = await service.get_observations(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
         )
 

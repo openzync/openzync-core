@@ -12,7 +12,7 @@ Key invariants (mirror the repo's zero-fallback discipline):
   commit-then-send.
 - **Accept is atomic.**  ``UserRepository.claim_invite`` is a single
   conditional UPDATE ... RETURNING; exactly one concurrent caller wins.
-  The returned ``id``/``organization_id``/``role`` feed straight into
+  The returned ``id``/``user_id``/``role`` feed straight into
   ``AuthService.issue_tokens`` — never a select-then-update.
 - **Expired and used are indistinguishable.**  Both accept and info return
   the same generic 404 ("This invitation link is invalid or has expired.").
@@ -22,6 +22,7 @@ Key invariants (mirror the repo's zero-fallback discipline):
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import secrets
@@ -32,9 +33,6 @@ from typing import TYPE_CHECKING
 from core.config import get_settings
 from core.exceptions import ConflictError, ExternalServiceError, NotFoundError
 from core.rbac import MEMBER_DEFAULT_PERMISSIONS
-from repositories.organization_repository import (  # noqa: TC001
-    OrganizationRepository,
-)
 from repositories.user_repository import UserRepository  # noqa: TC001
 from schemas.auth import (
     InviteInfoResponse,
@@ -43,6 +41,7 @@ from schemas.auth import (
     TokenResponse,
 )
 from utils.password import hash_password
+from utils.pii import mask_email
 
 if TYPE_CHECKING:
     from services.auth_service import AuthService
@@ -95,8 +94,7 @@ async def send_invite_email(
 ) -> None:
     """Render and send the magic-link invite email.
 
-    Shared by the admin invite flow and the platform org-approval flow
-    (``OrganizationService.approve_org``) — one template, one link shape
+    Shared by the admin invite flow — one template, one link shape
     (``{FRONTEND_URL}/invite?token=...``).
 
     Args:
@@ -147,13 +145,10 @@ class InviteService:
 
     Args:
         repo: User repository — pending-row CRUD and the atomic claim.
-        auth_service: Auth service — token issuance and the shared password
-            strength rule.
+        auth_service: Auth service — token issuance on accept.
         email_service: Email service for the magic-link delivery.  ``None``
             is a loud failure at invite time (the email *is* the invite) —
             there is no silent no-email path.
-        org_repo: Organization repository — org-name lookups for the email
-            and for ``InviteInfoResponse``.
     """
 
     def __init__(
@@ -161,19 +156,16 @@ class InviteService:
         repo: UserRepository,
         auth_service: AuthService,  # noqa: F821
         email_service: EmailService | None,  # noqa: F821
-        org_repo: OrganizationRepository,
     ) -> None:
         self._repo = repo
         self._auth_service = auth_service
         self._email_service = email_service
-        self._org_repo = org_repo
 
     # ── Invite ─────────────────────────────────────────────────────────────
 
     async def invite_user(
         self,
         admin_user_id: uuid.UUID,
-        org_id: uuid.UUID,
         payload: InviteRequest,
     ) -> InviteResponse:
         """Create a pending member user and email them the magic link.
@@ -181,8 +173,8 @@ class InviteService:
         Flow:
         1. Reject duplicate emails loudly (admin-facing — no anti-enumeration
            here; the admin already knows who they invited).
-        2. Resolve the org (email body) and the admin (inviter name) —
-           a missing org or admin is a loud 404, before any row is created.
+        2. Resolve the admin (inviter name) — a missing admin is a loud
+           404, before any row is created.
         3. Create the user row with ``password_hash=NULL`` and the SHA-256
            hash of a fresh random token.
         4. Render + send the invite email.  A send failure raises
@@ -192,7 +184,6 @@ class InviteService:
         Args:
             admin_user_id: UUID of the inviting admin (for the email's
                 "invited you" attribution).
-            org_id: The inviting organization.
             payload: Invitee email + name.
 
         Returns:
@@ -200,7 +191,7 @@ class InviteService:
 
         Raises:
             ConflictError: If an account with this email already exists.
-            NotFoundError: If the org or the admin user does not exist.
+            NotFoundError: If the admin user does not exist.
             ExternalServiceError: If the invite email cannot be sent (the
                 row is rolled back with it).
         """
@@ -208,7 +199,9 @@ class InviteService:
         if existing is not None:
             logger.warning(
                 "invite.duplicate_email",
-                extra={"email": payload.email, "org_id": str(org_id)},
+                extra={
+                    "email": mask_email(payload.email),
+                },
             )
             raise ConflictError("An account with this email already exists.")
 
@@ -217,10 +210,7 @@ class InviteService:
         # invites for the same email can both pass and create two pending
         # rows (same as signup/join — pre-existing gap).  A unique partial
         # index on (email) would close it; out of scope here.
-        org = await self._org_repo.get_by_id(org_id)
-        if org is None:
-            raise NotFoundError(f"Organization {org_id} not found.")
-        admin = await self._repo.get_by_uuid(org_id, admin_user_id)
+        admin = await self._repo.get_by_uuid(admin_user_id)
         if admin is None:
             raise NotFoundError(f"Admin user {admin_user_id} not found.")
 
@@ -230,7 +220,7 @@ class InviteService:
         # Create the row FIRST — the token credential and the pending user
         # are born atomically; the email send happens after.
         user = await self._repo.create(
-            organization_id=org_id,
+
             external_id=payload.email,
             name=payload.name,
             email=payload.email,
@@ -243,13 +233,12 @@ class InviteService:
             "invite.created",
             extra={
                 "user_id": str(user.id),
-                "org_id": str(org_id),
-                "email": payload.email,
+                "email": mask_email(payload.email),
             },
         )
 
         await self._send_invite_email(
-            org_name=org.name,
+            org_name="OpenZync",
             inviter_name=admin.name or "An admin",
             invitee_name=payload.name,
             invitee_email=payload.email,
@@ -264,46 +253,55 @@ class InviteService:
 
     # ── Revoke ─────────────────────────────────────────────────────────────
 
-    async def revoke_invite(self, org_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    async def revoke_invite(self, pending_user_id: uuid.UUID) -> None:
         """Revoke a pending invite by hard-deleting its user row.
 
-        Only rows that still carry a non-NULL ``invite_token_hash`` in this
-        org are affected — an accepted or ordinary user is never touched.
+        Only rows that still carry a non-NULL ``invite_token_hash`` are
+        affected — an accepted or ordinary user is never touched (the
+        predicate is pending-only by construction).
+
+        Runs on the caller's admin session: the row belongs to the invitee,
+        not the revoking admin, so the delete executes under an explicit
+        RLS bypass (see :meth:`UserRepository.hard_delete_pending_user`) —
+        otherwise the tenant policy would match zero rows and every revoke
+        would 404.  The router's admin gate is the authorization.
 
         Args:
-            org_id: The admin's organization (tenant scope).
-            user_id: The pending user's UUID.
+            pending_user_id: The pending user's UUID.
 
         Raises:
-            NotFoundError: If there is no pending invite for this user in
-                this org.
+            NotFoundError: If there is no pending invite for this user.
         """
         deleted = await self._repo.hard_delete_pending_user(
-            organization_id=org_id,
-            user_id=user_id,
+            user_id=pending_user_id,
         )
         if deleted == 0:
             logger.warning(
                 "invite.revoke_miss",
-                extra={"user_id": str(user_id), "org_id": str(org_id)},
+                extra={"user_id": str(pending_user_id)},
             )
             raise NotFoundError("No pending invite for this user.")
 
     # ── Info ───────────────────────────────────────────────────────────────
 
     async def get_invite_info(self, token: str) -> InviteInfoResponse:
-        """Resolve the org/email/name shown on the invite landing page.
+        """Resolve the email/name shown on the invite landing page.
 
         A valid unexpired token returns the invite details; anything else
         (unknown, expired, already used) is the generic 404.  An expired
         but still-present row is hard-deleted here — self-clean, so the
         accept path never sees it.
 
+        Pre-authentication (no tenant context): the lookup and the
+        self-clean delete both run under an explicit RLS bypass inside
+        the repository — otherwise the tenant-less session would match
+        zero rows and every token would 404.
+
         Args:
             token: The raw magic-link token.
 
         Returns:
-            The invitee's org name, email, and name.
+            The invitee's email and name.
 
         Raises:
             NotFoundError: Generic message for unknown, expired, or used
@@ -316,7 +314,7 @@ class InviteService:
 
         if self._is_expired(user.created_at):
             await self._repo.hard_delete_pending_user(
-                organization_id=user.organization_id,
+
                 user_id=user.id,
             )
             # Persist the self-clean NOW — the raise immediately after would
@@ -326,13 +324,7 @@ class InviteService:
             await self._repo.commit()
             raise NotFoundError(_GENERIC_INVITE_404)
 
-        org = await self._org_repo.get_by_id(user.organization_id)
-        if org is None:
-            # Org deleted since the invite — the invite is dead.
-            raise NotFoundError(_GENERIC_INVITE_404)
-
         return InviteInfoResponse(
-            org_name=org.name,
             email=user.email or "",
             name=user.name or "",
         )
@@ -352,6 +344,11 @@ class InviteService:
         expired-but-present case is self-cleaned and both raise the generic
         404 (indistinguishable by design).
 
+        Pre-authentication (no tenant context): the claim and the
+        self-clean run under an explicit RLS bypass inside the repository —
+        otherwise the tenant-less session would match zero rows and every
+        token would 404.
+
         Args:
             token: The raw magic-link token.
             password: The invitee's chosen password (strength-checked with
@@ -365,9 +362,12 @@ class InviteService:
             NotFoundError: Generic message for unknown, expired, or used
                 tokens.
         """
-        self._validate_password(password)
+        from utils.password import validate_password_strength
+
+        validate_password_strength(password)
         token_hash = _hash_invite_token(token)
-        pw_hash = hash_password(password)
+        # bcrypt blocks the event loop — offload to a worker thread.
+        pw_hash = await asyncio.to_thread(hash_password, password)
 
         # Naive UTC (auth_service storage convention) — the single source
         # of the expiry window is INVITE_EXPIRY_HOURS above.
@@ -385,7 +385,7 @@ class InviteService:
             stale = await self._repo.find_user_by_invite_token(token_hash)
             if stale is not None and self._is_expired(stale.created_at):
                 await self._repo.hard_delete_pending_user(
-                    organization_id=stale.organization_id,
+
                     user_id=stale.id,
                 )
                 # Persist the self-clean NOW — same rationale as the info
@@ -395,11 +395,11 @@ class InviteService:
 
         logger.info(
             "invite.accepted",
-            extra={"user_id": str(claimed.id), "org_id": str(claimed.organization_id)},
+            extra={"user_id": str(claimed.id)},
         )
         return await self._auth_service.issue_tokens(
             user_id=claimed.id,
-            organization_id=claimed.organization_id,
+
             role=claimed.role,
         )
 
@@ -452,20 +452,3 @@ class InviteService:
             ``True`` when the invite can no longer be claimed.
         """
         return created_at < datetime.now(UTC) - timedelta(hours=INVITE_EXPIRY_HOURS)
-
-    @staticmethod
-    def _validate_password(password: str) -> None:
-        """Validate a password against the shared auth strength rule.
-
-        Reuses ``AuthService._validate_password`` — one rule for every
-        place a dashboard password is set (signup, reset, accept).
-
-        Args:
-            password: The plaintext password.
-
-        Raises:
-            ValidationError: If the password is too weak.
-        """
-        from services.auth_service import AuthService  # noqa: PLC0415
-
-        AuthService._validate_password(password)

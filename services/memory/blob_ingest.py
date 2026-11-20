@@ -28,7 +28,7 @@ class BlobIngestMixin:
     _bao_client: Any
     _blob_repo: Any
 
-    async def _resolve_storage_config(self, org_id: UUID) -> dict[str, Any]:
+    async def _resolve_storage_config(self, user_id: UUID) -> dict[str, Any]:
         """Resolve the org's blob storage config from OpenBao — fail loud.
 
         The org's S3 settings are read with the app-level OpenBao client
@@ -43,7 +43,7 @@ class BlobIngestMixin:
         the defaults.
 
         Args:
-            org_id: The organization UUID.
+            user_id: The organization UUID.
 
         Returns:
             Flattened storage config dict for ``BlobStorageConfig``.
@@ -56,18 +56,18 @@ class BlobIngestMixin:
 
         try:
             org_cfg = await get_org_config(
-                org_id,
+                user_id,
                 redis=self._redis,
                 bao_client=self._bao_client,
             )
         except Exception as exc:
             logger.error(
                 "memory.org_storage_config_fetch_failed",
-                extra={"org_id": str(org_id)},
+                extra={"user_id": str(user_id)},
                 exc_info=True,
             )
             raise ExternalServiceError(
-                f"Blob storage config for org {org_id} could not be read from OpenBao."
+                f"Blob storage config for org {user_id} could not be read from OpenBao."
             ) from exc
 
         # Platform defaults (the shared MinIO bucket of the compose stack)
@@ -85,7 +85,7 @@ class BlobIngestMixin:
         return storage_config
 
     async def _compensate_blob_uploads(
-        self, org_id: UUID, storage_keys: list[str]
+        self, user_id: UUID, storage_keys: list[str]
     ) -> None:
         """Delete S3 objects orphaned by a pre-commit ingest failure.
 
@@ -95,7 +95,7 @@ class BlobIngestMixin:
         this method never raises — it must not mask the original exception.
 
         Args:
-            org_id: The organization UUID (storage config scope).
+            user_id: The organization UUID (storage config scope).
             storage_keys: S3 keys uploaded by the failed attempt.
         """
         if not storage_keys:
@@ -103,7 +103,7 @@ class BlobIngestMixin:
         try:
             from core.blob_storage import BlobStorage, BlobStorageConfig
 
-            storage_config = await self._resolve_storage_config(org_id)
+            storage_config = await self._resolve_storage_config(user_id)
             storage = BlobStorage(
                 BlobStorageConfig.from_org_config(storage_config)
             )
@@ -113,19 +113,19 @@ class BlobIngestMixin:
                 except Exception:
                     logger.error(
                         "memory.blob_compensating_delete_failed",
-                        extra={"org_id": str(org_id), "storage_key": key},
+                        extra={"user_id": str(user_id), "storage_key": key},
                         exc_info=True,
                     )
         except Exception:
             logger.error(
                 "memory.blob_compensation_failed",
-                extra={"org_id": str(org_id), "key_count": len(storage_keys)},
+                extra={"user_id": str(user_id), "key_count": len(storage_keys)},
                 exc_info=True,
             )
 
     async def _process_blobs(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         session_id: UUID,
         created_by: UUID,
@@ -140,7 +140,7 @@ class BlobIngestMixin:
         ``BlobStorageService.upload_blobs`` for each batch.
 
         Args:
-            org_id: Organization UUID.
+            user_id: Organization UUID.
             project_id: Project UUID.
             session_id: Session UUID.
             created_by: User UUID who uploaded the blobs.
@@ -168,7 +168,7 @@ class BlobIngestMixin:
             return 0, []
 
         # Resolved once per ingest — not per blob.
-        storage_config = await self._resolve_storage_config(org_id)
+        storage_config = await self._resolve_storage_config(user_id)
 
         from core.blob_storage import BlobStorage, BlobStorageConfig
         from services.blob_storage_service import (
@@ -219,7 +219,7 @@ class BlobIngestMixin:
                 if bid in shared_ids:
                     shared_bytes[bid] = data
             records = await blob_svc.upload_blobs(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=project_id,
                 episode_id=episode_id,
                 session_id=session_id,
@@ -248,7 +248,7 @@ class BlobIngestMixin:
             "memory.blobs_uploaded",
             extra={
                 "blob_count": blob_count,
-                "org_id": str(org_id),
+                "user_id": str(user_id),
                 "project_id": str(project_id),
             },
         )
@@ -257,7 +257,7 @@ class BlobIngestMixin:
     async def _enqueue_blob_extraction_tasks(
         self,
         blob_records: list[Any],
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
     ) -> None:
         """Enqueue ARQ ``extract_blob_text`` tasks for each uploaded blob.
@@ -270,7 +270,7 @@ class BlobIngestMixin:
         Args:
             blob_records: List of ``EpisodeBlob`` ORM instances returned
                 by ``_process_blobs``.
-            org_id: Organization UUID.
+            user_id: Organization UUID.
             project_id: Project UUID.
         """
         from core.config import get_settings
@@ -289,7 +289,7 @@ class BlobIngestMixin:
                         "extract_blob_text",
                         queue_name=low_qname,
                         blob_id=str(blob.id),
-                        org_id=str(org_id),
+                        user_id=str(user_id),
                         project_id=str(project_id),
                         episode_id=str(blob.episode_id),
                         storage_key=blob.storage_key,
@@ -304,7 +304,7 @@ class BlobIngestMixin:
                 "memory.blob_extraction_tasks_enqueued",
                 extra={
                     "blob_count": len(blob_records),
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                 },
             )
@@ -313,7 +313,7 @@ class BlobIngestMixin:
                 "memory.blob_extraction_enqueue_failed",
                 extra={
                     "blob_count": len(blob_records),
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "error": (
                         "ARQ pool unavailable — blob text extraction not enqueued. "

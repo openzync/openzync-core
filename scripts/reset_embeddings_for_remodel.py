@@ -91,7 +91,7 @@ async def _list_org_ids(engine: AsyncEngine) -> list[UUID]:
             await db.rollback()
 
 
-async def _count_rows(db: AsyncSession, org_id: UUID) -> tuple[int, int]:
+async def _count_rows(db: AsyncSession, user_id: UUID) -> tuple[int, int]:
     """Return the number of episode and fact rows this run would reset.
 
     Counts only rows that actually hold a vector — already-NULL rows need
@@ -100,7 +100,7 @@ async def _count_rows(db: AsyncSession, org_id: UUID) -> tuple[int, int]:
 
     Args:
         db: An open async SQLAlchemy session with the org tenant bound.
-        org_id: The organization the counts are scoped to.
+        user_id: The organization the counts are scoped to.
 
     Returns:
         ``(episodes, facts)`` row counts for that org.
@@ -108,14 +108,14 @@ async def _count_rows(db: AsyncSession, org_id: UUID) -> tuple[int, int]:
     episodes = await db.execute(
         text(  # noqa: S608
             "SELECT count(*) FROM episodes "
-            "WHERE embedding IS NOT NULL AND organization_id = :org_id"
-        ).bindparams(org_id=org_id)
+            "WHERE embedding IS NOT NULL AND user_id = :user_id"
+        ).bindparams(user_id=user_id)
     )
     facts = await db.execute(
         text(  # noqa: S608
             "SELECT count(*) FROM facts "
-            "WHERE embedding IS NOT NULL AND organization_id = :org_id"
-        ).bindparams(org_id=org_id)
+            "WHERE embedding IS NOT NULL AND user_id = :user_id"
+        ).bindparams(user_id=user_id)
     )
     return episodes.scalar_one(), facts.scalar_one()
 
@@ -141,10 +141,10 @@ async def run(db_url: str, *, dry_run: bool) -> None:
         if dry_run:
             total_episodes = 0
             total_facts = 0
-            for org_id in org_ids:
+            for user_id in org_ids:
                 async with get_async_session(engine)() as db:
-                    await set_tenant_context(db, org_id)
-                    episodes, facts = await _count_rows(db, org_id)
+                    await set_tenant_context(db, user_id)
+                    episodes, facts = await _count_rows(db, user_id)
                     total_episodes += episodes
                     total_facts += facts
             logger.info(
@@ -158,15 +158,15 @@ async def run(db_url: str, *, dry_run: bool) -> None:
 
         # Per-org rewrite: each org's rows are nulled inside its own
         # tenant context — RLS narrows every statement to that org, and
-        # the explicit organization_id predicates scope them even if a
+        # the explicit user_id predicates scope them even if a
         # policy were misconfigured. No bulk rewrite ever runs under
         # bypass_rls.
         total_episodes = 0
         total_facts = 0
-        for org_id in org_ids:
+        for user_id in org_ids:
             async with get_async_session(engine)() as db:
-                await set_tenant_context(db, org_id)
-                episodes, facts = await _count_rows(db, org_id)
+                await set_tenant_context(db, user_id)
+                episodes, facts = await _count_rows(db, user_id)
 
                 # S608: `~{ENRICHMENT_EMBEDDING}` interpolates an int constant
                 # (2), never user input. Clears bit 1 only — other enrichment
@@ -177,8 +177,8 @@ async def run(db_url: str, *, dry_run: bool) -> None:
                         "enrichment_status = enrichment_status "
                         f"& ~{ENRICHMENT_EMBEDDING} "
                         "WHERE embedding IS NOT NULL "
-                        "AND organization_id = :org_id"
-                    ).bindparams(org_id=org_id)
+                        "AND user_id = :user_id"
+                    ).bindparams(user_id=user_id)
                 )
                 # embedded_at = NULL returns the row to reconcile's "never
                 # attempted" state; leaving it set would mark it retired and
@@ -186,15 +186,15 @@ async def run(db_url: str, *, dry_run: bool) -> None:
                 await db.execute(
                     text(
                         "UPDATE facts SET embedding = NULL, embedded_at = NULL "
-                        "WHERE embedding IS NOT NULL AND organization_id = :org_id"
-                    ).bindparams(org_id=org_id)
+                        "WHERE embedding IS NOT NULL AND user_id = :user_id"
+                    ).bindparams(user_id=user_id)
                 )
                 await db.commit()
                 total_episodes += episodes
                 total_facts += facts
                 logger.info(
-                    "reset_embeddings.org_completed org_id=%s episodes=%d facts=%d",
-                    org_id,
+                    "reset_embeddings.org_completed user_id=%s episodes=%d facts=%d",
+                    user_id,
                     episodes,
                     facts,
                 )

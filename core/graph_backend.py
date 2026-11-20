@@ -14,7 +14,7 @@ Usage::
     # Per-request (Postgres):
     dispatcher = request.app.state.graph_backend_dispatcher
     backend = dispatcher.resolve_and_create(org_config, db)
-    entity = await backend.create_entity(org_id=..., name="Acme", ...)
+    entity = await backend.create_entity(user_id=..., name="Acme", ...)
 
     # Per-request (SurrealDB):
     backend = dispatcher.resolve_and_create(org_config, db, surreal=surreal)
@@ -328,7 +328,7 @@ def init_dispatcher() -> GraphBackendDispatcher:
 async def resolve_graph_backend_fail_soft(
     request: Request,
     org_config: OrgConfigBase,
-    org_id: UUID,
+    user_id: UUID,
     db: AsyncSession,
     log_prefix: str,
 ) -> GraphBackend | None:
@@ -342,7 +342,7 @@ async def resolve_graph_backend_fail_soft(
     Args:
         request: FastAPI request (dispatcher + pools live on app state).
         org_config: Org config (graph backend selection).
-        org_id: Authenticated organization ID (log context + pool key).
+        user_id: Authenticated organization ID (log context + pool key).
         db: Request-scoped session passed to ``resolve_and_create``.
         log_prefix: Caller namespace for log events
             (``"admin_metrics"`` / ``"admin_stats"``).
@@ -360,7 +360,7 @@ async def resolve_graph_backend_fail_soft(
         pool = getattr(request.app.state, "surreal_connection_pool", None)
         if pool is not None:
             try:
-                surreal = await pool.get_or_create(org_id, org_config)
+                surreal = await pool.get_or_create(user_id, org_config)
             except Exception as exc:
                 _resolve_logger.warning(
                     f"{log_prefix}.surreal_connection_failed",

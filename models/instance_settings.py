@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, String, Text, func
+from sqlalchemy import TIMESTAMP, Boolean, CheckConstraint, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,8 +25,9 @@ class InstanceSettings(Base):
 
     Attributes:
         id: Fixed primary key (``1``) — enforces single-row semantics.
-        registration_mode: One of ``disabled``, ``enabled_with_org_code``,
-            ``enabled_self_serve_org_creation``.
+        registration_mode: One of ``open``, ``invite_only``, ``approval``.
+            ⚠️ BREAKING: the old ``disabled`` / ``enabled_with_org_code`` /
+            ``enabled_self_serve_org_creation`` values are removed.
         initialized: Whether the instance setup wizard has completed.
         bootstrap_token_hash: SHA-256 hex digest of the one-time bootstrap
             token.  The plaintext is printed once at boot and written to
@@ -42,8 +43,8 @@ class InstanceSettings(Base):
     registration_mode: Mapped[str] = mapped_column(
         String(64),
         nullable=False,
-        default="enabled_self_serve_org_creation",
-        server_default="enabled_self_serve_org_creation",
+        default="invite_only",
+        server_default="invite_only",
     )
     initialized: Mapped[bool] = mapped_column(
         Boolean,
@@ -63,7 +64,7 @@ class InstanceSettings(Base):
         server_default="{}",
     )
     updated_at: Mapped[datetime] = mapped_column(
-        func.now(),
+        TIMESTAMP(timezone=True),
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
@@ -71,8 +72,7 @@ class InstanceSettings(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "registration_mode IN "
-            "('disabled', 'enabled_with_org_code', 'enabled_self_serve_org_creation')",
+            "registration_mode IN ('open', 'invite_only', 'approval')",
             name="ck_instance_settings_registration_mode",
         ),
     )

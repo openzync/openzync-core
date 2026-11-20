@@ -21,8 +21,6 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import rls
-from core.org_codes import generate_org_code
-from models.organization import Organization
 from models.refresh_token import RefreshToken
 from models.user import User
 
@@ -37,6 +35,11 @@ class AuthRepository:
 
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
+
+    @property
+    def session(self) -> AsyncSession:
+        """Return the database session for cross-layer RLS binding."""
+        return self._db
 
     # ── User lookup ─────────────────────────────────────────────────────────
 
@@ -84,61 +87,25 @@ class AuthRepository:
             )
             return result.scalar_one_or_none()
 
-    # ── Organization ────────────────────────────────────────────────────────
-
-    async def create_organization(
-        self, name: str, status: str = "approved"
-    ) -> Organization:
-        """Create a new organization.
-
-        The organization id is minted here (not by the database) so the
-        session can be bound to the new tenant *before* the row is
-        written: SQLAlchemy appends a ``RETURNING`` clause to the INSERT
-        (for the ``created_at``/``updated_at`` server defaults) and that
-        clause is filtered by the table's SELECT policy — a session that is
-        not bound to the new organization cannot see the row it just
-        created, and the insert is rejected.
-
-        Args:
-            name: Organization name.
-            status: Lifecycle state — ``approved`` (default) for a live
-                org, ``pending`` for an approval-queue org.
-
-        Returns:
-            The newly created Organization.
-        """
-        org = Organization(
-            id=uuid.uuid4(),
-            name=name,
-            status=status,
-            org_code=generate_org_code(),
-        )
-        await rls.set_tenant_context(self._db, org.id)
-        self._db.add(org)
-        await self._db.flush()
-        await self._db.refresh(org)
-        return org
-
     # ── Dashboard user ──────────────────────────────────────────────────────
 
     async def create_dashboard_user(
         self,
-        organization_id: uuid.UUID,
         email: str,
         password_hash: str | None = None,
         name: str | None = None,
         role: str = "admin",
         must_change_password: bool = False,
         permissions: list[str] | None = None,
+        is_active: bool = True,
     ) -> User:
         """Create a dashboard user (admin/member).
 
         Sets ``external_id`` to the email for simplicity.  The unique
-        constraint on ``(organization_id, external_id)`` prevents two
-        dashboard users with the same email in the same org.
+        constraint on ``external_id`` prevents two dashboard users
+        with the same email.
 
         Args:
-            organization_id: Owning organization.
             email: Email address (used as external_id too).
             password_hash: bcrypt hash of the password.  ``None`` for a
                 pending user (approval flow — no credential yet).
@@ -149,12 +116,13 @@ class AuthRepository:
             permissions: Explicit permission strings.  ``None`` falls back
                 to the model default (empty array — wildcard via role).
                 The service layer seeds role-appropriate defaults.
+            is_active: ``False`` creates the row inactive atomically
+                (approval flow — no live-then-deactivate window).
 
         Returns:
             The newly created User.
         """
         user = User(
-            organization_id=organization_id,
             external_id=email,
             email=email,
             name=name,
@@ -162,6 +130,7 @@ class AuthRepository:
             role=role,
             must_change_password=must_change_password,
             permissions=permissions,
+            is_active=is_active,
             metadata_={},
         )
         self._db.add(user)
@@ -174,7 +143,7 @@ class AuthRepository:
     async def create_refresh_token(
         self,
         user_id: uuid.UUID,
-        organization_id: uuid.UUID,
+
         token_hash: str,
         expires_at: datetime,
     ) -> RefreshToken:
@@ -182,7 +151,7 @@ class AuthRepository:
 
         Args:
             user_id: The authenticated user's UUID.
-            organization_id: The user's organization UUID.
+
             token_hash: SHA-256 hash of the opaque refresh token string.
             expires_at: Expiration timestamp (naive UTC).
 
@@ -190,8 +159,8 @@ class AuthRepository:
             The newly created RefreshToken.
         """
         rt = RefreshToken(
-            user_id=str(user_id),
-            organization_id=organization_id,
+            user_id=user_id,
+
             token_hash=token_hash,
             expires_at=expires_at,
         )
@@ -365,7 +334,7 @@ class AuthRepository:
         stmt = (
             update(RefreshToken)
             .where(
-                RefreshToken.user_id == str(user_id),
+                RefreshToken.user_id == user_id,
                 RefreshToken.is_revoked.is_(False),
             )
             .values(is_revoked=True)

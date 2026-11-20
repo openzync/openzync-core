@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import Settings, set_settings
 from core.exceptions import AuthenticationError
-from core.org_codes import generate_org_code
 from models.refresh_token import RefreshToken
 from repositories.auth_repository import AuthRepository
 from schemas.auth import TokenResponse
@@ -48,17 +47,9 @@ def _init_settings() -> None:
 
 
 async def _make_user(db: AsyncSession, email: str) -> object:
-    """Create a bootstrap user + org row and return the user."""
+    """Create a bootstrap user row and return the user."""
     repo = AuthRepository(db)
-    from models.organization import Organization
-
-    org = Organization(
-        name=f"Sec Test {uuid4()}", org_code=generate_org_code()
-    )
-    db.add(org)
-    await db.flush()
     user = await repo.create_dashboard_user(
-        organization_id=org.id,
         email=email,
         password_hash="$2b$12$hash",
         role="admin",
@@ -68,13 +59,15 @@ async def _make_user(db: AsyncSession, email: str) -> object:
 
 def _make_service(db: AsyncSession) -> AuthService:
     """Build an AuthService over a real repo with mocked side-dependencies."""
+    settings_repo = AsyncMock()
+    settings_repo.get_registration_mode.return_value = "open"
     return AuthService(
         repo=AuthRepository(db),
         otp_service=AsyncMock(),
         redis=AsyncMock(),
-        org_repo=AsyncMock(),
         email_service=None,
         bao_client=None,
+        settings_repo=settings_repo,
     )
 
 
@@ -87,8 +80,8 @@ class TestRefreshTokenAtomicClaim:
             user = await _make_user(db, "claim@openzync.tech")
             raw = "claim-raw-token"
             await AuthRepository(db).create_refresh_token(
+                
                 user_id=user.id,
-                organization_id=user.organization_id,
                 token_hash=_token_hash(raw),
                 expires_at=datetime.now() + timedelta(days=7),
             )
@@ -115,8 +108,8 @@ class TestRefreshTokenAtomicClaim:
             user = await _make_user(db, "replay@openzync.tech")
             raw = "replay-raw-token"
             await AuthRepository(db).create_refresh_token(
+                
                 user_id=user.id,
-                organization_id=user.organization_id,
                 token_hash=_token_hash(raw),
                 expires_at=datetime.now() + timedelta(days=7),
             )
@@ -170,8 +163,8 @@ class TestRefreshTokenAtomicClaim:
             user_id = str(user.id)
             raw = "double-raw-token"
             await AuthRepository(db).create_refresh_token(
-                user_id=user_id,
-                organization_id=user.organization_id,
+                
+                user_id=user.id,
                 token_hash=_token_hash(raw),
                 expires_at=datetime.now() + timedelta(days=7),
             )
@@ -213,8 +206,8 @@ class TestRefreshTokenAtomicClaim:
             user.is_active = False
             raw = "deact-raw-token"
             await AuthRepository(db).create_refresh_token(
+                
                 user_id=user.id,
-                organization_id=user.organization_id,
                 token_hash=_token_hash(raw),
                 expires_at=datetime.now() + timedelta(days=7),
             )

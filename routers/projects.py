@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import audit_action
 from core.exceptions import AuthenticationError
-from dependencies.auth import require_permission
+from dependencies.auth import require_permission, require_user_id
 from dependencies.db import get_db
 from dependencies.project_auth import require_project_membership
 from repositories.project_pin_repository import ProjectPinRepository
@@ -64,7 +64,7 @@ async def create_project(
     raw_user_id: str | None = getattr(request.state, "user_id", None)
     user_id: UUID | None = UUID(raw_user_id) if raw_user_id else None
     return await service.create_project(
-        organization_id=request.state.org_id,
+
         user_id=user_id,
         payload=payload,
     )
@@ -109,7 +109,7 @@ async def list_projects(
         UUID(raw_user_id) if raw_user_id and auth_type != "api_key" else None
     )
     return await service.list_projects(
-        organization_id=request.state.org_id,
+
         user_id=user_id,
         limit=limit,
         offset=offset,
@@ -131,10 +131,11 @@ async def get_project(
     project_id: UUID = Path(...),
     request: Request = None,
     service: ProjectService = Depends(_get_project_service),
+    user_id: str = Depends(require_user_id),
 ) -> ProjectResponse:
     """Get a single project by ID."""
     return await service.get_project(
-        organization_id=request.state.org_id,
+        user_id=UUID(user_id),
         project_id=project_id,
     )
 
@@ -156,13 +157,14 @@ async def update_project(
     project_id: UUID = Path(...),
     request: Request = None,
     service: ProjectService = Depends(_get_project_service),
+    user_id: str = Depends(require_user_id),
 ) -> ProjectResponse:
     """Update project name and/or description.
 
     Requires owner role.
     """
     return await service.update_project(
-        organization_id=request.state.org_id,
+        user_id=UUID(user_id),
         project_id=project_id,
         payload=payload,
     )
@@ -184,6 +186,7 @@ async def archive_project(
     project_id: UUID = Path(...),
     request: Request = None,
     service: ProjectService = Depends(_get_project_service),
+    user_id: str = Depends(require_user_id),
 ) -> Response:
     """Archive a project (soft-delete, preserves all data).
 
@@ -196,7 +199,7 @@ async def archive_project(
     # AFTER 204 headers are flushed — a silent client/server divergence.
     # pin/unpin below already follow this pattern.
     await service.archive_project(
-        organization_id=request.state.org_id,
+        user_id=UUID(user_id),
         project_id=project_id,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -214,6 +217,7 @@ async def unarchive_project(
     project_id: UUID = Path(...),
     request: Request = None,
     service: ProjectService = Depends(_get_project_service),
+    user_id: str = Depends(require_user_id),
 ) -> ProjectResponse:
     """Restore an archived project.
 
@@ -222,7 +226,7 @@ async def unarchive_project(
     ``get_by_id``, which would make archived projects unrestorable.
     """
     return await service.unarchive_project(
-        organization_id=request.state.org_id,
+        user_id=UUID(user_id),
         project_id=project_id,
     )
 
@@ -251,7 +255,7 @@ async def pin_project(
     if raw_user_id is None:
         raise AuthenticationError("Pins require dashboard auth")
     await service.pin_project(
-        organization_id=request.state.org_id,
+
         user_id=UUID(raw_user_id),
         project_id=project_id,
     )
@@ -279,7 +283,7 @@ async def unpin_project(
     if raw_user_id is None:
         raise AuthenticationError("Pins require dashboard auth")
     await service.unpin_project(
-        organization_id=request.state.org_id,
+
         user_id=UUID(raw_user_id),
         project_id=project_id,
     )

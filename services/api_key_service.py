@@ -49,7 +49,7 @@ class ApiKeyService:
 
     async def create_project_key(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         payload: CreateApiKeyRequest,
         created_by: UUID | None = None,
@@ -61,7 +61,7 @@ class ApiKeyService:
         the hash.  The raw key is returned exactly once.
 
         Args:
-            organization_id: The owning organization UUID.
+            user_id: The owning organization UUID.
             project_id: The project UUID to scope this key to.
             payload: Key name from the request body.
             created_by: Optional UUID of the user creating the key.
@@ -95,7 +95,7 @@ class ApiKeyService:
             )
 
         api_key = await self._repo.create(
-            organization_id=organization_id,
+            user_id=user_id,
             project_id=project_id,
             lookup_hash=lookup_hash,
             key_hash=key_hash,
@@ -110,14 +110,14 @@ class ApiKeyService:
             "api_key.created",
             key_id=str(api_key.id),
             project_id=str(project_id),
-            org_id=str(organization_id),
+            user_id=str(user_id),
         )
 
         return api_key, raw_key
 
     async def list_project_keys(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         sort: SortSpec | None = None,
     ) -> list[ApiKey]:
@@ -127,7 +127,7 @@ class ApiKeyService:
         ``last_used_at``.
 
         Args:
-            organization_id: The owning organization UUID.
+            user_id: The owning organization UUID.
             project_id: The project UUID to list keys for.
             sort: Validated sort spec (forwarded opaque to the repository).
 
@@ -136,7 +136,7 @@ class ApiKeyService:
         """
         return list(
             await self._repo.list_by_org(
-                organization_id=organization_id,
+                user_id=user_id,
                 project_id=project_id,
                 include_revoked=False,
                 sort=sort,
@@ -174,7 +174,7 @@ class ApiKeyService:
 
     async def revoke_project_key(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         key_id: UUID,
     ) -> ApiKey | None:
@@ -184,7 +184,7 @@ class ApiKeyService:
         Redis auth cache so the key is rejected on the next request.
 
         Args:
-            organization_id: The owning organization UUID.
+            user_id: The owning organization UUID.
             project_id: The project UUID scope.
             key_id: The UUID of the API key to revoke.
 
@@ -193,7 +193,7 @@ class ApiKeyService:
             given org + project scope.
         """
         api_key = await self._repo.revoke(
-            organization_id=organization_id,
+            user_id=user_id,
             project_id=project_id,
             key_id=key_id,
         )
@@ -204,7 +204,7 @@ class ApiKeyService:
                 "api_key.revoked",
                 key_id=str(key_id),
                 project_id=str(project_id),
-                org_id=str(organization_id),
+                user_id=str(user_id),
             )
 
         return api_key

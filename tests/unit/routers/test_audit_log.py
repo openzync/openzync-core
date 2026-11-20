@@ -19,7 +19,7 @@ from httpx import ASGITransport, AsyncClient
 
 from routers.audit_log import router
 
-ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 LOG_ID = UUID("00000000-0000-0000-0000-000000000003")
 NOW = datetime.now(UTC)
@@ -33,7 +33,7 @@ def _stub_permission_gate() -> None:
     closure created at router import time that cannot be keyed in
     ``dependency_overrides``.  Patching ``dependencies.auth._check_permission``
     (the shared decision function) stubs the gate while keeping the
-    ``require_org_id`` chain intact.  The real gate matrix is covered by
+    ``require_user_id`` chain intact.  The real gate matrix is covered by
     ``test_admin_gate_matrix.py``.
     """
     with patch("dependencies.auth._check_permission", new=AsyncMock()):
@@ -46,7 +46,7 @@ def _stub_audit_log_entry(
     """Return a MagicMock that looks like an AuditLog ORM object."""
     entry = MagicMock()
     entry.id = LOG_ID
-    entry.organization_id = ORG_ID
+    entry.user_id = USER_ID
     entry.actor_id = str(USER_ID)
     entry.actor_type = "user"
     entry.action = "session.create"
@@ -66,17 +66,17 @@ def _build_app(mock_service: AsyncMock) -> FastAPI:
     app = FastAPI()
     app.include_router(router)
 
-    from dependencies.auth import require_org_id
+    from dependencies.auth import require_user_id
     from dependencies.db import get_db
 
     app.dependency_overrides = {}
     app.dependency_overrides[get_db] = lambda: mock_service._db  # not used directly
     # Permission-gated: the endpoint is org-wide (IPs, actors, resources, bodies).
-    app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+    app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
 
     @app.middleware("http")
     async def _mock_auth(request: Request, call_next):
-        request.state.org_id = str(ORG_ID)
+        request.state.user_id = str(USER_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "jwt"
         response = await call_next(request)
@@ -137,7 +137,7 @@ class TestListAuditLogs:
 
         mock_audit_service.query_logs.assert_awaited_once()
         call_kwargs = mock_audit_service.query_logs.await_args.kwargs
-        assert call_kwargs["organization_id"] == ORG_ID
+        assert call_kwargs["user_id"] == USER_ID
         assert call_kwargs["limit"] == 50
         assert call_kwargs["offset"] == 0
 

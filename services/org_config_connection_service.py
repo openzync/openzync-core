@@ -78,7 +78,7 @@ class OrgConfigConnectionService:
 
     async def test_connections(
         self,
-        org_id: UUID,
+        user_id: UUID,
         domain: str,
         candidate: UpdateOrgConfigRequest,
     ) -> TestOrgConfigResponse:
@@ -89,7 +89,7 @@ class OrgConfigConnectionService:
         yield ``ok: False`` entries — never exceptions.
 
         Args:
-            org_id: The organization UUID.
+            user_id: The organization UUID.
             domain: One of ``llm``, ``graph``, ``blob``.
             candidate: Partial candidate config; only ``exclude_unset``
                 fields overlay the stored config.
@@ -106,7 +106,7 @@ class OrgConfigConnectionService:
             raise OpenBaoConnectionError("OpenBao client required for org config test")
         self._reject_system_managed_overrides(candidate)
         stored = await get_org_config(
-            org_id,
+            user_id,
             redis=self._redis,
             bao_client=self._bao_client,
             skip_cache=True,
@@ -114,7 +114,7 @@ class OrgConfigConnectionService:
         merged = self._overlay_candidate(stored, candidate)
         logger.info(
             "org_config.test_started",
-            extra={"org_id": str(org_id), "domain": domain},
+            extra={"user_id": str(user_id), "domain": domain},
         )
         probe = self._resolve_probe(domain)
         results = await asyncio.gather(
@@ -141,7 +141,7 @@ class OrgConfigConnectionService:
         logger.info(
             "org_config.test_finished",
             extra={
-                "org_id": str(org_id),
+                "user_id": str(user_id),
                 "domain": domain,
                 "ok": result.ok,
                 "latency_ms": result.latency_ms,

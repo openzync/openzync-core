@@ -70,14 +70,14 @@ than workers can drain them when there's already a large backlog."""
 _NON_LLM_TASK_MAP: dict[int, tuple[str, set[str], str]] = {
     ENRICHMENT_EMBEDDING: (
         "embed_episode",
-        {"episode_id", "org_id", "project_id", "trace_id"},
+        {"episode_id", "user_id", "project_id", "trace_id"},
         "high",
     ),
     ENRICHMENT_ENTITY_LINKS: (
         "link_entities_to_episode",
         {
             "episode_id",
-            "org_id",
+            "user_id",
             "project_id",
             "role",
             "trace_id",
@@ -91,7 +91,7 @@ _LLM_TASK_DETAILS: tuple[str, set[str], str] = (
     "enrich_episode",
     {
         "episode_id",
-        "org_id",
+        "user_id",
         "project_id",
         "session_id",
         "trace_id",
@@ -131,7 +131,7 @@ async def _repair_missing_fact_embeddings(
     rows: list[dict[str, Any]] = []
     async with session_factory() as db:
         # Cross-org cron scan: bypass RLS so every org is visible.  The
-        # policies read NULLIF(current_setting('app.org_id', true), ''),
+        # policies read NULLIF(current_setting('app.user_id', true), ''),
         # so an unset context matches no rows — the bypass is what makes
         # the platform-wide scan possible.  The bypass is bound on the
         # session, so it survives a commit instead of silently vanishing.
@@ -140,7 +140,7 @@ async def _repair_missing_fact_embeddings(
             select(
                 Fact.id,
                 Fact.content,
-                Fact.organization_id,
+                Fact.user_id,
                 Fact.project_id,
             )
             .where(
@@ -159,7 +159,7 @@ async def _repair_missing_fact_embeddings(
                 {
                     "id": str(row.id),
                     "content": row.content,
-                    "org_id": str(row.organization_id),
+                    "user_id": str(row.user_id),
                     "project_id": str(row.project_id),
                 }
             )
@@ -175,14 +175,14 @@ async def _repair_missing_fact_embeddings(
     # Resolve org config once per org, not once per fact.
     by_org: dict[str, list[dict[str, Any]]] = {}
     for fact_row in rows:
-        by_org.setdefault(fact_row["org_id"], []).append(fact_row)
+        by_org.setdefault(fact_row["user_id"], []).append(fact_row)
 
     enqueued: int = 0
-    for org_id, org_facts in by_org.items():
+    for user_id, org_facts in by_org.items():
         for fact_row in org_facts:
             task_kwargs = {
                 "fact_id": fact_row["id"],
-                "org_id": org_id,
+                "user_id": user_id,
                 "project_id": fact_row["project_id"],
                 "content": fact_row["content"],
                 "trace_id": f"reconcile_{fact_row['id'][:8]}",
@@ -291,7 +291,7 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
         result = await db.execute(
             select(
                 Episode.id,
-                Episode.organization_id,
+                Episode.user_id,
                 Episode.project_id,
                 Episode.session_id,
                 Episode.enrichment_status,
@@ -322,7 +322,7 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
             stale_episodes.append(
                 {
                     "id": str(row.id),
-                    "org_id": str(row.organization_id),
+                    "user_id": str(row.user_id),
                     "project_id": str(row.project_id),
                     "session_id": str(row.session_id),
                     "enrichment_status": row.enrichment_status,
@@ -346,14 +346,14 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
 
     for ep in stale_episodes:
         current_status: int = ep["enrichment_status"]
-        org_id: str = ep["org_id"]
+        user_id: str = ep["user_id"]
         episode_id: str = ep["id"]
         project_id: str = ep.get("project_id", "")
 
         # ID-only kwargs — workers load content/metadata from the row.
         base_kwargs: dict[str, Any] = {
             "episode_id": episode_id,
-            "org_id": org_id,
+            "user_id": user_id,
             "project_id": project_id,
             "session_id": ep.get("session_id", ""),
             "trace_id": f"reconcile_{episode_id[:8]}",

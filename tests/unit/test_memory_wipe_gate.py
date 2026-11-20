@@ -60,7 +60,7 @@ class TestWipeOrgGate:
 
         with pytest.raises(NotFoundError) as exc_info:
             await service.delete_project_memory(
-                org_id=ORG_A,
+                user_id=ORG_A,
                 project_id=PROJECT_ID,
                 confirm=str(PROJECT_ID),
                 actor_id=USER_ID,
@@ -77,7 +77,7 @@ class TestWipeOrgGate:
 
         with pytest.raises(ValidationError) as exc_info:
             await service.delete_project_memory(
-                org_id=ORG_A,
+                user_id=ORG_A,
                 project_id=PROJECT_ID,
                 confirm=str(uuid4()),
                 actor_id=USER_ID,

@@ -91,7 +91,7 @@ class TestGraphService:
         service = GraphService(graph_backend=AsyncMock(), user_repo=mock_user_repo)
 
         # Should not raise
-        await service.ensure_user_exists(self.ORG_ID, uuid4())
+        await service.ensure_user_exists(uuid4())
 
         mock_user_repo.get_by_uuid.assert_awaited_once()
 
@@ -103,7 +103,7 @@ class TestGraphService:
         service = GraphService(graph_backend=AsyncMock(), user_repo=mock_user_repo)
 
         with pytest.raises(NotFoundError):
-            await service.ensure_user_exists(self.ORG_ID, uuid4())
+            await service.ensure_user_exists(uuid4())
 
     @pytest.mark.asyncio
     async def test_ensure_user_exists_no_repo(self) -> None:
@@ -111,7 +111,7 @@ class TestGraphService:
         service = GraphService(graph_backend=AsyncMock(), user_repo=None)
 
         with pytest.raises(NotFoundError):
-            await service.ensure_user_exists(self.ORG_ID, uuid4())
+            await service.ensure_user_exists(uuid4())
 
     # ── get_entities (session-scoped) ──────────────────────────────────────
 
@@ -155,7 +155,7 @@ class TestGraphService:
             limit=500,
         )
         mock_backend.get_entities_for_episodes.assert_awaited_once_with(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             episode_ids=[episode_id],
             limit=200,
@@ -215,7 +215,7 @@ class TestGraphService:
 
         assert result == expected
         mock_backend.get_entity_with_edges.assert_awaited_once_with(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             entity_id=entity_id,
         )
@@ -264,7 +264,7 @@ class TestGraphService:
 
         assert result == expected
         mock_backend.list_entity_edges.assert_awaited_once_with(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             entity_id=subject_id,
             predicate=None,
@@ -370,7 +370,7 @@ class TestGraphService:
         )
 
         mock_backend.list_entity_edges.assert_awaited_once_with(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             entity_id=subject_id,
             predicate="knows",
@@ -423,7 +423,7 @@ class TestGraphService:
         assert result[0]["name"] == "Tech Cluster"
         assert result[0]["member_count"] == 42
         mock_backend.list_entities.assert_awaited_once_with(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             entity_type="community",
             limit=200,
@@ -506,7 +506,7 @@ class TestGraphService:
         )
 
         mock_backend.list_entities.assert_awaited_once_with(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             entity_type="community",
             limit=200,

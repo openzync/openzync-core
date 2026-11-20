@@ -40,7 +40,7 @@ class DetectionMixin:
     async def detect_co_occurrences(
         self,
         project_id: UUID,
-        organization_id: UUID | None = None,
+        user_id: UUID | None = None,
     ) -> list[CoOccurrencePattern]:
         """Find entity pairs that co-occur above the frequency threshold.
 
@@ -50,7 +50,7 @@ class DetectionMixin:
 
         Args:
             project_id: Project scope.
-            organization_id: Organization scope — required for backend
+            user_id: Organization scope — required for backend
                 calls (RLS enforcement).
 
         Returns:
@@ -63,17 +63,17 @@ class DetectionMixin:
         """
         self._assert_backend()
         assert self._backend is not None  # mypy type narrowing
-        if organization_id is None:
-            raise ValueError("organization_id is required when using GraphBackend")
+        if user_id is None:
+            raise ValueError("user_id is required when using GraphBackend")
 
         # Get total episode count for the project (denominator for ratio)
-        total_episodes = await self._get_episode_count(project_id, organization_id)
+        total_episodes = await self._get_episode_count(project_id, user_id)
         if total_episodes == 0:
             return []
 
         # Find co-occurring pairs via graph backend
         pair_rows = await self._backend.get_co_occurring_entity_pairs(
-            org_id=organization_id,
+            user_id=user_id,
             project_id=project_id,
             min_co_count=self._min_co_count,
         )
@@ -94,7 +94,7 @@ class DetectionMixin:
             for row in pair_rows
         ]
         evidence = await self._backend.get_relationship_ids_between_many(
-            org_id=organization_id,
+            user_id=user_id,
             project_id=project_id,
             pairs=pairs,
         )
@@ -116,7 +116,7 @@ class DetectionMixin:
     async def detect_temporal_gaps(
         self,
         project_id: UUID,
-        organization_id: UUID | None = None,
+        user_id: UUID | None = None,
     ) -> list[TemporalGapPattern]:
         """Analyze temporal gaps between entity appearances.
 
@@ -127,7 +127,7 @@ class DetectionMixin:
 
         Args:
             project_id: Project scope.
-            organization_id: Organization scope — required for backend
+            user_id: Organization scope — required for backend
                 calls (RLS enforcement).
 
         Returns:
@@ -141,12 +141,12 @@ class DetectionMixin:
         self._assert_backend()
         assert self._backend is not None  # mypy type narrowing
         backend: GraphBackend = self._backend  # local var for closure type narrowing
-        if organization_id is None:
-            raise ValueError("organization_id is required when using GraphBackend")
+        if user_id is None:
+            raise ValueError("user_id is required when using GraphBackend")
 
         # Get all entities for the project
         entities = await backend.get_all_entities(
-            org_id=organization_id,
+            user_id=user_id,
             project_id=project_id,
         )
 
@@ -156,7 +156,7 @@ class DetectionMixin:
         ) -> tuple[UUID, str, list[datetime]] | None:
             eid = UUID(entity["id"]) if isinstance(entity["id"], str) else entity["id"]
             timestamps = await backend.get_entity_appearance_timestamps(
-                org_id=organization_id,
+                user_id=user_id,
                 project_id=project_id,
                 entity_id=eid,
             )
@@ -237,7 +237,7 @@ class DetectionMixin:
     async def detect_behavioral_patterns(
         self,
         project_id: UUID,
-        organization_id: UUID | None = None,
+        user_id: UUID | None = None,
     ) -> list[BehavioralPattern]:
         """Detect behavioral patterns from extracted facts.
 
@@ -248,14 +248,14 @@ class DetectionMixin:
 
         Args:
             project_id: Project scope.
-            organization_id: Reserved for future use.
+            user_id: Reserved for future use.
 
         Returns:
             A list of ``BehavioralPattern`` instances, one per entity
             with notable fact-predicate patterns.
         """
         # Get predicate frequency for each entity via direct DB query
-        rows = await self._get_fact_predicate_counts(project_id, organization_id)
+        rows = await self._get_fact_predicate_counts(project_id, user_id)
 
         # Aggregate by entity
         entity_data: dict[UUID, dict[str, Any]] = {}
@@ -306,7 +306,7 @@ class DetectionMixin:
     async def _get_episode_count(
         self,
         project_id: UUID,
-        organization_id: UUID,
+        user_id: UUID,
     ) -> int:
         """Get total distinct episode count for a project via graph backend.
 
@@ -314,7 +314,7 @@ class DetectionMixin:
 
         Args:
             project_id: Project scope.
-            organization_id: Organisation scope (for RLS enforcement).
+            user_id: Organisation scope (for RLS enforcement).
 
         Returns:
             Number of distinct episodes with linked entities.
@@ -328,6 +328,6 @@ class DetectionMixin:
                 "ObservationService requires a graph_backend instance."
             )
         return await self._backend.get_total_entity_linked_episode_count(
-            org_id=organization_id,
+            user_id=user_id,
             project_id=project_id,
         )

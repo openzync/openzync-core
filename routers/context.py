@@ -124,7 +124,7 @@ async def get_context(
         A ``ContextResponse`` with the assembled context string and
         assembly metadata (cache status, timing, source counts).
     """
-    org_id = UUID(request.state.org_id)
+    user_id = UUID(request.state.user_id)
     project_id = UUID(request.path_params["project_id"])
 
     # Normalize a naive ISO-8601 input (no offset) to UTC-aware so the
@@ -144,25 +144,25 @@ async def get_context(
         pool = request.app.state.surreal_connection_pool
         if pool is not None:
             try:
-                surreal = await pool.get_or_create(org_id, org_config)
+                surreal = await pool.get_or_create(user_id, org_config)
             except Exception as exc:
                 logger.error(
                     "context.surreal_connection_failed",
                     extra={
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "backend": "surrealdb",
                         "error": str(exc),
                     },
                 )
                 raise GraphBackendUnavailableError(
-                    f"SurrealDB connection failed for org {org_id} "
+                    f"SurrealDB connection failed for org {user_id} "
                     f"with graph_backend='surrealdb': {exc}"
                 ) from exc
 
     graph_backends = dispatcher.create_all_backends(db, org_config, surreal=surreal)
     service = ContextService(
         db,
-        org_id,
+        user_id,
         redis,
         graph_backends=graph_backends,
         org_config=org_config,

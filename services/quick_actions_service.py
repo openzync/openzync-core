@@ -32,11 +32,11 @@ class QuickActionsService:
         self._user_repo = user_repo
         self._org_repo = org_repo
 
-    async def get_actions(self, org_id: UUID) -> list[dict]:
+    async def get_actions(self, user_id: UUID) -> list[dict]:
         """Build a prioritized list of quick actions based on org state.
 
         Args:
-            org_id: The organization UUID.
+            user_id: The organization UUID.
 
         Returns:
             A list of action dicts, each with ``label``, ``href``, ``icon``,
@@ -45,9 +45,9 @@ class QuickActionsService:
         actions: list[dict] = []
 
         # One AsyncSession allows only one in-flight query — sequential, not gather.
-        project_count = await self._project_repo.count_active(org_id)
-        llm_config = await self._org_repo.get_llm_config(org_id)
-        user_count = await self._user_repo.count_active(org_id)
+        project_count = await self._project_repo.count_active(user_id)
+        llm_config = await self._org_repo.get_llm_config(user_id)
+        user_count = await self._user_repo.count_active(user_id)
 
         # 1. Projects
         if project_count == 0:

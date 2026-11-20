@@ -59,7 +59,7 @@ class LLMUsageRepository:
         stmt = (
             pg_insert(LLMUsage)
             .values(
-                organization_id=record.org_id,
+
                 provider=record.provider,
                 model=record.model,
                 task_type=record.worker,
@@ -102,19 +102,19 @@ class LLMUsageRepository:
         Raises:
             RuntimeError: If the record has no org scope.
         """
-        if record.org_id is None:
-            raise RuntimeError("usage sink received a record without org_id")
+        if record.user_id is None:
+            raise RuntimeError("usage sink received a record without user_id")
         async with session_factory() as session:
             await session.execute(
-                text("SELECT set_config('app.org_id', :oid, true)"),
-                {"oid": str(record.org_id)},
+                text("SELECT set_config('app.user_id', :oid, true)"),
+                {"oid": str(record.user_id)},
             )
             await cls(session).create(record)
             await session.commit()
 
     async def list_paginated(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         *,
         start: datetime | None = None,
         end: datetime | None = None,
@@ -132,7 +132,7 @@ class LLMUsageRepository:
         ``completion_tokens``, ``total_tokens``.
 
         Args:
-            organization_id: Owning org (RLS also scopes the session).
+            user_id: Owning org (RLS also scopes the session).
             start: Include rows created at/after this instant.
             end: Include rows created before this instant (exclusive).
             project_id: Exact-match filter on project scope.
@@ -145,9 +145,9 @@ class LLMUsageRepository:
         Returns:
             Tuple of (rows, total_count).
         """
-        base = select(LLMUsage).where(LLMUsage.organization_id == organization_id)
+        base = select(LLMUsage).where(LLMUsage.user_id == user_id)
         count_base = select(func.count(LLMUsage.id)).where(
-            LLMUsage.organization_id == organization_id
+            LLMUsage.user_id == user_id
         )
         conditions = []
         if start is not None:
@@ -189,7 +189,7 @@ class LLMUsageRepository:
 
     async def get_summary(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         *,
         start: datetime | None = None,
         end: datetime | None = None,
@@ -200,7 +200,7 @@ class LLMUsageRepository:
         """Aggregate metering totals over the filtered window.
 
         Args:
-            organization_id: Owning org (RLS also scopes the session).
+            user_id: Owning org (RLS also scopes the session).
             start: Include rows created at/after this instant.
             end: Include rows created before this instant (exclusive).
             project_id: Exact-match filter on project scope.
@@ -218,7 +218,7 @@ class LLMUsageRepository:
             func.coalesce(func.sum(LLMUsage.reasoning_tokens), 0),
             func.coalesce(func.sum(LLMUsage.total_tokens), 0),
             func.coalesce(func.avg(LLMUsage.duration_ms), 0),
-        ).where(LLMUsage.organization_id == organization_id)
+        ).where(LLMUsage.user_id == user_id)
         if start is not None:
             query = query.where(LLMUsage.created_at >= start)
         if end is not None:

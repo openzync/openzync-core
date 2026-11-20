@@ -30,7 +30,7 @@ class ApiKey(TimestampMixin, Base):
 
     Attributes:
         id: UUID primary key.
-        organization_id: Foreign key to the owning organization.
+        user_id: Foreign key to the owning user.
         project_id: Foreign key to the owning project (NOT NULL).
         created_by: The user who created this API key. Populated when
             the key is created via the dashboard (JWT session). Used for
@@ -56,8 +56,8 @@ class ApiKey(TimestampMixin, Base):
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
     )
-    organization_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="CASCADE"),
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
     project_id: Mapped[uuid.UUID] = mapped_column(
@@ -116,7 +116,7 @@ class ApiKey(TimestampMixin, Base):
             "prefix IN ('oz_live_', 'oz_test_')",
             name="ck_api_key_prefix",
         ),
-        Index("ix_api_key_organization_id", "organization_id"),
+        Index("ix_api_key_user_id", "user_id"),
         Index("ix_api_key_created_by", "created_by"),
     )
 

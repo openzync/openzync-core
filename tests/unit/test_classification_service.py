@@ -73,7 +73,7 @@ class TestClassificationService:
         mock_repo.get_by_session.return_value = ([], None)
 
         result, next_cursor = await service.get_classifications_for_session(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             session_id=uuid4(),
         )
         assert isinstance(result, list)
@@ -89,7 +89,7 @@ class TestClassificationService:
         mock_repo.get_by_session.return_value = ([mock_cls], None)
 
         result, _next_cursor = await service.get_classifications_for_session(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             session_id=uuid4(),
         )
         assert len(result) == 1
@@ -126,7 +126,7 @@ class TestClassificationService:
         }
 
         result, _next_cursor = await service.get_classifications_for_session(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             session_id=uuid4(),
         )
 
@@ -160,7 +160,7 @@ class TestClassificationService:
         }
 
         result = await service.get_classification_for_episode(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             episode_id=episode_id,
         )
 

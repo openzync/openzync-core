@@ -33,7 +33,7 @@ class TestWebhookRepository:
     def _mock_endpoint(self, **overrides: object) -> MagicMock:
         ep = MagicMock()
         ep.id = overrides.get("id", self.ENDPOINT_ID)
-        ep.organization_id = overrides.get("organization_id", self.ORG_ID)
+        ep.user_id = overrides.get("user_id", self.ORG_ID)
         ep.name = overrides.get("name", "Test Webhook")
         ep.url = overrides.get("url", "https://example.com/hook")
         ep.events = overrides.get(
@@ -82,7 +82,7 @@ class TestWebhookRepository:
         mock_result.scalars.return_value.all.return_value = endpoints
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_organization(organization_id=self.ORG_ID)
+        result = await repo.get_by_organization(user_id=self.ORG_ID)
 
         assert result == endpoints
 
@@ -94,7 +94,7 @@ class TestWebhookRepository:
         mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_organization(organization_id=self.ORG_ID)
+        result = await repo.get_by_organization(user_id=self.ORG_ID)
 
         assert result == []
 
@@ -109,7 +109,7 @@ class TestWebhookRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.create(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             name="My Webhook",
             url="https://example.com/hook",
             events=["message.created"],
@@ -129,7 +129,7 @@ class TestWebhookRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.create(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             name="No Events",
             url="https://example.com/hook",
         )
@@ -291,7 +291,7 @@ class TestWebhookRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_active_endpoints_for_event(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             event_type="message.created",
         )
 
@@ -308,7 +308,7 @@ class TestWebhookRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_active_endpoints_for_event(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             event_type="any.event",
         )
 
@@ -326,7 +326,7 @@ class TestWebhookRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_active_endpoints_for_event(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             event_type="message.created",
         )
 
@@ -342,7 +342,7 @@ class TestWebhookRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_active_endpoints_for_event(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             event_type="anything",
         )
 

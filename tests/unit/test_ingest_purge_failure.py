@@ -89,7 +89,7 @@ class TestPostCommitPurgeFailure:
             patch.object(service, "_get_org_pii_config", return_value={}),
         ):
             result = await service.ingest(
-                org_id=ORG_A,
+                user_id=ORG_A,
                 project_id=PROJECT_ID,
                 created_by=USER_ID,
                 session_external_id="session-abc",

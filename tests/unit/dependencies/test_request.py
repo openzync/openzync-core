@@ -14,54 +14,54 @@ pytestmark = pytest.mark.unit
 
 
 class TestGetCurrentOrgId:
-    """get_current_org_id: extracts org_id from request.state as UUID."""
+    """get_current_user_id: extracts user_id from request.state as UUID."""
 
     ORG_ID_STR = "00000000-0000-0000-0000-000000000001"
 
     @pytest.mark.asyncio
-    async def test_returns_uuid_when_org_id_present(self) -> None:
-        """org_id in request.state → returns UUID."""
-        from dependencies.request import get_current_org_id
+    async def test_returns_uuid_when_user_id_present(self) -> None:
+        """user_id in request.state → returns UUID."""
+        from dependencies.request import get_current_user_id
 
         request = MagicMock(spec=Request)
-        request.state.org_id = self.ORG_ID_STR
+        request.state.user_id = self.ORG_ID_STR
 
-        result = await get_current_org_id(request)
+        result = await get_current_user_id(request)
         assert isinstance(result, UUID)
         assert result == UUID(self.ORG_ID_STR)
 
     @pytest.mark.asyncio
     async def test_raises_authentication_error_when_missing(self) -> None:
-        """org_id absent → raises AuthenticationError."""
-        from dependencies.request import get_current_org_id
+        """user_id absent → raises AuthenticationError."""
+        from dependencies.request import get_current_user_id
 
         request = MagicMock(spec=Request)
-        request.state.org_id = None
+        request.state.user_id = None
 
-        with pytest.raises(AuthenticationError, match="Organization context not set"):
-            await get_current_org_id(request)
+        with pytest.raises(AuthenticationError, match="User context not set"):
+            await get_current_user_id(request)
 
     @pytest.mark.asyncio
     async def test_raises_authentication_error_when_empty(self) -> None:
-        """org_id is empty string → raises AuthenticationError."""
-        from dependencies.request import get_current_org_id
+        """user_id is empty string → raises AuthenticationError."""
+        from dependencies.request import get_current_user_id
 
         request = MagicMock(spec=Request)
-        request.state.org_id = ""
+        request.state.user_id = ""
 
-        with pytest.raises(AuthenticationError, match="Organization context not set"):
-            await get_current_org_id(request)
+        with pytest.raises(AuthenticationError, match="User context not set"):
+            await get_current_user_id(request)
 
     @pytest.mark.asyncio
     async def test_raises_authentication_error_when_state_attr_missing(self) -> None:
-        """request.state has no org_id attr → raises AuthenticationError."""
-        from dependencies.request import get_current_org_id
+        """request.state has no user_id attr → raises AuthenticationError."""
+        from dependencies.request import get_current_user_id
 
         request = MagicMock(spec=Request)
-        del request.state.org_id
+        del request.state.user_id
 
-        with pytest.raises(AuthenticationError, match="Organization context not set"):
-            await get_current_org_id(request)
+        with pytest.raises(AuthenticationError, match="User context not set"):
+            await get_current_user_id(request)
 
 
 class TestGetProjectId:

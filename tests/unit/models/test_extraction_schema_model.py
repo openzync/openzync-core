@@ -15,11 +15,11 @@ class TestExtractionSchemaModel:
     def test_required_fields(self) -> None:
         """Minimal required fields produce a valid instance."""
         schema = ExtractionSchema(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             name="customer_profile",
             json_schema={"type": "object", "properties": {"name": {"type": "string"}}},
         )
-        assert schema.organization_id is not None
+        assert schema.user_id is not None
         assert schema.name == "customer_profile"
         assert schema.json_schema == {"type": "object", "properties": {"name": {"type": "string"}}}
 
@@ -37,7 +37,7 @@ class TestExtractionSchemaModel:
     def test_nullable_prompt_template(self) -> None:
         """prompt_template defaults to None."""
         schema = ExtractionSchema(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             name="test",
             json_schema={},
         )
@@ -50,8 +50,8 @@ class TestExtractionSchemaModel:
 
     @pytest.mark.unit
     def test_unique_constraint(self) -> None:
-        """UniqueConstraint on (organization_id, name)."""
-        uq_name = "uq_extraction_schema_org_name"
+        """UniqueConstraint on (user_id, name)."""
+        uq_name = "uq_extraction_schema_user_name"
         constraints = ExtractionSchema.__table_args__
         names = {c.name for c in constraints if hasattr(c, "name")}
         assert uq_name in names
@@ -60,7 +60,7 @@ class TestExtractionSchemaModel:
     def test_repr(self) -> None:
         """repr includes id, org, name."""
         schema = ExtractionSchema(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             name="test",
             json_schema={},
         )

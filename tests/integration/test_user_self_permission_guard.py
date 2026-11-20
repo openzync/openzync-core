@@ -56,7 +56,7 @@ _MEMBER_PERMS = ["project:read", "project:write"]
 _GRANTED_PERMS = ["members:read", "members:write", "project:read", "project:write"]
 
 
-async def _seed_member(app: Any, org_id: UUID) -> UUID:
+async def _seed_member(app: Any, user_id: UUID) -> UUID:
     """Create a verified member dashboard user with limited perms."""
     from repositories.auth_repository import AuthRepository
     from utils.password import hash_password
@@ -64,7 +64,6 @@ async def _seed_member(app: Any, org_id: UUID) -> UUID:
     async with app.state.db_session_factory() as session:
         repo = AuthRepository(session)
         user = await repo.create_dashboard_user(
-            organization_id=org_id,
             email=_MEMBER_EMAIL,
             password_hash=hash_password(_PASSWORD),
             role="member",
@@ -99,9 +98,9 @@ class TestSelfPermissionGuard:
         isolated_org_and_key: dict,
     ) -> None:
         """Member PATCH own record ``permissions`` → 422, unchanged."""
-        org_id = isolated_org_and_key["org_id"]
+        user_id = isolated_org_and_key["user_id"]
         admin_jwt: str = isolated_org_and_key["jwt"]
-        member_id = await _seed_member(isolated_app, org_id)
+        member_id = await _seed_member(isolated_app, user_id)
 
         transport = asgi_transport(isolated_app)
         async with AsyncClient(
@@ -143,7 +142,7 @@ class TestSelfPermissionGuard:
     ) -> None:
         """Admin PATCH other ``permissions`` → 200, within the actor set."""
         admin_jwt: str = isolated_org_and_key["jwt"]
-        member_id = await _seed_member(isolated_app, isolated_org_and_key["org_id"])
+        member_id = await _seed_member(isolated_app, isolated_org_and_key["user_id"])
 
         requested = [
             "configuration:read",
@@ -181,13 +180,12 @@ class TestSelfPermissionGuard:
         from repositories.auth_repository import AuthRepository
         from utils.password import hash_password
 
-        org_id = isolated_org_and_key["org_id"]
+        user_id = isolated_org_and_key["user_id"]
         admin_jwt: str = isolated_org_and_key["jwt"]
         actor_perms = ["members:read", "members:write", "project:read"]
         async with isolated_app.state.db_session_factory() as session:
             repo = AuthRepository(session)
             actor = await repo.create_dashboard_user(
-                organization_id=org_id,
                 email="cap-actor@example.com",
                 password_hash=hash_password(_PASSWORD),
                 role="member",
@@ -195,7 +193,6 @@ class TestSelfPermissionGuard:
             )
             await repo.mark_email_verified(actor.id)
             target = await repo.create_dashboard_user(
-                organization_id=org_id,
                 email="cap-target@example.com",
                 password_hash=hash_password(_PASSWORD),
                 role="member",

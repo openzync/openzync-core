@@ -21,7 +21,7 @@ class Project(TimestampMixin, Base):
 
     Attributes:
         id: UUID primary key, generated server-side via gen_random_uuid().
-        organization_id: Foreign key to the owning organization.
+        user_id: Foreign key to the owning organization.
         name: Human-readable project name (unique within an organization).
         description: Optional longer description of the project's purpose.
         metadata_: Arbitrary JSONB metadata for extensible configuration.
@@ -38,8 +38,8 @@ class Project(TimestampMixin, Base):
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
     )
-    organization_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="CASCADE"),
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -67,14 +67,14 @@ class Project(TimestampMixin, Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "organization_id",
+            "user_id",
             "name",
-            name="uq_projects_org_name",
+            name="uq_projects_user_name",
         ),
     )
 
     def __repr__(self) -> str:
         return (
-            f"<Project id={self.id} org={self.organization_id} "
+            f"<Project id={self.id} user={self.user_id} "
             f"name={self.name!r} archived={self.is_archived}>"
         )

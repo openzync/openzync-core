@@ -24,14 +24,14 @@ class TestLuaClaimSingleWinner:
         job_a = str(uuid4())
         svc_a = _service_with_script(job_a, 1)
         claim_a = await svc_a.claim_content_hash(
-            "org", "user", "sess", [{"role": "user", "content": "hi"}],
+            "user", "sess", [{"role": "user", "content": "hi"}],
             payload=job_a,
         )
         assert claim_a.won is True
 
         svc_b = _service_with_script(job_a, 0)
         claim_b = await svc_b.claim_content_hash(
-            "org", "user", "sess", [{"role": "user", "content": "hi"}],
+            "user", "sess", [{"role": "user", "content": "hi"}],
             payload=str(uuid4()),
         )
         assert claim_b.won is False

@@ -1,8 +1,8 @@
 """Admin dashboard statistics endpoints — HTTP adapter layer only.
 
 Provides aggregate data for the dashboard frontend:
-- Organization-level counts (episodes, sessions, facts, extractions,
-  observations, classifications) — windowed by days/from/to and
+- Platform-level counts (episodes, sessions, facts, extractions,
+  observations, classifications) — windowed by days and
   optional project_id.
 - Daily usage trends (episodes, sessions, facts, extractions,
   observations, classifications, nodes, edges per day) — same windowing.
@@ -20,9 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.auth import require_permission
 from dependencies.db import get_db
-from dependencies.org_config import get_org_config
 from schemas.admin_stats import OrgStatsResponse, UsageStatsResponse
-from schemas.organization_config import OrgConfigBase
 from services.admin_stats_service import AdminStatsService
 
 router = APIRouter(
@@ -78,43 +76,39 @@ def _resolve_window(
 
 
 @router.get(
-    "/org",
+    "",
     response_model=OrgStatsResponse,
-    summary="Organization aggregate statistics",
+    summary="Platform aggregate statistics",
     description=(
-        "Returns aggregate counts for the authenticated organization: "
+        "Returns aggregate counts for the authenticated user: "
         "total episodes, sessions, facts, extractions, observations, "
-        "and classifications. Windowed by days/from/to and optional "
-        "project_id. Default window is last 30 days (BREAKING: previously all-time)."
+        "and classifications. Windowed by days and optional "
+        "project_id. Default window is last 30 days."
     ),
 )
-async def get_org_stats(
-    days: int | None = Query(default=None, ge=1, le=365),
-    from_date: date | None = Query(default=None, alias="from"),
-    to_date: date | None = Query(default=None, alias="to"),
+async def get_platform_stats(
+    days: int = Query(default=30, ge=1, le=365),
     project_id: UUID | None = Query(default=None),
-    org_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_permission("members:read")),
     service: AdminStatsService = Depends(_get_admin_stats_service),
 ) -> OrgStatsResponse:
-    """Get aggregate statistics for the authenticated organization.
+    """Get aggregate statistics for the authenticated user.
 
-    Windowed by days/from/to and optional project_id. Default window is
+    Windowed by days and optional project_id. Default window is
     last 30 days.
 
     Args:
-        days: Look-back window in days (1-365). Ignored if from/to provided.
-        from_date: Inclusive start date (YYYY-MM-DD).
-        to_date: Inclusive end date (YYYY-MM-DD).
+        days: Look-back window in days (1-365).
         project_id: Optional project scope — when provided, all counts are
-            filtered to that project (AND with organization_id for RLS).
-        org_id: Authenticated organization ID (from JWT or API key).
+            filtered to that project (AND with user_id for RLS).
+        user_id: Authenticated user ID (from JWT or API key).
         service: Admin stats service.
 
     Returns:
         OrgStatsResponse with windowed aggregate counts.
     """
-    start, end_exclusive = _resolve_window(days, from_date, to_date)
-    return await service.get_org_stats(UUID(org_id), start, end_exclusive, project_id)
+    start, end_exclusive = _resolve_window(days, None, None)
+    return await service.get_platform_stats(UUID(user_id), start, end_exclusive, project_id)
 
 
 @router.get(
@@ -133,24 +127,24 @@ async def get_usage_stats(
     from_date: date | None = Query(default=None, alias="from"),
     to_date: date | None = Query(default=None, alias="to"),
     project_id: UUID | None = Query(default=None),
-    org_id: str = Depends(require_permission("members:read")),
-    org_config: OrgConfigBase = Depends(get_org_config),
+    user_id: str = Depends(require_permission("members:read")),
     service: AdminStatsService = Depends(_get_admin_stats_service),
 ) -> list[UsageStatsResponse]:
-    """Get daily usage statistics for the organization.
+    """Get daily usage statistics for the user.
 
     Windowed by days/from/to and optional project_id. Default window is
     last 30 days.
 
     Args:
-        request: FastAPI request (graph backend dispatcher + pools).
+        request: FastAPI request (graph backend dispatcher + pools, plus
+            app-state OpenBao/Redis for user-config resolution inside the
+            service).
         days: Look-back window in days (default 30 when no window provided, max 365).
             Ignored if from/to provided.
         from_date: Inclusive start date (YYYY-MM-DD).
         to_date: Inclusive end date (YYYY-MM-DD).
         project_id: Optional project scope.
-        org_id: Authenticated organization ID.
-        org_config: Org config (graph backend selection).
+        user_id: Authenticated user ID.
         service: Admin stats service.
 
     Returns:
@@ -158,5 +152,5 @@ async def get_usage_stats(
     """
     start, end_exclusive = _resolve_window(days, from_date, to_date)
     return await service.get_usage_stats(
-        request, org_config, UUID(org_id), start, end_exclusive, project_id
+        request, UUID(user_id), start, end_exclusive, project_id
     )

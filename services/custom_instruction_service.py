@@ -66,18 +66,18 @@ class CustomInstructionService:
 
     async def list_for_scope(
         self,
-        org_id: UUID,
+        user_id: UUID,
         scope: str,
         target_id: UUID | None = None,
     ) -> list[CustomInstruction]:
         """List instructions for a scope + target, ordered by name."""
         return await self._repo.get_by_scope(
-            org_id=org_id, scope=scope, target_id=target_id
+            user_id=user_id, scope=scope, target_id=target_id
         )
 
     async def set_for_scope(
         self,
-        org_id: UUID,
+        user_id: UUID,
         scope: str,
         target_id: UUID | None,
         instructions: list[dict],
@@ -95,7 +95,7 @@ class CustomInstructionService:
                 detail={"duplicates": dupes},
             )
         return await self._repo.set_by_scope(
-            org_id=org_id,
+            user_id=user_id,
             scope=scope,
             target_id=target_id,
             instructions=instructions,
@@ -103,11 +103,11 @@ class CustomInstructionService:
 
     async def clear_for_scope(
         self,
-        org_id: UUID,
+        user_id: UUID,
         scope: str,
         target_id: UUID | None = None,
     ) -> None:
         """Delete all instructions for a scope + target."""
         await self._repo.delete_by_scope(
-            org_id=org_id, scope=scope, target_id=target_id
+            user_id=user_id, scope=scope, target_id=target_id
         )

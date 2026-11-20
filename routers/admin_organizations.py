@@ -53,11 +53,11 @@ async def get_custom_instruction_service(
 )
 async def list_custom_instructions(
     service=Depends(get_custom_instruction_service),
-    org_id: str = Depends(require_permission("configuration:read")),
+    user_id: str = Depends(require_permission("configuration:read")),
 ) -> CustomInstructionsResponse:
     """List all extraction custom instructions for the organization."""
     instructions = await service.list_for_scope(
-        org_id=uuid.UUID(org_id),
+        user_id=uuid.UUID(user_id),
         scope="extraction",
     )
     return CustomInstructionsResponse(
@@ -74,7 +74,7 @@ async def list_custom_instructions(
 async def set_custom_instructions(
     body: SetCustomInstructionsRequest,
     service=Depends(get_custom_instruction_service),
-    org_id: str = Depends(require_permission("configuration:write")),
+    user_id: str = Depends(require_permission("configuration:write")),
 ) -> CustomInstructionsResponse:
     """Replace all extraction custom instructions for the organization.
 
@@ -83,7 +83,7 @@ async def set_custom_instructions(
     """
     instructions_data = [i.model_dump() for i in body.instructions]
     instructions = await service.set_for_scope(
-        org_id=uuid.UUID(org_id),
+        user_id=uuid.UUID(user_id),
         scope="extraction",
         target_id=None,
         instructions=instructions_data,
@@ -100,7 +100,7 @@ async def set_custom_instructions(
 @audit_action("instruction.delete", "instruction", "Instructions deleted")
 async def clear_custom_instructions(
     service=Depends(get_custom_instruction_service),
-    org_id: str = Depends(require_permission("configuration:write")),
+    user_id: str = Depends(require_permission("configuration:write")),
 ) -> Response:
     """Clear all extraction custom instructions for the organization.
 
@@ -108,7 +108,7 @@ async def clear_custom_instructions(
     no-op if no instructions exist.
     """
     await service.clear_for_scope(
-        org_id=uuid.UUID(org_id),
+        user_id=uuid.UUID(user_id),
         scope="extraction",
     )
     return Response(status_code=204)

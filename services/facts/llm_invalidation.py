@@ -50,7 +50,7 @@ class LLMInvalidationMixin:
     async def apply_llm_invalidations(
         self,
         *,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         invalidations: list[dict[str, Any]],
         ref_to_fact: dict[str, Fact],
@@ -85,7 +85,7 @@ class LLMInvalidationMixin:
         is expired (case 1/2) or kept (case 3 re-assertion).
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: Project scope.
             invalidations: List of dicts with ``existing_fact_ref``
                 (required), ``successor_fact_ref`` (optional), ``reason``
@@ -133,7 +133,7 @@ class LLMInvalidationMixin:
             ref_to_fact[inv["existing_fact_ref"]].id for inv in invalidations
         }
         lock_keys = sorted(
-            f"inv:{org_id}:{project_id}:{fact_id}" for fact_id in targeted_ids
+            f"inv:{user_id}:{project_id}:{fact_id}" for fact_id in targeted_ids
         )
         if lock_keys:
             await self._fact_repo.lock_conflict_identities(lock_keys)
@@ -163,7 +163,7 @@ class LLMInvalidationMixin:
                 old.id, successor.id if successor is not None else None
             )
             await self._fact_repo.record_invalidation_event(
-                organization_id=org_id,
+                user_id=user_id,
                 project_id=project_id,
                 old_fact_id=old.id,
                 new_fact_id=successor.id if successor is not None else None,
@@ -197,7 +197,7 @@ class LLMInvalidationMixin:
                     partial(
                         _purge_project_context,
                         self._cache_service,
-                        org_id,
+                        user_id,
                         project_id,
                     )
                 )
@@ -205,7 +205,7 @@ class LLMInvalidationMixin:
             for transition in events:
                 self._queue_post_commit_effect(
                     self._make_webhook_effect(
-                        org_id=org_id,
+                        user_id=user_id,
                         project_id=project_id,
                         old_id=transition.old_fact_id,
                         new_id=transition.new_fact_id,
@@ -217,7 +217,7 @@ class LLMInvalidationMixin:
         if events and self._graph_sync is not None:
             self._queue_post_commit_effect(
                 self._make_graph_sync_effect(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=project_id,
                     events=events,
                     at_time=now,
@@ -227,7 +227,7 @@ class LLMInvalidationMixin:
         logger.info(
             "fact_invalidation.llm_applied",
             extra={
-                "org_id": str(org_id),
+                "user_id": str(user_id),
                 "project_id": str(project_id),
                 "closed_count": closed_count,
                 "skipped_count": skipped_count,
@@ -240,7 +240,7 @@ class LLMInvalidationMixin:
     def notify_retraction(
         self,
         *,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         old_fact: object,
         at_time: datetime,
@@ -258,7 +258,7 @@ class LLMInvalidationMixin:
         project context-cache purge, ``facts_retracted_total`` bump.
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: Project scope.
             old_fact: The retracted fact — entity ID attributes are read
                 for the edge key.
@@ -269,7 +269,7 @@ class LLMInvalidationMixin:
         if self._graph_sync is not None:
             self._queue_post_commit_effect(
                 self._make_graph_sync_effect(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=project_id,
                     events=events,
                     at_time=at_time,
@@ -280,7 +280,7 @@ class LLMInvalidationMixin:
             # id was already validated by make_supersession_event.
             self._queue_post_commit_effect(
                 self._make_webhook_effect(
-                    org_id=org_id,
+                    user_id=user_id,
                     project_id=project_id,
                     old_id=events[0].old_fact_id,
                     new_id=None,
@@ -297,7 +297,7 @@ class LLMInvalidationMixin:
                 partial(
                     _purge_project_context,
                     self._cache_service,
-                    org_id,
+                    user_id,
                     project_id,
                 )
             )

@@ -139,7 +139,7 @@ def make_entity_record(
     eid = entity_id or ENTITY_ID
     return {
         "id": RecordID("entity", str(eid)),
-        "organization_id": str(ORG_ID),
+        "user_id": str(ORG_ID),
         "project_id": str(PROJ_ID),
         "name": name,
         "entity_type": entity_type,
@@ -241,7 +241,7 @@ class TestSurrealGraphBackendEntityCrud:
         }
 
         result = await backend.create_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             name="Test",
             entity_type="Person",
@@ -280,7 +280,7 @@ class TestSurrealGraphBackendEntityCrud:
         }
 
         await backend.create_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             name="  MixedCase  ",
             entity_type="Custom",
@@ -299,7 +299,7 @@ class TestSurrealGraphBackendEntityCrud:
 
         with pytest.raises(ExternalServiceError, match="DB connection lost"):
             await backend.create_entity(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 name="Test",
                 entity_type="Person",
@@ -369,7 +369,7 @@ class TestSurrealGraphBackendEntityCrud:
         mock_surreal.query.return_value = [record]
 
         result = await backend.update_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             entity_id=ENTITY_ID,
             name="Updated-Name",
@@ -394,7 +394,7 @@ class TestSurrealGraphBackendEntityCrud:
 
         with pytest.raises(NotFoundError, match="not found"):
             await backend.update_entity(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 entity_id=ENTITY_ID,
                 name="Anything",
@@ -410,7 +410,7 @@ class TestSurrealGraphBackendEntityCrud:
         mock_surreal.query.return_value = [make_entity_record()]
 
         result = await backend.update_entity(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             entity_id=ENTITY_ID,
         )
@@ -459,7 +459,7 @@ class TestSurrealGraphBackendRelationships:
         }
 
         result = await backend.create_relationship(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             source_id=ENTITY_ID,
             target_id=TARGET_ID,
@@ -503,7 +503,7 @@ class TestSurrealGraphBackendRelationships:
         }
 
         result = await backend.create_relationship(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             source_id=ENTITY_ID,
             target_id=TARGET_ID,
@@ -523,7 +523,7 @@ class TestSurrealGraphBackendRelationships:
         """Invalid edge type name raises ``ValueError``."""
         with pytest.raises(ValueError, match="Unsafe edge type"):
             await backend.create_relationship(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 source_id=ENTITY_ID,
                 target_id=TARGET_ID,
@@ -540,7 +540,7 @@ class TestSurrealGraphBackendRelationships:
 
         with pytest.raises(ExternalServiceError, match="surreal timeout"):
             await backend.create_relationship(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 source_id=ENTITY_ID,
                 target_id=TARGET_ID,
@@ -702,7 +702,7 @@ class TestSurrealGraphBackendSearchAndListing:
         mock_surreal.query.return_value = [record]
 
         result = await backend.search_entities(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             query="findable",
         )
@@ -722,7 +722,7 @@ class TestSurrealGraphBackendSearchAndListing:
         mock_surreal.query.return_value = []
 
         result = await backend.search_entities(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             query="nothing",
         )
@@ -743,7 +743,7 @@ class TestSurrealGraphBackendSearchAndListing:
         mock_surreal.query.return_value = records  # 2 items, limit=3 → no overflow
 
         result = await backend.list_entities(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             limit=3,
         )
@@ -765,7 +765,7 @@ class TestSurrealGraphBackendSearchAndListing:
         mock_surreal.query.return_value = records  # 6 items, limit=5 → overflow
 
         result = await backend.list_entities(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             limit=5,
         )
@@ -803,7 +803,7 @@ class TestSurrealGraphBackendSearchAndListing:
         mock_surreal.query.return_value = records
 
         result = await backend.list_entity_edges(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             entity_id=ENTITY_ID,
             predicate="likes",
@@ -846,7 +846,7 @@ class TestSurrealGraphBackendRetrieveGraph:
         backend.traverse = AsyncMock(return_value=[neighbor])
 
         result = await backend.retrieve_graph(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             query="find",
             match_limit=5,
@@ -856,7 +856,7 @@ class TestSurrealGraphBackendRetrieveGraph:
 
         # Search called with correct params
         backend.search_entities.assert_called_once_with(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             query="find",
             limit=5,
@@ -864,7 +864,7 @@ class TestSurrealGraphBackendRetrieveGraph:
 
         # Traverse called from the matched entity
         backend.traverse.assert_called_once_with(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             start_node_id=ENTITY_ID,
             max_depth=2,
@@ -885,7 +885,7 @@ class TestSurrealGraphBackendRetrieveGraph:
         backend.search_entities = AsyncMock(return_value=[])
 
         result = await backend.retrieve_graph(
-            org_id=ORG_ID,
+            user_id=ORG_ID,
             project_id=PROJ_ID,
             query="nothing",
         )
@@ -908,7 +908,7 @@ class TestSurrealGraphBackendRetrieveGraph:
 
         with pytest.raises(GraphBackendUnavailableError, match="traverse failed"):
             await backend.retrieve_graph(
-                org_id=ORG_ID,
+                user_id=ORG_ID,
                 project_id=PROJ_ID,
                 query="find",
             )

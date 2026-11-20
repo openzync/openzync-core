@@ -28,7 +28,7 @@ class EpisodeBlobRepository:
 
     async def batch_create(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         session_id: UUID,
         episode_id: UUID,
@@ -41,7 +41,7 @@ class EpisodeBlobRepository:
         matching the batch pattern in ``EpisodeRepository.batch_create``.
 
         Args:
-            organization_id: Tenant isolation UUID.
+            user_id: Tenant isolation UUID.
             project_id: Project UUID.
             session_id: Session UUID.
             episode_id: Episode UUID these blobs belong to.
@@ -61,7 +61,7 @@ class EpisodeBlobRepository:
 
         values: list[str] = []
         params: dict[str, str | int | None] = {}
-        org_id_str = str(organization_id)
+        tenant_id_str = str(user_id)
         proj_id_str = str(project_id)
         sess_id_str = str(session_id)
         ep_id_str = str(episode_id)
@@ -71,7 +71,7 @@ class EpisodeBlobRepository:
             pfx = f"b{i}"
             params.update({
                 f"{pfx}_id": blob.get("id", str(uuid4())),
-                f"{pfx}_org": org_id_str,
+                f"{pfx}_org": tenant_id_str,
                 f"{pfx}_proj": proj_id_str,
                 f"{pfx}_sess": sess_id_str,
                 f"{pfx}_ep": ep_id_str,
@@ -95,13 +95,13 @@ class EpisodeBlobRepository:
 
         stmt = text(f"""
             INSERT INTO episode_blobs (
-                id, organization_id, project_id, session_id, episode_id,
+                id, user_id, project_id, session_id, episode_id,
                 created_by, storage_backend, storage_key, file_name, mime_type,
                 file_size, content_hash, width, height, blob_index
             )
             VALUES {', '.join(values)}
             RETURNING
-                id, organization_id, project_id, session_id, episode_id,
+                id, user_id, project_id, session_id, episode_id,
                 created_by, storage_backend, storage_key, file_name, mime_type,
                 file_size, content_hash, width, height, extracted_text,
                 blob_index, created_at, updated_at
@@ -117,7 +117,7 @@ class EpisodeBlobRepository:
             episode_blobs.append(
                 EpisodeBlob(
                     id=mapping["id"],
-                    organization_id=mapping["organization_id"],
+
                     project_id=mapping["project_id"],
                     session_id=mapping["session_id"],
                     episode_id=mapping["episode_id"],
@@ -276,12 +276,12 @@ class EpisodeBlobRepository:
         return result.scalar_one_or_none()
 
     async def get_by_content_hash(
-        self, organization_id: UUID, content_hash: str
+        self, user_id: UUID, content_hash: str
     ) -> list[EpisodeBlob]:
         """Find blobs with a matching content hash (for dedup).
 
         Args:
-            organization_id: Tenant isolation UUID.
+            user_id: Tenant isolation UUID.
             content_hash: SHA-256 hex digest.
 
         Returns:
@@ -290,7 +290,7 @@ class EpisodeBlobRepository:
         result = await self._db.execute(
             select(EpisodeBlob)
             .where(
-                EpisodeBlob.organization_id == organization_id,
+                EpisodeBlob.user_id == user_id,
                 EpisodeBlob.content_hash == content_hash,
             )
         )
@@ -349,7 +349,7 @@ class EpisodeBlobRepository:
 
     async def get_orphaned_blobs(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         limit: int = 100,
     ) -> list[EpisodeBlob]:
         """Find blobs whose episodes are soft-deleted.
@@ -357,7 +357,7 @@ class EpisodeBlobRepository:
         Used by the cleanup worker to identify orphaned S3 objects.
 
         Args:
-            organization_id: Tenant isolation UUID.
+            user_id: Tenant isolation UUID.
             limit: Maximum blobs to return (batch size).
 
         Returns:
@@ -374,7 +374,7 @@ class EpisodeBlobRepository:
                      EpisodeBlob.episode_id == Episode.id)
             )
             .where(
-                EpisodeBlob.organization_id == organization_id,
+                EpisodeBlob.user_id == user_id,
                 Episode.is_deleted == True,
             )
             .limit(limit)

@@ -1,7 +1,8 @@
-"""Auth org join — org-code join, email verify, resend."""
+"""Auth org join — singleton-org join, email verify, resend."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -10,18 +11,20 @@ from sqlalchemy.exc import IntegrityError
 from core.exceptions import (
     AuthenticationError,
     AuthorizationError,
-    ValidationError,
 )
-from core.org_codes import normalize_org_code
+from core.openbao_exceptions import OpenBaoConnectionError
+from core.rls import set_user_context
 from core.rbac import (
     MEMBER_DEFAULT_PERMISSIONS,
 )
+from repositories.instance_settings_repository import InstanceSettingsRepository
 from schemas.auth import (
     JoinRequest,
     SignupResponse,
     TokenResponse,
     VerifyEmailRequest,
 )
+from utils.pii import mask_email
 
 logger = logging.getLogger(__name__)
 
@@ -31,102 +34,85 @@ class OrgJoinMixin:
     _repo: Any
     _otp_service: Any
     _redis: Any
-    _org_repo: Any
     _email_service: Any
     _bao_client: Any
+    _settings_repo: Any
+
+    def _settings(self) -> InstanceSettingsRepository:
+        """Return the injected settings repo (fallback constructs one)."""
+        if self._settings_repo is not None:
+            return self._settings_repo
+        return InstanceSettingsRepository(self._repo.session)
 
     # ── Org-code join ────────────────────────────────────────────────────────
 
     async def join_organization(self, payload: JoinRequest) -> SignupResponse:
-        """Join an existing organization via its join code.
+        """Join the singleton platform organization as a member.
 
-        Flow:
-        1. Normalize the org code and look up the active organization.
-        2. If the email is already registered, return the generic response
-           (no user created, no OTP sent — anti-enumeration, mirrors signup).
-        3. Hash the password and create a **member** dashboard user in the
-           target organization.
-        4. Send a signup OTP to the user's email.
+        Single platform org: the join code is gone — every join lands in
+        the platform org.  Registration is governed by
+        ``instance_settings.registration_mode``: ``open`` creates a live
+        member, ``approval`` creates an inactive member pending admin
+        activation, ``invite_only`` rejects with 403.
 
         The response is identical whether or not the email already exists.
-        An invalid org code is the one case that fails loudly — the code is
-        the credential being presented, and there is no enumeration risk in
-        rejecting it.
 
         Args:
-            payload: Email, password, and org code.
+            payload: Email and password.
 
         Returns:
             A ``SignupResponse`` with a confirmation message.
 
         Raises:
-            ValidationError: If the org code is unknown or the org is inactive.
-            AuthorizationError: If the org has disabled org-code
-                self-registration (``join_enabled`` False → 403), or the
-                platform policy is ``reject_all`` (403).
+            AuthorizationError: If registration is ``invite_only`` or the
+                platform org is missing.
         """
-        # ── Platform policy gate — sits on top of the per-org join_enabled
-        #    check; reject_all blocks every channel. ────────────────────────
-        from services import auth_service as _facade  # via facade (patchable)
-        system_config = await _facade.get_system_config(
-            self._redis, self._bao_client
-        )
-        if system_config.org_creation_policy == "reject_all":
+        # ── Platform policy gate ──────────────────────────────────────────
+        mode = await self._settings().get_registration_mode()
+        if mode == "invite_only":
+            raise AuthorizationError("Registration is invite-only")
+        if mode not in ("open", "approval"):
             raise AuthorizationError("Registration is disabled")
 
-        code = normalize_org_code(payload.org_code)
-        # Bind the join code to the session: it is the credential presented
-        # by an anonymous joiner, and the ``org_join_code_lookup`` policy
-        # exposes exactly the organization row that owns it.
-        await self._org_repo.set_lookup_code(code)
-        org = await self._org_repo.get_by_code(code)
-        if org is None:
-            raise ValidationError("Invalid organization code")
-        if not org.join_enabled:
-            # Admin-disabled self-registration: the code is valid but the
-            # org is not accepting new members — distinct from an unknown
-            # code (422 above), so admins can see join attempts in the logs.
-            logger.warning(
-                "auth.join_disabled",
-                extra={"org_id": str(org.id)},
-            )
-            raise AuthorizationError(
-                "This organization is not accepting new members"
-            )
-
-        # Bind the session to the resolved tenant — the member insert below
-        # is org-scoped and the request has no org context of its own.
-        await self._org_repo.set_tenant_context(org.id)
-
+        # No org gate — the single-user model has no platform org.
+        # Join mints ``member`` (unlike open signup, which mints the
+        # bootstrapping ``admin``) — joined users never self-promote.
         existing = await self._repo.find_user_by_email(payload.email)
         if existing is not None:
             logger.warning(
                 "security.join_existing_email",
-                extra={"email": payload.email},
+                extra={"email": mask_email(payload.email)},
             )
             return self._signup_success_response(payload.email)
 
-        pw_hash = _facade.hash_password(payload.password)
+        # bcrypt blocks the event loop — offload to a worker thread.
+        from services import auth_service as _facade  # via facade (patchable)
+
+        pw_hash = await asyncio.to_thread(_facade.hash_password, payload.password)
         try:
-            await self._repo.create_dashboard_user(
-                organization_id=org.id,
+            user = await self._repo.create_dashboard_user(
                 email=payload.email,
                 password_hash=pw_hash,
                 name=payload.email.split("@")[0],  # default name from email
                 role="member",
                 permissions=list(MEMBER_DEFAULT_PERMISSIONS),
             )
-            await self._otp_service.generate_and_send(
-                email=payload.email,
-                purpose="signup",
-            )
+            await set_user_context(self._repo.session, user.id)
+            if mode == "approval":
+                user.is_active = False
+                await self._repo.flush()
+            else:
+                await self._otp_service.generate_and_send(
+                    email=payload.email,
+                    purpose="signup",
+                )
         except IntegrityError:
             # Concurrent duplicate join — the unique email index won.  Same
             # generic response as a fresh join; roll back the aborted
             # transaction so the session is usable.
             logger.warning(
                 "security.join_existing_email",
-                extra={"email": payload.email},
+                extra={"email": mask_email(payload.email)},
             )
             await self._repo.rollback()
             return self._signup_success_response(payload.email)
@@ -162,9 +148,9 @@ class OrgJoinMixin:
                 "Please request a new code."
             )
 
-        # Bind the session to the caller's tenant — the email-verification
-        # update and the refresh-token insert below are org-scoped.
-        await self._org_repo.set_tenant_context(user.organization_id)
+        # Bind the session to the caller's user — the email-verification
+        # update and the refresh-token insert below are user-scoped.
+        await set_user_context(self._repo.session, user.id)
 
         # Always verify the OTP — even for already-verified users.
         # This prevents an unauthenticated attacker who knows a verified
@@ -184,22 +170,18 @@ class OrgJoinMixin:
         if not user.is_email_verified:
             await self._repo.mark_email_verified(user.id)
 
-        # Bootstrap OpenBao namespace for the org (idempotent — skips if exists)
-        if self._bao_client is not None:
-            try:
-                await self._bao_client.create_org_namespace(
-                    user.organization_id
-                )
-            except Exception:
-                logger.exception(
-                    "auth_service.openbao_ns_bootstrap_failed org_id=%s",
-                    str(user.organization_id),
-                )
+        # Bootstrap OpenBao namespace for the org (idempotent — skips if exists).
+        # Fail loud, never silent: a missing client means every subsequent
+        # config write breaks, so raise instead of skipping.
+        if self._bao_client is None:
+            raise OpenBaoConnectionError(
+                "OpenBao client required to bootstrap the org namespace"
+            )
+        await self._bao_client.create_org_namespace(user.id)
 
         # Issue tokens now that email is verified
         return await self.issue_tokens(
             user_id=user.id,
-            organization_id=user.organization_id,
             role=user.role if user.role is not None else "member",
         )
     async def resend_verification(self, email: str) -> SignupResponse:
@@ -228,7 +210,7 @@ class OrgJoinMixin:
         if user is None:
             logger.warning(
                 "security.resend_otp_unknown_email",
-                extra={"email": email},
+                extra={"email": mask_email(email)},
             )
             return generic
 

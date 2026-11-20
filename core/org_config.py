@@ -4,7 +4,7 @@ Every request path and background worker that needs org-level settings (LLM,
 embeddings, graph, behaviour) should resolve them through this module.
 
 Resolution order:
-1. Redis cache (key ``org_config:{org_id}``, TTL 5 min) — performance
+1. Redis cache (key ``org_config:{user_id}``, TTL 5 min) — performance
    optimisation only.  Cache failures are logged at ERROR but the request
    continues to OpenBao.
 2. OpenBao KV (per-org namespace ``org_<uuid>/config/``) — the authoritative
@@ -24,6 +24,7 @@ from typing import Any
 from uuid import UUID
 
 import redis.asyncio
+import structlog
 from pydantic import ValidationError as PydanticValidationError
 
 from core.exceptions import ValidationError as OrgConfigValidationError
@@ -35,6 +36,11 @@ from schemas.organization_config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _request_id() -> str:
+    """Return the current request correlation ID (``""`` outside requests)."""
+    return structlog.contextvars.get_contextvars().get("request_id", "")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -69,7 +75,7 @@ def _invalid_field_names(exc: PydanticValidationError) -> list[str]:
 
 
 async def get_org_config(
-    org_id: UUID,
+    user_id: UUID,
     redis: redis.asyncio.Redis | None = None,
     bao_client: OpenBaoClient | None = None,
     *,
@@ -82,7 +88,7 @@ async def get_org_config(
     must implement that logic themselves.
 
     Args:
-        org_id: The organization UUID.
+        user_id: The organization UUID.
         redis: An optional async Redis client.  When ``None``, caching is
             skipped.
         bao_client: An authenticated :class:`OpenBaoClient`.  **Required**.
@@ -100,7 +106,7 @@ async def get_org_config(
     if bao_client is None:
         raise OpenBaoConnectionError("OpenBao client required for org config reads")
 
-    cache_key = f"{CACHE_KEY_PREFIX}:{org_id}"
+    cache_key = f"{CACHE_KEY_PREFIX}:{user_id}"
 
     # 1. Try cache (unless skip_cache is set)
     if not skip_cache and redis is not None:
@@ -115,7 +121,7 @@ async def get_org_config(
                     logger.warning(
                         "org_config.cache_invalid",
                         extra={
-                            "org_id": str(org_id),
+                            "user_id": str(user_id),
                             "fields": _invalid_field_names(exc),
                         },
                     )
@@ -124,18 +130,21 @@ async def get_org_config(
                     except Exception:
                         logger.error(
                             "org_config.cache_invalidation_failed",
-                            extra={"org_id": str(org_id)},
+                            extra={
+                                "user_id": str(user_id),
+                                "request_id": _request_id(),
+                            },
                             exc_info=True,
                         )
         except Exception:
             logger.error(
                 "org_config.cache_read_failed",
-                extra={"org_id": str(org_id)},
+                extra={"user_id": str(user_id), "request_id": _request_id()},
                 exc_info=True,
             )
 
     # 2. Fetch from OpenBao
-    raw = await bao_client.read_org_config(org_id)
+    raw = await bao_client.read_org_config(user_id)
     # When no config has been stored yet, raw is {} and **raw would apply
     # Pydantic defaults — but we want new orgs to default to falkordb
     # (not disabled).  Only graph_backend gets a synthetic default; all
@@ -159,7 +168,7 @@ async def get_org_config(
             fields = _invalid_field_names(exc)
             logger.warning(
                 "org_config.stored_config_invalid",
-                extra={"org_id": str(org_id), "fields": fields},
+                extra={"user_id": str(user_id), "fields": fields},
             )
             raise OrgConfigValidationError(
                 message=(
@@ -167,7 +176,7 @@ async def get_org_config(
                     f"{', '.join(fields) or 'unknown'}. "
                     "Fix via PATCH /admin/org/config."
                 ),
-                detail={"org_id": str(org_id), "fields": fields},
+                detail={"user_id": str(user_id), "fields": fields},
                 # Break the chain: the pydantic cause renders rejected
                 # input values (potentially secrets) into its string, so
                 # it must never surface via a future exc_info traceback
@@ -184,7 +193,7 @@ async def get_org_config(
         except Exception:
             logger.error(
                 "org_config.cache_write_failed",
-                extra={"org_id": str(org_id)},
+                extra={"user_id": str(user_id), "request_id": _request_id()},
                 exc_info=True,
             )
 
@@ -192,7 +201,7 @@ async def get_org_config(
 
 
 async def update_org_config(
-    org_id: UUID,
+    user_id: UUID,
     update_data: UpdateOrgConfigRequest | dict[str, Any],
     bao_client: OpenBaoClient,
     redis: redis.asyncio.Redis | None = None,
@@ -207,7 +216,7 @@ async def update_org_config(
     dual-write.
 
     Args:
-        org_id: The organization UUID.
+        user_id: The organization UUID.
         update_data: Fields to update.  Can be a :class:`UpdateOrgConfigRequest`
             or a plain dict.
         bao_client: An authenticated :class:`OpenBaoClient`.
@@ -222,7 +231,7 @@ async def update_org_config(
         update_dict = update_data
 
     # 1. Read existing config from OpenBao
-    existing = await bao_client.read_org_config(org_id)
+    existing = await bao_client.read_org_config(user_id)
 
     # 2. Merge: provided keys override.  None values are kept in the dict on
     #    purpose — write_org_config deletes the KV secret for any key whose
@@ -232,33 +241,33 @@ async def update_org_config(
         existing[key] = value
 
     # 3. Write to OpenBao (authoritative store)
-    await bao_client.write_org_config(org_id, existing)
+    await bao_client.write_org_config(user_id, existing)
 
     # 4. Invalidate Redis cache
     if redis is not None:
-        cache_key = f"{CACHE_KEY_PREFIX}:{org_id}"
+        cache_key = f"{CACHE_KEY_PREFIX}:{user_id}"
         try:
             await redis.delete(cache_key)
         except Exception:
             logger.error(
                 "org_config.cache_invalidation_failed",
-                extra={"org_id": str(org_id)},
+                extra={"user_id": str(user_id), "request_id": _request_id()},
                 exc_info=True,
             )
 
     # 5. Re-read from OpenBao (cache is cold — forces fresh read)
     return await get_org_config(
-        org_id, redis=redis, bao_client=bao_client, skip_cache=True
+        user_id, redis=redis, bao_client=bao_client, skip_cache=True
     )
 
 
-def build_cache_key(org_id: UUID) -> str:
+def build_cache_key(user_id: UUID) -> str:
     """Build the Redis cache key for an org's config.
 
     Args:
-        org_id: The organization UUID.
+        user_id: The organization UUID.
 
     Returns:
         A string like ``"org_config:<uuid>"``.
     """
-    return f"{CACHE_KEY_PREFIX}:{org_id}"
+    return f"{CACHE_KEY_PREFIX}:{user_id}"

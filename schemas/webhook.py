@@ -15,7 +15,7 @@ class WebhookEndpointResponse(BaseModel):
     """
 
     id: UUID
-    organization_id: UUID
+    user_id: UUID
     name: str
     url: str
     events: list[str]

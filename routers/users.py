@@ -65,7 +65,7 @@ async def get_user_service(
 @audit_action("user.create", "user", "User created")
 async def create_user(
     body: CreateUserRequest,
-    org_id: str = Depends(require_permission("members:write")),
+    user_id: str = Depends(require_permission("members:write")),
     service: UserService = Depends(get_user_service),
 ) -> UserResponse:
     """Create a new user.
@@ -75,7 +75,7 @@ async def create_user(
     exists.  Admin-gated (JWT org admin only).
     """
     return await service.create_user(
-        organization_id=UUID(org_id),
+        user_id=UUID(user_id),
         external_id=body.external_id,
         name=body.name,
         email=body.email,
@@ -88,7 +88,7 @@ async def create_user(
 async def list_users(
     # ⚠️ BREAKING: listing members now requires ``members:read`` —
     # previously any authenticated principal could enumerate the org.
-    org_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_permission("members:read")),
     service: UserService = Depends(get_user_service),
     limit: int = Query(
         default=50,
@@ -130,7 +130,7 @@ async def list_users(
     from a different sort fails with 422.
     """
     return await service.list_users(
-        organization_id=UUID(org_id),
+        user_id=UUID(user_id),
         limit=limit,
         cursor=cursor,
         search=search,
@@ -146,14 +146,14 @@ async def get_user(
     service: UserService = Depends(get_user_service),
     # ⚠️ BREAKING: reading another member's record now requires
     # ``members:read``; a JWT user may still fetch their own record.
-    org_id: str = Depends(require_permission_or_self("members:read")),
+    _viewer_id: str = Depends(require_permission_or_self("members:read")),  # noqa: B008
 ) -> UserResponseWithStats:
     """Get a user by internal UUID.
 
     Returns profile information plus aggregate statistics
     (message_count, fact_count, session_count).
     """
-    return await service.get_user(organization_id=UUID(org_id), user_id=user_id)
+    return await service.get_user(user_id)
 
 
 @router.patch("/{user_id}", response_model=UserResponse)
@@ -163,7 +163,7 @@ async def update_user(
     body: UpdateUserRequest,
     request: Request,
     service: UserService = Depends(get_user_service),
-    org_id: str = Depends(require_permission("members:write")),
+    _writer_id: str = Depends(require_permission("members:write")),  # noqa: B008
     actor_permissions: frozenset[str] | None = Depends(get_actor_permissions),
 ) -> UserResponse:
     """Update user fields.
@@ -188,7 +188,7 @@ async def update_user(
             "must be provided for update",
         )
     return await service.update_user(
-        organization_id=UUID(org_id),
+
         user_id=user_id,
         update_fields=update_fields,
         actor_user_id=UUID(request.state.user_id),
@@ -202,7 +202,7 @@ async def delete_user(
     user_id: UUID,
     request: Request,
     service: UserService = Depends(get_user_service),
-    org_id: str = Depends(require_permission("members:write")),
+    _writer_id: str = Depends(require_permission("members:write")),  # noqa: B008
 ) -> Response:
     """Delete a user and all associated data.
 
@@ -221,7 +221,7 @@ async def delete_user(
     use the superadmin console).
     """
     await service.delete_user(
-        organization_id=UUID(org_id),
+
         user_id=user_id,
         actor_user_id=UUID(request.state.user_id),
     )
@@ -249,7 +249,7 @@ async def get_user_summary_service(
 async def get_user_summary(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_permission_or_self("members:read")),
+    _viewer_id: str = Depends(require_permission_or_self("members:read")),  # noqa: B008
 ) -> UserSummaryResponse:
     """Get the current summary for a user.
 
@@ -257,7 +257,7 @@ async def get_user_summary(
 
     Returns 404 if no summary has been generated yet.
     """
-    summary = await service.get_summary(org_id=UUID(org_id), user_id=user_id)
+    summary = await service.get_summary(user_id=user_id)
     if summary is None:
         raise HTTPException(
             status_code=404,
@@ -278,7 +278,7 @@ async def get_user_summary(
 async def trigger_user_summary(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_permission("members:write")),
+    _writer_id: str = Depends(require_permission("members:write")),  # noqa: B008
 ) -> UserSummaryTriggerResponse:
     """Trigger generation of a user summary.
 
@@ -289,7 +289,7 @@ async def trigger_user_summary(
     """
     try:
         return await service.trigger_generation(
-            org_id=UUID(org_id), user_id=user_id,
+            user_id=user_id,
         )
     except RateLimitError as exc:
         raise HTTPException(status_code=429, detail=exc.message) from exc
@@ -302,14 +302,14 @@ async def trigger_user_summary(
 async def list_user_summary_instructions(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_permission_or_self("members:read")),
+    _viewer_id: str = Depends(require_permission_or_self("members:read")),  # noqa: B008
 ) -> CustomInstructionsResponse:
     """List custom instructions for a user's summary generation.
 
     Readable by the target user themself or an org admin (JWT only).
     """
     instructions = await service.get_instructions(
-        org_id=UUID(org_id), user_id=user_id,
+        user_id=user_id,
     )
     return CustomInstructionsResponse(
         data=[CustomInstructionSchema(**i) for i in instructions],
@@ -326,7 +326,7 @@ async def set_user_summary_instructions(
     user_id: UUID,
     body: SetCustomInstructionsRequest,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_permission("members:write")),
+    _writer_id: str = Depends(require_permission("members:write")),  # noqa: B008
 ) -> CustomInstructionsResponse:
     """Replace all summary instructions for a user.
 
@@ -335,7 +335,6 @@ async def set_user_summary_instructions(
     """
     instructions_data = [i.model_dump() for i in body.instructions]
     instructions = await service.set_instructions(
-        org_id=UUID(org_id),
         user_id=user_id,
         instructions=instructions_data,
     )
@@ -349,12 +348,12 @@ async def set_user_summary_instructions(
 async def delete_user_summary_instructions(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_permission("members:write")),
+    _writer_id: str = Depends(require_permission("members:write")),  # noqa: B008
 ) -> Response:
     """Clear all summary instructions for a user.
 
     Permission-gated (``require_permission("members:write")``): mutates
     another user's data.
     """
-    await service.delete_instructions(org_id=UUID(org_id), user_id=user_id)
+    await service.delete_instructions(user_id=user_id)
     return Response(status_code=204)

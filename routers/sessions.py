@@ -21,7 +21,7 @@ from starlette.responses import Response
 from core.audit import audit_action
 from dependencies.auth import get_current_user_id, require_permission
 from dependencies.project_auth import require_project_membership
-from dependencies.request import get_current_org_id, get_project_id
+from dependencies.request import get_project_id
 from dependencies.services import get_fact_service, get_session_service
 from schemas.common import PaginatedResponse
 from schemas.facts import FactResponse
@@ -71,7 +71,7 @@ async def create_session(
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:write")),
     created_by: UUID = Depends(get_current_user_id),
-    org_id: UUID = Depends(get_current_org_id),
+    user_id: UUID = Depends(get_current_user_id),
     project_id: UUID = Depends(get_project_id),
 ) -> SessionResponse:
     """Create a new session within a project.
@@ -81,7 +81,7 @@ async def create_session(
     exists.
     """
     return await service.create_session(
-        organization_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         created_by=created_by,
         external_id=body.external_id,
@@ -105,7 +105,7 @@ async def list_sessions(
     service: SessionService = Depends(get_session_service),
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:read")),
-    org_id: UUID = Depends(get_current_org_id),
+    user_id: UUID = Depends(get_current_user_id),
     project_id: UUID = Depends(get_project_id),
     limit: int = Query(
         default=50,
@@ -137,7 +137,7 @@ async def list_sessions(
     to include them. Cursors encode sort — mismatch fails with 422.
     """
     return await service.list_sessions(
-        org_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         limit=limit,
         cursor=cursor,
@@ -164,7 +164,7 @@ async def get_session(
     service: SessionService = Depends(get_session_service),
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:read")),
-    org_id: UUID = Depends(get_current_org_id),
+    user_id: UUID = Depends(get_current_user_id),
     project_id: UUID = Depends(get_project_id),
 ) -> SessionResponse:
     """Get session details including aggregate statistics.
@@ -172,7 +172,7 @@ async def get_session(
     Returns message count, fact count, and session metadata.
     """
     return await service.get_session(
-        org_id=org_id,
+        user_id=user_id,
         session_id=session_id,
         project_id=project_id,
     )
@@ -196,7 +196,7 @@ async def get_session_messages(
     service: SessionService = Depends(get_session_service),
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:read")),
-    org_id: UUID = Depends(get_current_org_id),
+    user_id: UUID = Depends(get_current_user_id),
     project_id: UUID = Depends(get_project_id),
     limit: int = Query(
         default=100,
@@ -224,7 +224,7 @@ async def get_session_messages(
     deterministic ordering (not by ``created_at``, which can have ties).
     """
     return await service.get_messages(
-        org_id=org_id,
+        user_id=user_id,
         session_id=session_id,
         limit=limit,
         cursor=cursor,
@@ -252,7 +252,7 @@ async def get_session_facts(
     fact_service: FactService = Depends(get_fact_service),
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:read")),
-    org_id: UUID = Depends(get_current_org_id),
+    user_id: UUID = Depends(get_current_user_id),
     project_id: UUID = Depends(get_project_id),
     limit: int = Query(
         default=50,
@@ -280,10 +280,10 @@ async def get_session_facts(
     """
     # Verify the session exists before fetching facts.
     # NotFoundError propagates to global exception handler → 404.
-    await service.get_session(org_id, session_id, project_id=project_id)
+    await service.get_session(user_id, session_id, project_id=project_id)
 
     facts, next_cursor = await fact_service.list_facts_by_session(
-        organization_id=org_id,
+        user_id=user_id,
         session_id=session_id,
         limit=limit,
         cursor=cursor,
@@ -318,7 +318,7 @@ async def delete_session(
     service: SessionService = Depends(get_session_service),
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:write")),
-    org_id: UUID = Depends(get_current_org_id),
+    user_id: UUID = Depends(get_current_user_id),
     project_id: UUID = Depends(get_project_id),
 ) -> Response:
     """Delete (soft-delete) a session.
@@ -327,7 +327,7 @@ async def delete_session(
     Episodes are preserved as orphaned history for audit purposes.
     """
     await service.delete_session(
-        org_id=org_id,
+        user_id=user_id,
         session_id=session_id,
         project_id=project_id,
     )

@@ -442,7 +442,7 @@ class TestAuth:
         token = create_jwt_token(
             data={
                 "sub": str(isolated_org_and_key["user_id"]),
-                "org_id": str(isolated_org_and_key["org_id"]),
+                "user_id": str(isolated_org_and_key["user_id"]),
                 "role": "member",
                 "type": "access",
             },

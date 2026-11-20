@@ -42,7 +42,7 @@ def _stub_permission_gate() -> None:
     closure created at router import time that cannot be keyed in
     ``dependency_overrides``.  Patching ``dependencies.auth._check_permission``
     (the shared decision function) stubs the gate while keeping the
-    ``require_org_id`` chain intact.  The real gate matrix is covered by
+    ``require_user_id`` chain intact.  The real gate matrix is covered by
     ``test_admin_gate_matrix.py``.
     """
     with patch("dependencies.auth._check_permission", new=AsyncMock()):
@@ -82,7 +82,7 @@ class TestSearchRouter:
 
         @self.app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)

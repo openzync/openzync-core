@@ -3,7 +3,7 @@
 Pipeline:
 1. Find orgs with graph data via the ORM.  Discovery runs under a
    transaction-local RLS bypass (``app.bypass_rls``); per-org processing
-   re-applies ``app.org_id`` per org because the shared session commits
+   re-applies ``app.user_id`` per org because the shared session commits
    after each org (same rationale as ``cleanup_orphan_blobs``).
 2. Resolve per-org graph backend (surfaces SurrealDB or FalkorDB if configured)
 3. Per project within each org:
@@ -45,16 +45,16 @@ COMMUNITY_MIN_ENTITY_COUNT = 5
 
 
 @with_task_metrics
-async def summarise_community(ctx: dict, org_id: str | None = None) -> dict:
+async def summarise_community(ctx: dict, user_id: str | None = None) -> dict:
     """ARQ worker: run community detection and summarisation.
 
     Can be called:
-    - Without ``org_id`` (scheduled run): processes all eligible orgs.
-    - With ``org_id`` (manual trigger): processes a single org.
+    - Without ``user_id`` (scheduled run): processes all eligible orgs.
+    - With ``user_id`` (manual trigger): processes a single org.
 
     Args:
         ctx: ARQ worker context (includes ``redis``, ``db``).
-        org_id: Optional org UUID to process (processes all if ``None``).
+        user_id: Optional org UUID to process (processes all if ``None``).
 
     Returns:
         Dict with ``status``, ``orgs_processed``, ``orgs_failed``,
@@ -83,11 +83,11 @@ async def summarise_community(ctx: dict, org_id: str | None = None) -> dict:
     try:
         async with session_factory() as db:
             # Determine which orgs to process
-            if org_id:
-                org_ids = [UUID(org_id)]
+            if user_id:
+                org_ids = [UUID(user_id)]
             else:
                 # RLS: the organizations policy requires bypass_rls or a
-                # matching org_id; a global discovery has neither.
+                # matching user_id; a global discovery has neither.
                 # The bypass is bound on the session, so it survives the
                 # per-org commit; the per-org work drops it again (see
                 # _process_org) and runs tenant-scoped.
@@ -112,7 +112,7 @@ async def summarise_community(ctx: dict, org_id: str | None = None) -> dict:
                     except Exception:
                         logger.error(
                             "community.org_resolution_failed",
-                            extra={"org_id": str(oid)},
+                            extra={"user_id": str(oid)},
                             exc_info=True,
                         )
                         continue
@@ -129,7 +129,7 @@ async def summarise_community(ctx: dict, org_id: str | None = None) -> dict:
                 except Exception as exc:
                     logger.error(
                         "community.process_org_failed",
-                        extra={"org_id": str(current_org_id), "error": str(exc)},
+                        extra={"user_id": str(current_org_id), "error": str(exc)},
                     )
                     org_errors.append(str(current_org_id))
 
@@ -150,20 +150,20 @@ async def summarise_community(ctx: dict, org_id: str | None = None) -> dict:
             await engine.dispose()
 
 
-async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
+async def _process_org(ctx: dict, db: AsyncSession, user_id: UUID) -> int:
     """Run community detection and summarisation for a single org.
 
     Resolves the per-org graph backend, discovers projects with graph
     data, and processes each project independently.
 
-    Sets the transaction-local ``app.org_id`` RLS context first so the
+    Sets the transaction-local ``app.user_id`` RLS context first so the
     projects/organizations policies admit this org's rows; re-applied per
     org because this function commits and the setting is transaction-local.
 
     Args:
         ctx: ARQ worker context (passed to ``resolve_graph_backend``).
         db: Database session.
-        org_id: Organization UUID.
+        user_id: Organization UUID.
 
     Returns:
         Number of communities created across all projects.
@@ -173,19 +173,19 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
         detect_communities_label_propagation,
     )
 
-    # RLS: projects/organizations policies need app.org_id (or bypass).
+    # RLS: projects/organizations policies need app.user_id (or bypass).
     # The discovery scan above ran under a bypass; the per-org work drops
     # it and binds the tenant instead, so it is org-scoped.  The binding is
     # remembered by the session, so _process_org's commit re-applies it
     # instead of leaving the session un-tenanted.
     await rls.set_bypass_rls(db, False)
-    await rls.set_tenant_context(db, org_id)
+    await rls.set_tenant_context(db, user_id)
 
-    backend = await resolve_graph_backend(ctx, org_id, db)
+    backend = await resolve_graph_backend(ctx, user_id, db)
     if backend is None:
         logger.warning(
             "community.graph_disabled",
-            extra={"org_id": str(org_id)},
+            extra={"user_id": str(user_id)},
         )
         return 0
 
@@ -194,7 +194,7 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
         # Discover projects for this org that have graph entities
         result = await db.execute(
             select(Project.id).where(
-                Project.organization_id == org_id,
+                Project.user_id == user_id,
                 Project.is_archived.is_(False),
             )
         )
@@ -203,20 +203,20 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
         if not project_ids:
             logger.info(
                 "community.no_projects",
-                extra={"org_id": str(org_id)},
+                extra={"user_id": str(user_id)},
             )
             return 0
 
         for project_id in project_ids:
             try:
                 # 1. Fetch all entities via backend
-                entities = await backend.get_all_entities(org_id, project_id)
+                entities = await backend.get_all_entities(user_id, project_id)
 
                 if len(entities) < COMMUNITY_MIN_ENTITY_COUNT:
                     logger.info(
                         "community.too_few_entities",
                         extra={
-                            "org_id": str(org_id),
+                            "user_id": str(user_id),
                             "project_id": str(project_id),
                             "count": len(entities),
                         },
@@ -224,7 +224,7 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
                     continue
 
                 # 2. Fetch relationships via backend
-                relationships = await backend.get_all_relationships(org_id, project_id)
+                relationships = await backend.get_all_relationships(user_id, project_id)
 
                 # 3. Exclude prior-run artefacts from the detection input
                 # so reruns cannot drag clustering toward old communities.
@@ -244,7 +244,7 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
                 logger.info(
                     "community.feedback_excluded",
                     extra={
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                         "excluded_nodes": len(entities) - len(input_entities),
                         "excluded_edges": len(relationships) - len(input_relationships),
@@ -259,7 +259,7 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
                     logger.info(
                         "community.no_communities_found",
                         extra={
-                            "org_id": str(org_id),
+                            "user_id": str(user_id),
                             "project_id": str(project_id),
                         },
                     )
@@ -268,7 +268,7 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
                 # 5. Rerun idempotency: delete prior-run communities
                 # before storing fresh ones so reruns replace instead of
                 # duplicating.
-                await _delete_prior_communities(backend, org_id, project_id)
+                await _delete_prior_communities(backend, user_id, project_id)
 
                 # 6. Generate summaries and store
                 for community_nodes in communities:
@@ -277,7 +277,7 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
                             ctx=ctx,
                             backend=backend,
                             db=db,
-                            org_id=org_id,
+                            user_id=user_id,
                             project_id=project_id,
                             entity_ids=list(community_nodes),
                             all_entities=entities,
@@ -288,7 +288,7 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
                         logger.error(
                             "community.create_failed",
                             extra={
-                                "org_id": str(org_id),
+                                "user_id": str(user_id),
                                 "project_id": str(project_id),
                                 "error": str(exc),
                             },
@@ -297,7 +297,7 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
                 logger.error(
                     "community.project_failed",
                     extra={
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                         "error": str(exc),
                     },
@@ -315,14 +315,14 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
 
     logger.info(
         "community.org_completed",
-        extra={"org_id": str(org_id), "communities": total_created},
+        extra={"user_id": str(user_id), "communities": total_created},
     )
     return total_created
 
 
 async def _delete_prior_communities(
     backend: GraphBackend,
-    org_id: UUID,
+    user_id: UUID,
     project_id: UUID,
 ) -> int:
     """Delete prior-run community nodes for a project.
@@ -337,7 +337,7 @@ async def _delete_prior_communities(
 
     Args:
         backend: Initialised graph backend for this org.
-        org_id: Organization UUID.
+        user_id: Organization UUID.
         project_id: Project UUID.
 
     Returns:
@@ -349,7 +349,7 @@ async def _delete_prior_communities(
     cursor: str | None = None
     while True:
         page = await backend.list_entities(
-            org_id,
+            user_id,
             project_id,
             entity_type="community",
             limit=200,
@@ -365,13 +365,13 @@ async def _delete_prior_communities(
 
     deleted = 0
     for community_id in community_ids:
-        if await backend.delete_entity(org_id, project_id, community_id):
+        if await backend.delete_entity(user_id, project_id, community_id):
             deleted += 1
 
     logger.info(
         "community.prior_communities_deleted",
         extra={
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
             "deleted": deleted,
         },
@@ -383,7 +383,7 @@ async def _create_community(
     ctx: dict,
     backend: GraphBackend,
     db: AsyncSession,
-    org_id: UUID,
+    user_id: UUID,
     project_id: UUID,
     entity_ids: list[str],
     all_entities: list[dict],
@@ -397,7 +397,7 @@ async def _create_community(
         ctx: ARQ worker context (used for LLM backend resolution).
         backend: Initialised graph backend for this org.
         db: Database session (for org config resolution).
-        org_id: Organization UUID.
+        user_id: Organization UUID.
         project_id: Project UUID.
         entity_ids: UUIDs of entities in this community.
         all_entities: All entities in the project (for building the prompt
@@ -431,7 +431,7 @@ async def _create_community(
         prompt = _build_community_prompt(context_entities, context_rels)
         bao_client = ctx.get("openbao_client") if isinstance(ctx, dict) else None
         if bao_client is not None:
-            org_cfg = await get_org_config(org_id, redis=None, bao_client=bao_client)
+            org_cfg = await get_org_config(user_id, redis=None, bao_client=bao_client)
         else:
             from core.config import BootstrapSettings
             from core.openbao import OpenBaoClient
@@ -443,11 +443,11 @@ async def _create_community(
                 bootstrap.OPENBAO_SECRET_ID,
                 timeout=10.0,
             ) as _tmp_bao:
-                org_cfg = await get_org_config(org_id, redis=None, bao_client=_tmp_bao)
+                org_cfg = await get_org_config(user_id, redis=None, bao_client=_tmp_bao)
         llm_config_dict = org_cfg.to_llm_config_dict()
         sink = make_sink(
             db,
-            org_id=org_id,
+            user_id=user_id,
             worker="community_summary",
             project_id=project_id,
         )
@@ -477,7 +477,7 @@ async def _create_community(
 
     # Create community entity via backend
     entity = await backend.create_entity(
-        org_id=org_id,
+        user_id=user_id,
         project_id=project_id,
         name=community_name,
         entity_type="community",
@@ -496,7 +496,7 @@ async def _create_community(
     ]
     if member_edges:
         await backend.create_relationship_bulk(
-            org_id=org_id,
+            user_id=user_id,
             project_id=project_id,
             relationships=member_edges,
         )
@@ -504,7 +504,7 @@ async def _create_community(
     logger.info(
         "community.created",
         extra={
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
             "community_id": str(community_id),
             "member_count": len(entity_ids),

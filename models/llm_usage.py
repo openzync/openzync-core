@@ -20,7 +20,7 @@ class LLMUsage(CreatedAtMixin, Base):
 
     Attributes:
         id: UUID primary key.
-        organization_id: Owning organization (denormalized for fast
+        user_id: Owning user (denormalized for fast
             aggregation queries).
         provider: Backend identifier (e.g. ``openai``, ``ollama``).
         model: Model identifier (e.g., ``gpt-4o``, ``claude-sonnet-4``).
@@ -60,7 +60,7 @@ class LLMUsage(CreatedAtMixin, Base):
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
     )
-    organization_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     provider: Mapped[str] = mapped_column(
         Text, nullable=False, default="", server_default=""
     )
@@ -132,7 +132,7 @@ class LLMUsage(CreatedAtMixin, Base):
     )
 
     __table_args__ = (
-        Index("ix_llm_usage_org_created", "organization_id", "created_at"),
+        Index("ix_llm_usage_org_created", "user_id", "created_at"),
     )
 
     def __repr__(self) -> str:

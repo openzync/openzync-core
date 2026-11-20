@@ -170,7 +170,7 @@ def _validate_against_schema(data: dict, schema: dict) -> None:
 
 async def process_structured_output(
     db: AsyncSession,
-    org_id: str,
+    user_id: str,
     episode_id: str,
     project_id: str,
     session_id: str,
@@ -186,7 +186,7 @@ async def process_structured_output(
 
     Args:
         db: Active database session.
-        org_id: Organization UUID string.
+        user_id: Organization UUID string.
         episode_id: Episode UUID string.
         project_id: Project UUID string.
         session_id: Session UUID string.
@@ -263,10 +263,10 @@ async def process_structured_output(
             await db.execute(
                 text("""
                     INSERT INTO structured_extractions
-                        (organization_id, project_id, session_id, episode_id,
+                        (user_id, project_id, session_id, episode_id,
                          schema_id, data, created_at, updated_at)
                     VALUES
-                        (:org_id, :project_id, :session_id, :episode_id,
+                        (:user_id, :project_id, :session_id, :episode_id,
                          :schema_id, CAST(:data AS jsonb),
                          now(), now())
                     ON CONFLICT (episode_id, schema_id)
@@ -274,7 +274,7 @@ async def process_structured_output(
                                   updated_at = now()
                 """),
                 {
-                    "org_id": uuid.UUID(org_id),
+                    "user_id": uuid.UUID(user_id),
                     "project_id": uuid.UUID(project_id),
                     "session_id": uuid.UUID(session_id),
                     "episode_id": uuid.UUID(episode_id),

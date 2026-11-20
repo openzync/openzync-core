@@ -266,9 +266,9 @@ class TestCacheService:
         assert key == f"ctx:org1:proj1:v0:text:20:{expected_hash}"
 
     def test_build_project_cache_pattern(self) -> None:
-        """Returns ctx:{org_id}:{project_id}:* for SCAN matching."""
-        pattern = CacheService.build_project_cache_pattern("org1", "proj1")
-        assert pattern == "ctx:org1:proj1:*"
+        """Returns ctx:{user_id}:{project_id}:* for SCAN matching."""
+        pattern = CacheService.build_project_cache_pattern("user1", "proj1")
+        assert pattern == "ctx:user1:proj1:*"
 
     # ── invalidate_user_context() ────────────────────────────────────────────
 
@@ -278,17 +278,17 @@ class TestCacheService:
         mock_redis = AsyncMock()
         mock_redis.scan.return_value = (
             0,
-            ["ctx:org1:user1:abc123", "ctx:org1:user1:def456"],
+            ["ctx:user1:abc123", "ctx:user1:def456"],
         )
         mock_redis.delete.return_value = 2
         cache = CacheService(redis=mock_redis, default_ttl=60)
 
-        result = await cache.invalidate_user_context("org1", "user1")
+        result = await cache.invalidate_user_context("user1")
 
         assert result == 2
         mock_redis.scan.assert_awaited_once()
         mock_redis.delete.assert_awaited_once_with(
-            "ctx:org1:user1:abc123", "ctx:org1:user1:def456"
+            "ctx:user1:abc123", "ctx:user1:def456"
         )
 
     @pytest.mark.asyncio
@@ -298,7 +298,7 @@ class TestCacheService:
         mock_redis.scan.return_value = (0, [])
         cache = CacheService(redis=mock_redis, default_ttl=60)
 
-        result = await cache.invalidate_user_context("org1", "user1")
+        result = await cache.invalidate_user_context("user1")
 
         assert result == 0
         mock_redis.scan.assert_awaited_once()
@@ -312,7 +312,7 @@ class TestCacheService:
         cache = CacheService(redis=mock_redis, default_ttl=60)
 
         with pytest.raises(CacheUnavailableError, match="Cache invalidation failed"):
-            await cache.invalidate_user_context("org1", "user1")
+            await cache.invalidate_user_context("user1")
 
     # ── invalidate_project_context() ─────────────────────────────────────────
 
@@ -364,11 +364,11 @@ class TestCacheService:
 
     def test_build_context_cache_key_differs_for_diff_inputs(self) -> None:
         """Different inputs produce different cache keys."""
-        key1 = CacheService.build_context_cache_key("org1", "user1", "query one")
-        key2 = CacheService.build_context_cache_key("org1", "user1", "query two")
+        key1 = CacheService.build_context_cache_key("user1", "proj1", "query one")
+        key2 = CacheService.build_context_cache_key("user1", "proj1", "query two")
         assert key1 != key2
 
     def test_build_user_cache_pattern(self) -> None:
         """Pattern ends with * for SCAN matching."""
-        pattern = CacheService.build_user_cache_pattern("org1", "user1")
-        assert pattern == "ctx:org1:user1:*"
+        pattern = CacheService.build_user_cache_pattern("user1")
+        assert pattern == "ctx:user1:*"

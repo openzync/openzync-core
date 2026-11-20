@@ -51,7 +51,7 @@ PLATFORM_ORG_ID = uuid.UUID("00000000-0000-0000-0000-0000000000aa")
 The platform org (``name="SYSTEM"``) and its root ``superadmin`` user are
 created exactly once via ``POST /v1/auth/setup`` (see
 ``services.setup_service``) — never at startup.  A JWT session
-is super-admin only when its ``org_id`` claim equals this UUID AND the
+is super-admin only when its ``user_id`` claim equals this UUID AND the
 DB-verified role is ``superadmin`` (see ``dependencies.auth``).  Fixed —
 never generated — so auth checks are deterministic and the setup is
 idempotent.

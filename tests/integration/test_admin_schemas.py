@@ -47,7 +47,7 @@ from tests.integration.conftest import asgi_transport, bootstrap_tenant
 def _assert_schema_response_shape(body: dict) -> None:
     """Validate that *body* matches ExtractionSchemaResponse shape."""
     assert "id" in body
-    assert "organization_id" in body
+    assert "user_id" in body
     assert "name" in body
     assert "type" in body
     assert "json_schema" in body
@@ -55,7 +55,7 @@ def _assert_schema_response_shape(body: dict) -> None:
     assert "created_at" in body
     assert "updated_at" in body
     UUID(body["id"])
-    UUID(body["organization_id"])
+    UUID(body["user_id"])
 
 
 @pytest_asyncio.fixture(loop_scope="function")

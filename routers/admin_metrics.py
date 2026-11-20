@@ -134,14 +134,14 @@ async def get_metrics_summary(
         "(window ends to 00:00 UTC + 1 day). "
         "Requires from; mutually exclusive with days.",
     ),
-    org_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_permission("members:read")),
     org_config: OrgConfigBase = Depends(get_org_config),
     service: AdminMetricsService = Depends(_get_admin_metrics_service),
 ) -> MetricsSummaryResponse:
     """Get aggregated metrics for the admin dashboard.
 
     Merges DB counts and Prometheus metrics into a single response.
-    DB counts are scoped to the authenticated organization.
+    DB counts are scoped to the authenticated user.
     Only the Prometheus range time-series honor the window; DB totals
     and instant queries stay snapshot semantics.
     """
@@ -182,7 +182,7 @@ async def get_metrics_summary(
     else:
         end = datetime.now(UTC)
         start = end - timedelta(hours=24)
-    return await service.get_summary(request, org_config, UUID(org_id), start, end)
+    return await service.get_summary(request, org_config, UUID(user_id), start, end)
 
 
 @router.get(
@@ -195,7 +195,7 @@ async def get_metrics_summary(
     ),
 )
 async def get_prometheus_targets(
-    _org_id: str = Depends(require_permission("members:read")),
+    _user_id: str = Depends(require_permission("members:read")),
     sort_by: MonitorTargetSortBy | None = Query(
         default=None,
         description="Sort key — ``name`` (job), ``created_at`` "
@@ -296,7 +296,7 @@ async def get_metrics_batch(
     project_id: UUID | None = Query(
         default=None, description="Optional project filter"
     ),
-    org_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_permission("members:read")),
     org_config: OrgConfigBase = Depends(get_org_config),
     service: AdminMetricsQueriesService = Depends(_get_admin_metrics_queries_service),
 ) -> dict:
@@ -349,7 +349,7 @@ async def get_metrics_batch(
     result = await service.run_batch(
         request,
         org_config,
-        UUID(org_id),
+        UUID(user_id),
         start,
         end,
         limit,

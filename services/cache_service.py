@@ -5,7 +5,7 @@ Uses the cache-aside pattern with optional ``SET NX EX`` stampede
 protection so that concurrent requests for the same cache key
 serialise the recompute behind a single distributed lock.
 
-Key namespace convention: ``ctx:{org_id}:{project_id}:{query_hash}``
+Key namespace convention: ``ctx:{user_id}:{project_id}:{query_hash}``
 """
 
 from __future__ import annotations
@@ -280,7 +280,7 @@ class CacheService:
 
     @staticmethod
     def build_context_cache_key(
-        org_id: str,
+        user_id: str,
         project_id: str,
         query: str,
         as_of: str | None = None,
@@ -306,7 +306,7 @@ class CacheService:
         is O(1) and stale keys simply expire via TTL.
 
         Args:
-            org_id: The organization UUID string.
+            user_id: The organization UUID string.
             project_id: The project UUID string.
             query: The natural-language query string.
             as_of: ISO-8601 effective-at timestamp; ``None`` omits the
@@ -323,7 +323,7 @@ class CacheService:
             A namespaced Redis key string.
         """
         query_hash = hashlib.sha256(query.encode("utf-8")).hexdigest()[:16]
-        parts = [f"ctx:{org_id}:{project_id}", f"v{version}"]
+        parts = [f"ctx:{user_id}:{project_id}", f"v{version}"]
         if as_of is not None:
             parts.append(as_of)
         if sort != "relevance":
@@ -334,7 +334,7 @@ class CacheService:
         return ":".join(parts)
 
     @staticmethod
-    def build_user_cache_pattern(org_id: str, user_id: str) -> str:
+    def build_user_cache_pattern(user_id: str) -> str:
         """Build a Redis key pattern for all context cache entries of a user.
 
         .. deprecated::
@@ -343,34 +343,33 @@ class CacheService:
             of existing tests.
 
         Args:
-            org_id: The organization UUID string.
+            user_id: The organization UUID string.
             user_id: The user UUID string.
 
         Returns:
             A glob pattern string for ``SCAN`` / ``KEYS``.
         """
-        return f"ctx:{org_id}:{user_id}:*"
+        return f"ctx:{user_id}:*"
 
     @staticmethod
-    def build_project_cache_pattern(org_id: str, project_id: str) -> str:
+    def build_project_cache_pattern(user_id: str, project_id: str) -> str:
         """Build a Redis key pattern for all context cache entries of a project.
 
         Used by the invalidation routine on new message ingestion.
 
         Args:
-            org_id: The organization UUID string.
+            user_id: The organization UUID string.
             project_id: The project UUID string.
 
         Returns:
             A glob pattern string for ``SCAN`` / ``KEYS``.
         """
-        return f"ctx:{org_id}:{project_id}:*"
+        return f"ctx:{user_id}:{project_id}:*"
 
     # ── Invalidation ───────────────────────────────────────────────────────────
 
     async def invalidate_user_context(
         self,
-        org_id: str,
         user_id: str,
     ) -> int:
         """Invalidate all context cache entries for a user.
@@ -380,10 +379,10 @@ class CacheService:
             invalidation is now project-scoped.  Kept for backward compatibility
             of existing tests.
 
-        Uses ``SCAN`` + ``DEL`` to match ``ctx:{org_id}:{user_id}:*``.
+        Uses ``SCAN`` + ``DEL`` to match ``ctx:{user_id}:{user_id}:*``.
 
         Args:
-            org_id: The organization UUID string.
+            user_id: The organization UUID string.
             user_id: The user UUID string.
 
         Returns:
@@ -393,7 +392,7 @@ class CacheService:
             CacheUnavailableError: If Redis is unreachable or the
                 invalidation fails.
         """
-        pattern = self.build_user_cache_pattern(org_id, user_id)
+        pattern = self.build_user_cache_pattern(user_id)
         cursor: int = 0
         deleted = 0
 
@@ -414,7 +413,6 @@ class CacheService:
                 logger.info(
                     "cache.context_cache_invalidated",
                     extra={
-                        "org_id": org_id,
                         "user_id": user_id,
                         "keys_deleted": deleted,
                     },
@@ -422,11 +420,11 @@ class CacheService:
         except Exception as exc:
             logger.error(
                 "cache.invalidation_failed",
-                extra={"org_id": org_id, "user_id": user_id},
+                extra={"user_id": user_id},
                 exc_info=True,
             )
             raise CacheUnavailableError(
-                f"Cache invalidation failed for org '{org_id}', user '{user_id}'."
+                f"Cache invalidation failed for org '{user_id}', user '{user_id}'."
             ) from exc
 
         return deleted
@@ -434,26 +432,26 @@ class CacheService:
     # ── Context cache generation (O(1) invalidation) ──────────────────────────
 
     @staticmethod
-    def build_context_version_key(org_id: str, project_id: str) -> str:
+    def build_context_version_key(user_id: str, project_id: str) -> str:
         """Build the Redis key holding a project's context cache generation.
 
         Args:
-            org_id: The organization UUID string.
+            user_id: The organization UUID string.
             project_id: The project UUID string.
 
         Returns:
             A namespaced Redis key string (``ctxver:{org}:{proj}``).
         """
-        return f"ctxver:{org_id}:{project_id}"
+        return f"ctxver:{user_id}:{project_id}"
 
-    async def get_context_version(self, org_id: str, project_id: str) -> str:
+    async def get_context_version(self, user_id: str, project_id: str) -> str:
         """Return the project's current context cache generation.
 
         Missing key means generation ``"0"`` (nothing ingested yet, or
         the counter expired — plain ``INCR`` recreates it on next bump).
 
         Args:
-            org_id: The organization UUID string.
+            user_id: The organization UUID string.
             project_id: The project UUID string.
 
         Returns:
@@ -462,7 +460,7 @@ class CacheService:
         Raises:
             CacheUnavailableError: If Redis is unreachable.
         """
-        key = self.build_context_version_key(org_id, project_id)
+        key = self.build_context_version_key(user_id, project_id)
         try:
             from redis.asyncio import Redis as AsyncRedis
 
@@ -481,7 +479,7 @@ class CacheService:
             return "0"
         return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
 
-    async def bump_context_version(self, org_id: str, project_id: str) -> int:
+    async def bump_context_version(self, user_id: str, project_id: str) -> int:
         """Atomically bump the project's context cache generation.
 
         O(1) invalidation: every key minted after this call carries the
@@ -489,7 +487,7 @@ class CacheService:
         expire via TTL — no SCAN+DEL.
 
         Args:
-            org_id: The organization UUID string.
+            user_id: The organization UUID string.
             project_id: The project UUID string.
 
         Returns:
@@ -498,7 +496,7 @@ class CacheService:
         Raises:
             CacheUnavailableError: If Redis is unreachable.
         """
-        key = self.build_context_version_key(org_id, project_id)
+        key = self.build_context_version_key(user_id, project_id)
         try:
             from redis.asyncio import Redis as AsyncRedis
 
@@ -516,17 +514,17 @@ class CacheService:
 
     async def invalidate_project_context(
         self,
-        org_id: str,
+        user_id: str,
         project_id: str,
     ) -> int:
         """Invalidate all context cache entries for a project.
 
-        Uses ``SCAN`` + ``DEL`` to match ``ctx:{org_id}:{project_id}:*``.
+        Uses ``SCAN`` + ``DEL`` to match ``ctx:{user_id}:{project_id}:*``.
         Called after new message ingestion so subsequent context queries
         fetch fresh data from the database.
 
         Args:
-            org_id: The organization UUID string.
+            user_id: The organization UUID string.
             project_id: The project UUID string.
 
         Returns:
@@ -536,7 +534,7 @@ class CacheService:
             CacheUnavailableError: If Redis is unreachable or the
                 invalidation fails.
         """
-        pattern = self.build_project_cache_pattern(org_id, project_id)
+        pattern = self.build_project_cache_pattern(user_id, project_id)
         cursor: int = 0
         deleted = 0
 
@@ -557,7 +555,7 @@ class CacheService:
                 logger.info(
                     "cache.project_context_cache_invalidated",
                     extra={
-                        "org_id": org_id,
+                        "user_id": user_id,
                         "project_id": project_id,
                         "keys_deleted": deleted,
                     },
@@ -565,11 +563,11 @@ class CacheService:
         except Exception as exc:
             logger.error(
                 "cache.project_invalidation_failed",
-                extra={"org_id": org_id, "project_id": project_id},
+                extra={"user_id": user_id, "project_id": project_id},
                 exc_info=True,
             )
             raise CacheUnavailableError(
-                f"Cache invalidation failed for org '{org_id}', project '{project_id}'."
+                f"Cache invalidation failed for org '{user_id}', project '{project_id}'."
             ) from exc
 
         return deleted

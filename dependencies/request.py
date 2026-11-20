@@ -1,17 +1,17 @@
 """FastAPI dependencies for extracting common request parameters.
 
-Provides reusable validated extractors for ``org_id`` (from auth middleware
+Provides reusable validated extractors for ``user_id`` (from auth middleware
 state) and ``project_id`` (from path parameters).  Using these instead of
-inline ``request.state.org_id`` / ``request.path_params["project_id"]``
+inline ``request.state.user_id`` / ``request.path_params["project_id"]``
 ensures consistent validation and error messages across all endpoints.
 
 Usage in a router::
 
-    from dependencies.request import get_current_org_id, get_project_id
+    from dependencies.request import get_current_user_id, get_project_id
 
     @router.get("/items")
     async def list_items(
-        org_id: UUID = Depends(get_current_org_id),
+        user_id: UUID = Depends(get_current_user_id),
         project_id: UUID = Depends(get_project_id),
     ):
         ...
@@ -26,23 +26,32 @@ from fastapi import Request
 from core.exceptions import AuthenticationError, ValidationError
 
 
-async def get_current_org_id(request: Request) -> UUID:
-    """Extract and validate the organization ID from request state.
+async def get_current_user_id(request: Request) -> UUID:
+    """Extract and validate the user ID from request state.
 
-    The auth middleware sets ``request.state.org_id`` during request
-    processing.  Raises ``AuthenticationError`` if the middleware has not
-    populated it (e.g., missing or invalid auth context).
+    The auth middleware sets ``request.state.user_id`` during request
+    processing (JWT ``sub`` claim or API-key owner).  Raises
+    ``AuthenticationError`` if the middleware has not populated it
+    (e.g., missing or invalid auth context).
 
     Returns:
-        The authenticated organization's UUID.
+        The authenticated user's UUID.
 
     Raises:
-        AuthenticationError: If ``request.state.org_id`` is missing or empty.
+        AuthenticationError: If ``request.state.user_id`` is missing or empty.
     """
-    raw: str | None = getattr(request.state, "org_id", None)
+    raw: str | None = getattr(request.state, "user_id", None)
     if not raw:
-        raise AuthenticationError("Organization context not set")
+        raise AuthenticationError("User context not set")
     return UUID(raw)
+
+
+get_current_org_id = get_current_user_id
+"""Legacy alias of :func:`get_current_user_id` (user scope: ``app.user_id``).
+
+Deferred removal: 0070 dropped only the join-code policies, not the
+``organizations`` table — remove with that table drop.
+"""
 
 
 async def get_project_id(request: Request) -> UUID:

@@ -1,9 +1,9 @@
 """Unit tests for session router guard clauses.
 
 Validates that the request parameter extractors
-(:func:`dependencies.request.get_current_org_id` and
+(:func:`dependencies.request.get_current_user_id` and
 :func:`dependencies.request.get_project_id`) raise the correct domain
-exceptions when ``request.state.org_id`` is missing or
+exceptions when ``request.state.user_id`` is missing or
 ``request.path_params["project_id"]`` is absent, rather than letting
 ``UUID(None)`` / ``KeyError`` produce an unhandled 500.
 """
@@ -17,44 +17,44 @@ import pytest
 from starlette.requests import Request
 
 from core.exceptions import AuthenticationError, ValidationError
-from dependencies.request import get_current_org_id, get_project_id
+from dependencies.request import get_current_user_id, get_project_id
 
 
 class TestOrgIdGuard:
-    """``get_current_org_id`` raises ``AuthenticationError`` when org context is missing."""
+    """``get_current_user_id`` raises ``AuthenticationError`` when user context is missing."""
 
     @pytest.mark.unit
-    async def test_missing_org_id_raises(self) -> None:
-        """When ``request.state.org_id`` is ``None``, raise ``AuthenticationError``."""
+    async def test_missing_user_id_raises(self) -> None:
+        """When ``request.state.user_id`` is ``None``, raise ``AuthenticationError``."""
         request = MagicMock(spec=Request)
-        request.state.org_id = None
+        request.state.user_id = None
 
         with pytest.raises(
             AuthenticationError,
-            match="Organization context not set",
+            match="User context not set",
         ):
-            await get_current_org_id(request)
+            await get_current_user_id(request)
 
     @pytest.mark.unit
-    async def test_missing_org_id_attr_raises(self) -> None:
-        """When ``request.state`` has no ``org_id`` attribute, raise ``AuthenticationError``."""
+    async def test_missing_user_id_attr_raises(self) -> None:
+        """When ``request.state`` has no ``user_id`` attribute, raise ``AuthenticationError``."""
         request = MagicMock(spec=Request)
-        # Use a spec that doesn't have org_id on state
-        del request.state.org_id
+        # Use a spec that doesn't have user_id on state
+        del request.state.user_id
 
         with pytest.raises(
             AuthenticationError,
-            match="Organization context not set",
+            match="User context not set",
         ):
-            await get_current_org_id(request)
+            await get_current_user_id(request)
 
     @pytest.mark.unit
-    async def test_valid_org_id_returns_uuid(self) -> None:
-        """A valid org_id string is returned as a UUID."""
+    async def test_valid_user_id_returns_uuid(self) -> None:
+        """A valid user_id string is returned as a UUID."""
         request = MagicMock(spec=Request)
-        request.state.org_id = "550e8400-e29b-41d4-a716-446655440000"
+        request.state.user_id = "550e8400-e29b-41d4-a716-446655440000"
 
-        result = await get_current_org_id(request)
+        result = await get_current_user_id(request)
         assert result == UUID("550e8400-e29b-41d4-a716-446655440000")
 
 
@@ -133,14 +133,14 @@ class TestDeleteSessionResponse:
 
         session_id = UUID("00000000-0000-0000-0000-000000000003")
         service = AsyncMock()
-        org_id = UUID("00000000-0000-0000-0000-000000000001")
+        user_id = UUID("00000000-0000-0000-0000-000000000001")
         project_id = UUID("00000000-0000-0000-0000-000000000002")
 
         result = await delete_session(
             session_id=session_id,
             service=service,
             _=None,
-            org_id=org_id,
+            user_id=user_id,
             project_id=project_id,
         )
 

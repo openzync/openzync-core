@@ -31,7 +31,7 @@ class TestAuditLogRepository:
     def _mock_entry(self, **overrides: object) -> MagicMock:
         entry = MagicMock()
         entry.id = overrides.get("id", uuid4())
-        entry.organization_id = overrides.get("organization_id", self.ORG_ID)
+        entry.user_id = overrides.get("user_id", self.ORG_ID)
         entry.actor_id = overrides.get("actor_id", "user-abc")
         entry.actor_type = overrides.get("actor_type", "user")
         entry.action = overrides.get("action", "session.create")
@@ -54,7 +54,7 @@ class TestAuditLogRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.create(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             actor_id="user-abc",
             actor_type="user",
             action="session.create",
@@ -80,7 +80,7 @@ class TestAuditLogRepository:
         mock_db.refresh.return_value = None
 
         result = await repo.create(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             actor_id=None,
             actor_type=None,
             action="system.startup",
@@ -117,7 +117,7 @@ class TestAuditLogRepository:
         mock_db.execute.side_effect = None
         mock_db.execute.side_effect = [mock_count_result, mock_list_result]
 
-        result, total = await repo.list(organization_id=self.ORG_ID)
+        result, total = await repo.list(user_id=self.ORG_ID)
 
         assert result == entries
         assert total == 2
@@ -135,7 +135,7 @@ class TestAuditLogRepository:
         mock_db.execute.side_effect = [mock_count_result, mock_list_result]
 
         result, total = await repo.list(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             action="session.create",
             actor_id="user-abc",
             actor_type="user",
@@ -154,7 +154,7 @@ class TestAuditLogRepository:
         mock_count_result.scalar.return_value = 0
         mock_db.execute.side_effect = [mock_count_result, mock_list_result]
 
-        result, total = await repo.list(organization_id=self.ORG_ID, limit=10, offset=5)
+        result, total = await repo.list(user_id=self.ORG_ID, limit=10, offset=5)
 
         assert result == []
         assert total == 0
@@ -170,7 +170,7 @@ class TestAuditLogRepository:
         mock_db.execute.side_effect = [mock_count_result, mock_list_result]
 
         result, total = await repo.list(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             exclude_prefix="system.,health.",
         )
 
@@ -187,7 +187,7 @@ class TestAuditLogRepository:
         mock_db.execute.side_effect = [mock_count_result, mock_list_result]
 
         result, total = await repo.list(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             resource_type="session",
             resource_id="sess-123",
         )
@@ -206,7 +206,7 @@ class TestAuditLogRepository:
         mock_db.execute.side_effect = [mock_count_result, mock_list_result]
 
         result, total = await repo.list(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             created_after="2024-01-01T00:00:00",
             created_before="2024-12-31T23:59:59",
         )
@@ -223,7 +223,7 @@ class TestAuditLogRepository:
         mock_count_result.scalar.return_value = 0
         mock_db.execute.side_effect = [mock_count_result, mock_list_result]
 
-        result, total = await repo.list(organization_id=self.ORG_ID)
+        result, total = await repo.list(user_id=self.ORG_ID)
 
         assert result == []
         assert total == 0
@@ -234,7 +234,7 @@ class TestAuditLogRepository:
     def _where_clause(stmt: object) -> str:
         """The WHERE clause of a compiled statement (empty when there is none).
 
-        The SELECT column list also names ``audit_logs.organization_id``,
+        The SELECT column list also names ``audit_logs.user_id``,
         so only the predicate can answer "is the result filtered by org?".
         """
         compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
@@ -258,13 +258,13 @@ class TestAuditLogRepository:
         mock_count_result.scalar.return_value = 0
         mock_db.execute.side_effect = [mock_count_result, mock_list_result]
 
-        await repo.list(organization_id=self.ORG_ID)
+        await repo.list(user_id=self.ORG_ID)
 
         statements = [call.args[0] for call in mock_db.execute.await_args_list]
         assert len(statements) == 2
         for stmt in statements:
             where = self._where_clause(stmt)
-            assert "audit_logs.organization_id" in where
+            assert "audit_logs.user_id" in where
             assert self.ORG_ID.hex in where
 
     async def test_list_without_organization_is_platform_wide(
@@ -274,7 +274,7 @@ class TestAuditLogRepository:
 
         The superadmin path reads the whole audit trail; the RLS-bypass
         session it runs on decides what is visible.  A tenant-scoped
-        ``organization_id IS NULL`` filter would silently hide every
+        ``user_id IS NULL`` filter would silently hide every
         platform-level row from the platform admin.
         """
         mock_list_result = MagicMock()
@@ -283,12 +283,12 @@ class TestAuditLogRepository:
         mock_count_result.scalar.return_value = 0
         mock_db.execute.side_effect = [mock_count_result, mock_list_result]
 
-        await repo.list(organization_id=None)
+        await repo.list(user_id=None)
 
         statements = [call.args[0] for call in mock_db.execute.await_args_list]
         assert len(statements) == 2
         for stmt in statements:
-            assert "audit_logs.organization_id" not in self._where_clause(stmt)
+            assert "audit_logs.user_id" not in self._where_clause(stmt)
 
     async def test_list_combines_the_organization_with_the_other_filters(
         self, repo: AuditLogRepository, mock_db: AsyncMock
@@ -300,9 +300,9 @@ class TestAuditLogRepository:
         mock_count_result.scalar.return_value = 0
         mock_db.execute.side_effect = [mock_count_result, mock_list_result]
 
-        await repo.list(organization_id=self.ORG_ID, action="session.create")
+        await repo.list(user_id=self.ORG_ID, action="session.create")
 
         list_stmt = mock_db.execute.await_args_list[1].args[0]
         where = self._where_clause(list_stmt)
-        assert "audit_logs.organization_id" in where
+        assert "audit_logs.user_id" in where
         assert "audit_logs.action" in where

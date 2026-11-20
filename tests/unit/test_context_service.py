@@ -28,7 +28,7 @@ class TestContextService:
 
         svc = ContextService(
             db=mock_db,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             redis=mock_redis,
             graph_backends=[mock_graph_backend],
             org_config=OrgConfigBase(context_cache_ttl=300),
@@ -106,7 +106,7 @@ class TestContextService:
         """Construct a ContextService with a given (possibly None) org config."""
         svc = ContextService(
             db=AsyncMock(),
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             redis=AsyncMock(),
             org_config=org_config,
         )
@@ -252,7 +252,7 @@ class TestContextAsOf:
         mock_redis.get.return_value = None
         svc = ContextService(
             db=mock_db,
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             redis=mock_redis,
             graph_backends=[AsyncMock()],
             org_config=OrgConfigBase(context_cache_ttl=300),

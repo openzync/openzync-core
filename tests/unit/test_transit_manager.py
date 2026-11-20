@@ -48,15 +48,15 @@ class TestOrgApiKeyEncryption:
         transit: TransitManager,
         mock_bao: AsyncMock,
     ) -> None:
-        org_id = uuid4()
+        user_id = uuid4()
         api_key = "sk-original-value"
 
-        result = await transit.encrypt_org_api_key(org_id, api_key)
+        result = await transit.encrypt_org_api_key(user_id, api_key)
 
         mock_bao.encrypt_data.assert_called_once_with(
             ORG_API_KEY_KEY,
             api_key,
-            context=str(org_id),
+            context=str(user_id),
         )
         assert result == "vault:v1:ciphertext"
 
@@ -66,15 +66,15 @@ class TestOrgApiKeyEncryption:
         transit: TransitManager,
         mock_bao: AsyncMock,
     ) -> None:
-        org_id = uuid4()
+        user_id = uuid4()
         ciphertext = "vault:v1:ciphertext"
 
-        result = await transit.decrypt_org_api_key(org_id, ciphertext)
+        result = await transit.decrypt_org_api_key(user_id, ciphertext)
 
         mock_bao.decrypt_data.assert_called_once_with(
             ORG_API_KEY_KEY,
             ciphertext,
-            context=str(org_id),
+            context=str(user_id),
         )
         assert "decrypted" in result
 

@@ -29,7 +29,7 @@ def _stub_permission_gate() -> None:
     ``require_permission("project:manage")`` — closures created at router
     import time that cannot be keyed in ``dependency_overrides``.  Patching
     ``dependencies.auth._check_permission`` (the shared decision function)
-    stubs the gate while keeping the ``require_org_id`` chain intact.  The
+    stubs the gate while keeping the ``require_user_id`` chain intact.  The
     real gate matrix is covered by ``test_admin_gate_matrix.py``.
     """
     with patch("dependencies.auth._check_permission", new=AsyncMock()):
@@ -108,7 +108,7 @@ class TestProjectsRouter:
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -145,7 +145,7 @@ class TestProjectsRouter:
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -177,7 +177,7 @@ class TestProjectsRouter:
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -212,7 +212,7 @@ class TestProjectsRouter:
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -246,7 +246,7 @@ class TestProjectsRouter:
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -278,7 +278,7 @@ class TestProjectsRouter:
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -314,7 +314,7 @@ class TestProjectsRouter:
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -358,7 +358,7 @@ class TestProjectsRouter:
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -379,7 +379,7 @@ class TestProjectsRouter:
             _make_project_response({"name": "Updated Project"})
         )
 
-        from dependencies.auth import require_org_id
+        from dependencies.auth import require_user_id
         from dependencies.db import get_db
         from routers.projects import _get_project_service, router
 
@@ -387,11 +387,11 @@ class TestProjectsRouter:
         app.include_router(router)
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
-        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -418,7 +418,7 @@ class TestProjectsRouter:
             _make_project_response()
         )
 
-        from dependencies.auth import require_org_id
+        from dependencies.auth import require_user_id
         from dependencies.db import get_db
         from routers.projects import _get_project_service, router
 
@@ -426,11 +426,11 @@ class TestProjectsRouter:
         app.include_router(router)
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
-        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -454,7 +454,7 @@ class TestProjectsRouter:
         mock_project_service.return_value = mock_instance
         mock_instance.archive_project.return_value = None
 
-        from dependencies.auth import require_org_id
+        from dependencies.auth import require_user_id
         from dependencies.db import get_db
         from routers.projects import _get_project_service, router
 
@@ -462,11 +462,11 @@ class TestProjectsRouter:
         app.include_router(router)
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
-        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -487,7 +487,7 @@ class TestProjectsRouter:
         mock_project_service.return_value = mock_instance
         mock_instance.add_member.return_value = _make_member_response()
 
-        from dependencies.auth import require_org_id
+        from dependencies.auth import require_user_id
         from dependencies.db import get_db
         from routers.projects import _get_project_service, router
 
@@ -495,11 +495,11 @@ class TestProjectsRouter:
         app.include_router(router)
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
-        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -524,7 +524,7 @@ class TestProjectsRouter:
         mock_instance = AsyncMock()
         mock_project_service.return_value = mock_instance
 
-        from dependencies.auth import require_org_id
+        from dependencies.auth import require_user_id
         from dependencies.db import get_db
         from routers.projects import _get_project_service, router
 
@@ -532,11 +532,11 @@ class TestProjectsRouter:
         app.include_router(router)
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
-        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -573,7 +573,7 @@ class TestProjectsRouter:
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -596,7 +596,7 @@ class TestProjectsRouter:
         mock_project_service.return_value = mock_instance
         mock_instance.remove_member.return_value = None
 
-        from dependencies.auth import require_org_id
+        from dependencies.auth import require_user_id
         from dependencies.db import get_db
         from routers.projects import _get_project_service, router
 
@@ -604,11 +604,11 @@ class TestProjectsRouter:
         app.include_router(router)
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
-        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -632,7 +632,7 @@ class TestProjectsRouter:
             {"role": "owner"}
         )
 
-        from dependencies.auth import require_org_id
+        from dependencies.auth import require_user_id
         from dependencies.db import get_db
         from routers.projects import _get_project_service, router
 
@@ -640,11 +640,11 @@ class TestProjectsRouter:
         app.include_router(router)
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
-        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -669,7 +669,7 @@ class TestProjectsRouter:
         mock_instance = AsyncMock()
         mock_project_service.return_value = mock_instance
 
-        from dependencies.auth import require_org_id
+        from dependencies.auth import require_user_id
         from dependencies.db import get_db
         from routers.projects import _get_project_service, router
 
@@ -677,11 +677,11 @@ class TestProjectsRouter:
         app.include_router(router)
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
-        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(ORG_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)

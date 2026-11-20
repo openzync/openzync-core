@@ -66,7 +66,7 @@ class ExtractionSchemaResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    organization_id: UUID
+    user_id: UUID
     name: str
     type: str
     json_schema: dict

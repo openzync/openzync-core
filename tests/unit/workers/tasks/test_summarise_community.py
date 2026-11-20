@@ -15,7 +15,7 @@ class TestSummariseCommunity:
     """summarise_community task tests."""
 
     def _make_db(
-        self, org_ids: list | None = None, project_ids: list | None = None
+        self, user_ids: list | None = None, project_ids: list | None = None
     ) -> AsyncMock:
         db = AsyncMock()
         # ``add`` is sync in SQLAlchemy — an AsyncMock child would return an
@@ -23,10 +23,10 @@ class TestSummariseCommunity:
         db.add = MagicMock()
         db.__aenter__.return_value = db
         db.__aexit__.return_value = None
-        org_id_tuples = [(oid,) for oid in (org_ids or [uuid4()])]
+        user_id_tuples = [(oid,) for oid in (user_ids or [uuid4()])]
         proj_id_tuples = [(pid,) for pid in (project_ids or [uuid4()])]
         org_result = MagicMock()
-        org_result.all.return_value = org_id_tuples
+        org_result.all.return_value = user_id_tuples
         proj_result = MagicMock()
         proj_result.all.return_value = proj_id_tuples
 
@@ -102,7 +102,7 @@ class TestSummariseCommunity:
             # Need to handle org query + project query — use separate side effects
             oid = uuid4()
             pid = uuid4()
-            db = self._make_db(org_ids=[oid], project_ids=[pid])
+            db = self._make_db(user_ids=[oid], project_ids=[pid])
 
             from workers.tasks.summarise_community import summarise_community
 
@@ -130,7 +130,7 @@ class TestSummariseCommunity:
 
     @pytest.mark.asyncio
     async def test_single_org(self) -> None:
-        """Single org processed when org_id is provided."""
+        """Single org processed when user_id is provided."""
         mock_backend = AsyncMock()
         mock_backend.get_all_entities.return_value = self._make_entities(6)
         mock_backend.get_all_relationships.return_value = []
@@ -160,7 +160,7 @@ class TestSummariseCommunity:
 
             from workers.tasks.summarise_community import summarise_community
 
-            result = await summarise_community(ctx=self._ctx(db), org_id=_ORG_ID)
+            result = await summarise_community(ctx=self._ctx(db), user_id=_ORG_ID)
 
             assert result["status"] == "completed"
 
@@ -183,7 +183,7 @@ class TestSummariseCommunity:
 
             from workers.tasks.summarise_community import summarise_community
 
-            result = await summarise_community(ctx=self._ctx(db), org_id=_ORG_ID)
+            result = await summarise_community(ctx=self._ctx(db), user_id=_ORG_ID)
 
             assert result["communities_created"] == 0
 
@@ -213,7 +213,7 @@ class TestSummariseCommunity:
 
             from workers.tasks.summarise_community import summarise_community
 
-            result = await summarise_community(ctx=self._ctx(db), org_id=_ORG_ID)
+            result = await summarise_community(ctx=self._ctx(db), user_id=_ORG_ID)
 
             assert result["communities_created"] == 0
 
@@ -254,7 +254,7 @@ class TestSummariseCommunity:
 
             from workers.tasks.summarise_community import summarise_community
 
-            result = await summarise_community(ctx=self._ctx(db), org_id=_ORG_ID)
+            result = await summarise_community(ctx=self._ctx(db), user_id=_ORG_ID)
 
             assert result["communities_created"] >= 1
             assert mock_backend.create_entity.called
@@ -274,7 +274,7 @@ class TestSummariseCommunity:
 
             from workers.tasks.summarise_community import summarise_community
 
-            result = await summarise_community(ctx=self._ctx(db), org_id=_ORG_ID)
+            result = await summarise_community(ctx=self._ctx(db), user_id=_ORG_ID)
 
             assert result["communities_created"] == 0
 
@@ -292,7 +292,7 @@ class TestSummariseCommunity:
         # re-raised as ``RuntimeError``; the message embeds the org count and
         # ids, so only the stable literal fragment is pinned.
         with pytest.raises(RuntimeError, match="orgs failed"):
-            await summarise_community(ctx=self._ctx(db), org_id=_ORG_ID)
+            await summarise_community(ctx=self._ctx(db), user_id=_ORG_ID)
 
     @pytest.mark.asyncio
     async def test_discovery_sets_bypass_rls_before_org_query(self) -> None:
@@ -306,7 +306,7 @@ class TestSummariseCommunity:
         the session and survives the per-org commit.
         """
         oid = uuid4()
-        db = self._make_db(org_ids=[oid], project_ids=[])
+        db = self._make_db(user_ids=[oid], project_ids=[])
 
         with patch(
             "workers.tasks.summarise_community.resolve_graph_backend",
@@ -318,22 +318,20 @@ class TestSummariseCommunity:
 
         calls = db.execute.call_args_list
         assert str(calls[0].args[0]) == (
-            "SELECT set_config('app.org_id', :org_id, true), "
-            "set_config('app.bypass_rls', :bypass_rls, true), "
-            "set_config('app.lookup_code', :lookup_code, true)"
+            "SELECT set_config('app.user_id', :user_id, true), "
+            "set_config('app.bypass_rls', :bypass_rls, true)"
         )
         # The bypass is on, and no tenant is bound — the scan is
         # platform-wide.
         assert calls[0].args[1] == {
-            "org_id": "",
+            "user_id": "",
             "bypass_rls": "true",
-            "lookup_code": "",
         }
         assert "organizations" in str(calls[1].args[0]).lower()
 
     @pytest.mark.asyncio
-    async def test_process_org_sets_org_id_context(self) -> None:
-        """RLS app.org_id context is set before per-org project discovery.
+    async def test_process_org_sets_user_id_context(self) -> None:
+        """RLS app.user_id context is set before per-org project discovery.
 
         Regression for the RLS fix: without the tenant binding the
         projects policy (migrations/0019) admits no rows for this org, so
@@ -344,7 +342,7 @@ class TestSummariseCommunity:
         the session and re-applied after ``_process_org``'s commit.
         """
         oid = uuid4()
-        db = self._make_db(org_ids=[], project_ids=[uuid4()])
+        db = self._make_db(user_ids=[], project_ids=[uuid4()])
         mock_backend = AsyncMock()
         mock_backend.get_all_entities.return_value = self._make_entities(2)
 
@@ -354,20 +352,18 @@ class TestSummariseCommunity:
         ):
             from workers.tasks.summarise_community import summarise_community
 
-            await summarise_community(ctx=self._ctx(db), org_id=str(oid))
+            await summarise_community(ctx=self._ctx(db), user_id=str(oid))
 
         calls = db.execute.call_args_list
         # The discovery bypass is dropped…
         assert calls[0].args[1] == {
-            "org_id": "",
+            "user_id": "",
             "bypass_rls": "false",
-            "lookup_code": "",
         }
         # …and the tenant is bound before the project query.
         assert calls[1].args[1] == {
-            "org_id": str(oid),
+            "user_id": str(oid),
             "bypass_rls": "false",
-            "lookup_code": "",
         }
         assert "projects" in str(calls[2].args[0]).lower()
 
@@ -476,5 +472,5 @@ class TestSummariseCommunity:
 
         calls = db.execute.call_args_list
         # Both orgs were attempted — each org's tenant binding ran with its id.
-        assert calls[3].args[1]["org_id"] == str(org_1)
-        assert calls[6].args[1]["org_id"] == str(org_2)
+        assert calls[3].args[1]["user_id"] == str(org_1)
+        assert calls[6].args[1]["user_id"] == str(org_2)

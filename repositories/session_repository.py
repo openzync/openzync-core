@@ -59,7 +59,7 @@ class SessionRepository:
 
     async def create(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         created_by: UUID,
         external_id: str,
@@ -72,7 +72,7 @@ class SessionRepository:
         but a race is still possible.
 
         Args:
-            organization_id: The organization UUID for tenant isolation.
+            user_id: The organization UUID for tenant isolation.
             project_id: The project UUID the session belongs to.
             created_by: The UUID of the user who created the session.
             external_id: Caller-defined session identifier.
@@ -82,9 +82,8 @@ class SessionRepository:
             The newly created Session with generated id and timestamps.
         """
         session = Session(
-            organization_id=organization_id,
+            user_id=user_id,
             project_id=project_id,
-            user_id=created_by,
             external_id=external_id,
             metadata_=metadata if metadata is not None else {},
         )
@@ -96,12 +95,12 @@ class SessionRepository:
     # ── Read ────────────────────────────────────────────────────────────────
 
     async def get_by_external_id(
-        self, org_id: UUID, project_id: UUID, external_id: str
+        self, user_id: UUID, project_id: UUID, external_id: str
     ) -> Session | None:
         """Look up a session by ``project_id`` and ``external_id``, scoped to org.
 
         Args:
-            org_id: The organization UUID for tenant isolation.
+            user_id: The organization UUID for tenant isolation.
             project_id: The project UUID.
             external_id: The caller-defined session identifier.
 
@@ -114,19 +113,19 @@ class SessionRepository:
             .where(
                 Session.project_id == project_id,
                 Session.external_id == external_id,
-                Project.organization_id == org_id,
+                Project.user_id == user_id,
                 Session.is_deleted.is_(False),
             )
         )
         return result.scalar_one_or_none()
 
     async def get_by_uuid(
-        self, org_id: UUID, session_id: UUID, project_id: UUID | None = None
+        self, user_id: UUID, session_id: UUID, project_id: UUID | None = None
     ) -> Session | None:
         """Look up a session by its internal UUID, scoped to org and optionally project.
 
         Args:
-            org_id: The organization UUID for tenant isolation.
+            user_id: The organization UUID for tenant isolation.
             session_id: The session's UUID primary key.
             project_id: Optional project UUID for intra-org isolation. When provided,
                 only sessions belonging to this project are returned.
@@ -139,7 +138,7 @@ class SessionRepository:
             .join(Project, Session.project_id == Project.id)
             .where(
                 Session.id == session_id,
-                Project.organization_id == org_id,
+                Project.user_id == user_id,
                 Session.is_deleted.is_(False),
             )
         )
@@ -153,7 +152,7 @@ class SessionRepository:
 
     async def list(  # noqa: A003 — shadowing built-in is idiomatic for repos
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         limit: int = 50,
         cursor: str | None = None,
@@ -170,7 +169,7 @@ class SessionRepository:
         stable ordering.
 
         Args:
-            org_id: The organization UUID for tenant isolation.
+            user_id: The organization UUID for tenant isolation.
             project_id: The project UUID.
             limit: Maximum results per page (capped at 200).
             cursor: Opaque base64 cursor from a previous page.
@@ -193,7 +192,7 @@ class SessionRepository:
             .join(Project, Session.project_id == Project.id)
             .where(
                 Session.project_id == project_id,
-                Project.organization_id == org_id,
+                Project.user_id == user_id,
                 Session.is_deleted.is_(False),
             )
         )
@@ -262,7 +261,7 @@ class SessionRepository:
 
     async def search_member_sessions(
         self,
-        organization_id: UUID,
+
         user_id: UUID,
         pattern: str,
         limit: int,
@@ -274,7 +273,7 @@ class SessionRepository:
         ``%query%`` parameter — never interpolated.
 
         Args:
-            organization_id: Tenant scope.
+
             user_id: Only sessions in projects this user belongs to.
             pattern: ILIKE pattern (caller-built, e.g. ``%query%``).
             limit: Maximum rows.
@@ -295,7 +294,7 @@ class SessionRepository:
             .join(Project, Session.project_id == Project.id)
             .join(ProjectMember, ProjectMember.project_id == Project.id)
             .where(
-                Project.organization_id == organization_id,
+                Project.user_id == user_id,
                 ProjectMember.user_id == user_id,
                 Session.is_deleted.is_(False),
                 Project.is_archived.is_(False),
@@ -318,7 +317,7 @@ class SessionRepository:
 
     async def get_messages(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         limit: int = 100,
         cursor: str | None = None,
@@ -335,7 +334,7 @@ class SessionRepository:
         messages arrive in the same millisecond.
 
         Args:
-            org_id: The organization UUID for tenant isolation.
+            user_id: The organization UUID for tenant isolation.
             session_id: The session's UUID.
             limit: Maximum results per page (capped at 500).
             cursor: Opaque base64 cursor from a previous page.
@@ -355,7 +354,7 @@ class SessionRepository:
             .join(Project, Session.project_id == Project.id)
             .where(
                 Session.id == session_id,
-                Project.organization_id == org_id,
+                Project.user_id == user_id,
                 Session.is_deleted.is_(False),
             )
         )
@@ -479,7 +478,7 @@ class SessionRepository:
 
     async def update_metadata(
         self,
-        org_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         metadata: dict[str, Any],
     ) -> Session | None:
@@ -489,7 +488,7 @@ class SessionRepository:
         ``None`` to remove it from the stored metadata.
 
         Args:
-            org_id: The organization UUID for tenant isolation.
+            user_id: The organization UUID for tenant isolation.
             session_id: The session's UUID.
             metadata: Key-value pairs to merge.
 
@@ -501,7 +500,7 @@ class SessionRepository:
             .join(Project, Session.project_id == Project.id)
             .where(
                 Session.id == session_id,
-                Project.organization_id == org_id,
+                Project.user_id == user_id,
                 Session.is_deleted.is_(False),
             )
         )
@@ -526,7 +525,7 @@ class SessionRepository:
     # ── Close ───────────────────────────────────────────────────────────────
 
     async def close(
-        self, org_id: UUID, session_id: UUID
+        self, user_id: UUID, session_id: UUID
     ) -> Session | None:
         """Mark a session as closed by setting ``closed_at = now()``, scoped to org.
 
@@ -534,7 +533,7 @@ class SessionRepository:
         the session as-is.
 
         Args:
-            org_id: The organization UUID for tenant isolation.
+            user_id: The organization UUID for tenant isolation.
             session_id: The session's UUID.
 
         Returns:
@@ -545,7 +544,7 @@ class SessionRepository:
             .join(Project, Session.project_id == Project.id)
             .where(
                 Session.id == session_id,
-                Project.organization_id == org_id,
+                Project.user_id == user_id,
                 Session.is_deleted.is_(False),
             )
         )
@@ -561,14 +560,14 @@ class SessionRepository:
     # ── Soft Delete ─────────────────────────────────────────────────────────
 
     async def soft_delete(
-        self, org_id: UUID, session_id: UUID, project_id: UUID | None = None
+        self, user_id: UUID, session_id: UUID, project_id: UUID | None = None
     ) -> Session | None:
         """Soft-delete a session, scoped to org and optionally project.
 
         Sets ``is_deleted = True``.
 
         Args:
-            org_id: The organization UUID for tenant isolation.
+            user_id: The organization UUID for tenant isolation.
             session_id: The session's UUID.
             project_id: Optional project UUID for intra-org isolation.
 
@@ -580,7 +579,7 @@ class SessionRepository:
             .join(Project, Session.project_id == Project.id)
             .where(
                 Session.id == session_id,
-                Project.organization_id == org_id,
+                Project.user_id == user_id,
                 Session.is_deleted.is_(False),
             )
         )
@@ -681,7 +680,7 @@ class SessionRepository:
         }
 
     async def get_observation_count(
-        self, org_id: UUID, project_id: UUID
+        self, user_id: UUID, project_id: UUID
     ) -> int:
         """Return the total number of observations for a project.
 
@@ -689,21 +688,21 @@ class SessionRepository:
         and are project-wide (not session-scoped).
 
         Args:
-            org_id: The organization UUID for tenant isolation.
+            user_id: The organization UUID for tenant isolation.
             project_id: The project UUID.
 
         Returns:
             Total observation count (0 if none or table is empty).
         """
         stmt = select(func.count()).select_from(GraphObservation).where(
-            GraphObservation.organization_id == org_id,
+            GraphObservation.user_id == user_id,
             GraphObservation.project_id == project_id,
         )
         result = await self._db.execute(stmt)
         return result.scalar() or 0
 
     async def batch_get_stats(
-        self, session_ids: list[UUID], organization_id: UUID
+        self, session_ids: list[UUID], user_id: UUID
     ) -> dict[UUID, dict[str, int]]:
         """Batch-load message and fact counts per session in a single query.
 
@@ -713,7 +712,7 @@ class SessionRepository:
 
         Args:
             session_ids: The session UUIDs to fetch stats for.
-            organization_id: Tenant isolation scope.
+            user_id: Tenant isolation scope.
 
         Returns:
             Dict mapping ``session_id`` → ``{"message_count": int, "fact_count": int}``.
@@ -739,7 +738,7 @@ class SessionRepository:
             func.coalesce(func.sum(fact_subq), 0).label("fact_count"),
         ).where(
             Episode.session_id.in_(session_ids),
-            Episode.organization_id == organization_id,
+            Episode.user_id == user_id,
             Episode.is_deleted.is_(False),
         ).group_by(Episode.session_id)
 

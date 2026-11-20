@@ -37,7 +37,7 @@ router = APIRouter(
 )
 async def list_audit_logs(
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_permission("members:read")),
     action: str | None = Query(None, description="Filter by action (exact match)"),
     actor_id: str | None = Query(None, description="Filter by actor ID"),
     actor_type: str | None = Query(None, description="Filter by actor type (user, api_key, system)"),
@@ -66,7 +66,7 @@ async def list_audit_logs(
 
     Args:
         db: Database session.
-        org_id: Authenticated organization ID (admin-gated).
+        user_id: Authenticated organization ID (admin-gated).
         action: Optional action filter.
         actor_id: Optional actor filter.
         actor_type: Optional actor type filter.
@@ -88,7 +88,7 @@ async def list_audit_logs(
 
     service = AuditLogService(db)
     entries, total = await service.query_logs(
-        organization_id=UUID(org_id),
+        user_id=UUID(user_id),
         action=action,
         actor_id=actor_id,
         actor_type=actor_type,
@@ -106,7 +106,7 @@ async def list_audit_logs(
     items = [
         AuditLogResponse(
             id=e.id,
-            organization_id=e.organization_id,
+
             actor_id=e.actor_id,
             actor_type=e.actor_type,
             action=e.action,

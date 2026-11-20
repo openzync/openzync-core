@@ -18,12 +18,12 @@ from uuid import UUID
 
 from fastapi import Depends, Request
 
-from dependencies.auth import require_org_id
+from dependencies.auth import require_user_id
 
 
 async def get_org_config(
     request: Request,
-    org_id: str = Depends(require_org_id),
+    user_id: str = Depends(require_user_id),
 ) -> OrgConfigBase:
     """FastAPI dependency that yields the stored org config for the current org.
 
@@ -44,4 +44,4 @@ async def get_org_config(
 
     bao_client = getattr(request.app.state, "openbao_client", None)
     redis = getattr(request.app.state, "redis", None)
-    return await _get_org_config(UUID(org_id), redis=redis, bao_client=bao_client)
+    return await _get_org_config(UUID(user_id), redis=redis, bao_client=bao_client)

@@ -24,7 +24,7 @@ WHERE e.invalid_at IS NULL
           FROM facts f
           WHERE f.invalid_at IS NULL
           AND (f.valid_to IS NULL OR f.valid_to > :now)
-          AND f.organization_id = e.organization_id
+          AND f.user_id = e.user_id
           AND f.project_id = e.project_id
           AND f.subject_entity_id = e.source_id
           AND f.predicate = e.relationship_type

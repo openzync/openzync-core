@@ -61,7 +61,7 @@ class TestSessionFactoryParity:
     @pytest.mark.asyncio
     async def test_none_factory_results_correct(self) -> None:
         """``session_factory=None`` → correct merged results, no raise."""
-        service = HybridRetriever(db=AsyncMock(), org_id=ORG_ID)
+        service = HybridRetriever(db=AsyncMock(), user_id=ORG_ID)
         _stub_legs(service)
 
         result = await service.hybrid_search("q", PROJECT_ID)
@@ -76,7 +76,7 @@ class TestSessionFactoryParity:
         """Factory path returns the same merged results as the ``None`` path."""
         sibling_db = AsyncMock()
         service = HybridRetriever(
-            db=AsyncMock(), org_id=ORG_ID, session_factory=_factory(sibling_db)
+            db=AsyncMock(), user_id=ORG_ID, session_factory=_factory(sibling_db)
         )
         # note: the factory path runs legs on scoped sibling-session copies,
         # so stub at class level — instance stubs would not apply there.
@@ -147,7 +147,7 @@ class TestGraphMergeSkipsMalformed:
         backend = AsyncMock()
         backend.retrieve_graph.return_value = items
         return HybridRetriever(
-            db=AsyncMock(), org_id=ORG_ID, graph_backends=[backend]
+            db=AsyncMock(), user_id=ORG_ID, graph_backends=[backend]
         )
 
     @pytest.mark.asyncio
@@ -192,7 +192,7 @@ class TestSortRecentMixedDates:
     @pytest.mark.asyncio
     async def test_mixed_created_at_ordered_no_typeerror(self) -> None:
         """Datetime / ISO-string / missing / garbage dates order newest-first."""
-        service = HybridRetriever(db=AsyncMock(), org_id=ORG_ID)
+        service = HybridRetriever(db=AsyncMock(), user_id=ORG_ID)
         service._embed_query = AsyncMock(return_value=list(_EMBEDDING))  # type: ignore[method-assign]
         service._vector_search_episodes = AsyncMock(  # type: ignore[method-assign]
             return_value=[

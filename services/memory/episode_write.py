@@ -22,7 +22,7 @@ class EpisodeWriteMixin:
 
     async def _lock_and_insert(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         session_id: UUID,
         created_by: UUID,
@@ -36,7 +36,7 @@ class EpisodeWriteMixin:
         round-trip — no network I/O under lock).
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: Project scope.
             session_id: Target session.
             created_by: Attributing user.
@@ -59,7 +59,7 @@ class EpisodeWriteMixin:
 
         try:
             episodes = await self._episode_repo.batch_create(
-                organization_id=org_id,
+
                 session_id=session_id,
                 project_id=project_id,
                 user_id=created_by,
@@ -74,7 +74,7 @@ class EpisodeWriteMixin:
                 extra={
                     "session_id": str(session_id),
                     "project_id": str(project_id),
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                 },
             )
             raise ConflictError(
@@ -86,7 +86,7 @@ class EpisodeWriteMixin:
                 "count": len(episodes),
                 "session_id": str(session_id),
                 "project_id": str(project_id),
-                "org_id": str(org_id),
+                "user_id": str(user_id),
             },
         )
         return episodes

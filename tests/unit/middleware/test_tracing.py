@@ -180,8 +180,8 @@ class TestTracingMiddleware:
         assert fake_span.status_code == 1  # StatusCode.ERROR
 
     @pytest.mark.asyncio
-    async def test_span_includes_org_id_if_present(self) -> None:
-        """When org_id is in scope state, span receives it as attribute."""
+    async def test_span_includes_user_id_if_present(self) -> None:
+        """When user_id is in scope state, span receives it as attribute."""
         fake_span = FakeSpan()
         fake_tracer = MagicMock()
         fake_tracer.start_as_current_span = MagicMock(return_value=fake_span)
@@ -189,11 +189,11 @@ class TestTracingMiddleware:
         from starlette.types import ASGIApp, Receive, Scope, Send
 
         class _InjectState:
-            """Inject scope state so TracingMiddleware can read org_id."""
+            """Inject scope state so TracingMiddleware can read user_id."""
             def __init__(self, app: ASGIApp):
                 self.app = app
             async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-                scope["state"] = {"org_id": "org-123"}
+                scope["state"] = {"user_id": "org-123"}
                 await self.app(scope, receive, send)
 
         inner = FastAPI()
@@ -213,7 +213,7 @@ class TestTracingMiddleware:
                 resp = await c.get("/test")
                 assert resp.status_code == 200
 
-        assert "org_id" in fake_span.attributes
+        assert "user_id" in fake_span.attributes
 
     @pytest.mark.asyncio
     async def test_non_http_passthrough(self) -> None:

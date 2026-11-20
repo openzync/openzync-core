@@ -42,7 +42,7 @@ async def _retire_fact(
     engine: Any,
     own_engine: bool,
     fact_id: str,
-    org_id: str,
+    user_id: str,
 ) -> None:
     """Mark a fact as permanently unembeddable without storing a vector.
 
@@ -55,7 +55,7 @@ async def _retire_fact(
         engine: The worker's async engine (disposed when ``own_engine``).
         own_engine: True when this worker created the engine itself.
         fact_id: UUID of the fact to retire.
-        org_id: UUID of the owning organization (RLS tenant scope).
+        user_id: UUID of the owning organization (RLS tenant scope).
     """
     # Any keeps sqlalchemy out of module top-level (ARQ lazy-import convention).
     from sqlalchemy import text
@@ -65,7 +65,7 @@ async def _retire_fact(
     try:
         async with session_factory() as db:
             try:
-                await rls.set_tenant_context(db, org_id)
+                await rls.set_tenant_context(db, user_id)
                 await db.execute(
                     text("UPDATE facts SET embedded_at = now() WHERE id = :id"),
                     {"id": fact_id},
@@ -85,7 +85,7 @@ async def embed_fact(
     fact_id: str,
     content: str | None = None,
     trace_id: str = "",
-    **kwargs: Any,  # noqa: ARG002 — accepts org_id, user_id from API caller
+    **kwargs: Any,  # noqa: ARG002 — accepts user_id, user_id from API caller
 ) -> None:
     """Generate an embedding for a fact and store it in ``facts.embedding``.
 
@@ -101,12 +101,12 @@ async def embed_fact(
         content: Fact text content to embed. If not provided (e.g. when
             called from ``fact_service``), it will be fetched from the DB.
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
-        **kwargs: Additional context (org_id, user_id) forwarded from the caller.
+        **kwargs: Additional context (user_id, user_id) forwarded from the caller.
 
     Raises:
         ExternalServiceError: If the embedder returns a non-canonical-dim
             vector.
-        RuntimeError: If ``org_id`` is missing — the RLS tenant context
+        RuntimeError: If ``user_id`` is missing — the RLS tenant context
             cannot be derived, and an unbound session would silently see
             zero rows.
     """
@@ -114,12 +114,12 @@ async def embed_fact(
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
 
     # The RLS tenant scope.  Without it the session sees no facts at all
-    # under enforced row-level security, so a missing org_id is a loud
+    # under enforced row-level security, so a missing user_id is a loud
     # wiring error — never a silently empty result.
-    org_id = kwargs.get("org_id")
-    if not org_id:
+    user_id = kwargs.get("user_id")
+    if not user_id:
         raise RuntimeError(
-            "embed_fact requires an org_id — the RLS tenant context cannot "
+            "embed_fact requires an user_id — the RLS tenant context cannot "
             "be derived without it."
         )
 
@@ -154,7 +154,7 @@ async def embed_fact(
     if content is None:
         async with session_factory() as db:
             try:
-                await rls.set_tenant_context(db, org_id)
+                await rls.set_tenant_context(db, user_id)
                 result = await db.execute(
                     text("SELECT content FROM facts WHERE id = :id"),
                     {"id": fact_id},
@@ -187,7 +187,7 @@ async def embed_fact(
                 error=str(e),
                 error_type=type(e).__name__,
             )
-            await _retire_fact(session_factory, engine, _own_engine, fact_id, org_id)
+            await _retire_fact(session_factory, engine, _own_engine, fact_id, user_id)
         else:
             logger.error(
                 "embed_fact.embedding_failed",
@@ -206,7 +206,7 @@ async def embed_fact(
     try:
         async with session_factory() as db:
             try:
-                await rls.set_tenant_context(db, org_id)
+                await rls.set_tenant_context(db, user_id)
                 await db.execute(
                     text(
                         "UPDATE facts SET embedding = "  # noqa: S608

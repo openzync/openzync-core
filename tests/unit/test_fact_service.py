@@ -71,7 +71,7 @@ class TestFactService:
         """Ingesting an empty fact list returns accepted (schema-level validation
         catches empty lists before reaching the service)."""
         result = await service.ingest_facts(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             created_by=self.USER_ID,
             facts=[],
@@ -114,7 +114,7 @@ class TestFactService:
                 return_value=mock_result
             )
             result = await service.ingest_facts(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 facts=facts,
@@ -130,7 +130,7 @@ class TestFactService:
 
         mock_inv_cls.return_value.ingest_with_supersession.assert_awaited_once()
         service._session_repo.get_by_external_id.assert_awaited_once_with(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             external_id="session-abc",
         )
@@ -149,7 +149,7 @@ class TestFactService:
             pytest.raises(NotFoundError) as exc_info,
         ):
             await service.ingest_facts(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 facts=facts,
@@ -173,7 +173,6 @@ class TestFactService:
         from services.idempotency_service import IdempotencyService as _Idem
 
         return _Idem.compute_content_hash(
-            str(self.ORG_ID),
             str(self.USER_ID),
             "session-abc",
             [t.model_dump() for t in triples],
@@ -209,9 +208,9 @@ class TestFactService:
         assert self._hash(trimmed) != self._hash(padded)
         # Determinism still holds for identical inputs.
         assert _Idem.compute_content_hash(
-            str(self.ORG_ID), str(self.USER_ID), "s", [{"role": "user", "content": "x"}]
+            str(self.USER_ID), "s", [{"role": "user", "content": "x"}]
         ) == _Idem.compute_content_hash(
-            str(self.ORG_ID), str(self.USER_ID), "s", [{"role": "user", "content": "x"}]
+            str(self.USER_ID), "s", [{"role": "user", "content": "x"}]
         )
 
 
@@ -224,7 +223,7 @@ class TestFactRetraction:
     retraction is routed through ``FactInvalidationService.notify_retraction``
     for post-commit effects.  Already-closed facts (``invalid_at`` or
     ``valid_to``) are 200 no-ops — no second event, no re-notify.  The
-    ``(organization_id, project_id)`` scope makes a cross-project fact
+    ``(user_id, project_id)`` scope makes a cross-project fact
     indistinguishable from a missing one (no existence leak).
     """
 
@@ -255,7 +254,7 @@ class TestFactRetraction:
         fact = MagicMock()
         fact.id = overrides.get("id", self.FACT_1_ID)
         fact.project_id = overrides.get("project_id", self.PROJECT_ID)
-        fact.organization_id = overrides.get("organization_id", self.ORG_ID)
+        fact.user_id = overrides.get("user_id", self.ORG_ID)
         fact.invalid_at = overrides.get("invalid_at")
         fact.valid_to = overrides.get("valid_to")
         return fact
@@ -281,7 +280,7 @@ class TestFactRetraction:
         ) as mock_inv_cls:
             result = await service.retract_fact(
                 self.FACT_1_ID,
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 reason="outdated",
                 at_time=self.NOW,
@@ -290,13 +289,13 @@ class TestFactRetraction:
         assert result is fact
         assert result.invalid_at == self.NOW
         service._fact_repo.get_by_id.assert_awaited_once_with(
-            self.FACT_1_ID, organization_id=self.ORG_ID
+            self.FACT_1_ID, user_id=self.ORG_ID
         )
         service._fact_repo.set_invalid_at.assert_awaited_once_with(
             self.FACT_1_ID, self.NOW
         )
         service._fact_repo.record_invalidation_event.assert_awaited_once_with(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             old_fact_id=self.FACT_1_ID,
             new_fact_id=None,
@@ -305,7 +304,7 @@ class TestFactRetraction:
             at_time=self.NOW,
         )
         mock_inv_cls.return_value.notify_retraction.assert_called_once_with(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             old_fact=fact,
             at_time=self.NOW,
@@ -329,7 +328,7 @@ class TestFactRetraction:
         ):
             result = await service.retract_fact(
                 self.FACT_1_ID,
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
             )
 
@@ -350,7 +349,7 @@ class TestFactRetraction:
         ) as mock_inv_cls:
             result = await service.retract_fact(
                 self.FACT_1_ID,
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 reason="again",
                 at_time=self.NOW,
@@ -375,7 +374,7 @@ class TestFactRetraction:
         ) as mock_inv_cls:
             result = await service.retract_fact(
                 self.FACT_1_ID,
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 at_time=self.NOW,
             )
@@ -394,7 +393,7 @@ class TestFactRetraction:
         with pytest.raises(NotFoundError) as exc_info:
             await service.retract_fact(
                 self.FACT_1_ID,
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 at_time=self.NOW,
             )
@@ -415,7 +414,7 @@ class TestFactRetraction:
         with pytest.raises(NotFoundError):
             await service.retract_fact(
                 self.FACT_1_ID,
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 at_time=self.NOW,
             )
@@ -467,7 +466,7 @@ class TestFactHistory:
         fact.valid_to = None
         fact.invalid_at = None
         fact.created_at = self.NOW
-        fact.organization_id = self.ORG_ID
+        fact.user_id = self.ORG_ID
         fact.project_id = self.PROJECT_ID
         return fact
 
@@ -491,7 +490,7 @@ class TestFactHistory:
 
         result = await service.get_fact_history(
             self.FACT_1_ID,
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             limit=10,
             offset=5,
@@ -501,11 +500,11 @@ class TestFactHistory:
         assert result["fact"].content == "Alice likes hiking"
         assert result["events"] == events
         service._fact_repo.get_by_id.assert_awaited_once_with(
-            self.FACT_1_ID, organization_id=self.ORG_ID
+            self.FACT_1_ID, user_id=self.ORG_ID
         )
         service._fact_repo.get_fact_history.assert_awaited_once_with(
             self.FACT_1_ID,
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             limit=10,
             offset=5,
             sort=None,
@@ -521,7 +520,7 @@ class TestFactHistory:
         with pytest.raises(NotFoundError) as exc_info:
             await service.get_fact_history(
                 self.FACT_1_ID,
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
             )
 
@@ -541,7 +540,7 @@ class TestFactHistory:
         with pytest.raises(NotFoundError):
             await service.get_fact_history(
                 self.FACT_1_ID,
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
             )
 
@@ -556,14 +555,14 @@ class TestFactHistory:
 
         await service.get_fact_history(
             self.FACT_1_ID,
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             sort=spec,
         )
 
         service._fact_repo.get_fact_history.assert_awaited_once_with(
             self.FACT_1_ID,
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             limit=50,
             offset=0,
             sort=spec,
@@ -698,7 +697,7 @@ class TestFactServiceGraphSync:
             patch("services.fact_service.get_arq", return_value=AsyncMock()),
         ):
             result = await service.ingest_facts(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 facts=[
@@ -770,7 +769,7 @@ class TestFactServiceGraphSync:
             patch("services.fact_service.get_arq", return_value=AsyncMock()),
         ):
             await service.ingest_facts(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 facts=[
@@ -794,7 +793,7 @@ class TestFactServiceGraphSync:
 
         at_time = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
         invalidation.notify_retraction(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             old_fact=old_fact,
             at_time=at_time,
@@ -802,7 +801,7 @@ class TestFactServiceGraphSync:
         await self._commit(invalidation, mock_db)
 
         backend.expire_relationships_matching.assert_awaited_once_with(
-            org_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             source_id=self.SRC_ENTITY,
             target_id=self.TGT_ENTITY,
@@ -843,7 +842,7 @@ class TestFactServiceGraphSync:
             patch("services.fact_service.get_arq", return_value=AsyncMock()),
         ):
             result = await service.ingest_facts(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 facts=[self._sample_triple()],
@@ -883,7 +882,7 @@ class TestFactServiceGraphSync:
             patch("services.fact_service.get_arq", return_value=AsyncMock()),
         ):
             result = await service.ingest_facts(
-                org_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 facts=[self._sample_triple()],

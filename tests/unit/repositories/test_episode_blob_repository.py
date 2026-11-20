@@ -39,7 +39,7 @@ class TestEpisodeBlobRepository:
     def _mock_blob(self, **overrides: object) -> MagicMock:
         blob = MagicMock()
         blob.id = overrides.get("id", self.BLOB_ID)
-        blob.organization_id = overrides.get("organization_id", self.ORG_ID)
+        blob.user_id = overrides.get("user_id", self.ORG_ID)
         blob.project_id = overrides.get("project_id", self.PROJECT_ID)
         blob.session_id = overrides.get("session_id", self.SESSION_ID)
         blob.episode_id = overrides.get("episode_id", self.EPISODE_ID)
@@ -63,7 +63,7 @@ class TestEpisodeBlobRepository:
     ) -> None:
         """batch_create returns empty list when no blobs provided."""
         result = await repo.batch_create(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             session_id=self.SESSION_ID,
             episode_id=self.EPISODE_ID,
@@ -102,7 +102,7 @@ class TestEpisodeBlobRepository:
         mock_db.execute.return_value.fetchall.return_value = [
             MagicMock(_mapping={
                 "id": uuid4(),
-                "organization_id": self.ORG_ID,
+                "user_id": self.ORG_ID,
                 "project_id": self.PROJECT_ID,
                 "session_id": self.SESSION_ID,
                 "episode_id": self.EPISODE_ID,
@@ -122,7 +122,7 @@ class TestEpisodeBlobRepository:
             }),
             MagicMock(_mapping={
                 "id": uuid4(),
-                "organization_id": self.ORG_ID,
+                "user_id": self.ORG_ID,
                 "project_id": self.PROJECT_ID,
                 "session_id": self.SESSION_ID,
                 "episode_id": self.EPISODE_ID,
@@ -143,7 +143,7 @@ class TestEpisodeBlobRepository:
         ]
 
         result = await repo.batch_create(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             session_id=self.SESSION_ID,
             episode_id=self.EPISODE_ID,
@@ -288,7 +288,7 @@ class TestEpisodeBlobRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_content_hash(
-            organization_id=self.ORG_ID, content_hash="abc123"
+            user_id=self.ORG_ID, content_hash="abc123"
         )
 
         assert result == blobs
@@ -302,7 +302,7 @@ class TestEpisodeBlobRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_content_hash(
-            organization_id=self.ORG_ID, content_hash="nonexistent"
+            user_id=self.ORG_ID, content_hash="nonexistent"
         )
 
         assert result == []
@@ -377,7 +377,7 @@ class TestEpisodeBlobRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_orphaned_blobs(
-            organization_id=self.ORG_ID, limit=100
+            user_id=self.ORG_ID, limit=100
         )
 
         assert result == blobs
@@ -391,7 +391,7 @@ class TestEpisodeBlobRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_orphaned_blobs(
-            organization_id=self.ORG_ID, limit=100
+            user_id=self.ORG_ID, limit=100
         )
 
         assert result == []

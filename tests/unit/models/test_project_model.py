@@ -15,10 +15,10 @@ class TestProjectModel:
     def test_required_fields(self) -> None:
         """Minimal required fields produce a valid instance."""
         project = Project(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             name="My Project",
         )
-        assert project.organization_id is not None
+        assert project.user_id is not None
         assert project.name == "My Project"
 
     @pytest.mark.unit
@@ -33,7 +33,7 @@ class TestProjectModel:
     def test_nullable_fields(self) -> None:
         """description and created_by default to None."""
         project = Project(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             name="Nullables",
         )
         assert project.description is None
@@ -46,8 +46,8 @@ class TestProjectModel:
 
     @pytest.mark.unit
     def test_unique_constraint(self) -> None:
-        """UniqueConstraint on (organization_id, name)."""
-        uq_name = "uq_projects_org_name"
+        """UniqueConstraint on (user_id, name)."""
+        uq_name = "uq_projects_user_name"
         constraints = Project.__table_args__
         names = {c.name for c in constraints if hasattr(c, "name")}
         assert uq_name in names
@@ -56,7 +56,7 @@ class TestProjectModel:
     def test_repr(self) -> None:
         """repr includes org, name, is_archived."""
         project = Project(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             name="My Project",
             is_archived=True,
         )

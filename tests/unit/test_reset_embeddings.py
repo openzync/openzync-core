@@ -69,8 +69,8 @@ def _patch_db(module, sessions: list[_FakeSession], monkeypatch) -> dict:
     async def _bypass(db, value):  # noqa: ANN001, ANN202
         calls["bypass"].append(value)
 
-    async def _tenant(db, org_id):  # noqa: ANN001, ANN202
-        calls["tenant"].append(org_id)
+    async def _tenant(db, user_id):  # noqa: ANN001, ANN202
+        calls["tenant"].append(user_id)
 
     it = iter(sessions)
 
@@ -121,7 +121,7 @@ async def test_write_loops_per_org_tenant(monkeypatch) -> None:
         assert sess.commits == 1
     # Episodes + facts updates are org-scoped (no global wipe).
     assert any(
-        "organization_id" in s for sess in write_sessions for s in sess.statements
+        "user_id" in s for sess in write_sessions for s in sess.statements
     )
     # The global bypass is only the read-only org enumeration, never a write.
     assert calls["bypass"] == [True]

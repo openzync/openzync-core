@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 async def tenants(isolated_app: Any) -> dict[str, dict[str, Any]]:
     """Bootstrap three isolated tenants (A/B/C) via the real API contract.
 
-    Each entry holds ``org_id``, ``user_id``, ``jwt``, ``project_id`` and
+    Each entry holds ``user_id``, ``user_id``, ``jwt``, ``project_id`` and
     ``api_key`` — all real UUIDs/credentials created through
     :func:`bootstrap_tenant`.  Function-scoped: the ``isolated_app``
     truncation teardown wipes all three orgs after each test.

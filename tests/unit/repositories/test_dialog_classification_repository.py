@@ -38,7 +38,7 @@ class TestDialogClassificationRepository:
         c = MagicMock()
         c.id = overrides.get("id", uuid4())
         c.episode_id = overrides.get("episode_id", self.EPISODE_ID)
-        c.organization_id = overrides.get("organization_id", self.ORG_ID)
+        c.user_id = overrides.get("user_id", self.ORG_ID)
         c.label = overrides.get("label", "support")
         c.confidence = overrides.get("confidence", 0.95)
         return c
@@ -60,7 +60,7 @@ class TestDialogClassificationRepository:
         mock_db.execute.return_value = mock_result
 
         rows, next_cursor = await repo.get_by_session(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
+            user_id=self.ORG_ID, session_id=self.SESSION_ID
         )
 
         assert rows == classifications
@@ -75,7 +75,7 @@ class TestDialogClassificationRepository:
         mock_db.execute.return_value = mock_result
 
         rows, next_cursor = await repo.get_by_session(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
+            user_id=self.ORG_ID, session_id=self.SESSION_ID
         )
 
         assert rows == []
@@ -93,7 +93,7 @@ class TestDialogClassificationRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_episode(
-            org_id=self.ORG_ID, episode_id=self.EPISODE_ID
+            user_id=self.ORG_ID, episode_id=self.EPISODE_ID
         )
 
         assert result == classification
@@ -107,7 +107,7 @@ class TestDialogClassificationRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_by_episode(
-            org_id=self.ORG_ID, episode_id=self.EPISODE_ID
+            user_id=self.ORG_ID, episode_id=self.EPISODE_ID
         )
 
         assert result is None
@@ -123,7 +123,7 @@ class TestDialogClassificationRepository:
         mock_db.execute.return_value = mock_result
 
         count = await repo.count_for_session(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
+            user_id=self.ORG_ID, session_id=self.SESSION_ID
         )
 
         assert count == 5
@@ -137,7 +137,7 @@ class TestDialogClassificationRepository:
         mock_db.execute.return_value = mock_result
 
         count = await repo.count_for_session(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
+            user_id=self.ORG_ID, session_id=self.SESSION_ID
         )
 
         assert count == 0

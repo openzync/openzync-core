@@ -1,6 +1,6 @@
 """User repository — all database access for the User domain.
 
-Every public method accepts ``organization_id`` to enforce tenant isolation.
+Every public method accepts ``user_id`` to enforce tenant isolation.
 No business logic — pure query construction and execution.
 
 Key patterns:
@@ -23,6 +23,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from core import rls
 from core.cursor import decode_cursor, encode_cursor
+from core.dict_merge import deep_merge
 from core.exceptions import ValidationError
 from core.sorting import SortSpec, resolve_order_by
 from models.episode import Episode
@@ -51,31 +52,34 @@ if TYPE_CHECKING:
 class ClaimedInvite:
     """Identity of a successfully claimed invite.
 
-    Returned by :meth:`UserRepository.claim_invite` — the three fields the
+    Returned by :meth:`UserRepository.claim_invite` — the fields the
     accept flow needs to issue tokens, read back via ``RETURNING`` so no
     second round-trip (and no stale identity-mapped row) is involved.
     """
 
     id: UUID
-    organization_id: UUID
     role: str
 
 
 class UserRepository:
     """All database access for users.
 
-    Every method accepts ``organization_id`` to enforce tenant isolation.
+    Every method accepts ``user_id`` to enforce tenant isolation.
     No business logic — pure query construction and execution.
     """
 
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
+    @property
+    def session(self) -> AsyncSession:
+        """Return the database session for cross-repo service flows."""
+        return self._db
+
     # ── Create ──────────────────────────────────────────────────────────────
 
     async def create(
         self,
-        organization_id: UUID,
         external_id: str,
         name: str | None = None,
         email: str | None = None,
@@ -88,7 +92,6 @@ class UserRepository:
         """Insert a new user.
 
         Args:
-            organization_id: Tenant scope (foreign key).
             external_id: Caller-defined unique user identifier within org.
             name: Optional display name.
             email: Optional email address.
@@ -108,11 +111,10 @@ class UserRepository:
             timestamps populated after flush).
 
         Raises:
-            IntegrityError: If a user with this ``(organization_id,
+            IntegrityError: If a user with this ``(user_id,
                 external_id)`` already exists (unique constraint).
         """
         user = User(
-            organization_id=organization_id,
             external_id=external_id,
             name=name,
             email=email,
@@ -129,7 +131,6 @@ class UserRepository:
 
     async def create_or_get_by_external_id(
         self,
-        organization_id: UUID,
         external_id: str,
         name: str | None = None,
         email: str | None = None,
@@ -141,7 +142,6 @@ class UserRepository:
         service layer does not need to import SQLAlchemy exceptions.
 
         Args:
-            organization_id: Tenant scope (foreign key).
             external_id: Caller-defined unique user identifier within org.
             name: Optional display name.
             email: Optional email address.
@@ -160,7 +160,6 @@ class UserRepository:
 
         try:
             return await self.create(
-                organization_id=organization_id,
                 external_id=external_id,
                 name=name,
                 email=email,
@@ -169,13 +168,12 @@ class UserRepository:
             )
         except IntegrityError as err:
             await self._db.rollback()
-            user = await self.get_by_external_id(organization_id, external_id)
+            user = await self.get_by_external_id(external_id)
             if user is None:
                 from core.exceptions import NotFoundError
 
                 raise NotFoundError(
-                    f"Failed to get-or-create user '{external_id}' "
-                    f"in organization {organization_id}"
+                    f"Failed to get-or-create user '{external_id}'"
                 ) from err
             return user
 
@@ -183,13 +181,11 @@ class UserRepository:
 
     async def get_by_external_id(
         self,
-        organization_id: UUID,
         external_id: str,
     ) -> User | None:
         """Look up a user by caller-defined external ID within an org.
 
         Args:
-            organization_id: Tenant scope.
             external_id: The caller-defined identifier.
 
         Returns:
@@ -197,7 +193,6 @@ class UserRepository:
         """
         result = await self._db.execute(
             select(User).where(
-                User.organization_id == organization_id,
                 User.external_id == external_id,
             )
         )
@@ -213,12 +208,9 @@ class UserRepository:
         Returns:
             The root User if seeded, or ``None``.
         """
-        from core.config import PLATFORM_ORG_ID
-
         async with rls.rls_bypass(self._db):
             result = await self._db.execute(
                 select(User).where(
-                    User.organization_id == PLATFORM_ORG_ID,
                     User.external_id == "root",
                 )
             )
@@ -227,10 +219,10 @@ class UserRepository:
     async def create_platform_root(self, password_hash: str) -> bool:
         """Insert the platform root superadmin, idempotently.
 
-        ``ON CONFLICT (organization_id, external_id) DO NOTHING`` — exactly
+        ``ON CONFLICT (external_id) DO NOTHING`` — exactly
         one concurrent setup caller wins; the losers get ``False`` and must
         raise instead of silently succeeding.  Runs under an RLS bypass so
-        it works without a tenant context.
+        it works without a user context.
 
         Args:
             password_hash: bcrypt hash of the operator-chosen password.
@@ -239,13 +231,10 @@ class UserRepository:
             ``True`` if this caller created the row, ``False`` if it
             already existed.
         """
-        from core.config import PLATFORM_ORG_ID
-
         async with rls.rls_bypass(self._db):
             result = await self._db.execute(
                 pg_insert(User)
                 .values(
-                    organization_id=PLATFORM_ORG_ID,
                     external_id="root",
                     email="root",
                     name="Platform Root",
@@ -258,17 +247,16 @@ class UserRepository:
                     metadata_={},
                 )
                 .on_conflict_do_nothing(
-                    index_elements=["organization_id", "external_id"]
+                    index_elements=[User.external_id]
                 )
             )
             await self._db.flush()
             return (result.rowcount or 0) > 0
 
-    async def get_by_uuid(self, organization_id: UUID, user_id: UUID) -> User | None:
-        """Look up a user by internal UUID, scoped to an organization.
+    async def get_by_uuid(self, user_id: UUID) -> User | None:
+        """Look up a user by internal UUID.
 
         Args:
-            organization_id: Tenant scope (always applied).
             user_id: The internal OpenZync user UUID.
 
         Returns:
@@ -277,7 +265,6 @@ class UserRepository:
         result = await self._db.execute(
             select(User).where(
                 User.id == user_id,
-                User.organization_id == organization_id,
             )
         )
         return result.scalar_one_or_none()
@@ -285,10 +272,11 @@ class UserRepository:
     async def find_user_by_email(self, email: str) -> User | None:
         """Find a user by email across all organizations (global lookup).
 
-        Mirrors ``AuthRepository.find_user_by_email`` — email is globally
-        unique (partial unique index) — so the invite flow's duplicate
-        check sees accounts created via signup/join too, not just rows this
-        repository created.
+        Single implementation lives in
+        :meth:`AuthRepository.find_user_by_email` (email is globally
+        unique via the partial unique index) — this delegates so the
+        invite flow's duplicate check sees accounts created via
+        signup/join too, without a second copy of the query.
 
         Args:
             email: The user's email address.
@@ -296,14 +284,9 @@ class UserRepository:
         Returns:
             The User if found, or ``None``.
         """
-        async with rls.rls_bypass(self._db):
-            result = await self._db.execute(
-                select(User).where(
-                    User.email == email,
-                    User.is_deleted.is_(False),
-                )
-            )
-            return result.scalar_one_or_none()
+        from repositories.auth_repository import AuthRepository
+
+        return await AuthRepository(self._db).find_user_by_email(email)
 
     # ── Invite flow ─────────────────────────────────────────────────────────
 
@@ -314,6 +297,10 @@ class UserRepository:
         a row present here means the token matched but the invite has
         expired (the only claim condition not mirrored below is the
         72-hour window).
+
+        Pre-authentication — runs under an explicit RLS bypass (no tenant
+        context on invite info/accept sessions), otherwise the lookup
+        would always miss and every token would 404.
 
         Args:
             token_hash: SHA-256 hex digest of the raw invite token.
@@ -332,78 +319,6 @@ class UserRepository:
             )
             return result.scalar_one_or_none()
 
-    async def find_pending_admin_by_org(self, organization_id: UUID) -> User | None:
-        """Find an org's pending admin user (approval flow).
-
-        A pending admin is the designated admin of a ``pending`` org: role
-        ``admin``, no password yet, no invite token yet (the invite is
-        minted at approval time).  At most one is expected per org —
-        returns the oldest if duplicates somehow exist.
-
-        Args:
-            organization_id: The organization UUID.
-
-        Returns:
-            The pending admin User, or ``None``.
-        """
-        result = await self._db.execute(
-            select(User)
-            .where(
-                User.organization_id == organization_id,
-                User.role == "admin",
-                User.password_hash.is_(None),
-                User.invite_token_hash.is_(None),
-                User.is_deleted.is_(False),
-            )
-            .order_by(User.created_at.asc())
-            .limit(1)
-        )
-        return result.scalar_one_or_none()
-
-    async def set_invite_token(
-        self,
-        organization_id: UUID,
-        user_id: UUID,
-        token_hash: str,
-    ) -> User:
-        """Mint an invite token on a pending user (approval flow).
-
-        Sets ``invite_token_hash`` and re-stamps ``created_at`` to now, so
-        the 72-hour invite window starts at approval time rather than at
-        the (possibly much earlier) request time.
-
-        Args:
-            organization_id: Tenant scope (always applied).
-            user_id: The pending user's UUID.
-            token_hash: SHA-256 hex digest of the raw magic-link token.
-
-        Returns:
-            The updated User.
-
-        Raises:
-            NotFoundError: If no user with this UUID exists in the org.
-        """
-        from datetime import UTC, datetime
-
-        from core.exceptions import NotFoundError
-
-        result = await self._db.execute(
-            select(User).where(
-                User.id == user_id,
-                User.organization_id == organization_id,
-            )
-        )
-        user = result.scalar_one_or_none()
-        if user is None:
-            raise NotFoundError(
-                f"User {user_id} not found in organization {organization_id}."
-            )
-        user.invite_token_hash = token_hash
-        user.created_at = datetime.now(UTC)
-        await self._db.flush()
-        await self._db.refresh(user)
-        return user
-
     async def claim_invite(
         self,
         token_hash: str,
@@ -415,10 +330,14 @@ class UserRepository:
         Exactly one concurrent caller wins (the loser's UPDATE matches zero
         rows).  This is the same race-free pattern as
         ``AuthRepository.revoke_refresh_token_if_current``, extended with
-        ``RETURNING`` so the winner reads back ``id``, ``organization_id``
-        and ``role`` without a second round-trip — the caller must not
+        ``RETURNING`` so the winner reads back ``id`` and ``role``
+        without a second round-trip — the caller must not
         select-then-update, because any identity-mapped User instance goes
         stale once this UPDATE runs.
+
+        Pre-authentication — runs under an explicit RLS bypass (no tenant
+        context on the accept session), otherwise the claim would match
+        zero rows and every token would 404.
 
         Args:
             token_hash: SHA-256 hex digest of the raw invite token.
@@ -430,9 +349,9 @@ class UserRepository:
                 silently drift from the service constant).
 
         Returns:
-            A :class:`ClaimedInvite` with ``id``, ``organization_id`` and
-            ``role`` if this caller claimed the invite, or ``None`` (no
-            live invite matched).
+            A :class:`ClaimedInvite` with ``id`` and ``role`` if this
+            caller claimed the invite, or ``None`` (no live invite
+            matched).
         """
         stmt = (
             sa_update(User)
@@ -452,7 +371,7 @@ class UserRepository:
                 is_email_verified=True,
                 email_verified_at=func.now(),
             )
-            .returning(User.id, User.organization_id, User.role)
+            .returning(User.id, User.role)
             # Skip the identity-map sync: the evaluator would compare the
             # bound naive-UTC cutoff against the aware created_at attribute
             # and raise TypeError.  The caller is already forbidden from
@@ -468,26 +387,29 @@ class UserRepository:
             return None
         return ClaimedInvite(
             id=row.id,
-            organization_id=row.organization_id,
             role=row.role,
         )
 
     async def hard_delete_pending_user(
         self,
-        organization_id: UUID,
         user_id: UUID,
     ) -> int:
         """Permanently delete a user row that still carries a pending invite.
 
         The ``invite_token_hash IS NOT NULL`` predicate makes this a revoke
         (or a self-clean of an expired invite) — an already-accepted or
-        ordinary user is never touched.  A pending invite row has no audit
-        trail (the invitee never logged in), so hard delete is safe.
+        ordinary user is never touched (pending-only guard: the token
+        column is cleared on accept, so accepted rows can never match).
+        A pending invite row has no audit trail (the invitee never logged
+        in), so hard delete is safe.
+
+        Runs under an explicit RLS bypass: the row belongs to the invitee,
+        but the session belongs to the revoking admin (or to nobody on the
+        pre-auth self-clean path) — without the bypass the tenant policy
+        would match zero rows and the revoke would always 404.
 
         Args:
-            organization_id: Tenant scope (always applied — a revoke must
-                not delete a row from another org).
-            user_id: The internal OpenZync user UUID.
+            user_id: The pending user's UUID.
 
         Returns:
             Number of rows deleted (1 = pending invite revoked, 0 = no
@@ -495,22 +417,87 @@ class UserRepository:
         """
         from sqlalchemy import delete
 
-        result = await self._db.execute(
-            delete(User).where(
-                User.id == user_id,
-                User.organization_id == organization_id,
-                User.invite_token_hash.is_not(None),
-                User.is_deleted.is_(False),
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                delete(User).where(
+                    User.id == user_id,
+                    User.invite_token_hash.is_not(None),
+                    User.is_deleted.is_(False),
+                )
             )
-        )
-        await self._db.flush()
+            await self._db.flush()
         return result.rowcount or 0  # type: ignore[attr-defined]
+
+    # ── Config override (per-user layer over org config) ───────────────────
+
+    async def get_config_override(self, user_id: UUID) -> dict[str, Any]:
+        """Return the user's stored config override (``{}`` when none).
+
+        PK lookup with no tenant bind: the caller is already authenticated
+        (ownership = JWT sub for self-reads).  Note this does NOT bypass
+        RLS — under a tenant session the ``user_isolation_select`` policy
+        (``id = current user``) still applies, so reading another user's
+        row returns ``{}`` fail-closed rather than leaking it.
+
+        Args:
+            user_id: The internal OpenZync user UUID.
+
+        Returns:
+            The override dict, or ``{}`` if unset or not visible to this
+            session.
+        """
+        result = await self._db.execute(
+            select(User.config_override).where(User.id == user_id)
+        )
+        row = result.one_or_none()
+        if row is None or not isinstance(row[0], dict):
+            return {}
+        return dict(row[0])
+
+    async def merge_config_override(
+        self, user_id: UUID, patch: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Deep-merge ``patch`` onto the user's config override.
+
+        Nested dicts merge recursively (see :func:`core.dict_merge.deep_merge`);
+        ``None`` removes that **top-level** key only — a nested ``None``
+        never deletes a deep path.  Returns the stored override.
+        Same PK-scoping rationale as :meth:`get_config_override`
+        (no bypass — other users' rows stay invisible fail-closed).
+
+        Args:
+            user_id: The internal OpenZync user UUID.
+            patch: Partial keys to merge (``None`` removes a top-level key).
+
+        Returns:
+            The updated override dict.
+
+        Raises:
+            NotFoundError: If the user does not exist.
+        """
+        from core.exceptions import NotFoundError
+
+        result = await self._db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+        existing = dict(user.config_override or {})
+        overlay = {k: v for k, v in patch.items() if v is not None}
+        removed = {k for k, v in patch.items() if v is None}
+        # Shared recursive helper (core.dict_merge) — same semantics as the
+        # service-level effective-config merge, never a one-level copy.
+        merged = deep_merge(existing, overlay)
+        for key in removed:
+            merged.pop(key, None)
+        user.config_override = merged
+        await self._db.flush()
+        await self._db.refresh(user)
+        return dict(user.config_override or {})
 
     # ── Update ──────────────────────────────────────────────────────────────
 
     async def update(
         self,
-        organization_id: UUID,
         user_id: UUID,
         update_fields: dict[str, Any],
     ) -> User | None:
@@ -524,7 +511,7 @@ class UserRepository:
         Keys set to ``None`` in the merge dict are removed from metadata.
 
         Args:
-            organization_id: Tenant scope (always applied).
+            user_id: Tenant scope (always applied).
             user_id: The internal OpenZync user UUID.
             update_fields: Dict of fields to update. Valid keys: ``name``,
                 ``email``, ``metadata``, ``role``, ``permissions``.
@@ -535,7 +522,6 @@ class UserRepository:
         result = await self._db.execute(
             select(User).where(
                 User.id == user_id,
-                User.organization_id == organization_id,
             )
         )
         user = result.scalar_one_or_none()
@@ -571,7 +557,7 @@ class UserRepository:
     # ── Soft Delete ─────────────────────────────────────────────────────────
 
     async def soft_delete(
-        self, organization_id: UUID, user_id: UUID
+        self, user_id: UUID
     ) -> User | None:
         """Set ``is_deleted = True`` on the user.
 
@@ -579,7 +565,7 @@ class UserRepository:
         deletion workflow (soft -> hard purge after 30 days).
 
         Args:
-            organization_id: Tenant scope (always applied).
+            user_id: Tenant scope (always applied).
             user_id: The internal OpenZync user UUID.
 
         Returns:
@@ -588,7 +574,6 @@ class UserRepository:
         result = await self._db.execute(
             select(User).where(
                 User.id == user_id,
-                User.organization_id == organization_id,
             )
         )
         user = result.scalar_one_or_none()
@@ -602,7 +587,7 @@ class UserRepository:
     # ── Hard Delete ─────────────────────────────────────────────────────────
 
     async def hard_delete(
-        self, organization_id: UUID, user_id: UUID
+        self, user_id: UUID
     ) -> bool:
         """Permanently remove a user row.
 
@@ -611,7 +596,7 @@ class UserRepository:
         episodes, facts).
 
         Args:
-            organization_id: Tenant scope (always applied).
+            user_id: Tenant scope (always applied).
             user_id: The internal OpenZync user UUID.
 
         Returns:
@@ -620,7 +605,6 @@ class UserRepository:
         result = await self._db.execute(
             select(User).where(
                 User.id == user_id,
-                User.organization_id == organization_id,
             )
         )
         user = result.scalar_one_or_none()
@@ -634,7 +618,7 @@ class UserRepository:
 
     async def list(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         limit: int = 50,
         cursor: str | None = None,
         search: str | None = None,
@@ -649,7 +633,7 @@ class UserRepository:
         (fail-closed 422 on sort mismatch). Default ``created_at/desc``.
 
         Args:
-            organization_id: Tenant scope (always applied).
+            user_id: Tenant scope (always applied).
             limit: Max results per page (default 50, max 200).
             cursor: Opaque pagination token from a previous response.
             search: Fuzzy match against ``external_id``, ``name``,
@@ -669,7 +653,7 @@ class UserRepository:
         spec = sort if sort is not None else SortSpec()
         req_sort, req_dir = spec.effective("created_at", "desc")
 
-        query = select(User).where(User.organization_id == organization_id)
+        query = select(User)
 
         if not include_deleted:
             query = query.where(User.is_deleted.is_(False))
@@ -785,7 +769,7 @@ class UserRepository:
 
     async def list_by_org(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         page: int = 1,
         limit: int = 50,
         sort: SortSpec | None = None,
@@ -798,7 +782,7 @@ class UserRepository:
         deleted users are excluded. Default ``created_at/asc``.
 
         Args:
-            organization_id: Tenant scope (always applied).
+            user_id: Tenant scope (always applied).
             page: 1-based page number.
             limit: Page size (clamped to 1..200).
             sort: Validated sort spec (whitelist ``created_at``,
@@ -816,7 +800,6 @@ class UserRepository:
         total_stmt = (
             select(func.count(User.id))
             .where(
-                User.organization_id == organization_id,
                 User.is_deleted.is_(False),
             )
         )
@@ -830,7 +813,6 @@ class UserRepository:
         result = await self._db.execute(
             select(User)
             .where(
-                User.organization_id == organization_id,
                 User.is_deleted.is_(False),
             )
             .order_by(
@@ -850,7 +832,7 @@ class UserRepository:
 
     async def search_by_pattern(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         pattern: str,
         limit: int,
     ) -> list[dict[str, Any]]:
@@ -860,7 +842,6 @@ class UserRepository:
         parameter — never interpolated.
 
         Args:
-            organization_id: Tenant scope.
             pattern: ILIKE pattern (caller-built, e.g. ``%query%``).
             limit: Maximum rows.
 
@@ -877,7 +858,6 @@ class UserRepository:
                 User.created_at,
             )
             .where(
-                User.organization_id == organization_id,
                 User.is_deleted.is_(False),
                 or_(
                     User.name.ilike(pattern),
@@ -978,13 +958,12 @@ class UserRepository:
 
     async def get_summary(
         self,
-        organization_id: UUID,
         user_id: UUID,
     ) -> tuple[str | None, datetime | None]:
         """Return ``(summary, summary_updated_at)`` for a user.
 
         Args:
-            organization_id: Tenant scope (always applied).
+            user_id: Tenant scope (always applied).
             user_id: The internal OpenZync user UUID.
 
         Returns:
@@ -994,7 +973,6 @@ class UserRepository:
         result = await self._db.execute(
             select(User.summary, User.summary_updated_at).where(
                 User.id == user_id,
-                User.organization_id == organization_id,
             )
         )
         row = result.one_or_none()
@@ -1002,38 +980,34 @@ class UserRepository:
             return None, None
         return row.summary, row.summary_updated_at
 
-    async def count_active(self, organization_id: UUID) -> int:
+    async def count_active(self, user_id: UUID) -> int:
         """Count non-deleted users for the given organization.
 
         Args:
-            organization_id: Tenant scope.
 
         Returns:
             Number of active users (0 if none).
         """
         result = await self._db.execute(
             select(func.count(User.id)).where(
-                User.organization_id == organization_id,
                 User.is_deleted.is_(False),
             )
         )
         return result.scalar() or 0
 
-    async def count_active_admins(self, organization_id: UUID) -> int:
+    async def count_active_admins(self, user_id: UUID) -> int:
         """Count active admins for the given organization.
 
         Used by the service layer to enforce the "last admin cannot be
         demoted/deleted" rule.
 
         Args:
-            organization_id: Tenant scope.
 
         Returns:
             Number of active, non-deleted admins (0 if none).
         """
         result = await self._db.execute(
             select(func.count(User.id)).where(
-                User.organization_id == organization_id,
                 User.role == "admin",
                 User.is_active.is_(True),
                 User.is_deleted.is_(False),
@@ -1045,16 +1019,15 @@ class UserRepository:
 
     async def exists_by_external_id(
         self,
-        organization_id: UUID,
         external_id: str,
     ) -> bool:
-        """Check if a user with this ``external_id`` exists in the org.
+        """Check if a user with this ``external_id`` exists.
 
         Efficient boolean query — fetches only the primary key (no
-        full-row transfer).
+        full-row transfer).  ``external_id`` is globally unique
+        (``uq_user_external``), so no tenant scope is needed.
 
         Args:
-            organization_id: Tenant scope.
             external_id: The caller-defined identifier.
 
         Returns:
@@ -1063,7 +1036,6 @@ class UserRepository:
         result = await self._db.execute(
             select(User.id)
             .where(
-                User.organization_id == organization_id,
                 User.external_id == external_id,
             )
             .limit(1)

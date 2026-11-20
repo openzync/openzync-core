@@ -52,3 +52,36 @@ def verify_password(password: str, hashed: str) -> bool:
         )
     except (ValueError, TypeError):
         return False
+
+
+def validate_password_strength(password: str) -> None:
+    """Validate a password against the shared dashboard strength rule.
+
+    Single implementation used everywhere a dashboard password is set
+    (signup, reset, invite accept) — the auth mixins delegate here so the
+    rule cannot drift between flows.
+
+    Args:
+        password: The plaintext password.
+
+    Raises:
+        ValidationError: If the password is too weak.
+    """
+    from core.exceptions import ValidationError
+
+    if len(password) < 8:
+        raise ValidationError(
+            "Password must be at least 8 characters long."
+        )
+    if not any(c.isupper() for c in password):
+        raise ValidationError(
+            "Password must contain at least one uppercase letter."
+        )
+    if not any(c.islower() for c in password):
+        raise ValidationError(
+            "Password must contain at least one lowercase letter."
+        )
+    if not any(c.isdigit() for c in password):
+        raise ValidationError(
+            "Password must contain at least one digit."
+        )

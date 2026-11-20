@@ -62,7 +62,7 @@ class TestProcessClassificationOutput:
         """Known intent/emotion/valence/arousal are persisted as-is."""
         await process_classification_output(
             db=mock_db,
-            org_id=_ORG_ID,
+            user_id=_ORG_ID,
             episode_id=_EPISODE_ID,
             project_id=_PROJECT_ID,
             parsed=self._valid_output(),
@@ -87,7 +87,7 @@ class TestProcessClassificationOutput:
 
         await process_classification_output(
             db=mock_db,
-            org_id=_ORG_ID,
+            user_id=_ORG_ID,
             episode_id=_EPISODE_ID,
             project_id=_PROJECT_ID,
             parsed=parsed,
@@ -108,7 +108,7 @@ class TestProcessClassificationOutput:
 
         await process_classification_output(
             db=mock_db,
-            org_id=_ORG_ID,
+            user_id=_ORG_ID,
             episode_id=_EPISODE_ID,
             project_id=_PROJECT_ID,
             parsed=parsed,
@@ -131,7 +131,7 @@ class TestProcessClassificationOutput:
 
         await process_classification_output(
             db=mock_db,
-            org_id=_ORG_ID,
+            user_id=_ORG_ID,
             episode_id=_EPISODE_ID,
             project_id=_PROJECT_ID,
             parsed=parsed,
@@ -153,7 +153,7 @@ class TestProcessClassificationOutput:
 
         await process_classification_output(
             db=mock_db,
-            org_id=_ORG_ID,
+            user_id=_ORG_ID,
             episode_id=_EPISODE_ID,
             project_id=_PROJECT_ID,
             parsed=parsed,
@@ -176,7 +176,7 @@ class TestProcessClassificationOutput:
 
         await process_classification_output(
             db=mock_db,
-            org_id=_ORG_ID,
+            user_id=_ORG_ID,
             episode_id=_EPISODE_ID,
             project_id=_PROJECT_ID,
             parsed=self._valid_output(),
@@ -198,7 +198,7 @@ class TestProcessClassificationOutput:
         """Without an episode_repo, no enrichment bit is set."""
         await process_classification_output(
             db=mock_db,
-            org_id=_ORG_ID,
+            user_id=_ORG_ID,
             episode_id=_EPISODE_ID,
             project_id=_PROJECT_ID,
             parsed=self._valid_output(),

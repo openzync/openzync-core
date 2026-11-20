@@ -12,8 +12,8 @@ and recursive CTEs for BFS traversal.
 Usage::
 
     backend = PostgresGraphBackend(db_session)
-    entity = await backend.create_entity(org_id, name="Acme", entity_type="company")
-    results = await backend.traverse(org_id, start_id, max_depth=2)
+    entity = await backend.create_entity(user_id, name="Acme", entity_type="company")
+    results = await backend.traverse(user_id, start_id, max_depth=2)
 """
 
 from __future__ import annotations
@@ -88,7 +88,7 @@ WITH RECURSIVE bfs AS (
            ge.attributes, ge.created_at, 0 AS depth
     FROM graph_entities ge
     WHERE ge.id = :start_id
-      AND ge.organization_id = :org_id
+      AND ge.user_id = :user_id
       AND ge.project_id = :project_id
 
     UNION
@@ -106,7 +106,7 @@ WITH RECURSIVE bfs AS (
             ELSE r.source_id
         END)
     WHERE bfs.depth < :max_depth
-      AND e.organization_id = :org_id
+      AND e.user_id = :user_id
       AND e.project_id = :project_id
       AND (:edge_types_null OR r.relationship_type = ANY(:edge_types))
 )
@@ -126,7 +126,7 @@ SELECT ge.id, ge.name, ge.entity_type, ge.summary,
                             plainto_tsquery('english', :query)), 0) * 0.4
        AS score
 FROM graph_entities ge
-WHERE ge.organization_id = :org_id
+WHERE ge.user_id = :user_id
   AND ge.project_id = :project_id
   AND (
       ge.name ILIKE '%' || :query || '%'
@@ -239,15 +239,15 @@ class PostgresGraphBackend(GraphBackend):
 
     async def create_entity(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         name: str,
         entity_type: str,
         summary: str | None = None,
     ) -> dict:
-        """Create or update an entity node (upsert by org_id + name).
+        """Create or update an entity node (upsert by user_id + name).
 
-        Uses ``ON CONFLICT (organization_id, name) DO UPDATE`` so that
+        Uses ``ON CONFLICT (user_id, name) DO UPDATE`` so that
         duplicate extractions (same entity name in the same org) update
         the entity_type and summary with the latest information rather
         than silently dropping it or creating duplicate rows.
@@ -264,16 +264,16 @@ class PostgresGraphBackend(GraphBackend):
         """
         try:
             # Normalise to lowercase so the case-sensitive unique constraint
-            # (organization_id, name) correctly deduplicates "Nikita" ↔ "nikita".
+            # (user_id, name) correctly deduplicates "Nikita" ↔ "nikita".
             name = name.lower().strip()
 
             result = await self._db.execute(
                 text(
                     """
                     INSERT INTO graph_entities
-                        (organization_id, project_id, name, entity_type, summary)
-                    VALUES (:org_id, :project_id, :name, :type, :summary)
-                    ON CONFLICT (organization_id, name)
+                        (user_id, project_id, name, entity_type, summary)
+                    VALUES (:user_id, :project_id, :name, :type, :summary)
+                    ON CONFLICT (user_id, name)
                     DO UPDATE SET
                         entity_type = CASE
                             WHEN graph_entities.entity_type = 'Custom'
@@ -290,7 +290,7 @@ class PostgresGraphBackend(GraphBackend):
                     """
                 ),
                 {
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "name": name,
                     "type": entity_type,
@@ -313,7 +313,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.info(
                 "pg_graph.entity_upserted",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": entity["id"],
                     "entity_type": entity_type,
@@ -325,7 +325,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.create_entity_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "name": name,
                     "error": str(exc),
@@ -333,11 +333,11 @@ class PostgresGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Failed to create entity '{name}': {exc}",
-                detail={"org_id": str(org_id), "name": name},
+                detail={"user_id": str(user_id), "name": name},
             ) from exc
 
     async def get_entity(
-        self, org_id: UUID, project_id: UUID, entity_id: UUID
+        self, user_id: UUID, project_id: UUID, entity_id: UUID
     ) -> dict | None:
         """Retrieve an entity node by ID, scoped to org and project."""
         try:
@@ -347,13 +347,13 @@ class PostgresGraphBackend(GraphBackend):
                     SELECT id, name, entity_type, summary, attributes, created_at
                     FROM graph_entities
                     WHERE id = :entity_id
-                      AND organization_id = :org_id
+                      AND user_id = :user_id
                       AND project_id = :project_id
                     """
                 ),
                 {
                     "entity_id": str(entity_id),
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                 },
             )
@@ -363,7 +363,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.get_entity_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
@@ -371,12 +371,12 @@ class PostgresGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Failed to retrieve entity {entity_id}: {exc}",
-                detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                detail={"user_id": str(user_id), "entity_id": str(entity_id)},
             ) from exc
 
     async def update_entity(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_id: UUID,
         *,
@@ -390,7 +390,7 @@ class PostgresGraphBackend(GraphBackend):
         untouched.
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
             entity_id: UUID of the entity to update.
             name: New name, or ``None`` to leave unchanged.
@@ -418,15 +418,15 @@ class PostgresGraphBackend(GraphBackend):
             update_cols.append("summary = :summary")
 
         if not update_cols:
-            entity = await self.get_entity(org_id, project_id, entity_id)
+            entity = await self.get_entity(user_id, project_id, entity_id)
             if entity is None:
                 raise NotFoundError(
                     message=f"Entity {entity_id} not found",
-                    detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                    detail={"user_id": str(user_id), "entity_id": str(entity_id)},
                 )
             return entity
 
-        updates["org_id"] = str(org_id)
+        updates["user_id"] = str(user_id)
         updates["project_id"] = str(project_id)
         updates["entity_id"] = str(entity_id)
         set_clause = ", ".join(update_cols)
@@ -438,7 +438,7 @@ class PostgresGraphBackend(GraphBackend):
                     UPDATE graph_entities
                     SET {set_clause}, updated_at = now()
                     WHERE id = :entity_id
-                      AND organization_id = :org_id
+                      AND user_id = :user_id
                       AND project_id = :project_id
                     RETURNING id, name, entity_type, summary, attributes,
                               created_at, updated_at
@@ -450,7 +450,7 @@ class PostgresGraphBackend(GraphBackend):
             if row is None:
                 raise NotFoundError(
                     message=f"Entity {entity_id} not found",
-                    detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                    detail={"user_id": str(user_id), "entity_id": str(entity_id)},
                 )
             return self._row_to_entity(row)
         except NotFoundError:
@@ -459,7 +459,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.update_entity_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
@@ -467,11 +467,11 @@ class PostgresGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Failed to update entity {entity_id}: {exc}",
-                detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                detail={"user_id": str(user_id), "entity_id": str(entity_id)},
             ) from exc
 
     async def delete_entity(
-        self, org_id: UUID, project_id: UUID, entity_id: UUID
+        self, user_id: UUID, project_id: UUID, entity_id: UUID
     ) -> bool:
         """Delete an entity — cascades to relationships and episode links.
 
@@ -484,14 +484,14 @@ class PostgresGraphBackend(GraphBackend):
                     """
                     DELETE FROM graph_entities
                     WHERE id = :entity_id
-                      AND organization_id = :org_id
+                      AND user_id = :user_id
                       AND project_id = :project_id
                     RETURNING id
                     """
                 ),
                 {
                     "entity_id": str(entity_id),
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                 },
             )
@@ -500,7 +500,7 @@ class PostgresGraphBackend(GraphBackend):
                 logger.info(
                     "pg_graph.entity_deleted",
                     extra={
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                         "entity_id": str(entity_id),
                     },
@@ -510,7 +510,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.delete_entity_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
@@ -518,14 +518,14 @@ class PostgresGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Failed to delete entity {entity_id}: {exc}",
-                detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                detail={"user_id": str(user_id), "entity_id": str(entity_id)},
             ) from exc
 
     # ── Relationship CRUD ─────────────────────────────────────────────────────
 
     async def create_relationship(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         source_id: UUID,
         target_id: UUID,
@@ -559,11 +559,11 @@ class PostgresGraphBackend(GraphBackend):
                     text(
                         """
                         INSERT INTO graph_relationships
-                            (organization_id, project_id, source_id, target_id,
+                            (user_id, project_id, source_id, target_id,
                              relationship_type, properties, fact, confidence,
                              valid_from, valid_to, created_at)
                         VALUES
-                            (:org_id, :project_id, :source_id, :target_id,
+                            (:user_id, :project_id, :source_id, :target_id,
                              :rel_type, CAST(:properties AS jsonb), :fact, :confidence,
                              COALESCE(:valid_from, now()), :valid_to, now())
                         ON CONFLICT (source_id, target_id, relationship_type)
@@ -590,7 +590,7 @@ class PostgresGraphBackend(GraphBackend):
                         """
                     ),
                     {
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                         "source_id": str(source_id),
                         "target_id": str(target_id),
@@ -618,7 +618,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.info(
                 "pg_graph.relationship_upserted",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
@@ -631,7 +631,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.create_relationship_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
@@ -642,7 +642,7 @@ class PostgresGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to create relationship '{relationship_type}': {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
                 },
@@ -650,7 +650,7 @@ class PostgresGraphBackend(GraphBackend):
 
     async def expire_relationship(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         relationship_id: UUID,
     ) -> bool:
@@ -665,7 +665,7 @@ class PostgresGraphBackend(GraphBackend):
                     UPDATE graph_relationships
                     SET invalid_at = now()
                     WHERE id = :rel_id
-                      AND organization_id = :org_id
+                      AND user_id = :user_id
                       AND project_id = :project_id
                       AND invalid_at IS NULL
                     RETURNING id
@@ -673,7 +673,7 @@ class PostgresGraphBackend(GraphBackend):
                 ),
                 {
                     "rel_id": str(relationship_id),
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                 },
             )
@@ -682,7 +682,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.expire_relationship_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "relationship_id": str(relationship_id),
                     "error": str(exc),
@@ -691,14 +691,14 @@ class PostgresGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to expire relationship {relationship_id}: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "relationship_id": str(relationship_id),
                 },
             ) from exc
 
     async def expire_relationships_matching(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         *,
         source_id: UUID,
@@ -718,7 +718,7 @@ class PostgresGraphBackend(GraphBackend):
         retry.
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: Project scope.
             source_id: Edge source (fact subject entity).
             target_id: Edge target (fact object entity).
@@ -739,12 +739,12 @@ class PostgresGraphBackend(GraphBackend):
                       AND target_id = :target_id
                       AND relationship_type = :rel_type
                       AND invalid_at IS NULL
-                      AND organization_id = :org_id
+                      AND user_id = :user_id
                       AND project_id = :project_id
                     """
                 ),
                 {
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
@@ -757,7 +757,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.expire_relationships_matching_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
@@ -772,7 +772,7 @@ class PostgresGraphBackend(GraphBackend):
                     f"({source_id}, {target_id}, {relationship_type}): {exc}"
                 ),
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
                 },
@@ -780,7 +780,7 @@ class PostgresGraphBackend(GraphBackend):
 
     async def get_relationships(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_id: UUID,
         relationship_type: str | None = None,
@@ -789,7 +789,7 @@ class PostgresGraphBackend(GraphBackend):
         """Get all active relationships for an entity.
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: Project scope.
             entity_id: The entity whose relationships to fetch.
             relationship_type: Optional filter by type.
@@ -801,7 +801,7 @@ class PostgresGraphBackend(GraphBackend):
         """
         at_time = at_time or datetime.now(UTC)
         conditions = """
-            r.organization_id = :org_id
+            r.user_id = :user_id
             AND r.project_id = :project_id
             AND (r.source_id = :entity_id OR r.target_id = :entity_id)
             AND r.invalid_at IS NULL
@@ -809,7 +809,7 @@ class PostgresGraphBackend(GraphBackend):
             AND (r.valid_to IS NULL OR r.valid_to >= :at_time)
         """
         params: dict[str, object] = {
-            "org_id": str(org_id),
+            "user_id": str(user_id),
             "project_id": str(project_id),
             "entity_id": str(entity_id),
             "at_time": at_time,
@@ -839,21 +839,21 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.get_relationships_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
                 },
             )
             raise ExternalServiceError(
                 message=f"Failed to get relationships for entity {entity_id}: {exc}",
-                detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                detail={"user_id": str(user_id), "entity_id": str(entity_id)},
             ) from exc
 
     # ── BFS Traversal ────────────────────────────────────────────────────────
 
     async def traverse(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         start_node_id: UUID,
         max_depth: int = 2,
@@ -867,7 +867,7 @@ class PostgresGraphBackend(GraphBackend):
         traversed.
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: Project scope.
             start_node_id: UUID of the node to start from.
             max_depth: Maximum hops (capped at MAX_TRAVERSAL_DEPTH).
@@ -885,7 +885,7 @@ class PostgresGraphBackend(GraphBackend):
         # Distinguish None (all types) from [] (no types)
         if edge_types is not None and len(edge_types) == 0:
             # No edge types to follow — return just the start node
-            start = await self.get_entity(org_id, project_id, start_node_id)
+            start = await self.get_entity(user_id, project_id, start_node_id)
             if start is None:
                 return []
             start["depth"] = 0
@@ -900,7 +900,7 @@ class PostgresGraphBackend(GraphBackend):
             await self._db.execute(text("SET LOCAL statement_timeout = '5s'"))
 
             params: dict[str, object] = {
-                "org_id": str(org_id),
+                "user_id": str(user_id),
                 "project_id": str(project_id),
                 "start_id": str(start_node_id),
                 "max_depth": max_depth,
@@ -923,7 +923,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.traverse_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "start_node": str(start_node_id),
                     "max_depth": max_depth,
@@ -933,14 +933,14 @@ class PostgresGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to traverse from node {start_node_id}: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "start_node_id": str(start_node_id),
                 },
             ) from exc
 
     async def traverse_iterative(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         start_id: UUID,
         max_depth: int = 2,
@@ -954,7 +954,7 @@ class PostgresGraphBackend(GraphBackend):
         from collections import deque
 
         if edge_types is not None and len(edge_types) == 0:
-            start = await self.get_entity(org_id, project_id, start_id)
+            start = await self.get_entity(user_id, project_id, start_id)
             if start is None:
                 return []
             start["depth"] = 0
@@ -975,7 +975,7 @@ class PostgresGraphBackend(GraphBackend):
             visited.add(current_id)
 
             # Fetch current node
-            entity = await self.get_entity(org_id, project_id, UUID(current_id))
+            entity = await self.get_entity(user_id, project_id, UUID(current_id))
             if entity:
                 entity["depth"] = depth
                 nodes.append(entity)
@@ -993,7 +993,7 @@ class PostgresGraphBackend(GraphBackend):
                             ELSE r.source_id
                         END AS neighbour_id
                         FROM graph_relationships r
-                        WHERE r.organization_id = :org_id
+                        WHERE r.user_id = :user_id
                           AND r.project_id = :project_id
                           AND r.invalid_at IS NULL
                           AND (r.source_id = :eid OR r.target_id = :eid)
@@ -1002,7 +1002,7 @@ class PostgresGraphBackend(GraphBackend):
                     ),
                     {
                         "eid": current_id,
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                         "types_null": not type_filter,
                         "edge_types": edge_types if edge_types is not None else [],
@@ -1016,7 +1016,7 @@ class PostgresGraphBackend(GraphBackend):
                 logger.error(
                     "pg_graph.traverse_iterative.neighbour_fetch_failed",
                     extra={
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                         "entity_id": current_id,
                     },
@@ -1033,7 +1033,7 @@ class PostgresGraphBackend(GraphBackend):
 
     async def search_entities(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         query: str,
         types: list[str] | None = None,
@@ -1053,7 +1053,7 @@ class PostgresGraphBackend(GraphBackend):
             result = await self._db.execute(
                 text(SEARCH_ENTITIES_SQL),
                 {
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "query": query,
                     "entity_types": types if types is not None else [],
@@ -1076,7 +1076,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.search_entities_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "query": query,
                     "error": str(exc),
@@ -1084,12 +1084,12 @@ class PostgresGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Entity search failed: {exc}",
-                detail={"org_id": str(org_id), "query": query},
+                detail={"user_id": str(user_id), "query": query},
             ) from exc
 
     async def retrieve_graph(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         query: str,
         *,
@@ -1111,7 +1111,7 @@ class PostgresGraphBackend(GraphBackend):
           4. Sort by distance ascending and limit.
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
             query: Free-text search string.
             match_limit: Max entities to match before traversal.
@@ -1128,7 +1128,7 @@ class PostgresGraphBackend(GraphBackend):
         try:
             # Step 1: Search for entities matching the query
             matched_entities = await self.search_entities(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=project_id,
                 query=query,
                 limit=match_limit,
@@ -1169,7 +1169,7 @@ class PostgresGraphBackend(GraphBackend):
 
                 try:
                     related = await self.traverse(
-                        org_id=org_id,
+                        user_id=user_id,
                         project_id=project_id,
                         start_node_id=entity_id,
                         max_depth=max_depth,
@@ -1222,7 +1222,7 @@ class PostgresGraphBackend(GraphBackend):
 
     async def list_entities(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         *,
         entity_type: str | None = None,
@@ -1253,9 +1253,9 @@ class PostgresGraphBackend(GraphBackend):
             "asc",
         )
 
-        where_clause = "ge.organization_id = :org_id AND ge.project_id = :project_id"
+        where_clause = "ge.user_id = :user_id AND ge.project_id = :project_id"
         params: dict[str, object] = {
-            "org_id": org_id,
+            "user_id": user_id,
             "project_id": project_id,
             "limit": limit + 1,
         }
@@ -1316,7 +1316,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.list_entities_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_type": entity_type,
                     "error": str(exc),
@@ -1324,12 +1324,12 @@ class PostgresGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message="Failed to list entities",
-                detail={"org_id": str(org_id)},
+                detail={"user_id": str(user_id)},
             ) from exc
 
     async def list_entity_edges(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_id: UUID,
         *,
@@ -1359,13 +1359,13 @@ class PostgresGraphBackend(GraphBackend):
         )
 
         conditions = """
-            r.organization_id = :org_id
+            r.user_id = :user_id
             AND r.project_id = :project_id
             AND (r.source_id = :eid OR r.target_id = :eid)
             AND r.invalid_at IS NULL
         """
         params: dict[str, object] = {
-            "org_id": org_id,
+            "user_id": user_id,
             "project_id": project_id,
             "eid": entity_id,
             "limit": limit + 1,
@@ -1434,7 +1434,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.list_entity_edges_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
@@ -1442,20 +1442,20 @@ class PostgresGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Failed to list edges for entity {entity_id}",
-                detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                detail={"user_id": str(user_id), "entity_id": str(entity_id)},
             ) from exc
 
     async def get_entity_with_edges(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_id: UUID,
     ) -> dict | None:
         """Retrieve an entity with all its incident edges."""
-        entity = await self.get_entity(org_id, project_id, entity_id)
+        entity = await self.get_entity(user_id, project_id, entity_id)
         if entity is None:
             return None
-        edges = await self.get_relationships(org_id, project_id, entity_id)
+        edges = await self.get_relationships(user_id, project_id, entity_id)
         return {"node": entity, "edges": edges}
 
     # ── Health ────────────────────────────────────────────────────────────────
@@ -1472,7 +1472,7 @@ class PostgresGraphBackend(GraphBackend):
 
     async def link_entity_to_episode(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         episode_id: UUID,
         entity_id: UUID,
@@ -1499,7 +1499,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.link_entity_to_episode_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "episode_id": str(episode_id),
                     "entity_id": str(entity_id),
@@ -1511,7 +1511,7 @@ class PostgresGraphBackend(GraphBackend):
                     f"Failed to link entity {entity_id} to episode {episode_id}: {exc}"
                 ),
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "episode_id": str(episode_id),
                     "entity_id": str(entity_id),
                 },
@@ -1519,7 +1519,7 @@ class PostgresGraphBackend(GraphBackend):
 
     async def get_entities_for_session(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         session_id: UUID,
     ) -> list[dict[str, Any]]:
@@ -1533,8 +1533,8 @@ class PostgresGraphBackend(GraphBackend):
                         JOIN graph_episode_entities gee ON ge.id = gee.entity_id
                         JOIN episodes e ON e.id = gee.episode_id
                         WHERE e.session_id = :session_id
-                          AND e.organization_id = :org_id
-                          AND ge.organization_id = :org_id
+                          AND e.user_id = :user_id
+                          AND ge.user_id = :user_id
                           AND ge.project_id = :project_id
                           AND e.is_deleted = false
                           AND ge.is_merged = false
@@ -1545,9 +1545,9 @@ class PostgresGraphBackend(GraphBackend):
                     FROM graph_entities ge2
                     JOIN graph_relationships gr ON gr.target_id = ge2.id
                     WHERE gr.relationship_type = 'member_of'
-                      AND gr.organization_id = :org_id
+                      AND gr.user_id = :user_id
                       AND gr.project_id = :project_id
-                      AND ge2.organization_id = :org_id
+                      AND ge2.user_id = :user_id
                       AND ge2.project_id = :project_id
                       AND ge2.entity_type = 'community'
                       AND ge2.is_merged = false
@@ -1556,7 +1556,7 @@ class PostgresGraphBackend(GraphBackend):
                 """),
                 {
                     "session_id": str(session_id),
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                 },
             )
@@ -1573,7 +1573,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.get_entities_for_session_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "session_id": str(session_id),
                     "error": str(exc),
@@ -1582,16 +1582,15 @@ class PostgresGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to get entities for session {session_id}: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "session_id": str(session_id),
                 },
             ) from exc
 
     async def get_entities_for_user(
         self,
-        org_id: UUID,
-        project_id: UUID,
         user_id: UUID,
+        project_id: UUID,
         episode_ids: list[UUID],
         *,
         limit: int = 50,
@@ -1613,8 +1612,8 @@ class PostgresGraphBackend(GraphBackend):
                     JOIN episodes e ON e.id = gee.episode_id
                     JOIN sessions s ON e.session_id = s.id
                     WHERE s.user_id = :user_id
-                      AND s.organization_id = :org_id
-                      AND ge.organization_id = :org_id
+                      AND s.user_id = :user_id
+                      AND ge.user_id = :user_id
                       AND ge.project_id = :project_id
                       AND gee.episode_id IN :episode_ids
                       AND e.is_deleted = false
@@ -1624,7 +1623,6 @@ class PostgresGraphBackend(GraphBackend):
                 """).bindparams(bindparam("episode_ids", expanding=True)),
                 {
                     "user_id": user_id,
-                    "org_id": org_id,
                     "project_id": project_id,
                     "episode_ids": [str(e) for e in episode_ids],
                     "limit": limit,
@@ -1643,23 +1641,21 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.get_entities_for_user_failed",
                 extra={
-                    "org_id": str(org_id),
-                    "project_id": str(project_id),
                     "user_id": str(user_id),
+                    "project_id": str(project_id),
                     "error": str(exc),
                 },
             )
             raise ExternalServiceError(
                 message=f"Failed to get entities for user {user_id}: {exc}",
                 detail={
-                    "org_id": str(org_id),
                     "user_id": str(user_id),
                 },
             ) from exc
 
     async def get_entities_for_episodes(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         episode_ids: list[UUID],
         *,
@@ -1678,7 +1674,7 @@ class PostgresGraphBackend(GraphBackend):
         ``episode_ids`` list returns ``[]`` without touching the backend.
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
             episode_ids: Episode UUIDs to scope the lookup to.
             limit: Maximum entities to return (default 200, max 200).
@@ -1700,8 +1696,8 @@ class PostgresGraphBackend(GraphBackend):
                     FROM graph_entities ge
                     JOIN graph_episode_entities gee ON ge.id = gee.entity_id
                     JOIN episodes e ON e.id = gee.episode_id
-                    WHERE e.organization_id = :org_id
-                      AND ge.organization_id = :org_id
+                    WHERE e.user_id = :user_id
+                      AND ge.user_id = :user_id
                       AND ge.project_id = :project_id
                       AND gee.episode_id IN :episode_ids
                       AND e.is_deleted = false
@@ -1709,7 +1705,7 @@ class PostgresGraphBackend(GraphBackend):
                     LIMIT :limit
                 """).bindparams(bindparam("episode_ids", expanding=True)),
                 {
-                    "org_id": org_id,
+                    "user_id": user_id,
                     "project_id": project_id,
                     "episode_ids": [str(e) for e in episode_ids],
                     "limit": limit,
@@ -1728,7 +1724,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.get_entities_for_episodes_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "episode_count": len(episode_ids),
                     "error": str(exc),
@@ -1737,14 +1733,14 @@ class PostgresGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to get entities for episodes: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "episode_count": len(episode_ids),
                 },
             ) from exc
 
     async def get_co_occurring_entity_pairs(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         min_co_count: int = 2,
     ) -> list[dict[str, Any]]:
@@ -1791,21 +1787,21 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.get_co_occurring_pairs_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "error": str(exc),
                 },
             )
             raise ExternalServiceError(
                 message=f"Failed to get co-occurring entity pairs: {exc}",
-                detail={"org_id": str(org_id), "project_id": str(project_id)},
+                detail={"user_id": str(user_id), "project_id": str(project_id)},
             ) from exc
 
     # ── Group B: Bulk / Merge Operations ───────────────────────────────────────
 
     async def get_all_entities(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         *,
         include_merged: bool = False,
@@ -1815,7 +1811,7 @@ class PostgresGraphBackend(GraphBackend):
         Merged entities are excluded unless ``include_merged`` is set.
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: Project scope.
             include_merged: Include entities flagged as merged.
 
@@ -1832,13 +1828,13 @@ class PostgresGraphBackend(GraphBackend):
                     SELECT id, name, entity_type, summary, attributes,
                            is_merged, created_at
                     FROM graph_entities
-                    WHERE organization_id = :org_id
+                    WHERE user_id = :user_id
                       AND project_id = :project_id
                       AND (:include_merged OR is_merged = false)
                     ORDER BY name
                 """),
                 {
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "include_merged": include_merged,
                 },
@@ -1862,25 +1858,25 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.get_all_entities_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "error": str(exc),
                 },
             )
             raise ExternalServiceError(
                 message=f"Failed to get all entities: {exc}",
-                detail={"org_id": str(org_id)},
+                detail={"user_id": str(user_id)},
             ) from exc
 
     async def get_all_relationships(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
     ) -> list[dict[str, Any]]:
         """List every active (non-invalidated) relationship in a project.
 
         Args:
-            org_id: Tenant scope.
+            user_id: Tenant scope.
             project_id: Project scope.
 
         Returns:
@@ -1897,13 +1893,13 @@ class PostgresGraphBackend(GraphBackend):
                            properties, fact, confidence,
                            valid_from, valid_to, created_at
                     FROM graph_relationships
-                    WHERE organization_id = :org_id
+                    WHERE user_id = :user_id
                       AND project_id = :project_id
                       AND invalid_at IS NULL
                     ORDER BY created_at DESC
                 """),
                 {
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                 },
             )
@@ -1912,19 +1908,19 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.get_all_relationships_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "error": str(exc),
                 },
             )
             raise ExternalServiceError(
                 message=f"Failed to get all relationships: {exc}",
-                detail={"org_id": str(org_id)},
+                detail={"user_id": str(user_id)},
             ) from exc
 
     async def bulk_search_entities(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         query: str,
         *,
@@ -1938,7 +1934,7 @@ class PostgresGraphBackend(GraphBackend):
                     SELECT id, name, entity_type, summary, attributes, created_at,
                            similarity(LOWER(name), LOWER(:query)) AS score
                     FROM graph_entities
-                    WHERE organization_id = :org_id
+                    WHERE user_id = :user_id
                       AND project_id = :project_id
                       AND is_merged = false
                       AND similarity(LOWER(name), LOWER(:query)) > :threshold
@@ -1946,7 +1942,7 @@ class PostgresGraphBackend(GraphBackend):
                     LIMIT :limit
                 """),
                 {
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "query": query,
                     "threshold": fuzzy_threshold,
@@ -1967,7 +1963,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.bulk_search_entities_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "query": query,
                     "error": str(exc),
@@ -1975,12 +1971,12 @@ class PostgresGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Bulk entity search failed: {exc}",
-                detail={"org_id": str(org_id), "query": query},
+                detail={"user_id": str(user_id), "query": query},
             ) from exc
 
     async def merge_entities(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         canonical_id: UUID,
         merged_ids: list[UUID],
@@ -1994,11 +1990,11 @@ class PostgresGraphBackend(GraphBackend):
             return {"rewired_count": 0, "deleted_count": 0, "merged_count": 0}
 
         # Verify canonical entity exists
-        canonical = await self.get_entity(org_id, project_id, canonical_id)
+        canonical = await self.get_entity(user_id, project_id, canonical_id)
         if canonical is None:
             raise NotFoundError(
                 message=f"Canonical entity {canonical_id} not found",
-                detail={"org_id": str(org_id), "canonical_id": str(canonical_id)},
+                detail={"user_id": str(user_id), "canonical_id": str(canonical_id)},
             )
 
         merged_id_strs = [str(mid) for mid in merged_ids]
@@ -2013,14 +2009,14 @@ class PostgresGraphBackend(GraphBackend):
                     text("""
                         UPDATE graph_relationships
                         SET source_id = CAST(:canonical_id AS uuid)
-                        WHERE organization_id = :org_id
+                        WHERE user_id = :user_id
                           AND project_id = :project_id
                           AND source_id = ANY(CAST(:merged_ids AS uuid[]))
                           AND invalid_at IS NULL
                     """),
                     {
                         "canonical_id": str(canonical_id),
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                         "merged_ids": merged_id_strs,
                     },
@@ -2032,14 +2028,14 @@ class PostgresGraphBackend(GraphBackend):
                     text("""
                         UPDATE graph_relationships
                         SET target_id = CAST(:canonical_id AS uuid)
-                        WHERE organization_id = :org_id
+                        WHERE user_id = :user_id
                           AND project_id = :project_id
                           AND target_id = ANY(CAST(:merged_ids AS uuid[]))
                           AND invalid_at IS NULL
                     """),
                     {
                         "canonical_id": str(canonical_id),
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                         "merged_ids": merged_id_strs,
                     },
@@ -2051,20 +2047,20 @@ class PostgresGraphBackend(GraphBackend):
                 del_result = await self._db.execute(
                     text("""
                         DELETE FROM graph_relationships g
-                        WHERE organization_id = :org_id
+                        WHERE user_id = :user_id
                           AND project_id = :project_id
                           AND invalid_at IS NULL
                           AND CAST(g.id AS text) NOT IN (
                               SELECT MIN(CAST(id AS text))
                               FROM graph_relationships
-                              WHERE organization_id = :org_id
+                              WHERE user_id = :user_id
                                 AND project_id = :project_id
                                 AND invalid_at IS NULL
                               GROUP BY source_id, target_id, relationship_type
                           )
                     """),
                     {
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                     },
                 )
@@ -2075,12 +2071,12 @@ class PostgresGraphBackend(GraphBackend):
                     text("""
                         UPDATE graph_entities
                         SET is_merged = true, updated_at = now()
-                        WHERE organization_id = :org_id
+                        WHERE user_id = :user_id
                           AND project_id = :project_id
                           AND id = ANY(CAST(:merged_ids AS uuid[]))
                     """),
                     {
-                        "org_id": str(org_id),
+                        "user_id": str(user_id),
                         "project_id": str(project_id),
                         "merged_ids": merged_id_strs,
                     },
@@ -2090,7 +2086,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.info(
                 "pg_graph.entities_merged",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "canonical_id": str(canonical_id),
                     "merged_count": merged_count,
@@ -2108,7 +2104,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.merge_entities_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "canonical_id": str(canonical_id),
                     "merged_ids": merged_id_strs,
@@ -2118,14 +2114,14 @@ class PostgresGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to merge entities: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "canonical_id": str(canonical_id),
                 },
             ) from exc
 
     async def create_relationship_bulk(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         relationships: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
@@ -2155,11 +2151,11 @@ class PostgresGraphBackend(GraphBackend):
                     result = await self._db.execute(
                         text("""
                             INSERT INTO graph_relationships
-                                (organization_id, project_id, source_id, target_id,
+                                (user_id, project_id, source_id, target_id,
                                  relationship_type, properties, confidence,
                                  valid_from, valid_to, created_at)
                             VALUES
-                                (:org_id, :project_id, :source_id, :target_id,
+                                (:user_id, :project_id, :source_id, :target_id,
                                  :rel_type, CAST(:properties AS jsonb), :confidence,
                                  :valid_from, :valid_to, now())
                             ON CONFLICT (source_id, target_id, relationship_type)
@@ -2174,7 +2170,7 @@ class PostgresGraphBackend(GraphBackend):
                                       valid_from, valid_to, created_at
                         """),
                         {
-                            "org_id": str(org_id),
+                            "user_id": str(user_id),
                             "project_id": str(project_id),
                             "source_id": str(source_id),
                             "target_id": str(target_id),
@@ -2196,7 +2192,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.create_relationship_bulk_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "count": len(relationships),
                     "error": str(exc),
@@ -2204,14 +2200,14 @@ class PostgresGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message=f"Failed to create {len(relationships)} relationships: {exc}",
-                detail={"org_id": str(org_id)},
+                detail={"user_id": str(user_id)},
             ) from exc
 
     # ── Group C: Observations ──────────────────────────────────────────────────
 
     async def upsert_observation(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         subject_entity_id: UUID,
         observation_type: str,
@@ -2235,12 +2231,12 @@ class PostgresGraphBackend(GraphBackend):
             result = await self._db.execute(
                 text("""
                     INSERT INTO graph_observations
-                        (organization_id, project_id, subject_entity_id,
+                        (user_id, project_id, subject_entity_id,
                          related_entity_id, observation_type, content, confidence,
                          supporting_fact_ids, supporting_relationship_ids,
                          valid_from, valid_to, observation_metadata, updated_at)
                     VALUES
-                        (:org_id, :project_id, :subject_entity_id,
+                        (:user_id, :project_id, :subject_entity_id,
                          :related_entity_id, :obs_type, :content, :confidence,
                          :fact_ids, :rel_ids, :valid_from, :valid_to,
                          CAST(:obs_metadata AS jsonb), NOW())
@@ -2258,7 +2254,7 @@ class PostgresGraphBackend(GraphBackend):
                         valid_to = EXCLUDED.valid_to,
                         observation_metadata = EXCLUDED.observation_metadata,
                         updated_at = NOW()
-                    RETURNING id, organization_id, project_id,
+                    RETURNING id, user_id, project_id,
                               subject_entity_id, related_entity_id,
                               observation_type, content, confidence,
                               supporting_fact_ids, supporting_relationship_ids,
@@ -2266,7 +2262,7 @@ class PostgresGraphBackend(GraphBackend):
                               created_at, updated_at
                 """),
                 {
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "subject_entity_id": str(subject_entity_id),
                     "related_entity_id": (
@@ -2299,7 +2295,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.upsert_observation_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "subject_entity_id": str(subject_entity_id),
                     "observation_type": observation_type,
@@ -2309,14 +2305,14 @@ class PostgresGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to upsert observation: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "subject_entity_id": str(subject_entity_id),
                 },
             ) from exc
 
     async def get_observations(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         *,
         subject_entity_id: UUID | None = None,
@@ -2344,9 +2340,9 @@ class PostgresGraphBackend(GraphBackend):
             "asc",
         )
 
-        where_clause = "o.organization_id = :org_id AND o.project_id = :project_id"
+        where_clause = "o.user_id = :user_id AND o.project_id = :project_id"
         params: dict[str, object] = {
-            "org_id": org_id,
+            "user_id": user_id,
             "project_id": project_id,
             "limit": limit + 1,
         }
@@ -2381,7 +2377,7 @@ class PostgresGraphBackend(GraphBackend):
         try:
             result = await self._db.execute(
                 text(f"""
-                    SELECT o.id, o.organization_id, o.project_id,
+                    SELECT o.id, o.user_id, o.project_id,
                            o.subject_entity_id, o.related_entity_id,
                            o.observation_type, o.content, o.confidence,
                            o.supporting_fact_ids, o.supporting_relationship_ids,
@@ -2421,7 +2417,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.get_observations_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "subject_entity_id": (
                         str(subject_entity_id) if subject_entity_id else None
@@ -2432,12 +2428,12 @@ class PostgresGraphBackend(GraphBackend):
             )
             raise ExternalServiceError(
                 message="Failed to get observations",
-                detail={"org_id": str(org_id)},
+                detail={"user_id": str(user_id)},
             ) from exc
 
     async def get_entity_appearance_timestamps(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_id: UUID,
     ) -> list[datetime]:
@@ -2464,7 +2460,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.get_entity_appearance_timestamps_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
@@ -2475,14 +2471,14 @@ class PostgresGraphBackend(GraphBackend):
                     f"Failed to get appearance timestamps for entity {entity_id}: {exc}"
                 ),
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "entity_id": str(entity_id),
                 },
             ) from exc
 
     async def get_relationship_ids_between(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_a_id: UUID,
         entity_b_id: UUID,
@@ -2493,7 +2489,7 @@ class PostgresGraphBackend(GraphBackend):
                 text("""
                     SELECT id FROM graph_relationships
                     WHERE project_id = :project_id
-                      AND organization_id = :org_id
+                      AND user_id = :user_id
                       AND invalid_at IS NULL
                       AND ((source_id = :a AND target_id = :b)
                            OR (source_id = :b AND target_id = :a))
@@ -2501,7 +2497,7 @@ class PostgresGraphBackend(GraphBackend):
                 """),
                 {
                     "project_id": str(project_id),
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "a": str(entity_a_id),
                     "b": str(entity_b_id),
                 },
@@ -2512,7 +2508,7 @@ class PostgresGraphBackend(GraphBackend):
             logger.error(
                 "pg_graph.get_relationship_ids_between_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "entity_a_id": str(entity_a_id),
                     "entity_b_id": str(entity_b_id),
@@ -2522,7 +2518,7 @@ class PostgresGraphBackend(GraphBackend):
             raise ExternalServiceError(
                 message=f"Failed to get relationship IDs between entities: {exc}",
                 detail={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "entity_a_id": str(entity_a_id),
                     "entity_b_id": str(entity_b_id),
                 },
@@ -2532,7 +2528,7 @@ class PostgresGraphBackend(GraphBackend):
 
     async def get_total_entity_linked_episode_count(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
     ) -> int:
         """Get total distinct episodes that have at least one linked entity.
@@ -2541,7 +2537,7 @@ class PostgresGraphBackend(GraphBackend):
         works regardless of which graph backend is active.
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
 
         Returns:
@@ -2560,14 +2556,14 @@ class PostgresGraphBackend(GraphBackend):
 
     async def resolve_entity_names(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         entity_ids: list[UUID],
     ) -> dict[str, dict]:
         """Resolve entity IDs to their names and types.
 
         Args:
-            org_id: Organisational scope.
+            user_id: Organisational scope.
             project_id: Project scope.
             entity_ids: List of entity UUIDs to resolve.
 
@@ -2581,12 +2577,12 @@ class PostgresGraphBackend(GraphBackend):
                 SELECT id, name, entity_type
                 FROM graph_entities
                 WHERE id = ANY(:entity_ids)
-                  AND organization_id = :org_id
+                  AND user_id = :user_id
                   AND project_id = :project_id
             """),
             {
                 "entity_ids": [str(eid) for eid in entity_ids],
-                "org_id": str(org_id),
+                "user_id": str(user_id),
                 "project_id": str(project_id),
             },
         )
@@ -2635,7 +2631,7 @@ class PostgresGraphBackend(GraphBackend):
         """Convert a DB row to an observation dict matching ``GraphBackend`` spec."""
         return {
             "id": str(row.id),
-            "organization_id": str(row.organization_id),
+            "user_id": str(row.user_id),
             "project_id": str(row.project_id),
             "subject_entity_id": str(row.subject_entity_id),
             "related_entity_id": (

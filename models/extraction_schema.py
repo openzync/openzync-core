@@ -20,7 +20,7 @@ class ExtractionSchema(TimestampMixin, Base):
 
     Attributes:
         id: UUID primary key.
-        organization_id: Foreign key to the owning organization.
+        user_id: Foreign key to the owning organization.
         name: Human-readable schema name (unique within an organization).
         json_schema: The JSON Schema definition that extraction payloads
             must conform to. For ``type='classification'``, this stores the
@@ -39,8 +39,8 @@ class ExtractionSchema(TimestampMixin, Base):
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
     )
-    organization_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="CASCADE"),
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -64,14 +64,14 @@ class ExtractionSchema(TimestampMixin, Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "organization_id",
+            "user_id",
             "name",
-            name="uq_extraction_schema_org_name",
+            name="uq_extraction_schema_user_name",
         ),
     )
 
     def __repr__(self) -> str:
         return (
             f"<ExtractionSchema id={self.id} "
-            f"org={self.organization_id} name={self.name!r}>"
+            f"user={self.user_id} name={self.name!r}>"
         )

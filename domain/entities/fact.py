@@ -14,7 +14,7 @@ class Fact:
     Attributes:
         id: Fact primary key.
         project_id: Owning project (tenant scope).
-        organization_id: Owning organization (tenant scope).
+        user_id: Owning organization (tenant scope).
         user_id: Attributed user.
         subject: Triple subject surface form.
         predicate: Triple predicate surface form.
@@ -27,7 +27,7 @@ class Fact:
 
     id: UUID
     project_id: UUID
-    organization_id: UUID
+    user_id: UUID
     user_id: UUID
     subject: str
     predicate: str

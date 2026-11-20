@@ -122,7 +122,7 @@ class BlobStorage:
         """Upload a blob to S3.
 
         Args:
-            key: S3 object key (e.g. ``blobs/{org_id}/{project_id}/{episode_id}/{idx}_{filename}``).
+            key: S3 object key (e.g. ``blobs/{user_id}/{project_id}/{episode_id}/{idx}_{filename}``).
             data: Raw bytes of the file.
             mime_type: MIME type of the file (e.g. ``"image/png"``).
 
@@ -415,7 +415,7 @@ class BlobStorage:
 
     @staticmethod
     def build_key(
-        org_id: str,
+        user_id: str,
         project_id: str,
         episode_id: str,
         blob_index: int,
@@ -425,10 +425,10 @@ class BlobStorage:
 
         Pattern::
 
-            blobs/{org_id}/{project_id}/{episode_id}/{blob_index}_{sanitized_name}
+            blobs/{user_id}/{project_id}/{episode_id}/{blob_index}_{sanitized_name}
 
         Args:
-            org_id: The organization UUID.
+            user_id: The organization UUID.
             project_id: The project UUID.
             episode_id: The episode UUID.
             blob_index: Zero-based index within the episode.
@@ -438,4 +438,4 @@ class BlobStorage:
             A deterministic S3 object key.
         """
         safe_name = BlobStorage.sanitize_file_name(file_name)
-        return f"blobs/{org_id}/{project_id}/{episode_id}/{blob_index}_{safe_name}"
+        return f"blobs/{user_id}/{project_id}/{episode_id}/{blob_index}_{safe_name}"

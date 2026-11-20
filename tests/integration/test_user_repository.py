@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,11 +28,10 @@ class TestUserRepository:
     """UserRepository CRUD + list + pagination tests."""
 
     async def _seed_user(
-        self, repo: UserRepository, org_id: UUID, ext_id: str = "test_user"
+        self, repo: UserRepository, ext_id: str = "test_user"
     ) -> User:
         email = f"{ext_id}@example.com"
         return await repo.create(
-            organization_id=org_id,
             external_id=ext_id,
             name="Test User",
             email=email,
@@ -42,8 +41,7 @@ class TestUserRepository:
         """Creating a user returns the user with generated fields."""
         async with AsyncSession(engine) as db:
             repo = UserRepository(db)
-            org_id = UUID("00000000-0000-0000-0000-000000000001")
-            user = await self._seed_user(repo, org_id)
+            user = await self._seed_user(repo)
 
             assert user.id is not None
             assert user.external_id == "test_user"
@@ -56,10 +54,9 @@ class TestUserRepository:
         """get_by_external_id returns the matching user."""
         async with AsyncSession(engine) as db:
             repo = UserRepository(db)
-            org_id = UUID("00000000-0000-0000-0000-000000000001")
-            user = await self._seed_user(repo, org_id)
+            user = await self._seed_user(repo)
 
-            found = await repo.get_by_external_id(org_id, user.external_id)
+            found = await repo.get_by_external_id(user.external_id)
             assert found is not None
             assert found.id == user.id
 
@@ -67,40 +64,35 @@ class TestUserRepository:
         """get_by_external_id returns None for non-existent user."""
         async with AsyncSession(engine) as db:
             repo = UserRepository(db)
-            org_id = UUID("00000000-0000-0000-0000-000000000001")
-            found = await repo.get_by_external_id(org_id, "nonexistent")
+            found = await repo.get_by_external_id("nonexistent")
             assert found is None
 
     async def test_get_by_uuid_found(self, engine) -> None:
         """get_by_uuid returns the user for the correct org."""
         async with AsyncSession(engine) as db:
             repo = UserRepository(db)
-            org_id = UUID("00000000-0000-0000-0000-000000000001")
-            user = await self._seed_user(repo, org_id)
+            user = await self._seed_user(repo)
 
-            found = await repo.get_by_uuid(org_id, user.id)
+            found = await repo.get_by_uuid(user.id)
             assert found is not None
             assert found.id == user.id
 
-    async def test_get_by_uuid_wrong_org(self, engine) -> None:
-        """get_by_uuid returns None for wrong org (tenant isolation)."""
+    async def test_get_by_uuid_unknown_id_returns_none(self, engine) -> None:
+        """get_by_uuid returns None for an unknown id."""
         async with AsyncSession(engine) as db:
             repo = UserRepository(db)
-            org_id = UUID("00000000-0000-0000-0000-000000000001")
-            user = await self._seed_user(repo, org_id)
+            user = await self._seed_user(repo)
 
-            wrong_org = UUID("00000000-0000-0000-0000-000000000099")
-            found = await repo.get_by_uuid(wrong_org, user.id)
+            found = await repo.get_by_uuid(UUID("00000000-0000-0000-0000-000000000099"))
             assert found is None
 
     async def test_update_user(self, engine) -> None:
         """Update modifies only specified fields."""
         async with AsyncSession(engine) as db:
             repo = UserRepository(db)
-            org_id = UUID("00000000-0000-0000-0000-000000000001")
-            user = await self._seed_user(repo, org_id)
+            user = await self._seed_user(repo)
 
-            updated = await repo.update(org_id, user.id, {"name": "Updated Name"})
+            updated = await repo.update(user.id, {"name": "Updated Name"})
             assert updated is not None
             assert updated.name == "Updated Name"
             assert updated.email == user.email  # unchanged
@@ -109,19 +101,17 @@ class TestUserRepository:
         """Update on non-existent user returns None."""
         async with AsyncSession(engine) as db:
             repo = UserRepository(db)
-            org_id = UUID("00000000-0000-0000-0000-000000000001")
             fake_id = UUID("00000000-0000-0000-0000-000000000099")
-            result = await repo.update(org_id, fake_id, {"name": "Whatever"})
+            result = await repo.update(fake_id, {"name": "Whatever"})
             assert result is None
 
     async def test_soft_delete(self, engine) -> None:
         """Soft delete sets is_deleted=True."""
         async with AsyncSession(engine) as db:
             repo = UserRepository(db)
-            org_id = UUID("00000000-0000-0000-0000-000000000001")
-            user = await self._seed_user(repo, org_id)
+            user = await self._seed_user(repo)
 
-            deleted = await repo.soft_delete(org_id, user.id)
+            deleted = await repo.soft_delete(user.id)
             assert deleted is not None
             assert deleted.is_deleted is True
 
@@ -129,32 +119,30 @@ class TestUserRepository:
         """Hard delete removes the row permanently."""
         async with AsyncSession(engine) as db:
             repo = UserRepository(db)
-            org_id = UUID("00000000-0000-0000-0000-000000000001")
-            user = await self._seed_user(repo, org_id)
+            user = await self._seed_user(repo)
 
-            result = await repo.hard_delete(org_id, user.id)
+            result = await repo.hard_delete(user.id)
             assert result is True
 
             # Verify gone
-            found = await repo.get_by_uuid(org_id, user.id)
+            found = await repo.get_by_uuid(user.id)
             assert found is None
 
     async def test_list_pagination(self, engine) -> None:
         """List returns paginated results with cursor."""
         async with AsyncSession(engine) as db:
             repo = UserRepository(db)
-            org_id = UUID("00000000-0000-0000-0000-000000000001")
 
             # Create 5 users
             for i in range(5):
-                await self._seed_user(repo, org_id, ext_id=f"user_{i}")
+                await self._seed_user(repo, ext_id=f"user_{i}")
 
-            users, cursor = await repo.list(org_id, limit=3)
+            users, cursor = await repo.list(user_id=uuid4(), limit=3)
             assert len(users) == 3
             assert cursor is not None
 
             # Next page
-            users2, cursor2 = await repo.list(org_id, limit=3, cursor=cursor)
+            users2, cursor2 = await repo.list(user_id=uuid4(), limit=3, cursor=cursor)
             assert len(users2) > 0
             assert len(users2) <= 3
 
@@ -162,18 +150,16 @@ class TestUserRepository:
         """exists_by_external_id returns True for existing user."""
         async with AsyncSession(engine) as db:
             repo = UserRepository(db)
-            org_id = UUID("00000000-0000-0000-0000-000000000001")
-            await self._seed_user(repo, org_id)
+            await self._seed_user(repo)
 
-            assert await repo.exists_by_external_id(org_id, "test_user") is True
-            assert await repo.exists_by_external_id(org_id, "nonexistent") is False
+            assert await repo.exists_by_external_id("test_user") is True
+            assert await repo.exists_by_external_id("nonexistent") is False
 
     async def test_get_stats_empty(self, engine) -> None:
         """get_stats returns zeros for user with no data."""
         async with AsyncSession(engine) as db:
             repo = UserRepository(db)
-            org_id = UUID("00000000-0000-0000-0000-000000000001")
-            user = await self._seed_user(repo, org_id)
+            user = await self._seed_user(repo)
 
             stats = await repo.get_stats(user.id)
             assert stats == {"message_count": 0, "fact_count": 0, "session_count": 0}
@@ -203,10 +189,8 @@ class TestUserRepository:
         """
         async with AsyncSession(engine) as db:
             repo = UserRepository(db)
-            org_id = UUID("00000000-0000-0000-0000-000000000001")
             token_hash = hashlib.sha256(b"integration-claim-token").hexdigest()
             user = await repo.create(
-                organization_id=org_id,
                 external_id="pending_invite_claim",
                 email="pending@example.com",
                 name="Pending Invitee",
@@ -225,7 +209,6 @@ class TestUserRepository:
             assert claimed is not None
             assert isinstance(claimed, ClaimedInvite)
             assert claimed.id == user.id
-            assert claimed.organization_id == org_id
             assert claimed.role == "member"
 
             # The UPDATE ... RETURNING leaves the identity-mapped instance

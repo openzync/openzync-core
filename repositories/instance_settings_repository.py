@@ -59,6 +59,19 @@ class InstanceSettingsRepository:
             await self._db.flush()
         return row
 
+    async def get_registration_mode(self) -> str:
+        """Return the platform registration mode (defaults ``invite_only``).
+
+        Single implementation behind the router (``GET
+        /v1/auth/registration-status``), ``SetupService``, and every auth
+        mixin — mode logic lives here, never inline in callers.
+
+        Returns:
+            One of ``open``, ``invite_only``, ``approval``.
+        """
+        row = await self.get()
+        return row.registration_mode or "invite_only"
+
     async def update(self, **fields: Any) -> InstanceSettings:
         """Apply partial field updates to the settings row.
 

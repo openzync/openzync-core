@@ -37,26 +37,26 @@ pytestmark = pytest.mark.integration
 RLS_ROLE = "oz_rls_test"
 RLS_PASSWORD = "oz_rls_test"  # noqa: S105 — throwaway role in a testcontainer
 
-_CREATED_ORG_IDS: list[UUID] = []
-"""Every organization this module created — removed again at session end."""
+_CREATED_USER_IDS: list[UUID] = []
+"""Every user this module created — removed again at session end."""
 
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
 async def _cleanup_created_orgs(engine: AsyncEngine) -> AsyncIterator[None]:
-    """Delete the organizations this module created.
+    """Delete the users this module created.
 
     The rows are seeded straight into the database (the tenant sessions
     are not allowed to create them), so they have to be removed again —
-    otherwise a later test that counts organizations would see them.
+    otherwise a later test that counts users would see them.
     """
     yield
-    if not _CREATED_ORG_IDS:
+    if not _CREATED_USER_IDS:
         return
     async with engine.begin() as conn:
-        for org_id in _CREATED_ORG_IDS:
+        for user_id in _CREATED_USER_IDS:
             await conn.execute(
-                text("DELETE FROM organizations WHERE id = :id"),
-                {"id": org_id},
+                text("DELETE FROM users WHERE id = :id"),
+                {"id": user_id},
             )
 
 
@@ -154,32 +154,32 @@ async def tenants(engine: AsyncEngine) -> dict[str, tuple[UUID, UUID]]:
     seeded: dict[str, tuple[UUID, UUID]] = {}
     async with engine.begin() as conn:
         for label in ("a", "b"):
-            org_id = uuid4()
+            user_id = uuid4()
             project_id = uuid4()
-            _CREATED_ORG_IDS.append(org_id)
+            _CREATED_USER_IDS.append(user_id)
             await conn.execute(
                 text(
-                    "INSERT INTO organizations (id, name, org_code) "
-                    "VALUES (:id, :name, :code)"
+                    "INSERT INTO users (id, external_id, name, role) "
+                    "VALUES (:id, :eid, :name, 'member')"
                 ),
                 {
-                    "id": org_id,
+                    "id": user_id,
+                    "eid": f"rls-user-{label}",
                     "name": f"RLS Tenant {label.upper()}",
-                    "code": f"rls{label}{uuid4().hex[:8]}",
                 },
             )
             await conn.execute(
                 text(
-                    "INSERT INTO projects (id, organization_id, name) "
-                    "VALUES (:id, :org_id, :name)"
+                    "INSERT INTO projects (id, user_id, name) "
+                    "VALUES (:id, :user_id, :name)"
                 ),
                 {
                     "id": project_id,
-                    "org_id": org_id,
+                    "user_id": user_id,
                     "name": f"RLS Project {label.upper()}",
                 },
             )
-            seeded[label] = (org_id, project_id)
+            seeded[label] = (user_id, project_id)
     return seeded
 
 
@@ -279,7 +279,7 @@ class TestTenantSurvivesTransactionBoundaries:
 
         assert commits, "the commit boundary must have been observed"
         first_after_commit = statements[commits[0]]
-        assert "set_config('app.org_id'" in first_after_commit
+        assert "set_config('app.user_id'" in first_after_commit
         # The caller's own statement runs *after* the re-bind.
         assert "SELECT 1" in statements[commits[0] + 1]
 
@@ -296,7 +296,7 @@ class TestFailClosed:
         """No context → no rows, and never another tenant's rows.
 
         This is why the policy expression is
-        ``NULLIF(current_setting('app.org_id', true), '')::UUID``: an unset
+        ``NULLIF(current_setting('app.user_id', true), '')::UUID``: an unset
         context is NULL, not an error.
         """
         _org_a, project_a = tenants["a"]
@@ -330,7 +330,7 @@ class TestFailClosed:
             await set_tenant_context(session, org_a)
             current = (
                 await session.execute(
-                    text("SELECT current_setting('app.org_id', true)")
+                    text("SELECT current_setting('app.user_id', true)")
                 )
             ).scalar()
             assert current == str(org_a)
@@ -343,7 +343,7 @@ class TestFailClosed:
         async with factory() as session:
             current = (
                 await session.execute(
-                    text("SELECT current_setting('app.org_id', true)")
+                    text("SELECT current_setting('app.user_id', true)")
                 )
             ).scalar()
             assert current in (None, "")
@@ -370,8 +370,8 @@ class TestHandBoundContext:
 
         async with factory() as session:
             await session.execute(
-                text("SELECT set_config('app.org_id', :org_id, true)"),
-                {"org_id": str(org_a)},
+                text("SELECT set_config('app.user_id', :user_id, true)"),
+                {"user_id": str(org_a)},
             )
             assert await _visible_project_ids(session) == {project_a}
 
@@ -395,75 +395,3 @@ class TestHandBoundContext:
             await session.commit()
 
             assert await _visible_project_ids(session) == {project_a}
-
-
-class TestOrgAnonInsertPolicy:
-    """``org_anon_insert`` only admits the session's own organization row."""
-
-    @pytest.mark.asyncio
-    async def test_a_tenant_cannot_insert_another_organizations_row(
-        self,
-        rls_engine: AsyncEngine,
-        tenants: dict[str, tuple[UUID, UUID]],
-    ) -> None:
-        """The INSERT policy is not ``WITH CHECK (true)``.
-
-        Permissive policies are OR'ed, so an unconditional CHECK would
-        override the ``FOR ALL`` policy's ``id = <app.org_id>`` and let a
-        tenant-bound session create an organization row for any id.
-        """
-        org_a, _project_a = tenants["a"]
-        factory = get_async_session(rls_engine)
-        foreign_org_id = uuid4()
-
-        async with factory() as session:
-            await set_tenant_context(session, org_a)
-
-            with pytest.raises(DBAPIError) as exc_info:
-                await session.execute(
-                    text(
-                        "INSERT INTO organizations (id, name, org_code) "
-                        "VALUES (:id, :name, :code)"
-                    ),
-                    {
-                        "id": foreign_org_id,
-                        "name": "Foreign Org",
-                        "code": f"foreign{uuid4().hex[:8]}",
-                    },
-                )
-
-            assert "row-level security" in str(exc_info.value).lower()
-            await session.rollback()
-
-    @pytest.mark.asyncio
-    async def test_a_session_bound_to_the_new_organization_can_insert_it(
-        self,
-        rls_engine: AsyncEngine,
-    ) -> None:
-        """The signup path still works: bind the new id, then insert it."""
-        factory = get_async_session(rls_engine)
-        new_org_id = uuid4()
-        _CREATED_ORG_IDS.append(new_org_id)
-
-        async with factory() as session:
-            await set_tenant_context(session, new_org_id)
-
-            await session.execute(
-                text(
-                    "INSERT INTO organizations (id, name, org_code) "
-                    "VALUES (:id, :name, :code)"
-                ),
-                {
-                    "id": new_org_id,
-                    "name": "Brand New Org",
-                    "code": f"neworg{uuid4().hex[:8]}",
-                },
-            )
-            await session.commit()
-
-            # The row is readable — the session is bound to it.
-            result = await session.execute(
-                text("SELECT id FROM organizations WHERE id = :id"),
-                {"id": new_org_id},
-            )
-            assert {row[0] for row in result.all()} == {new_org_id}

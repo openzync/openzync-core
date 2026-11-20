@@ -225,7 +225,7 @@ class TestPiiRedaction:
         event = {
             "request_id": "r-123",
             "user_id": "u-456",
-            "org_id": "o-789",
+            "user_id": "o-789",
             "name": "Alice",
             "email": "alice@example.com",  # 'email' is NOT in SENSITIVE_KEYS
         }
@@ -297,10 +297,9 @@ class TestRequestContext:
         ContextVars persist across tests within the same thread/context,
         so we must reset them to avoid state leaking between test methods.
         """
-        from core.logging import _org_id, _request_id, _user_id
+        from core.logging import _user_id, _request_id
 
         _request_id.set("")
-        _org_id.set("")
         _user_id.set("")
 
     def test_binds_request_id(self) -> None:
@@ -318,14 +317,14 @@ class TestRequestContext:
         event_dict = _add_context_from_vars(None, None, {})
         assert event_dict["request_id"] == "req-001"
 
-    def test_binds_org_id(self) -> None:
-        """org_id is set when provided."""
+    def test_binds_user_id(self) -> None:
+        """user_id is set when provided."""
         self._reset_context_vars()
         from core.logging import _add_context_from_vars, bind_request_context
 
-        bind_request_context(request_id="req-002", org_id="org-42")
+        bind_request_context(request_id="req-002", user_id="org-42")
         event_dict = _add_context_from_vars(None, None, {})
-        assert event_dict["org_id"] == "org-42"
+        assert event_dict["user_id"] == "org-42"
         assert event_dict["request_id"] == "req-002"
 
     def test_binds_user_id(self) -> None:
@@ -343,9 +342,9 @@ class TestRequestContext:
         self._reset_context_vars()
         from core.logging import _add_context_from_vars, bind_request_context
 
-        bind_request_context(request_id="req-004", org_id="o-1", user_id="u-1")
+        bind_request_context(request_id="req-004", user_id="u-1")
         event_dict = _add_context_from_vars(None, None, {})
-        assert event_dict == {"request_id": "req-004", "org_id": "o-1", "user_id": "u-1"}
+        assert event_dict == {"request_id": "req-004", "user_id": "o-1", "user_id": "u-1"}
 
     def test_skips_empty_optional_fields(self) -> None:
         """Optional fields not provided are omitted from event dict."""
@@ -354,7 +353,7 @@ class TestRequestContext:
 
         bind_request_context(request_id="req-005")
         event_dict = _add_context_from_vars(None, None, {})
-        assert "org_id" not in event_dict
+        assert "user_id" not in event_dict
         assert "user_id" not in event_dict
 
     def test_context_var_isolation(self) -> None:

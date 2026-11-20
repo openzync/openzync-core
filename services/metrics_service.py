@@ -159,17 +159,17 @@ GRAPH_LATENCY_RANGE_QUERIES: dict[str, str] = {
 _ORG_FILTER_EXCLUDED = ("openzync_worker_queue_depth",)
 
 
-def _is_org_scoped(org_id: str | None) -> bool:
+def _is_org_scoped(user_id: str | None) -> bool:
     """Return True when PromQL should be scoped to an org."""
-    return bool(org_id) and org_id != "anonymous"
+    return bool(user_id) and user_id != "anonymous"
 
 
-def _inject_org_filter(promql: str, org_id: str) -> str:
-    """Inject ``{org_id="..."}`` into every openzync_* selector.
+def _inject_org_filter(promql: str, user_id: str) -> str:
+    """Inject ``{user_id="..."}`` into every openzync_* selector.
 
-    Selectors that already have a label set get ``,org_id="..."`` appended
+    Selectors that already have a label set get ``,user_id="..."`` appended
     inside the braces. Bare metrics (``metric[`` or ``metric)``) get a new
-    ``{org_id="..."}`` selector. Metrics in ``_ORG_FILTER_EXCLUDED`` are left
+    ``{user_id="..."}`` selector. Metrics in ``_ORG_FILTER_EXCLUDED`` are left
     untouched — queue depth is global infra, not per-org (cardinality + no
     org label on that metric).
 
@@ -179,9 +179,9 @@ def _inject_org_filter(promql: str, org_id: str) -> str:
     if any(excluded in promql for excluded in _ORG_FILTER_EXCLUDED):
         return promql
 
-    org_label = f'org_id="{org_id}"'
+    org_label = f'user_id="{user_id}"'
 
-    # 1) selectors already with braces: metric{labels} -> metric{labels,org_id="..."}
+    # 1) selectors already with braces: metric{labels} -> metric{labels,user_id="..."}
     def _with_braces(m: re.Match[str]) -> str:
         metric = m.group(1)
         inner = m.group(2).strip()
@@ -210,17 +210,17 @@ class MetricsService:
 
     async def get_summary(
         self,
-        org_id: str | None = None,
+        user_id: str | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> MetricsSummaryResponse:
         """Run all PromQL queries and assemble the response.
 
         Args:
-            org_id: Organization to scope Prometheus queries to. When ``None``
+            user_id: Organization to scope Prometheus queries to. When ``None``
                 or ``"anonymous"`` the original global queries are used
                 (backward compat for health checks). The admin route always
-                passes a real org_id.
+                passes a real user_id.
             start: Window start for the range time-series. Defaults to 24h
                 before ``end`` (or now) when omitted.
             end: Window end for the range time-series. Defaults to now.
@@ -236,25 +236,25 @@ class MetricsService:
 
         # Build org-scoped instant queries (queue stays global — see _inject_org_filter).
         all_queries = _all_queries()
-        if _is_org_scoped(org_id):
-            assert org_id is not None  # narrowed by _is_org_scoped
+        if _is_org_scoped(user_id):
+            assert user_id is not None  # narrowed by _is_org_scoped
             effective_all = [
-                (name, _inject_org_filter(promql, org_id))
+                (name, _inject_org_filter(promql, user_id))
                 for name, promql in all_queries
             ]
             effective_retrieval = {
-                k: _inject_org_filter(v, org_id)
+                k: _inject_org_filter(v, user_id)
                 for k, v in RETRIEVAL_RANGE_QUERIES.items()
             }
             effective_error = {
-                k: _inject_org_filter(v, org_id) for k, v in ERROR_RANGE_QUERIES.items()
+                k: _inject_org_filter(v, user_id) for k, v in ERROR_RANGE_QUERIES.items()
             }
             effective_ctx_lat = {
-                k: _inject_org_filter(v, org_id)
+                k: _inject_org_filter(v, user_id)
                 for k, v in CONTEXT_LATENCY_RANGE_QUERIES.items()
             }
             effective_graph_lat = {
-                k: _inject_org_filter(v, org_id)
+                k: _inject_org_filter(v, user_id)
                 for k, v in GRAPH_LATENCY_RANGE_QUERIES.items()
             }
         else:

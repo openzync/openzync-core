@@ -124,7 +124,7 @@ def upgrade():
     op.create_table(
         "addon_{addon_id}_notes",
         sa.Column("id", sa.Integer, primary_key=True),
-        sa.Column("organization_id", sa.Uuid, nullable=False),
+        sa.Column("user_id", sa.Uuid, nullable=False),
         sa.Column("body", sa.Text),
     )
 
@@ -160,7 +160,6 @@ async def superadmin_client(isolated_app: Any) -> Any:
             {"id": PLATFORM_ORG_ID},
         )
         user = await UserRepository(session).create(
-            organization_id=PLATFORM_ORG_ID,
             external_id=f"superadmin_{uuid4().hex[:8]}",
             role="superadmin",
         )
@@ -172,7 +171,7 @@ async def superadmin_client(isolated_app: Any) -> Any:
     token = create_jwt_token(
         data={
             "sub": str(user.id),
-            "org_id": str(PLATFORM_ORG_ID),
+            "user_id": str(PLATFORM_ORG_ID),
             "role": "superadmin",
             "type": "access",
         },

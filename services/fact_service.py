@@ -88,7 +88,7 @@ class FactService:
 
     async def ingest_facts(
         self,
-        org_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         created_by: UUID,
         facts: list[FactTriple],
@@ -111,7 +111,7 @@ class FactService:
         active facts were replaced.
 
         Args:
-            org_id: The authenticated organization UUID.
+            user_id: The authenticated organization UUID.
             project_id: The project UUID.
             created_by: The authenticated user's UUID (attribution).
             facts: List of validated fact triples.
@@ -141,8 +141,7 @@ class FactService:
         job_id = str(uuid4())
         hash_dicts = [f.model_dump() for f in facts]
         claim = await self._idem.claim_content_hash(
-            str(org_id),
-            str(created_by),
+            str(user_id),
             session_external_id,
             hash_dicts,
             payload=job_id,
@@ -167,7 +166,7 @@ class FactService:
         try:
             # ── Step 2: Resolve session ──────────────────────────────────
             session = await self._session_repo.get_by_external_id(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=project_id,
                 external_id=session_external_id,
             )
@@ -210,12 +209,11 @@ class FactService:
                     if self._redis is not None
                     else None
                 ),
-                graph_sync=await self._resolve_graph_sync(org_id, project_id),
+                graph_sync=await self._resolve_graph_sync(user_id, project_id),
             )
             result = await invalidation.ingest_with_supersession(
-                org_id=org_id,
+                user_id=user_id,
                 project_id=project_id,
-                user_id=created_by,
                 facts=fact_dicts,
             )
             created = result.created
@@ -225,23 +223,23 @@ class FactService:
 
             await self._enqueue_embedding_tasks(
                 job_id=job_id,
-                org_id=str(org_id),
+                user_id=str(user_id),
                 project_id=str(project_id),
                 fact_ids=fact_ids,
             )
         except Exception:
             await self._idem.release_content_hash(
-                str(org_id), str(created_by), session_external_id, hash_dicts
+                str(user_id), session_external_id, hash_dicts
             )
             raise
 
         # ── Emit webhook event (best-effort — emit() never raises) ────────
         if self._webhook_service:
             await self._webhook_service.emit(
-                organization_id=org_id,
+                user_id=user_id,
                 event_type=EventType.FACT_EXTRACTED,
                 payload={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "session_id": str(session_id),
                     "fact_count": len(created),
@@ -256,7 +254,7 @@ class FactService:
                 "count": len(created),
                 "superseded_count": result.superseded_count,
                 "project_id": str(project_id),
-                "org_id": str(org_id),
+                "user_id": str(user_id),
             },
         )
 
@@ -272,14 +270,14 @@ class FactService:
         self,
         fact_id: UUID,
         *,
-        organization_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         reason: str | None = None,
         at_time: datetime | None = None,
     ) -> Fact:
         """Hard-retract a fact by setting ``invalid_at`` and record its lineage.
 
-        Scoped to ``(organization_id, project_id)``: a fact from another
+        Scoped to ``(user_id, project_id)``: a fact from another
         project (even in the same org) is indistinguishable from a missing
         one — ``NotFoundError`` either way, so the fact's existence is not
         leaked across project boundaries.
@@ -294,7 +292,7 @@ class FactService:
 
         Args:
             fact_id: The fact to retract.
-            organization_id: Tenant scope — the fact must belong to this
+            user_id: Tenant scope — the fact must belong to this
                 organization (defense-in-depth; RLS is org-scoped).
             project_id: Project scope — the fact must belong to this
                 project or ``NotFoundError`` is raised.
@@ -313,7 +311,7 @@ class FactService:
             at_time = datetime.now(UTC)
 
         fact = await self._fact_repo.get_by_id(
-            fact_id, organization_id=organization_id
+            fact_id, user_id=user_id
         )
         # NotFoundError, not 403 — a cross-project fact must be
         # indistinguishable from a nonexistent one (no existence leak).
@@ -329,7 +327,7 @@ class FactService:
             logger.debug(
                 "fact_retraction.requested",
                 extra={
-                    "org_id": str(fact.organization_id),
+                    "user_id": str(fact.user_id),
                     "project_id": str(fact.project_id),
                     "fact_id": str(fact.id),
                     "reason": reason,
@@ -349,7 +347,7 @@ class FactService:
         await self._fact_repo.lock_conflict_identities(
             [
                 FactInvalidationService._lock_key_for_identity(
-                    fact.organization_id, fact.project_id, _name_identity
+                    fact.user_id, fact.project_id, _name_identity
                 )
             ]
         )
@@ -360,7 +358,7 @@ class FactService:
         await self._db.refresh(fact)
 
         await self._fact_repo.record_invalidation_event(
-            organization_id=fact.organization_id,
+            user_id=user_id,
             project_id=fact.project_id,
             old_fact_id=fact.id,
             new_fact_id=None,
@@ -382,11 +380,11 @@ class FactService:
                 else None
             ),
             graph_sync=await self._resolve_graph_sync(
-                fact.organization_id, fact.project_id
+                fact.user_id, fact.project_id
             ),
         )
         invalidation.notify_retraction(
-            org_id=fact.organization_id,
+            user_id=fact.user_id,
             project_id=fact.project_id,
             old_fact=fact,
             at_time=at_time,
@@ -395,7 +393,7 @@ class FactService:
         logger.info(
             "fact_retraction.requested",
             extra={
-                "org_id": str(fact.organization_id),
+                "user_id": str(fact.user_id),
                 "project_id": str(fact.project_id),
                 "fact_id": str(fact.id),
                 "reason": reason,
@@ -409,7 +407,7 @@ class FactService:
         self,
         fact_id: UUID,
         *,
-        organization_id: UUID,
+        user_id: UUID,
         project_id: UUID,
         limit: int = 50,
         offset: int = 0,
@@ -417,12 +415,12 @@ class FactService:
     ) -> dict[str, Any]:
         """Fetch a fact and its invalidation-lineage events.
 
-        Scoped to ``(organization_id, project_id)`` — same non-leaking
+        Scoped to ``(user_id, project_id)`` — same non-leaking
         ``NotFoundError`` behavior as :meth:`retract_fact`.
 
         Args:
             fact_id: The fact whose lineage to fetch.
-            organization_id: Tenant scope — the fact must belong to this
+            user_id: Tenant scope — the fact must belong to this
                 organization (defense-in-depth; RLS is org-scoped).
             project_id: Project scope — the fact must belong to this
                 project or ``NotFoundError`` is raised.
@@ -440,7 +438,7 @@ class FactService:
                 scoped organization and project.
         """
         fact = await self._fact_repo.get_by_id(
-            fact_id, organization_id=organization_id
+            fact_id, user_id=user_id
         )
         if fact is None or fact.project_id != project_id:
             raise NotFoundError(
@@ -450,7 +448,7 @@ class FactService:
 
         events = await self._fact_repo.get_fact_history(
             fact_id,
-            organization_id=organization_id,
+            user_id=user_id,
             limit=limit,
             offset=offset,
             sort=sort,
@@ -463,7 +461,7 @@ class FactService:
     # ── Internal helpers ────────────────────────────────────────────────────────
 
     async def _resolve_graph_sync(
-        self, org_id: UUID, project_id: UUID
+        self, user_id: UUID, project_id: UUID
     ) -> GraphEdgeSyncService | None:
         """Resolve the org's graph backend and build the edge-sync service.
 
@@ -475,7 +473,7 @@ class FactService:
         failure must not lose or 500 a fact commit.
 
         Args:
-            org_id: The organization UUID.
+            user_id: The organization UUID.
             project_id: The project UUID (log context).
 
         Returns:
@@ -485,12 +483,12 @@ class FactService:
         if self._graph_backend_resolver is None:
             return None
         try:
-            backend = await self._graph_backend_resolver(org_id)
+            backend = await self._graph_backend_resolver(user_id)
         except Exception as exc:
             logger.warning(
                 "fact_service.graph_backend_resolve_failed",
                 extra={
-                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                     "project_id": str(project_id),
                     "error": str(exc),
                 },
@@ -505,7 +503,7 @@ class FactService:
     async def _enqueue_embedding_tasks(
         self,
         job_id: str,
-        org_id: str,
+        user_id: str,
         project_id: str,
         fact_ids: list[str],
     ) -> None:
@@ -513,7 +511,7 @@ class FactService:
 
         Args:
             job_id: The composite job ID for this ingestion.
-            org_id: The organization UUID string.
+            user_id: The organization UUID string.
             project_id: The project UUID string.
             fact_ids: List of fact UUIDs to embed.
         """
@@ -533,7 +531,7 @@ class FactService:
                         "embed_fact",
                         queue_name=qname,
                         fact_id=fact_id,
-                        org_id=org_id,
+                        user_id=user_id,
                         project_id=project_id,
                         trace_id=trace_id,
                     )
@@ -546,7 +544,7 @@ class FactService:
                 extra={
                     "job_id": job_id,
                     "task_count": len(fact_ids),
-                    "org_id": org_id,
+                    "user_id": user_id,
                 },
             )
         except Exception:
@@ -554,7 +552,7 @@ class FactService:
                 "fact_service.arq_enqueue_failed",
                 extra={
                     "job_id": job_id,
-                    "org_id": org_id,
+                    "user_id": user_id,
                     "project_id": project_id,
                     "fact_ids": fact_ids,
                     "error": "ARQ pool unavailable — tasks not enqueued. "
@@ -568,7 +566,7 @@ class FactService:
 
     async def list_facts_by_session(
         self,
-        organization_id: UUID,
+        user_id: UUID,
         session_id: UUID,
         limit: int = 50,
         cursor: str | None = None,
@@ -577,7 +575,7 @@ class FactService:
         """List non-invalidated facts extracted from a session's messages.
 
         Args:
-            organization_id: Tenant scope.
+            user_id: Tenant scope.
             session_id: The session to fetch facts for.
             limit: Max results per page (1–200).
             cursor: Opaque base64 cursor from a previous page.
@@ -587,7 +585,7 @@ class FactService:
             Tuple of (list of fact dicts, next_cursor or None).
         """
         return await self._fact_repo.list_by_session(
-            organization_id=organization_id,
+            user_id=user_id,
             session_id=session_id,
             limit=limit,
             cursor=cursor,

@@ -112,7 +112,7 @@ class TestWebhookService:
     def _make_endpoint(
         self,
         endpoint_id: UUID | None = None,
-        org_id: UUID | None = None,
+        user_id: UUID | None = None,
         name: str = "Test Endpoint",
         url: str = "https://example.com/hook",
         events: list[str] | None = None,
@@ -129,7 +129,7 @@ class TestWebhookService:
         """
         ep = MagicMock(spec=WebhookEndpoint)
         ep.id = endpoint_id or self.ENDPOINT_ID
-        ep.organization_id = org_id or self.ORG_ID
+        ep.user_id = user_id or self.ORG_ID
         ep.name = name
         ep.url = url
         ep.events = json.dumps(events or [])
@@ -218,7 +218,7 @@ class TestWebhookService:
         mock_repo.create.return_value = self._make_endpoint()
 
         endpoint, secret = await service.create_endpoint(
-            organization_id=self.ORG_ID,
+            user_id=self.ORG_ID,
             name="New Hook",
             url="https://example.com/hook",
             events=["session.created"],
@@ -398,7 +398,7 @@ class TestWebhookService:
 
         with patch("services.webhook_service.get_arq", return_value=mock_arq_pool):
             result = await service.emit(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 event_type="session.created",
                 payload={"session_id": "s1"},
             )
@@ -417,7 +417,7 @@ class TestWebhookService:
 
         with patch("services.webhook_service.get_arq") as mock_get_arq:
             result = await service.emit(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 event_type="unknown.event",
             )
 
@@ -446,7 +446,7 @@ class TestWebhookService:
             caplog.at_level(logging.ERROR, logger="openzync.webhooks"),
         ):
             result = await service.emit(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 event_type="session.created",
             )
 
@@ -473,7 +473,7 @@ class TestWebhookService:
             caplog.at_level(logging.ERROR, logger="openzync.webhooks"),
         ):
             result = await service.emit(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 event_type="session.created",
             )
 
@@ -504,7 +504,7 @@ class TestWebhookService:
             caplog.at_level(logging.ERROR, logger="openzync.webhooks"),
         ):
             result = await service.emit(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 event_type="session.created",
             )
 
@@ -526,7 +526,7 @@ class TestWebhookService:
 
         with patch("services.webhook_service.get_arq", return_value=mock_arq_pool):
             result = await service.emit(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 event_type="session.created",
                 payload={"session_id": "s1", "project_id": "p1"},
             )
@@ -556,7 +556,7 @@ class TestWebhookService:
         mock_arq_pool = AsyncMock()
         with patch("services.webhook_service.get_arq", return_value=mock_arq_pool):
             result = await service.emit(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 event_type="session.created",
                 payload={"session_id": "s1"},
             )
@@ -593,7 +593,7 @@ class TestWebhookService:
         mock_arq_pool = AsyncMock()
         with patch("services.webhook_service.get_arq", return_value=mock_arq_pool):
             result = await service.emit(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 event_type="session.created",
                 payload={},
             )
@@ -632,7 +632,7 @@ class TestWebhookService:
         mock_arq_pool = AsyncMock()
         with patch("services.webhook_service.get_arq", return_value=mock_arq_pool):
             result = await service.emit(
-                organization_id=self.ORG_ID,
+                user_id=self.ORG_ID,
                 event_type="session.created",
                 payload={},
             )

@@ -14,12 +14,12 @@ from httpx import ASGITransport, AsyncClient
 
 from dependencies.auth import (
     get_dashboard_user,
-    require_org_id,
+    require_user_id,
 )
 from dependencies.services import get_quick_actions_service
 from routers.admin_quick_actions import router
 
-ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 
 
@@ -31,7 +31,7 @@ def _stub_permission_gate() -> None:
     closure created at router import time that cannot be keyed in
     ``dependency_overrides``.  Patching ``dependencies.auth._check_permission``
     (the shared decision function) stubs the gate while keeping the
-    ``require_org_id`` chain intact.  The real gate matrix is covered by
+    ``require_user_id`` chain intact.  The real gate matrix is covered by
     ``test_admin_gate_matrix.py``.
     """
     with patch("dependencies.auth._check_permission", new=AsyncMock()):
@@ -45,7 +45,7 @@ def _create_app() -> tuple[FastAPI, dict[str, AsyncMock]]:
 
     @app.middleware("http")
     async def _mock_auth(request, call_next):
-        request.state.org_id = str(ORG_ID)
+        request.state.user_id = str(USER_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "jwt"
         response = await call_next(request)
@@ -56,7 +56,7 @@ def _create_app() -> tuple[FastAPI, dict[str, AsyncMock]]:
     from dependencies.db import get_db
 
     app.dependency_overrides[get_db] = lambda: AsyncMock()
-    app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+    app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
     app.dependency_overrides[get_dashboard_user] = lambda: str(USER_ID)
     app.dependency_overrides[get_quick_actions_service] = lambda: mocks["quick_actions_service"]
 
@@ -95,7 +95,7 @@ async def test_list_quick_actions_success() -> None:
     assert body["actions"][0]["icon"] == "folder-kanban"
     assert body["actions"][1]["label"] == "Configure LLM Provider"
 
-    mocks["quick_actions_service"].get_actions.assert_awaited_once_with(ORG_ID)
+    mocks["quick_actions_service"].get_actions.assert_awaited_once_with(USER_ID)
 
 
 @pytest.mark.asyncio
@@ -144,7 +144,7 @@ async def test_quick_actions_requires_auth() -> None:
     """GET /v1/admin/quick-actions returns 401 when unauthenticated."""
     app = FastAPI()
     # Set up db_session_factory so get_db succeeds.
-    # require_org_id will raise 401 naturally because no middleware sets org_id.
+    # require_user_id will raise 401 naturally because no middleware sets user_id.
     app.state.db_session_factory = MagicMock()
     app.include_router(router)
 

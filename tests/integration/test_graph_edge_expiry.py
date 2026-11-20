@@ -76,14 +76,13 @@ def _seed_worker_settings() -> Iterator[None]:
 async def _seed_user(db: AsyncSession, user_id: UUID) -> None:
     await db.execute(
         sa_text(
-            "INSERT INTO users (id, organization_id, external_id, name, "
+            "INSERT INTO users (id, external_id, name, "
             "role, is_active) "
-            "VALUES (:uid, :org_id, :eid, :name, 'member', true) "
+            "VALUES (:uid, :eid, :name, 'member', true) "
             "ON CONFLICT (id) DO NOTHING"
         ),
         {
             "uid": user_id,
-            "org_id": ORG_ID,
             "eid": f"edge-exp-{user_id}",
             "name": "Edge Expiry Test User",
         },
@@ -96,6 +95,7 @@ async def _make_graph(
     src_name: str,
     tgt_name: str,
     rel: str,
+    user_id: UUID,
     valid_from: datetime | None = None,
 ) -> dict:
     """Create two entities + one edge with the Postgres backend (real code)."""
@@ -103,13 +103,13 @@ async def _make_graph(
     try:
         backend = PostgresGraphBackend(db=db)
         src = await backend.create_entity(
-            ORG_ID, PROJECT_ID, name=src_name, entity_type="person"
+            user_id, PROJECT_ID, name=src_name, entity_type="person"
         )
         tgt = await backend.create_entity(
-            ORG_ID, PROJECT_ID, name=tgt_name, entity_type="brand"
+            user_id, PROJECT_ID, name=tgt_name, entity_type="brand"
         )
         rel_row = await backend.create_relationship(
-            ORG_ID,
+            user_id,
             PROJECT_ID,
             source_id=UUID(src["id"]),
             target_id=UUID(tgt["id"]),
@@ -143,10 +143,10 @@ async def _edge_invalid_at(
         return row[0] if row else None
 
 
-async def _edge_ids_for(engine, entity_id: UUID) -> list[str]:
+async def _edge_ids_for(engine, user_id: UUID, entity_id: UUID) -> list[str]:
     async with AsyncSession(engine) as db:
         backend = PostgresGraphBackend(db=db)
-        listing = await backend.list_entity_edges(ORG_ID, PROJECT_ID, entity_id)
+        listing = await backend.list_entity_edges(user_id, PROJECT_ID, entity_id)
         return [e["id"] for e in listing["items"]]
 
 
@@ -197,9 +197,9 @@ class TestCrossFormSupersessionExpiresEdge:
             await db.commit()
 
         graph = await _make_graph(
-            engine, src_name="Robbie", tgt_name="Adidas", rel="wears", valid_from=T0
+            engine, user_id=user_id, src_name="Robbie", tgt_name="Adidas", rel="wears", valid_from=T0
         )
-        assert await _edge_ids_for(engine, graph["src_id"]), (
+        assert await _edge_ids_for(engine, user_id, graph["src_id"]), (
             "edge must exist post-enrichment"
         )
 
@@ -208,7 +208,7 @@ class TestCrossFormSupersessionExpiresEdge:
         try:
             backend = PostgresGraphBackend(db=db)
             pre = await backend.traverse(
-                ORG_ID,
+                user_id,
                 PROJECT_ID,
                 graph["src_id"],
                 max_depth=1,
@@ -230,7 +230,7 @@ class TestCrossFormSupersessionExpiresEdge:
                 graph_sync=GraphEdgeSyncService(backends=[backend]),
             )
             r1 = await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[
@@ -255,7 +255,7 @@ class TestCrossFormSupersessionExpiresEdge:
                 graph_sync=GraphEdgeSyncService(backends=[backend]),
             )
             r2 = await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[_literal_triple("Robbie definitely wears Adidas")],
@@ -276,7 +276,7 @@ class TestCrossFormSupersessionExpiresEdge:
         assert invalid_at == T1, "edge must be invalidated at the supersession instant"
 
         # Edge gone from the active listing.
-        assert await _edge_ids_for(engine, graph["src_id"]) == []
+        assert await _edge_ids_for(engine, user_id, graph["src_id"]) == []
 
         # Bitemporal exclusion: invalidated at T1, the edge is still
         # traversable at an as-of before T1 and excluded only at/after T1.
@@ -284,14 +284,14 @@ class TestCrossFormSupersessionExpiresEdge:
         try:
             backend = PostgresGraphBackend(db=db)
             before_t1 = await backend.traverse(
-                ORG_ID,
+                user_id,
                 PROJECT_ID,
                 graph["src_id"],
                 max_depth=1,
                 at_time=T0 + timedelta(minutes=1),
             )
             after_t1 = await backend.traverse(
-                ORG_ID,
+                user_id,
                 PROJECT_ID,
                 graph["src_id"],
                 max_depth=1,
@@ -316,6 +316,7 @@ class TestCrossFormSupersessionExpiresEdge:
 
         graph = await _make_graph(
             engine,
+            user_id=user_id,
             src_name="AsOfSource",
             tgt_name="AsOfTarget",
             rel="wears",
@@ -331,7 +332,7 @@ class TestCrossFormSupersessionExpiresEdge:
                 graph_sync=GraphEdgeSyncService(backends=[backend]),
             )
             await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[_entity_triple(graph["src_id"], graph["tgt_id"], "wears")],
@@ -346,7 +347,7 @@ class TestCrossFormSupersessionExpiresEdge:
         try:
             backend = PostgresGraphBackend(db=db)
             at_t0_before = await backend.retrieve_graph(
-                ORG_ID, PROJECT_ID, query="AsOfSource", as_of=T0 + timedelta(minutes=1)
+                user_id, PROJECT_ID, query="AsOfSource", as_of=T0 + timedelta(minutes=1)
             )
             assert any(n["distance"] == 1 for n in at_t0_before), at_t0_before
         finally:
@@ -362,7 +363,7 @@ class TestCrossFormSupersessionExpiresEdge:
                 graph_sync=GraphEdgeSyncService(backends=[backend]),
             )
             await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[_literal_triple("AsOfSource wears AsOfTarget now")],
@@ -383,13 +384,13 @@ class TestCrossFormSupersessionExpiresEdge:
         try:
             backend = PostgresGraphBackend(db=db)
             at_t0 = await backend.retrieve_graph(
-                ORG_ID, PROJECT_ID, query="AsOfSource", as_of=T0 + timedelta(minutes=1)
+                user_id, PROJECT_ID, query="AsOfSource", as_of=T0 + timedelta(minutes=1)
             )
             at_t1 = await backend.retrieve_graph(
-                ORG_ID, PROJECT_ID, query="AsOfSource", as_of=T1
+                user_id, PROJECT_ID, query="AsOfSource", as_of=T1
             )
             at_t2 = await backend.retrieve_graph(
-                ORG_ID, PROJECT_ID, query="AsOfSource", as_of=T2
+                user_id, PROJECT_ID, query="AsOfSource", as_of=T2
             )
             assert any(n["distance"] == 1 for n in at_t0), (
                 "as-of before the invalidation instant must still see the edge"
@@ -412,7 +413,7 @@ class TestSameKeySupersessionKeepsEdge:
             await db.commit()
 
         graph = await _make_graph(
-            engine, src_name="KeepSrc", tgt_name="KeepTgt", rel="wears", valid_from=T0
+            engine, user_id=user_id, src_name="KeepSrc", tgt_name="KeepTgt", rel="wears", valid_from=T0
         )
 
         def _entity(content: str) -> dict[str, Any]:
@@ -429,7 +430,7 @@ class TestSameKeySupersessionKeepsEdge:
                     graph_sync=GraphEdgeSyncService(backends=[backend]),
                 )
                 result = await service.ingest_with_supersession(
-                    org_id=ORG_ID,
+                    
                     project_id=PROJECT_ID,
                     user_id=user_id,
                     facts=[_entity(content)],
@@ -446,7 +447,7 @@ class TestSameKeySupersessionKeepsEdge:
             await _edge_invalid_at(engine, graph["src_id"], graph["tgt_id"], "wears")
             is None
         )
-        assert await _edge_ids_for(engine, graph["src_id"]), (
+        assert await _edge_ids_for(engine, user_id, graph["src_id"]), (
             "same-key supersession must NOT expire the edge"
         )
 
@@ -462,6 +463,7 @@ class TestRetractionExpiresEdge:
 
         graph = await _make_graph(
             engine,
+            user_id=user_id,
             src_name="RetractSrc",
             tgt_name="RetractTgt",
             rel="wears",
@@ -477,7 +479,7 @@ class TestRetractionExpiresEdge:
                 graph_sync=GraphEdgeSyncService(backends=[backend]),
             )
             result = await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[
@@ -498,7 +500,7 @@ class TestRetractionExpiresEdge:
                     graph_sync=GraphEdgeSyncService(backends=[backend2]),
                 )
                 service2.notify_retraction(
-                    org_id=ORG_ID, project_id=PROJECT_ID, old_fact=old_fact, at_time=T1
+                    user_id=user_id, project_id=PROJECT_ID, old_fact=old_fact, at_time=T1
                 )
                 await db2.commit()
             finally:
@@ -510,7 +512,7 @@ class TestRetractionExpiresEdge:
             lambda: _edge_invalid_at(engine, graph["src_id"], graph["tgt_id"], "wears")
         )
         assert invalid_at == T1
-        assert await _edge_ids_for(engine, graph["src_id"]) == []
+        assert await _edge_ids_for(engine, user_id, graph["src_id"]) == []
 
 
 class TestIngestRollbackKeepsEdge:
@@ -523,7 +525,7 @@ class TestIngestRollbackKeepsEdge:
             await db.commit()
 
         graph = await _make_graph(
-            engine, src_name="RBSrc", tgt_name="RBTgt", rel="wears", valid_from=T0
+            engine, user_id=user_id, src_name="RBSrc", tgt_name="RBTgt", rel="wears", valid_from=T0
         )
 
         db = AsyncSession(engine, expire_on_commit=False)
@@ -535,7 +537,7 @@ class TestIngestRollbackKeepsEdge:
                 graph_sync=GraphEdgeSyncService(backends=[backend]),
             )
             await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[_entity_triple(graph["src_id"], graph["tgt_id"], "v1")],
@@ -555,7 +557,7 @@ class TestIngestRollbackKeepsEdge:
                 graph_sync=GraphEdgeSyncService(backends=[backend]),
             )
             await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[_literal_triple("RBSrc wears RBTgt (never committed)")],
@@ -570,7 +572,7 @@ class TestIngestRollbackKeepsEdge:
             await _edge_invalid_at(engine, graph["src_id"], graph["tgt_id"], "wears")
             is None
         )
-        assert await _edge_ids_for(engine, graph["src_id"]), (
+        assert await _edge_ids_for(engine, user_id, graph["src_id"]), (
             "rolled-back supersession must not expire the edge"
         )
 
@@ -587,14 +589,14 @@ class TestInBatchCrossFormCollapse:
             await db.commit()
 
         graph = await _make_graph(
-            engine, src_name="DupSrc", tgt_name="DupTgt", rel="wears"
+            engine, user_id=user_id, src_name="DupSrc", tgt_name="DupTgt", rel="wears"
         )
 
         db = AsyncSession(engine, expire_on_commit=False)
         try:
             service = FactInvalidationService(db=db, fact_repo=FactRepository(db))
             result = await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[
@@ -636,7 +638,7 @@ class TestReconcileAntiJoin:
             await db.commit()
 
         graph = await _make_graph(
-            engine, src_name="RecSrc", tgt_name="RecTgt", rel="works_at"
+            engine, user_id=user_id, src_name="RecSrc", tgt_name="RecTgt", rel="works_at"
         )
 
         enqueued: list[dict] = []
@@ -675,7 +677,7 @@ class TestReconcileAntiJoin:
             await db.commit()
 
         graph = await _make_graph(
-            engine, src_name="KeepRecSrc", tgt_name="KeepRecTgt", rel="works_at"
+            engine, user_id=user_id, src_name="KeepRecSrc", tgt_name="KeepRecTgt", rel="works_at"
         )
 
         # A live, open-ended fact asserts the exact edge key.
@@ -683,7 +685,7 @@ class TestReconcileAntiJoin:
         try:
             service = FactInvalidationService(db=db, fact_repo=FactRepository(db))
             await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[
@@ -734,14 +736,14 @@ class TestReconcileAntiJoin:
             await db.commit()
 
         graph = await _make_graph(
-            engine, src_name="DriftSrc", tgt_name="DriftTgt", rel="works_at"
+            engine, user_id=user_id, src_name="DriftSrc", tgt_name="DriftTgt", rel="works_at"
         )
 
         db = AsyncSession(engine, expire_on_commit=False)
         try:
             service = FactInvalidationService(db=db, fact_repo=FactRepository(db))
             result = await service.ingest_with_supersession(
-                org_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[
@@ -769,7 +771,7 @@ class TestReconcileAntiJoin:
                     db=db2, fact_repo=FactRepository(db2)
                 )
                 result2 = await service2.ingest_with_supersession(
-                    org_id=ORG_ID,
+                    
                     project_id=PROJECT_ID,
                     user_id=user_id,
                     facts=[
@@ -836,13 +838,13 @@ class TestReconcileAntiJoin:
 
         now = datetime.now(UTC)
         graph = await _make_graph(
-            engine, src_name="FutValidSrc", tgt_name="FutValidTgt", rel="works_at"
+            engine, user_id=user_id, src_name="FutValidSrc", tgt_name="FutValidTgt", rel="works_at"
         )
 
         db = AsyncSession(engine, expire_on_commit=False)
         try:
             await FactRepository(db).batch_create(
-                organization_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[
@@ -899,13 +901,13 @@ class TestReconcileAntiJoin:
 
         now = datetime.now(UTC)
         graph = await _make_graph(
-            engine, src_name="FutDatedSrc", tgt_name="FutDatedTgt", rel="works_at"
+            engine, user_id=user_id, src_name="FutDatedSrc", tgt_name="FutDatedTgt", rel="works_at"
         )
 
         db = AsyncSession(engine, expire_on_commit=False)
         try:
             await FactRepository(db).batch_create(
-                organization_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[
@@ -959,13 +961,13 @@ class TestReconcileAntiJoin:
 
         now = datetime.now(UTC)
         graph = await _make_graph(
-            engine, src_name="PastWinSrc", tgt_name="PastWinTgt", rel="works_at"
+            engine, user_id=user_id, src_name="PastWinSrc", tgt_name="PastWinTgt", rel="works_at"
         )
 
         db = AsyncSession(engine, expire_on_commit=False)
         try:
             await FactRepository(db).batch_create(
-                organization_id=ORG_ID,
+                
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[

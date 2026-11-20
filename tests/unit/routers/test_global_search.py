@@ -15,7 +15,7 @@ from httpx import ASGITransport, AsyncClient
 
 from schemas.search import GlobalSearchItem
 
-ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 
 
@@ -27,7 +27,7 @@ def _stub_permission_gate() -> None:
     closure created at router import time that cannot be keyed in
     ``dependency_overrides``.  Patching ``dependencies.auth._check_permission``
     (the shared decision function) stubs the gate while keeping the
-    ``require_org_id`` chain intact.  The real gate matrix is covered by
+    ``require_user_id`` chain intact.  The real gate matrix is covered by
     ``test_admin_gate_matrix.py``.
     """
     with patch("dependencies.auth._check_permission", new=AsyncMock()):
@@ -74,7 +74,7 @@ class TestGlobalSearchRouter:
             ),
         ]
 
-        from dependencies.auth import get_current_user_id, require_org_id
+        from dependencies.auth import get_current_user_id, require_user_id
         from dependencies.db import get_db
         from routers.global_search import router
 
@@ -85,12 +85,12 @@ class TestGlobalSearchRouter:
         # on Python 3.14 introspects AsyncMock differently and produces
         # spurious 422 errors for "args" and "kwargs" parameters.
         app.dependency_overrides[get_db] = lambda: AsyncMock()
-        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
         app.dependency_overrides[get_current_user_id] = lambda: USER_ID
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(USER_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -118,7 +118,7 @@ class TestGlobalSearchRouter:
         mock_instance = AsyncMock()
         mock_search_service.return_value = mock_instance
 
-        from dependencies.auth import get_current_user_id, require_org_id
+        from dependencies.auth import get_current_user_id, require_user_id
         from dependencies.db import get_db
         from routers.global_search import router
 
@@ -128,12 +128,12 @@ class TestGlobalSearchRouter:
         # on Python 3.14 introspects AsyncMock differently and produces
         # spurious 422 errors for "args" and "kwargs" parameters.
         app.dependency_overrides[get_db] = lambda: AsyncMock()
-        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
         app.dependency_overrides[get_current_user_id] = lambda: USER_ID
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(USER_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -154,7 +154,7 @@ class TestGlobalSearchRouter:
         mock_instance = AsyncMock()
         mock_search_service.return_value = mock_instance
 
-        from dependencies.auth import get_current_user_id, require_org_id
+        from dependencies.auth import get_current_user_id, require_user_id
         from dependencies.db import get_db
         from routers.global_search import router
 
@@ -164,12 +164,12 @@ class TestGlobalSearchRouter:
         # on Python 3.14 introspects AsyncMock differently and produces
         # spurious 422 errors for "args" and "kwargs" parameters.
         app.dependency_overrides[get_db] = lambda: AsyncMock()
-        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
         app.dependency_overrides[get_current_user_id] = lambda: USER_ID
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(USER_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -191,7 +191,7 @@ class TestGlobalSearchRouter:
         mock_search_service.return_value = mock_instance
         mock_instance.search.return_value = []
 
-        from dependencies.auth import get_current_user_id, require_org_id
+        from dependencies.auth import get_current_user_id, require_user_id
         from dependencies.db import get_db
         from routers.global_search import router
 
@@ -201,12 +201,12 @@ class TestGlobalSearchRouter:
         # on Python 3.14 introspects AsyncMock differently and produces
         # spurious 422 errors for "args" and "kwargs" parameters.
         app.dependency_overrides[get_db] = lambda: AsyncMock()
-        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
         app.dependency_overrides[get_current_user_id] = lambda: USER_ID
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(USER_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)
@@ -231,7 +231,7 @@ class TestGlobalSearchRouter:
         mock_search_service.return_value = mock_instance
         mock_instance.search.return_value = []
 
-        from dependencies.auth import get_current_user_id, require_org_id
+        from dependencies.auth import get_current_user_id, require_user_id
         from dependencies.db import get_db
         from routers.global_search import router
 
@@ -241,12 +241,12 @@ class TestGlobalSearchRouter:
         # on Python 3.14 introspects AsyncMock differently and produces
         # spurious 422 errors for "args" and "kwargs" parameters.
         app.dependency_overrides[get_db] = lambda: AsyncMock()
-        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
         app.dependency_overrides[get_current_user_id] = lambda: USER_ID
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
-            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(USER_ID)
             request.state.user_id = str(USER_ID)
             request.state.auth_type = "jwt"
             response = await call_next(request)

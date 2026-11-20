@@ -27,8 +27,8 @@ class FactInvalidationEvent(TimestampMixin, Base):
 
     Attributes:
         id: UUID primary key.
-        organization_id: Denormalized organization ID for RLS — no FK,
-            mirrors ``facts.organization_id``.
+        user_id: Denormalized organization ID for RLS — no FK,
+            mirrors ``facts.user_id``.
         project_id: Project scope, FK to ``projects`` (CASCADE).
         old_fact_id: The fact that stopped being current (FK to
             ``facts``, SET NULL on delete — nullable so a hard-deleted
@@ -52,7 +52,7 @@ class FactInvalidationEvent(TimestampMixin, Base):
         primary_key=True,
         server_default=func.gen_random_uuid(),
     )
-    organization_id: Mapped[uuid.UUID] = mapped_column(
+    user_id: Mapped[uuid.UUID] = mapped_column(
         # No FK constraint — denormalized for RLS performance, mirrors facts.
         # ⚠️ data integrity is application-enforced, not DB-enforced
         nullable=False,

@@ -15,13 +15,13 @@ class TestGraphObservationModel:
     def test_required_fields(self) -> None:
         """Minimal required fields produce a valid instance."""
         obs = GraphObservation(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             project_id=uuid.uuid4(),
             subject_entity_id=uuid.uuid4(),
             observation_type="co_occurrence",
             content="Alice and Bob appear together frequently.",
         )
-        assert obs.organization_id is not None
+        assert obs.user_id is not None
         assert obs.project_id is not None
         assert obs.subject_entity_id is not None
         assert obs.observation_type == "co_occurrence"
@@ -31,7 +31,7 @@ class TestGraphObservationModel:
     def test_nullable_fields(self) -> None:
         """related_entity_id, supporting_fact_ids, supporting_relationship_ids, valid_from, valid_to, observation_metadata default to None."""
         obs = GraphObservation(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             project_id=uuid.uuid4(),
             subject_entity_id=uuid.uuid4(),
             observation_type="temporal_pattern",
@@ -48,7 +48,7 @@ class TestGraphObservationModel:
     def test_confidence_default(self) -> None:
         """confidence has server_default '0.0', but Python-level default may be 0.0."""
         obs = GraphObservation(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             project_id=uuid.uuid4(),
             subject_entity_id=uuid.uuid4(),
             observation_type="behavioral_pattern",
@@ -70,7 +70,7 @@ class TestGraphObservationModel:
     def test_repr(self) -> None:
         """repr includes subject_entity_id and observation_type."""
         obs = GraphObservation(
-            organization_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
             project_id=uuid.uuid4(),
             subject_entity_id=uuid.uuid4(),
             observation_type="co_occurrence",

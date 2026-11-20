@@ -87,7 +87,7 @@ class PromMetricsQueriesService:
 
     async def error_rate_by_day(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
         limit: int,
@@ -98,7 +98,7 @@ class PromMetricsQueriesService:
         _ = (project_id, limit)
         promql = (
             'sum(increase(openzync_http_requests_total{status="5xx",'
-            f'org_id="{org_id}"}}[1d]))'
+            f'user_id="{user_id}"}}[1d]))'
         )
         rows = await self._prom_range(promql, start, end)
         params = {"from": start.isoformat(), "to": end.isoformat()}
@@ -108,7 +108,7 @@ class PromMetricsQueriesService:
 
     async def latency_percentiles(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
         limit: int,
@@ -123,7 +123,7 @@ class PromMetricsQueriesService:
         queries = {
             f"{prefix}_p{q}": (
                 f"histogram_quantile({v}, sum(rate({metric}"
-                f'{{org_id="{org_id}"}}[5m])) by (le)) * 1000'
+                f'{{user_id="{user_id}"}}[5m])) by (le)) * 1000'
             )
             for prefix, metric in (
                 ("overall", "openzync_http_request_duration_seconds_bucket"),
@@ -146,7 +146,7 @@ class PromMetricsQueriesService:
 
     async def context_retrieval_rate(
         self,
-        org_id: UUID,
+        user_id: UUID,
         start: datetime,
         end: datetime,
         limit: int,
@@ -157,7 +157,7 @@ class PromMetricsQueriesService:
         _ = (project_id, limit)
         promql = (
             "sum(rate(openzync_context_latency_seconds_count{"
-            f'org_id="{org_id}"}}[5m]))'
+            f'user_id="{user_id}"}}[5m]))'
         )
         rows = await self._prom_range(promql, start, end)
         params = {"from": start.isoformat(), "to": end.isoformat()}

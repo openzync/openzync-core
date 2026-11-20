@@ -21,7 +21,7 @@ from core.redis import get_redis
 from dependencies.auth import (
     get_actor_permissions,
     get_current_user_id,
-    require_org_id,
+    require_user_id,
     require_permission,
 )
 from dependencies.db import get_db
@@ -64,7 +64,7 @@ async def list_api_keys(
     service: ApiKeyService = Depends(_get_service),
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:manage")),
-    org_id: str = Depends(require_org_id),
+    user_id: str = Depends(require_user_id),
     sort_by: ApiKeySortBy | None = Query(
         default=None, description="Sort key (default created_at)."
     ),
@@ -78,7 +78,7 @@ async def list_api_keys(
         project_id: Injected from the URL path.
         service: API key service.
         _: Project owner auth guard.
-        org_id: Authenticated organization ID.
+        user_id: Authenticated organization ID.
         sort_by: Whitelisted sort key.
         sort_dir: Sort direction.
 
@@ -86,7 +86,7 @@ async def list_api_keys(
         List of API keys with metadata.
     """
     keys = await service.list_project_keys(
-        organization_id=UUID(org_id),
+        user_id=UUID(user_id),
         project_id=project_id,
         sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )
@@ -114,8 +114,7 @@ async def create_api_key(
     service: ApiKeyService = Depends(_get_service),
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:manage")),
-    org_id: str = Depends(require_org_id),
-    user_id: UUID = Depends(get_current_user_id),
+    user_id: str = Depends(require_user_id),
     actor_permissions: frozenset[str] | None = Depends(get_actor_permissions),
 ) -> ApiKeyCreatedResponse:
     """Create a new project-scoped API key.
@@ -125,7 +124,7 @@ async def create_api_key(
         payload: Key name/label.
         service: API key service.
         _: Project owner auth guard.
-        org_id: Authenticated organization ID.
+        user_id: Authenticated organization ID.
         user_id: Authenticated user UUID (stored as ``created_by`` for
             attribution in API-key-authenticated requests).
         actor_permissions: Creator's grantable set (``None`` = wildcard);
@@ -135,7 +134,7 @@ async def create_api_key(
         The new key with the raw value (shown once).
     """
     api_key, raw_key = await service.create_project_key(
-        organization_id=UUID(org_id),
+        user_id=UUID(user_id),
         project_id=project_id,
         payload=payload,
         created_by=user_id,
@@ -172,7 +171,7 @@ async def revoke_api_key(
     service: ApiKeyService = Depends(_get_service),
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:manage")),
-    org_id: str = Depends(require_org_id),
+    user_id: str = Depends(require_user_id),
 ) -> Response:
     """Revoke (soft-delete) a project-scoped API key.
 
@@ -181,7 +180,7 @@ async def revoke_api_key(
         key_id: UUID of the key to revoke.
         service: API key service.
         _: Project owner auth guard.
-        org_id: Authenticated organization ID.
+        user_id: Authenticated organization ID.
 
     Raises:
         NotFoundError: If the key does not exist in this project.
@@ -190,7 +189,7 @@ async def revoke_api_key(
     # a JSON `null` body on the 204, which uvicorn rejects and rolls back
     # the revoke in get_db teardown after 204 headers flush.
     revoked = await service.revoke_project_key(
-        organization_id=UUID(org_id),
+        user_id=UUID(user_id),
         project_id=project_id,
         key_id=key_id,
     )

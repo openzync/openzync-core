@@ -14,7 +14,7 @@ Usage::
     from services.webhook_service import WebhookService
 
     await webhook_service.emit(
-        org_id=org.id,
+        user_id=org.id,
         event_type=EventType.SESSION_CREATED,
         payload={"session_id": str(session.id), "user_id": str(user.id)},
     )

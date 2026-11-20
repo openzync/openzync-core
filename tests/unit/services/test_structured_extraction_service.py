@@ -63,7 +63,7 @@ class TestStructuredExtractionService:
         """Build a MagicMock mimicking a Session ORM model (for ownership check)."""
         session = MagicMock()
         session.id = self.SESSION_ID
-        session.organization_id = self.ORG_ID
+        session.user_id = self.ORG_ID
         return session
 
     # ── get_session_extractions ─────────────────────────────────────────────
@@ -87,7 +87,7 @@ class TestStructuredExtractionService:
         assert next_cursor is None
         assert isinstance(items[0], StructuredExtractionResponse)
         mock_session_repo.get_by_uuid.assert_awaited_once_with(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID, project_id=None,
+            user_id=self.ORG_ID, session_id=self.SESSION_ID, project_id=None,
         )
         mock_repo.get_by_session.assert_awaited_once_with(
             self.ORG_ID,
@@ -144,7 +144,7 @@ class TestStructuredExtractionService:
         assert items == []
         assert next_cursor is None
         mock_session_repo.get_by_uuid.assert_awaited_once_with(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID, project_id=self.PROJECT_ID,
+            user_id=self.ORG_ID, session_id=self.SESSION_ID, project_id=self.PROJECT_ID,
         )
 
     @pytest.mark.asyncio
@@ -177,7 +177,7 @@ class TestStructuredExtractionService:
         assert isinstance(result, StructuredExtractionResponse)
         assert result.data == {"amount": 250.0}
         mock_session_repo.get_by_uuid.assert_awaited_once_with(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID, project_id=None,
+            user_id=self.ORG_ID, session_id=self.SESSION_ID, project_id=None,
         )
         mock_repo.get_by_episode.assert_awaited_once_with(self.ORG_ID, self.EPISODE_ID)
 
@@ -220,5 +220,5 @@ class TestStructuredExtractionService:
 
         assert result is None
         mock_session_repo.get_by_uuid.assert_awaited_once_with(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID, project_id=self.PROJECT_ID,
+            user_id=self.ORG_ID, session_id=self.SESSION_ID, project_id=self.PROJECT_ID,
         )

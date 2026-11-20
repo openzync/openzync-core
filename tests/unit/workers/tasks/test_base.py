@@ -458,7 +458,7 @@ class TestWithTaskMetrics:
 
     The decorator and the worker's ``on_job_end`` callback share the same
     ctx dict, so these tests pin the keys ``on_job_end`` reads:
-    ``task_type``, ``org_id``, ``trace_id``, ``runtime`` and ``status``.
+    ``task_type``, ``user_id``, ``trace_id``, ``runtime`` and ``status``.
     """
 
     @pytest.mark.asyncio
@@ -476,33 +476,33 @@ class TestWithTaskMetrics:
         assert ctx["task_type"] == "my_task"
 
     @pytest.mark.asyncio
-    async def test_writes_org_id_and_trace_id_from_kwargs(self) -> None:
-        """``org_id`` and ``trace_id`` are lifted out of the task kwargs."""
+    async def test_writes_user_id_and_trace_id_from_kwargs(self) -> None:
+        """``user_id`` and ``trace_id`` are lifted out of the task kwargs."""
         from workers.tasks.base import with_task_metrics
 
         @with_task_metrics
-        async def my_task(ctx: dict, *, org_id: str, trace_id: str) -> str:
+        async def my_task(ctx: dict, *, user_id: str, trace_id: str) -> str:
             return "done"
 
         ctx: dict = {}
-        await my_task(ctx, org_id="org-1", trace_id="trace-1")
+        await my_task(ctx, user_id="org-1", trace_id="trace-1")
 
-        assert ctx["org_id"] == "org-1"
+        assert ctx["user_id"] == "org-1"
         assert ctx["trace_id"] == "trace-1"
 
     @pytest.mark.asyncio
-    async def test_accepts_organization_id_alias(self) -> None:
-        """``organization_id`` is accepted as an alias for ``org_id``."""
+    async def test_accepts_user_id_alias(self) -> None:
+        """``user_id`` is accepted as an alias for ``user_id``."""
         from workers.tasks.base import with_task_metrics
 
         @with_task_metrics
-        async def my_task(ctx: dict, *, organization_id: str) -> str:
+        async def my_task(ctx: dict, *, user_id: str) -> str:
             return "done"
 
         ctx: dict = {}
-        await my_task(ctx, organization_id="org-2")
+        await my_task(ctx, user_id="org-2")
 
-        assert ctx["org_id"] == "org-2"
+        assert ctx["user_id"] == "org-2"
 
     @pytest.mark.asyncio
     async def test_status_is_success_on_success(self) -> None:
@@ -576,14 +576,14 @@ class TestWithTaskMetrics:
         from workers.tasks.base import with_task_metrics
 
         @with_task_metrics
-        async def my_task(context: dict, *, org_id: str) -> str:
+        async def my_task(context: dict, *, user_id: str) -> str:
             return "done"
 
         ctx: dict = {}
-        await my_task(ctx, org_id="org-3")
+        await my_task(ctx, user_id="org-3")
 
         assert ctx["task_type"] == "my_task"
-        assert ctx["org_id"] == "org-3"
+        assert ctx["user_id"] == "org-3"
         assert ctx["status"] == "success"
         assert ctx["runtime"] > 0
 

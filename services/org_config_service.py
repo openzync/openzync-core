@@ -7,8 +7,8 @@ This service orchestrates the config update flow:
 
 Wire-up in router::
 
-    config = await org_config_service.get_config(org_id)
-    result = await org_config_service.update_config(org_id, payload)
+    config = await org_config_service.get_config(user_id)
+    result = await org_config_service.update_config(user_id, payload)
 """
 
 from __future__ import annotations
@@ -40,36 +40,36 @@ class OrgConfigService:
         self._bao_client = bao_client
         self._redis = redis
 
-    async def get_config(self, org_id: UUID) -> OrgConfigBase:
+    async def get_config(self, user_id: UUID) -> OrgConfigBase:
         """Return the stored config for an org.
 
         Args:
-            org_id: The organization UUID.
+            user_id: The owner user UUID.
 
         Returns:
             An ``OrgConfigBase`` with only explicitly stored fields.
             Unset fields are ``None``.
         """
         return await get_org_config(
-            org_id,
+            user_id,
             redis=self._redis,
             bao_client=self._bao_client,
         )
 
-    async def get_config_response(self, org_id: UUID) -> OrgConfigResponse:
+    async def get_config_response(self, user_id: UUID) -> OrgConfigResponse:
         """Return the stored config wrapped in an ``OrgConfigResponse``.
 
         Args:
-            org_id: The organization UUID.
+            user_id: The owner user UUID.
 
         Returns:
             An ``OrgConfigResponse`` containing the stored config.
         """
-        stored = await self.get_config(org_id)
+        stored = await self.get_config(user_id)
         return OrgConfigResponse(stored=stored)
 
     async def update_config(
-        self, org_id: UUID, payload: UpdateOrgConfigRequest
+        self, user_id: UUID, payload: UpdateOrgConfigRequest
     ) -> OrgConfigBase:
         """Partially update an org's configuration.
 
@@ -78,14 +78,14 @@ class OrgConfigService:
         invalidated after the update.
 
         Args:
-            org_id: The organization UUID.
+            user_id: The owner user UUID.
             payload: The fields to update.
 
         Returns:
             The freshly stored config after the update.
         """
         return await core_update_org_config(
-            org_id,
+            user_id,
             update_data=payload,
             bao_client=self._bao_client,
             redis=self._redis,

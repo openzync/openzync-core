@@ -1,7 +1,7 @@
 """Pydantic schemas for admin dashboard statistics.
 
-All response models aggregate data across an entire organization,
-windowed by days/from/to and optional project_id.
+All response models aggregate data for the authenticated user,
+windowed by days and optional project_id.
 """
 
 from __future__ import annotations
@@ -14,12 +14,12 @@ from pydantic import BaseModel, Field
 class OrgStatsResponse(BaseModel):
     """Aggregate statistics for the dashboard overview.
 
-    Provides a quick snapshot of the organization's data volume
+    Provides a quick snapshot of the user's data volume
     across episodes, sessions, facts, extractions, observations,
-    and classifications — windowed by days/from/to and optional project_id.
+    and classifications — windowed by days and optional project_id.
     """
 
-    organization_id: UUID = Field(..., description="The organization UUID.")
+    user_id: UUID = Field(..., description="The user UUID.")
     total_episodes: int = Field(..., description="Total episodes (conversation turns).")
     total_sessions: int = Field(..., description="Total sessions across all projects.")
     total_facts: int = Field(

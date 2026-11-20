@@ -80,12 +80,12 @@ class TestUserCrud:
         """Validate that ``body`` matches the ``UserResponse`` schema.
 
         ``UserResponse`` fields: ``id``, ``external_id``, ``name``, ``email``,
-        ``metadata``, ``organization_id``, ``created_at``, ``updated_at``,
+        ``metadata``, ``user_id``, ``created_at``, ``updated_at``,
         ``is_deleted``.
         """
         assert "id" in body, "Missing 'id'"
         assert "external_id" in body, "Missing 'external_id'"
-        assert "organization_id" in body, "Missing 'organization_id'"
+        assert "user_id" in body, "Missing 'user_id'"
         assert "created_at" in body, "Missing 'created_at'"
         assert "updated_at" in body, "Missing 'updated_at'"
         assert "metadata" in body, "Missing 'metadata'"
@@ -93,7 +93,7 @@ class TestUserCrud:
 
         # Validate UUIDs
         UUID(body["id"])
-        UUID(body["organization_id"])
+        UUID(body["user_id"])
 
         # Defaults
         assert body["is_deleted"] is False
@@ -139,7 +139,7 @@ class TestUserCrud:
     ) -> None:
         """POST /v1/users with the same external_id → 409 Conflict.
 
-        The ``(organization_id, external_id)`` unique constraint should
+        The ``(user_id, external_id)`` unique constraint should
         prevent duplicate user creation.
         """
         # Create the first user
@@ -365,10 +365,11 @@ class TestUserCrud:
         """GET /v1/users with cursor-based pagination.
 
         Each test gets a fixture user (``fixture_user``) created by the
-        ``isolated_org_and_key`` fixture, plus 4 test users = 5 total.
-        With limit=2: page 1 → 2, page 2 → 2, page 3 → 1.
+        ``isolated_org_and_key`` fixture, plus the bootstrap user and
+        4 test users = 6 total.
+        With limit=2: page 1 → 2, page 2 → 2, page 3 → 2.
         """
-        # Seed 4 users (fixture user brings total to 5)
+        # Seed 4 users (fixture + bootstrap users bring total to 6)
         for i in range(4):
             resp = await admin_client.post(
                 "/v1/users",
@@ -406,7 +407,7 @@ class TestUserCrud:
         )
         assert page3.status_code == 200
         body3 = page3.json()
-        assert len(body3["data"]) == 1
+        assert len(body3["data"]) == 2
         assert body3["has_more"] is False
         assert body3["next_cursor"] is None
 
@@ -459,12 +460,15 @@ class TestUserCrud:
         self,
         isolated_app: pytest.fixture,  # noqa: ARG002
     ) -> None:
-        """A user created by org A must not be accessible by org B.
+        """Users are platform-visible to members:read holders (no orgs).
 
-        1. Create org A → api_key_A.
-        2. Create org B → api_key_B.
-        3. Via org A, create a user.
-        4. Via org B, try to GET the same user → 404.
+        1. Create tenant A → jwt_A.
+        2. Create tenant B → jwt_B.
+        3. Via tenant A, create a user.
+        4. Via tenant B (admin wildcard), GET the same user → 200.
+
+        Tenant isolation now lives at project membership, not user
+        records: the singleton platform has no per-org user boundary.
         """
         # -- Bootstrap org A --
         async with AsyncClient(
@@ -515,12 +519,10 @@ class TestUserCrud:
             assert create_resp.status_code == 201
             user_id = create_resp.json()["id"]
 
-        # -- Try to access that user from org B → 404 --
-        # NOTE: must use Org B's admin JWT (members:read via wildcard), not
-        # the project-scoped API key (project:* only → 403 members:read
+        # -- Access that user from tenant B → 200 (platform-visible) --
+        # NOTE: must use tenant B's admin JWT (members:read via wildcard),
+        # not the project-scoped API key (project:* only → 403 members:read
         # missing at the permission gate, never reaching the data layer).
-        # The JWT reaches the repository, which must return 404 for a
-        # cross-tenant user id — true data-layer isolation.
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
@@ -528,10 +530,11 @@ class TestUserCrud:
             isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_b
             get_resp = await cli.get(f"/v1/users/{user_id}")
 
-        assert get_resp.status_code == 404, (
-            f"Org B should not be able to access Org A's user. "
+        assert get_resp.status_code == 200, (
+            f"Tenant B should see tenant A's user (platform-visible). "
             f"Got {get_resp.status_code}: {get_resp.text}"
         )
+        assert get_resp.json()["id"] == user_id
 
     # ═════════════════════════════════════════════════════════════════════
     # 11. No auth → 401

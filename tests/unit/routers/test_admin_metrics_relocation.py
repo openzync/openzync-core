@@ -21,14 +21,14 @@ from fastapi import FastAPI, HTTPException, status
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dependencies.auth import require_org_id
+from dependencies.auth import require_user_id
 from dependencies.db import get_db
 from routers import admin_metrics
 from routers.admin_metrics import router as metrics_router
 from routers.admin_stats import router as stats_router
 from schemas.admin_metrics import MetricsSummaryResponse
 
-ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 
 
@@ -77,13 +77,13 @@ def _create_app(*, include_stats: bool = False) -> tuple[FastAPI, AsyncMock]:
 
     @app.middleware("http")
     async def _mock_auth(request, call_next):  # noqa: ANN001, ANN202
-        request.state.org_id = str(ORG_ID)
+        request.state.user_id = str(USER_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "jwt"
         return await call_next(request)
 
     app.dependency_overrides[get_db] = lambda: db_mock
-    app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+    app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
     app.include_router(metrics_router)
     if include_stats:
         app.include_router(stats_router)
@@ -110,7 +110,7 @@ async def test_summary_days7_shape_and_service_called() -> None:
     assert body["status"] == "ok"
     # Router delegated to the service layer (service+repo own the queries).
     mock_service.get_summary.assert_awaited_once()
-    assert mock_service.get_summary.call_args.args[2] == ORG_ID
+    assert mock_service.get_summary.call_args.args[2] == USER_ID
 
 
 @pytest.mark.asyncio
@@ -206,7 +206,7 @@ async def test_metrics_endpoints_require_auth() -> None:
         )
 
     app.dependency_overrides[get_db] = lambda: db_mock
-    app.dependency_overrides[require_org_id] = _raise_401
+    app.dependency_overrides[require_user_id] = _raise_401
     app.include_router(metrics_router)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -217,15 +217,15 @@ async def test_metrics_endpoints_require_auth() -> None:
 
 @pytest.mark.asyncio
 async def test_admin_stats_org_delegates_to_service() -> None:
-    """GET /v1/admin/stats/org?days=7 delegates to AdminStatsService."""
+    """GET /v1/admin/stats?days=7 delegates to AdminStatsService."""
     from routers import admin_stats as admin_stats_mod
 
     app, _ = _create_app(include_stats=True)
     service_mock = AsyncMock()
     from schemas.admin_stats import OrgStatsResponse
 
-    service_mock.get_org_stats.return_value = OrgStatsResponse(
-        organization_id=ORG_ID,
+    service_mock.get_platform_stats.return_value = OrgStatsResponse(
+        user_id=USER_ID,
         total_episodes=1,
         total_sessions=0,
         total_facts=0,
@@ -238,6 +238,6 @@ async def test_admin_stats_org_delegates_to_service() -> None:
     )
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/v1/admin/stats/org", params={"days": 7})
+        resp = await client.get("/v1/admin/stats", params={"days": 7})
     assert resp.status_code == 200
-    service_mock.get_org_stats.assert_awaited_once()
+    service_mock.get_platform_stats.assert_awaited_once()

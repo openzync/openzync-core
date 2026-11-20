@@ -44,7 +44,7 @@ async def bootstrap_org(client: httpx.AsyncClient) -> dict:
     resp.raise_for_status()
     data = resp.json()
     logger.info("Org created: %s (API key: %s...)",
-                data["organization_id"], data["api_key"][:12])
+                data["user_id"], data["api_key"][:12])
     return data
 
 

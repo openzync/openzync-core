@@ -8,7 +8,7 @@ Layers
    raises conflict on key reuse with different payload.
 
 2. **Content-level** (SHA-256 content hash):
-   Prevents the same ``(org_id, user_id, session_id, messages)``
+   Prevents the same ``(user_id, user_id, session_id, messages)``
    combination from being ingested more than once, even from different
    clients with different ``Idempotency-Key`` values.  Backed by Redis
    with 48h TTL.
@@ -23,26 +23,26 @@ Usage
     service = IdempotencyService(redis=app.state.redis)
 
     # HTTP-level
-    result = await service.check_idempotency_key(key, body_hash, org_id)
+    result = await service.check_idempotency_key(key, body_hash, user_id)
     if result.status == IdempotencyStatus.NEW:
         response_data = await process_fn()
-        await service.store_idempotency_key(key, body_hash, response_data, org_id)
+        await service.store_idempotency_key(key, body_hash, response_data, user_id)
 
     # Content-level
     # Atomic claim (preferred — single Lua GET-or-SET, no TOCTOU):
     claim = await service.claim_content_hash(
-        org_id, user_id, session_id, messages, payload=job_id
+        user_id, session_id, messages, payload=job_id
     )
     if not claim.won:
         return claim.winner  # duplicate — replay winner payload (e.g. job_id)
     # ... proceed with ingestion ...
     # Legacy fast-path pair (best-effort only, never authoritative):
-    existing = await service.check_content_hash(org_id, user_id, session_id, messages)
+    existing = await service.check_content_hash(user_id, session_id, messages)
     if existing:
         return  # duplicate content — replay existing payload (e.g. job_id)
     ...
     await service.store_content_hash(
-        org_id, user_id, session_id, messages, payload=job_id
+        user_id, session_id, messages, payload=job_id
     )
 
     # Worker-level
@@ -212,18 +212,18 @@ class IdempotencyService:
     # ──────────────────────────────────────────────────────────────────────────
 
     async def check_idempotency_key(
-        self, key: str, body_hash: str, org_id: str | UUID
+        self, key: str, body_hash: str, user_id: str | UUID
     ) -> IdempotencyResult:
         """Check an ``Idempotency-Key`` and return the appropriate action.
 
         Keys are tenant-namespaced — the cache key is
-        ``OpenZync:{env}:idempotency:{org_id}:{key}`` — so the same key
+        ``OpenZync:{env}:idempotency:{user_id}:{key}`` — so the same key
         used by two different organizations never collides.
 
         Args:
             key: The ``Idempotency-Key`` header value (max 255 chars).
             body_hash: SHA-256 hex digest of the canonical request body.
-            org_id: The tenant (organization) UUID or string. Normalized
+            user_id: The tenant (organization) UUID or string. Normalized
                 to ``str`` for the cache key.
 
         Returns:
@@ -242,7 +242,7 @@ class IdempotencyService:
                 f"Idempotency-Key must not exceed {self._max_key_length} characters"
             )
 
-        cache_key = f"{self._idem_prefix}{org_id}:{key}"
+        cache_key = f"{self._idem_prefix}{user_id}:{key}"
 
         cached: str | None = await self._redis.get(cache_key)
         if cached is None:
@@ -298,22 +298,22 @@ class IdempotencyService:
         key: str,
         body_hash: str,
         response_data: dict[str, Any],
-        org_id: str | UUID,
+        user_id: str | UUID,
     ) -> None:
         """Persist a successful response for future idempotency replay.
 
         The cache key is tenant-namespaced
-        (``OpenZync:{env}:idempotency:{org_id}:{key}``) so replays cannot
+        (``OpenZync:{env}:idempotency:{user_id}:{key}``) so replays cannot
         cross organization boundaries.
 
         Args:
             key: The ``Idempotency-Key`` header value.
             body_hash: SHA-256 hex digest of the canonical request body.
             response_data: The response dict to cache for replay.
-            org_id: The tenant (organization) UUID or string. Normalized
+            user_id: The tenant (organization) UUID or string. Normalized
                 to ``str`` for the cache key.
         """
-        cache_key = f"{self._idem_prefix}{org_id}:{key}"
+        cache_key = f"{self._idem_prefix}{user_id}:{key}"
         entry: dict[str, Any] = {
             "response_body": response_data,
             "request_body_hash": body_hash,
@@ -340,21 +340,20 @@ class IdempotencyService:
 
     @staticmethod
     def compute_content_hash(
-        org_id: str,
         user_id: str,
         session_id: str,
         messages: list[dict[str, Any]],
     ) -> str:
         """Compute a deterministic SHA-256 hash for content dedup.
 
-        The hash is based on ``(org_id, user_id, session_id, role,
+        The hash is based on ``(user_id, user_id, session_id, role,
         content)``.  ``metadata`` and ``blobs`` are included in each
         message's canonical form when those keys are present in the
         message dict, so identical payloads that differ only in absence
         vs presence of metadata/blobs do not collide.
 
         Args:
-            org_id: Organisation UUID string.
+            user_id: Organisation UUID string.
             user_id: User UUID string.
             session_id: Session UUID or external ID string.
             messages: List of message dicts, each containing at minimum
@@ -365,7 +364,7 @@ class IdempotencyService:
         """
         canonical = orjson.dumps(
             {
-                "org_id": org_id,
+                "user_id": user_id,
                 "user_id": user_id,
                 "session_id": session_id,
                 "messages": [
@@ -384,7 +383,6 @@ class IdempotencyService:
 
     async def check_content_hash(
         self,
-        org_id: str,
         user_id: str,
         session_id: str,
         messages: list[dict[str, Any]],
@@ -400,7 +398,7 @@ class IdempotencyService:
         ``ingest_dedup`` UNIQUE claim as DB backstop.
 
         Args:
-            org_id: Organisation UUID string.
+            user_id: Organisation UUID string.
             user_id: User UUID string.
             session_id: Session UUID string.
             messages: List of message dicts.
@@ -411,7 +409,7 @@ class IdempotencyService:
             only, not a decision.
         """
         content_hash = self.compute_content_hash(
-            org_id, user_id, session_id, messages
+            user_id, session_id, messages
         )
         cache_key = self._content_prefix + content_hash
 
@@ -420,7 +418,6 @@ class IdempotencyService:
             logger.info(
                 "idempotency.content_dedup_hit",
                 extra={
-                    "org_id": org_id,
                     "user_id": user_id,
                     "session_id": session_id,
                     "message_count": len(messages),
@@ -432,7 +429,6 @@ class IdempotencyService:
 
     async def store_content_hash(
         self,
-        org_id: str,
         user_id: str,
         session_id: str,
         messages: list[dict[str, Any]],
@@ -449,7 +445,7 @@ class IdempotencyService:
         refreshing TTL after a won claim.
 
         Args:
-            org_id: Organisation UUID string.
+            user_id: Organisation UUID string.
             user_id: User UUID string.
             session_id: Session UUID string.
             messages: List of message dicts.
@@ -460,7 +456,7 @@ class IdempotencyService:
             The computed content hash hex string.
         """
         content_hash = self.compute_content_hash(
-            org_id, user_id, session_id, messages
+            user_id, session_id, messages
         )
         cache_key = self._content_prefix + content_hash
         value = payload if payload is not None else content_hash
@@ -493,7 +489,6 @@ class IdempotencyService:
 
     async def claim_content_hash(
         self,
-        org_id: str,
         user_id: str,
         session_id: str,
         messages: list[dict[str, Any]],
@@ -510,7 +505,7 @@ class IdempotencyService:
         without inserting anything.
 
         Args:
-            org_id: Organisation UUID string.
+            user_id: Organisation UUID string.
             user_id: User UUID string.
             session_id: Session UUID string.
             messages: List of message dicts.
@@ -520,7 +515,7 @@ class IdempotencyService:
             A :class:`ContentHashClaim` — ``won=True`` means proceed with
             ingestion; ``won=False`` means replay ``winner`` instead.
         """
-        content_hash = self.compute_content_hash(org_id, user_id, session_id, messages)
+        content_hash = self.compute_content_hash(user_id, session_id, messages)
         cache_key = self._content_prefix + content_hash
 
         # ``eval`` is typed as returning ``str`` in redis-py's stubs but
@@ -543,7 +538,6 @@ class IdempotencyService:
             logger.info(
                 "idempotency.content_hash_claim_replay",
                 extra={
-                    "org_id": org_id,
                     "user_id": user_id,
                     "session_id": session_id,
                     "message_count": len(messages),
@@ -553,7 +547,6 @@ class IdempotencyService:
 
     async def release_content_hash(
         self,
-        org_id: str,
         user_id: str,
         session_id: str,
         messages: list[dict[str, Any]],
@@ -571,13 +564,13 @@ class IdempotencyService:
         (:meth:`claim_content_hash`) stays fail-closed.
 
         Args:
-            org_id: Organisation UUID string.
+            user_id: Organisation UUID string.
             user_id: User UUID string.
             session_id: Session UUID string.
             messages: List of message dicts (recomputes the claim key).
         """
         content_hash = self.compute_content_hash(
-            org_id, user_id, session_id, messages
+            user_id, session_id, messages
         )
         try:
             await self._redis.delete(self._content_prefix + content_hash)
@@ -662,17 +655,17 @@ class IdempotencyService:
     # Cache invalidation
     # ══════════════════════════════════════════════════════════════════════════
 
-    async def invalidate_user_cache(self, org_id: str, user_id: str) -> None:
+    async def invalidate_user_cache(self, user_id: str) -> None:
         """Invalidate all cached data for a given user.
 
         Deletes cache keys matching the pattern
-        ``OpenZync:{env}:cache:{org_id}:{user_id}:*``.
+        ``OpenZync:{env}:cache:{user_id}:{user_id}:*``.
 
         Args:
-            org_id: Organisation UUID string.
+            user_id: Organisation UUID string.
             user_id: User UUID string.
         """
-        pattern = f"{self._cache_prefix}{org_id}:{user_id}:*"
+        pattern = f"{self._cache_prefix}{user_id}:{user_id}:*"
         cursor: int = 0
         deleted_count: int = 0
 
@@ -692,7 +685,6 @@ class IdempotencyService:
             logger.info(
                 "idempotency.cache_invalidated",
                 extra={
-                    "org_id": org_id,
                     "user_id": user_id,
                     "keys_deleted": deleted_count,
                 },

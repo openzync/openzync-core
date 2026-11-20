@@ -52,8 +52,8 @@ async def _persist(target: SessionTarget, record: UsageRecord) -> None:
             must stay loud inside the sink's ``try`` so it logs, never
             propagates.
     """
-    if record.org_id is None:
-        raise RuntimeError("usage sink received a record without org_id")
+    if record.user_id is None:
+        raise RuntimeError("usage sink received a record without user_id")
     if isinstance(target, Callable):
         await LLMUsageRepository.create_scoped(target, record)
     else:
@@ -64,7 +64,7 @@ async def _persist(target: SessionTarget, record: UsageRecord) -> None:
 def make_sink(
     target: SessionTarget,
     *,
-    org_id: UUID,
+    user_id: UUID,
     worker: str,
     project_id: UUID | None = None,
     episode_id: UUID | None = None,
@@ -81,7 +81,7 @@ def make_sink(
 
     Args:
         target: Session factory (workers) or active session (services).
-        org_id: Owning organization.
+        user_id: Owning organization.
         worker: Task vocabulary label (e.g. ``"enrich_episode"``).
         project_id: Project scope, when known.
         episode_id: Source episode, when the call enriches one.
@@ -100,7 +100,7 @@ def make_sink(
         """Fill scope and persist. Logs failures, then re-raises for retry."""
         full = replace(
             record,
-            org_id=record.org_id or org_id,
+            user_id=record.user_id or user_id,
             worker=record.worker or worker,
             project_id=record.project_id or project_id,
             episode_id=record.episode_id or episode_id,
@@ -115,7 +115,7 @@ def make_sink(
         except Exception:
             logger.exception(
                 "usage.sink_failed",
-                extra={"worker": worker, "org_id": str(org_id)},
+                extra={"worker": worker, "user_id": str(user_id)},
             )
             raise
 
@@ -125,7 +125,7 @@ def make_sink(
 async def list_usage(
     db: AsyncSession,
     *,
-    org_id: UUID,
+    user_id: UUID,
     start: datetime | None = None,
     end: datetime | None = None,
     project_id: UUID | None = None,
@@ -139,7 +139,7 @@ async def list_usage(
 
     Args:
         db: Active async session (RLS-scoped to the org).
-        org_id: Owning organization.
+        user_id: Owning organization.
         start: Include rows created at/after this instant.
         end: Include rows created before this instant (exclusive).
         project_id: Exact-match filter on project scope.
@@ -153,7 +153,7 @@ async def list_usage(
         Tuple of (rows, total_count).
     """
     return await LLMUsageRepository(db).list_paginated(
-        org_id,
+        user_id,
         start=start,
         end=end,
         project_id=project_id,
@@ -168,7 +168,7 @@ async def list_usage(
 async def summarize_usage(
     db: AsyncSession,
     *,
-    org_id: UUID,
+    user_id: UUID,
     start: datetime | None = None,
     end: datetime | None = None,
     project_id: UUID | None = None,
@@ -179,7 +179,7 @@ async def summarize_usage(
 
     Args:
         db: Active async session (RLS-scoped to the org).
-        org_id: Owning organization.
+        user_id: Owning organization.
         start: Include rows created at/after this instant.
         end: Include rows created before this instant (exclusive).
         project_id: Exact-match filter on project scope.
@@ -191,7 +191,7 @@ async def summarize_usage(
         average call duration.
     """
     return await LLMUsageRepository(db).get_summary(
-        org_id,
+        user_id,
         start=start,
         end=end,
         project_id=project_id,

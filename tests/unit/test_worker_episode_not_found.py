@@ -140,7 +140,7 @@ class TestLinkEntitiesToEpisode:
                 await link_entities_to_episode(
                     ctx=ctx,
                     episode_id=_EPISODE_ID,
-                    org_id=_ORG_ID,
+                    user_id=_ORG_ID,
                     project_id=_PROJECT_ID,
                     content=_CONTENT,
                     role="user",
@@ -191,7 +191,7 @@ class TestComputeObservations:
                         await compute_observations(
                             ctx=ctx,
                             episode_id=_EPISODE_ID,
-                            org_id=_ORG_ID,
+                            user_id=_ORG_ID,
                             project_id=_PROJECT_ID,
                         )
 
@@ -232,7 +232,7 @@ class TestEnrichEpisode:
                 await enrich_episode(
                     ctx=ctx,
                     episode_id=_EPISODE_ID,
-                    org_id=_ORG_ID,
+                    user_id=_ORG_ID,
                     project_id=_PROJECT_ID,
                     content=_CONTENT,
                 )

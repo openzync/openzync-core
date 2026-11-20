@@ -15,7 +15,7 @@ class Episode:
         id: Episode primary key.
         session_id: Parent session.
         project_id: Owning project (tenant scope).
-        organization_id: Owning organization (tenant scope).
+        user_id: Owning organization (tenant scope).
         user_id: Attributed user.
         role: Message role (``user`` / ``assistant`` / ``system`` / ``tool``).
         content: Redacted message body.
@@ -26,7 +26,7 @@ class Episode:
     id: UUID
     session_id: UUID
     project_id: UUID
-    organization_id: UUID
+    user_id: UUID
     user_id: UUID
     role: str
     content: str

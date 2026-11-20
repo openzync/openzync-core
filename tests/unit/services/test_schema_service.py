@@ -48,7 +48,7 @@ class TestSchemaService:
     def _make_schema(
         self,
         schema_id: UUID | None = None,
-        org_id: UUID | None = None,
+        user_id: UUID | None = None,
         name: str = "Test Schema",
         type: str = "structured",
         json_schema: dict | None = None,
@@ -58,7 +58,7 @@ class TestSchemaService:
         """Build a MagicMock mimicking an ExtractionSchema ORM model."""
         schema = MagicMock(spec=ExtractionSchema)
         schema.id = schema_id or self.SCHEMA_ID
-        schema.organization_id = org_id or self.ORG_ID
+        schema.user_id = user_id or self.ORG_ID
         schema.name = name
         schema.type = type
         schema.json_schema = json_schema or {"type": "object", "properties": {}}
@@ -214,7 +214,7 @@ class TestSchemaService:
         assert result[0].name == "Schema A"
         assert result[1].name == "Schema B"
         mock_repo.get_all.assert_awaited_once_with(
-            org_id=self.ORG_ID, schema_type=None, is_active=None, sort=None,
+            user_id=self.ORG_ID, schema_type=None, is_active=None, sort=None,
         )
 
     @pytest.mark.asyncio
@@ -227,7 +227,7 @@ class TestSchemaService:
         await service.list_schemas(self.ORG_ID, sort=spec)
 
         mock_repo.get_all.assert_awaited_once_with(
-            org_id=self.ORG_ID, schema_type=None, is_active=None, sort=spec,
+            user_id=self.ORG_ID, schema_type=None, is_active=None, sort=spec,
         )
 
     @pytest.mark.asyncio
@@ -241,7 +241,7 @@ class TestSchemaService:
         assert len(result) == 1
         assert result[0].name == "Classification"
         mock_repo.get_all.assert_awaited_once_with(
-            org_id=self.ORG_ID, schema_type="classification", is_active=True, sort=None,
+            user_id=self.ORG_ID, schema_type="classification", is_active=True, sort=None,
         )
 
     @pytest.mark.asyncio

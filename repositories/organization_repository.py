@@ -1,37 +1,28 @@
-"""Organization repository — all DB access for organization-specific queries.
+"""Organization repository — all DB access for the singleton platform org.
 
-Every public method accepts ``organization_id`` to enforce tenant isolation.
+Single platform org (``PLATFORM_ORG_ID``): this repository exposes only
+platform-row access plus the per-org ``config``/``quotas`` JSONB reads.
 No business logic — pure query construction and execution.
 """
 
 from __future__ import annotations
 
+import secrets
+import uuid as uuid_lib
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import rls
 from core.config import PLATFORM_ORG_ID
-from core.org_codes import generate_org_code
-from core.sorting import SortSpec, resolve_order_by
 from models.organization import Organization
-
-ORG_SORTABLE_COLUMNS = {
-    "name": Organization.name,
-    "created_at": Organization.created_at,
-}
-"""Sortable columns for admin org listing (default created_at/desc)."""
 
 
 class OrganizationRepository:
-    """All database access for organizations.
-
-    Every method accepts ``organization_id`` to enforce tenant isolation.
-    No business logic — pure query construction and execution.
-    """
+    """All database access for the singleton platform organization."""
 
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
@@ -45,49 +36,60 @@ class OrganizationRepository:
         """
         return self._db
 
-    # ── Tenant context ──────────────────────────────────────────────────────
-
-    async def set_tenant_context(self, org_id: UUID) -> None:
-        """Bind this session to one tenant (organization).
-
-        The public flows (signup, join, login, refresh) only learn their
-        tenant *after* their first lookup, so they bind the session to the
-        resolved organization before any org-scoped write.  Session-scoped,
-        so the tenant survives a mid-request commit.
-
-        Args:
-            org_id: The organization UUID the session may act on.
-        """
-        await rls.set_tenant_context(self._db, org_id)
-
-    async def set_lookup_code(self, code: str) -> None:
-        """Allow a single-row read of the organization owning ``code``.
-
-        The public org-code join presents the code as its credential, so
-        the code is bound to the session and the ``org_join_code_lookup``
-        policy exposes exactly that one organization row.  A wrong code
-        matches nothing.
-
-        Args:
-            code: The normalized organization code.
-        """
-        await rls.set_lookup_code(self._db, code)
-
     # ── Organization rows ───────────────────────────────────────────────────
 
-    async def get_by_id(self, org_id: UUID) -> Organization | None:
+    async def get_by_id(self, user_id: UUID) -> Organization | None:
         """Fetch an organization by UUID.
 
+        Tenant-scoped read: binds the session to ``user_id`` first so the
+        RLS ``FOR ALL`` policy admits the row (mirrors the write-path
+        convention in ``create_dashboard_user`` callers).  Public,
+        tenant-less callers (invite info/accept) must use
+        :meth:`get_platform_org`-style bypasses instead — this method
+        intentionally sees only the caller's own org.
+
         Args:
-            org_id: The organization UUID.
+            user_id: The organization UUID.
 
         Returns:
             The Organization if found, or ``None``.
         """
+        await rls.set_user_context(self._db, user_id)
         result = await self._db.execute(
-            select(Organization).where(Organization.id == org_id)
+            select(Organization).where(Organization.id == user_id)
         )
         return result.scalar_one_or_none()
+
+    async def create_organization(self, name: str) -> Organization:
+        """Insert an organization row (flush only — the caller commits).
+
+        # shortcut: no src callers (single platform org is ensured via
+        # ensure_platform_org); kept for scripts/one-off provisioning,
+        # remove when a second org flow exists.
+
+        The id is minted here so the session can be bound to the new
+        tenant before the row is written (see ``set_tenant_context``).
+
+        Args:
+            name: Human-readable organization name.
+
+        Returns:
+            The newly created Organization (flushed, uncommitted).
+        """
+        org = Organization(
+            id=uuid_lib.uuid4(),
+            name=name,
+            # Legacy NOT NULL column — join codes are removed (single org);
+            # a random placeholder keeps the constraint satisfied.
+            # shortcut: drop the column + backfill once 0044-era deploys are
+            # gone; blocked on a NOT NULL migration, not worth it yet.
+            org_code=secrets.token_hex(4).upper(),
+        )
+        await rls.set_user_context(self._db, org.id)
+        self._db.add(org)
+        await self._db.flush()
+        await self._db.refresh(org)
+        return org
 
     async def get_platform_org(self) -> Organization | None:
         """Fetch the platform (SYSTEM) organization, bypassing RLS.
@@ -105,254 +107,81 @@ class OrganizationRepository:
             )
             return result.scalar_one_or_none()
 
-    async def ensure_platform_org(self) -> None:
-        """Insert the platform (SYSTEM) organization if it does not exist.
+    async def ensure_platform_org(self, name: str = "Platform") -> None:
+        """Insert the platform organization if it does not exist.
 
         Idempotent ``ON CONFLICT DO NOTHING`` — concurrent setup calls
         race safely, the losers no-op.  Runs under an RLS bypass so it
-        works without a tenant context.
+        works without a tenant context.  When the row already exists its
+        name is left untouched (bootstrap naming applies once).
 
-        Returns:
-            ``None`` — the row exists afterwards either way.
+        Args:
+            name: Display name for the singleton org (bootstrap only).
         """
         async with rls.rls_bypass(self._db):
             await self._db.execute(
                 pg_insert(Organization)
                 .values(
                     id=PLATFORM_ORG_ID,
-                    name="SYSTEM",
+                    name=name,
                     status="approved",
                     join_enabled=False,
-                    org_code=generate_org_code(),
+                    # Legacy NOT NULL column — join codes are removed;
+                    # a random placeholder keeps the constraint satisfied.
+                    # shortcut: drop the column when a NOT NULL migration
+                    # is scheduled; the random mint is dead weight until then.
+                    org_code=secrets.token_hex(4).upper(),
                     is_active=True,
                 )
                 .on_conflict_do_nothing(index_elements=["id"])
             )
             await self._db.flush()
 
-    async def get_by_code(self, code: str) -> Organization | None:
-        """Fetch a joinable organization by its join code.
-
-        The caller normalizes the code (``normalize_org_code``) before
-        calling — this method matches exactly.  Inactive, pending,
-        rejected, and platform (``SYSTEM``) organizations are excluded:
-        a deactivated or unapproved org's code must not accept new
-        members.
-
-        Args:
-            code: The normalized org code.
-
-        Returns:
-            The joinable Organization if found, or ``None``.
-        """
-        result = await self._db.execute(
-            select(Organization).where(
-                Organization.org_code == code,
-                Organization.is_active.is_(True),
-                Organization.status == "approved",
-                Organization.name != "SYSTEM",
-            )
-        )
-        return result.scalar_one_or_none()
-
-    async def list_all(
-        self,
-        status: str | None = None,
-        page: int = 1,
-        limit: int = 50,
-        sort: SortSpec | None = None,
-    ) -> tuple[list[Organization], int]:
-        """List all organizations (superadmin view, requires RLS bypass).
-
-        Intended for the platform super-admin org listing — every org
-        including pending and rejected, newest first by default.
-
-        Args:
-            status: Optional lifecycle filter — ``pending``, ``approved``,
-                or ``rejected``.  ``None`` returns every status.
-            page: 1-based page number.
-            limit: Page size (clamped to 1..200).
-            sort: Validated sort spec (whitelist ``name``,
-                ``created_at``).
-
-        Returns:
-            A tuple of ``(orgs_on_page, total_matching_count)``.
-        """
-        effective_limit = min(max(limit, 1), 200)
-        effective_page = max(page, 1)
-        spec = sort if sort is not None else SortSpec()
-        req_sort, req_dir = spec.effective("created_at", "desc")
-
-        base = select(Organization)
-        if status is not None:
-            base = base.where(Organization.status == status)
-
-        total = (
-            await self._db.execute(select(func.count()).select_from(base.subquery()))
-        ).scalar() or 0
-
-        result = await self._db.execute(
-            base.order_by(
-                *resolve_order_by(
-                    ORG_SORTABLE_COLUMNS,
-                    Organization.id,
-                    req_sort,
-                    req_dir,
-                    default_sort_by="created_at",
-                    default_dir="desc",
-                )
-            )
-            .offset((effective_page - 1) * effective_limit)
-            .limit(effective_limit)
-        )
-        return list(result.scalars().all()), total
-
-    async def approve_if_pending(self, org_id: UUID) -> bool:
-        """Atomically flip a ``pending`` org to ``approved``.
-
-        Single conditional UPDATE — exactly one concurrent caller wins:
-        the loser's statement matches zero rows once the winner's
-        transaction commits (READ COMMITTED re-evaluates the WHERE against
-        the committed status), so two racing approvals can never both pass
-        the ``status == 'pending'`` gate.  Same race-free pattern as
-        ``AuthRepository.revoke_refresh_token_if_current``.
-
-        Args:
-            org_id: The organization UUID.
-
-        Returns:
-            ``True`` if this caller claimed (approved) the org.
-        """
-        result = await self._db.execute(
-            update(Organization)
-            .where(
-                Organization.id == org_id,
-                Organization.status == "pending",
-            )
-            .values(status="approved")
-            .execution_options(synchronize_session=False)
-        )
-        await self._db.flush()
-        return result.rowcount == 1  # type: ignore[attr-defined,no-any-return]
-
-    async def set_status(self, org_id: UUID, status: str) -> Organization:
-        """Set an organization's lifecycle status.
-
-        Args:
-            org_id: The organization UUID.
-            status: One of ``pending``, ``approved``, ``rejected``.
-
-        Returns:
-            The updated Organization.
-
-        Raises:
-            NotFoundError: If no organization with this UUID exists.
-        """
-        from core.exceptions import NotFoundError
-
-        result = await self._db.execute(
-            select(Organization).where(Organization.id == org_id)
-        )
-        org = result.scalar_one_or_none()
-        if org is None:
-            raise NotFoundError(f"Organization {org_id} not found.")
-        org.status = status
-        await self._db.flush()
-        await self._db.refresh(org)
-        return org
-
-    async def set_org_code(self, org_id: UUID, code: str) -> Organization:
-        """Replace an organization's join code (rotation).
-
-        Args:
-            org_id: The organization UUID.
-            code: The new normalized org code.
-
-        Returns:
-            The updated Organization.
-
-        Raises:
-            NotFoundError: If no organization with this UUID exists.
-        """
-        from core.exceptions import NotFoundError
-
-        result = await self._db.execute(
-            select(Organization).where(Organization.id == org_id)
-        )
-        org = result.scalar_one_or_none()
-        if org is None:
-            raise NotFoundError(f"Organization {org_id} not found.")
-        org.org_code = code
-        await self._db.flush()
-        await self._db.refresh(org)
-        return org
-
-    async def set_join_enabled(self, org_id: UUID, enabled: bool) -> Organization:
-        """Toggle whether the org accepts new members via org-code join.
-
-        Args:
-            org_id: The organization UUID.
-            enabled: Whether org-code self-registration is accepted.
-
-        Returns:
-            The updated Organization.
-
-        Raises:
-            NotFoundError: If no organization with this UUID exists.
-        """
-        from core.exceptions import NotFoundError
-
-        result = await self._db.execute(
-            select(Organization).where(Organization.id == org_id)
-        )
-        org = result.scalar_one_or_none()
-        if org is None:
-            raise NotFoundError(f"Organization {org_id} not found.")
-        org.join_enabled = enabled
-        await self._db.flush()
-        await self._db.refresh(org)
-        return org
-
     # ── Config JSONB (Groups A, B, C — UI-exposed settings) ─────────────────
 
-    async def get_config(self, org_id: UUID) -> dict[str, Any]:
+    async def get_config(self, user_id: UUID) -> dict[str, Any]:
         """Read the full ``config`` JSONB column for an organization.
 
+        Tenant-scoped read: binds the session to ``user_id`` first (see
+        :meth:`get_by_id`).
+
         Args:
-            org_id: The organization UUID.
+            user_id: The organization UUID.
 
         Returns:
             The config dict, or ``{}`` if not configured or the org does
             not exist.
         """
+        await rls.set_user_context(self._db, user_id)
         result = await self._db.execute(
-            text("SELECT config FROM organizations WHERE id = :org_id"),
-            {"org_id": org_id},
+            text("SELECT config FROM organizations WHERE id = :user_id"),
+            {"user_id": user_id},
         )
         row = result.one_or_none()
         return dict(row.config) if row and row.config else {}
 
     # ── PII config (from quotas->'pii') ──────────────────────────────────────
 
-    async def get_pii_config(self, org_id: UUID) -> dict:
+    async def get_pii_config(self, user_id: UUID) -> dict:
         """Fetch the PII configuration for an organization.
 
         The PII config lives at ``organizations.quotas -> 'pii'`` as a JSONB
-        sub-document.
+        sub-document.  Tenant-scoped read (binds ``user_id`` first).
 
         Args:
-            org_id: The organization UUID.
+            user_id: The organization UUID.
 
         Returns:
             The PII config dict, or ``{}`` if not configured or the
             organization does not exist.
         """
+        await rls.set_user_context(self._db, user_id)
         result = await self._db.execute(
             text(
                 "SELECT quotas->'pii' AS pii_config "
-                "FROM organizations WHERE id = :org_id"
+                "FROM organizations WHERE id = :user_id"
             ),
-            {"org_id": org_id},
+            {"user_id": user_id},
         )
         row = result.one_or_none()
         if row is None:
@@ -362,7 +191,7 @@ class OrganizationRepository:
 
     # ── Legacy llm_config (deprecated — reads config->'llm' with fallback) ───
 
-    async def get_llm_config(self, org_id: UUID) -> dict[str, Any]:
+    async def get_llm_config(self, user_id: UUID) -> dict[str, Any]:
         """Get the LLM configuration for an organization.
 
         **DEPRECATED**: Prefer ``get_config()`` which returns the full config
@@ -371,17 +200,18 @@ class OrganizationRepository:
         the migration window.
 
         Args:
-            org_id: The organization UUID.
+            user_id: The organization UUID.
 
         Returns:
             The LLM config dict, or ``{}`` if not configured.
         """
+        await rls.set_user_context(self._db, user_id)
         # Primary: read from new config JSONB
         result = await self._db.execute(
             text(
-                "SELECT config->'llm' AS llm FROM organizations WHERE id = :org_id"
+                "SELECT config->'llm' AS llm FROM organizations WHERE id = :user_id"
             ),
-            {"org_id": org_id},
+            {"user_id": user_id},
         )
         row = result.one_or_none()
         if row and row.llm is not None and isinstance(row.llm, dict):
@@ -390,32 +220,33 @@ class OrganizationRepository:
         # Fallback: legacy llm_config column (data will be migrated by
         # Alembic revision 0002, but keep this for safety)
         result = await self._db.execute(
-            text("SELECT llm_config FROM organizations WHERE id = :org_id"),
-            {"org_id": org_id},
+            text("SELECT llm_config FROM organizations WHERE id = :user_id"),
+            {"user_id": user_id},
         )
         row = result.one_or_none()
         return dict(row.llm_config) if row and row.llm_config else {}
 
-    async def get_quota(self, org_id: UUID, quota_name: str) -> int | None:
+    async def get_quota(self, user_id: UUID, quota_name: str) -> int | None:
         """Get a specific quota value for an organization.
 
         Quotas are stored as a JSONB column (``organizations.quotas``)
-        keyed by quota name.
+        keyed by quota name.  Tenant-scoped read (binds ``user_id`` first).
 
         Args:
-            org_id: The organization UUID.
+            user_id: The organization UUID.
             quota_name: The quota key name (e.g. ``max_users``, ``storage_gb``).
 
         Returns:
             The quota value as an ``int``, or ``None`` if the quota key is
             not set or the organization does not exist.
         """
+        await rls.set_user_context(self._db, user_id)
         result = await self._db.execute(
             text(
                 "SELECT quotas->>:quota_name AS quota "
-                "FROM organizations WHERE id = :org_id"
+                "FROM organizations WHERE id = :user_id"
             ),
-            {"org_id": org_id, "quota_name": quota_name},
+            {"user_id": user_id, "quota_name": quota_name},
         )
         row = result.one_or_none()
         if row and row.quota is not None:

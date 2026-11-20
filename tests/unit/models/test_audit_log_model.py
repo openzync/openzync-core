@@ -28,9 +28,9 @@ class TestAuditLogModel:
 
     @pytest.mark.unit
     def test_nullable_fields(self) -> None:
-        """organization_id, actor_id, actor_type, resource_id, ip_address default to None."""
+        """user_id, actor_id, actor_type, resource_id, ip_address default to None."""
         log = AuditLog(action="test.action", resource_type="test")
-        assert log.organization_id is None
+        assert log.user_id is None
         assert log.actor_id is None
         assert log.actor_type is None
         assert log.resource_id is None

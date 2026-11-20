@@ -1,7 +1,7 @@
 """Pydantic schemas for organization-level custom instructions.
 
 Custom instructions are named domain-specific text snippets that guide
-extraction behavior.  They are scoped by (organization_id, scope, target_id)
+extraction behavior.  They are scoped by (user_id, scope, target_id)
 where scope is one of ``extraction`` or ``user_summary``.
 
 Each instruction has a human-readable ``name`` (e.g. "legal_domain") and

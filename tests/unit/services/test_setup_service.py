@@ -51,41 +51,40 @@ class TestSetupService:
         mock_org_repo: AsyncMock,
     ) -> None:
         """Fresh platform → org ensured, root inserted, no error."""
-        mock_org_repo.get_platform_org.return_value = None
-        mock_user_repo.get_platform_root.return_value = None
         mock_user_repo.create_platform_root.return_value = True
 
         with patch(
-            "services.auth_service.hash_password",
+            "services.setup_service.hash_password",
             return_value="hashed",
         ) as mock_hash:
             await service.create_root_once(STRONG_PASSWORD)
 
-        mock_org_repo.ensure_platform_org.assert_awaited_once()
+        mock_org_repo.ensure_platform_org.assert_awaited_once_with(
+            name="Platform"
+        )
         mock_hash.assert_called_once_with(STRONG_PASSWORD)
         mock_user_repo.create_platform_root.assert_awaited_once_with(
             "hashed"
         )
 
-    async def test_org_without_root_still_creates_root(
+    async def test_org_name_applies_on_first_creation(
         self,
         service: SetupService,
         mock_user_repo: AsyncMock,
         mock_org_repo: AsyncMock,
     ) -> None:
-        """Half-seeded platform (org, no root) → root insert proceeds."""
-        mock_org_repo.get_platform_org.return_value = object()
-        mock_user_repo.get_platform_root.return_value = None
+        """Custom org name is forwarded to the idempotent ensure."""
         mock_user_repo.create_platform_root.return_value = True
 
         with patch(
-            "services.auth_service.hash_password",
+            "services.setup_service.hash_password",
             return_value="hashed",
         ):
-            await service.create_root_once(STRONG_PASSWORD)
+            await service.create_root_once(STRONG_PASSWORD, "Acme Corp")
 
-        mock_org_repo.ensure_platform_org.assert_awaited_once()
-        mock_user_repo.create_platform_root.assert_awaited_once()
+        mock_org_repo.ensure_platform_org.assert_awaited_once_with(
+            name="Acme Corp"
+        )
 
     async def test_root_exists_raises_conflict(
         self,
@@ -93,15 +92,19 @@ class TestSetupService:
         mock_user_repo: AsyncMock,
         mock_org_repo: AsyncMock,
     ) -> None:
-        """Org + root present → generic ConflictError, no writes."""
-        mock_org_repo.get_platform_org.return_value = object()
-        mock_user_repo.get_platform_root.return_value = object()
+        """Insert reports no row (already set up) → generic ConflictError."""
+        mock_user_repo.create_platform_root.return_value = False
 
-        with pytest.raises(ConflictError, match="not available"):
+        with (
+            patch(
+                "services.setup_service.hash_password",
+                return_value="hashed",
+            ),
+            pytest.raises(ConflictError, match="not available"),
+        ):
             await service.create_root_once(STRONG_PASSWORD)
 
-        mock_org_repo.ensure_platform_org.assert_not_awaited()
-        mock_user_repo.create_platform_root.assert_not_awaited()
+        mock_user_repo.create_platform_root.assert_awaited_once()
 
     async def test_weak_password_raises_validation_error(
         self,
@@ -110,11 +113,21 @@ class TestSetupService:
         mock_org_repo: AsyncMock,
     ) -> None:
         """Weak password → shared-validator ValidationError, no writes."""
-        mock_org_repo.get_platform_org.return_value = None
-        mock_user_repo.get_platform_root.return_value = None
-
         with pytest.raises(ValidationError, match="uppercase"):
             await service.create_root_once("weakpass1")
+
+        mock_org_repo.ensure_platform_org.assert_not_awaited()
+        mock_user_repo.create_platform_root.assert_not_awaited()
+
+    async def test_blank_org_name_raises_validation_error(
+        self,
+        service: SetupService,
+        mock_user_repo: AsyncMock,
+        mock_org_repo: AsyncMock,
+    ) -> None:
+        """Blank org name → ValidationError, no writes."""
+        with pytest.raises(ValidationError, match="blank"):
+            await service.create_root_once(STRONG_PASSWORD, "   ")
 
         mock_org_repo.ensure_platform_org.assert_not_awaited()
         mock_user_repo.create_platform_root.assert_not_awaited()
@@ -126,13 +139,11 @@ class TestSetupService:
         mock_org_repo: AsyncMock,
     ) -> None:
         """Insert returns False (lost ON CONFLICT race) → ConflictError."""
-        mock_org_repo.get_platform_org.return_value = None
-        mock_user_repo.get_platform_root.return_value = None
         mock_user_repo.create_platform_root.return_value = False
 
         with (
             patch(
-                "services.auth_service.hash_password",
+                "services.setup_service.hash_password",
                 return_value="hashed",
             ),
             pytest.raises(ConflictError, match="not available"),
@@ -147,7 +158,7 @@ class TestSetupService:
         mock_org_repo: AsyncMock,
     ) -> None:
         """Unexpected DB failure surfaces unwrapped — never masked."""
-        mock_org_repo.get_platform_org.side_effect = RuntimeError(
+        mock_org_repo.ensure_platform_org.side_effect = RuntimeError(
             "db down"
         )
 

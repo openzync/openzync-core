@@ -38,7 +38,6 @@ class TestRequireProjectMembership:
         from dependencies.project_auth import require_project_membership
 
         request = MagicMock(spec=Request)
-        request.state.org_id = ORG_ID_STR
         request.state.auth_type = "jwt"
         request.state.user_id = USER_ID_STR
 
@@ -52,7 +51,7 @@ class TestRequireProjectMembership:
 
         assert result is None
         mock_repo.get_by_id.assert_awaited_once_with(
-            organization_id=ORG_ID_STR, project_id=PROJECT_ID
+            user_id=UUID(USER_ID_STR), project_id=PROJECT_ID
         )
         mock_repo.get_member.assert_awaited_once_with(
             project_id=PROJECT_ID, user_id=UUID(USER_ID_STR)
@@ -66,7 +65,6 @@ class TestRequireProjectMembership:
         from dependencies.project_auth import require_project_membership
 
         request = MagicMock(spec=Request)
-        request.state.org_id = ORG_ID_STR
         request.state.auth_type = "jwt"
         request.state.user_id = USER_ID_STR
 
@@ -89,7 +87,6 @@ class TestRequireProjectMembership:
         from dependencies.project_auth import require_project_membership
 
         request = MagicMock(spec=Request)
-        request.state.org_id = ORG_ID_STR
         request.state.auth_type = "jwt"
         request.state.user_id = USER_ID_STR
 
@@ -112,7 +109,7 @@ class TestRequireProjectMembership:
         from dependencies.project_auth import require_project_membership
 
         request = MagicMock(spec=Request)
-        request.state.org_id = ORG_ID_STR
+        request.state.user_id = ORG_ID_STR
         request.state.auth_type = "jwt"
         request.state.user_id = None
 
@@ -121,14 +118,14 @@ class TestRequireProjectMembership:
         assert exc.value.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_no_org_id_raises_401(
+    async def test_no_user_id_raises_401(
         self, db_session: AsyncMock,
     ) -> None:
-        """Missing org_id → raises 401."""
+        """Missing user_id → raises 401."""
         from dependencies.project_auth import require_project_membership
 
         request = MagicMock(spec=Request)
-        request.state.org_id = None
+        request.state.user_id = None
 
         with pytest.raises(HTTPException) as exc:
             await require_project_membership(request, PROJECT_ID, db_session)
@@ -142,7 +139,7 @@ class TestRequireProjectMembership:
         from dependencies.project_auth import require_project_membership
 
         request = MagicMock(spec=Request)
-        request.state.org_id = ORG_ID_STR
+        request.state.user_id = ORG_ID_STR
         request.state.auth_type = "api_key"
         request.state.api_key_project_id = str(PROJECT_ID)
 
@@ -157,7 +154,7 @@ class TestRequireProjectMembership:
         from dependencies.project_auth import require_project_membership
 
         request = MagicMock(spec=Request)
-        request.state.org_id = ORG_ID_STR
+        request.state.user_id = ORG_ID_STR
         request.state.auth_type = "api_key"
         request.state.api_key_project_id = "00000000-0000-0000-0000-0000000000bb"
 
@@ -173,7 +170,7 @@ class TestRequireProjectMembership:
         from dependencies.project_auth import require_project_membership
 
         request = MagicMock(spec=Request)
-        request.state.org_id = ORG_ID_STR
+        request.state.user_id = ORG_ID_STR
         request.state.auth_type = "api_key"
         request.state.api_key_project_id = None
 
@@ -189,7 +186,7 @@ class TestRequireProjectMembership:
         from dependencies.project_auth import require_project_membership
 
         request = MagicMock(spec=Request)
-        request.state.org_id = ORG_ID_STR
+        request.state.user_id = ORG_ID_STR
         request.state.auth_type = "unknown"
         request.state.user_id = None
 

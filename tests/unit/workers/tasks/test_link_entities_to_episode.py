@@ -73,7 +73,7 @@ class TestLinkEntitiesToEpisode:
             await link_entities_to_episode(
                 ctx=self._mock_ctx(),
                 episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 content=_CONTENT,
                 role=_ROLE,
@@ -109,7 +109,7 @@ class TestLinkEntitiesToEpisode:
             await link_entities_to_episode(
                 ctx=self._mock_ctx(),
                 episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 content="short text",
                 role=_ROLE,
@@ -136,7 +136,7 @@ class TestLinkEntitiesToEpisode:
                 await link_entities_to_episode(
                     ctx={"db_engine": MagicMock(), "db_session_factory": factory},
                     episode_id=_EPISODE_ID,
-                    org_id=_ORG_ID,
+                    user_id=_ORG_ID,
                     project_id=_PROJECT_ID,
                     content=_CONTENT,
                     role=_ROLE,
@@ -160,7 +160,7 @@ class TestLinkEntitiesToEpisode:
             await link_entities_to_episode(
                 ctx=self._mock_ctx(),
                 episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
+                user_id=_ORG_ID,
                 project_id=_PROJECT_ID,
                 content=_CONTENT,
                 role=_ROLE,
@@ -195,7 +195,7 @@ class TestLinkEntitiesToEpisode:
                 await link_entities_to_episode(
                     ctx=self._mock_ctx(),
                     episode_id=_EPISODE_ID,
-                    org_id=_ORG_ID,
+                    user_id=_ORG_ID,
                     project_id=_PROJECT_ID,
                     content=_CONTENT,
                     role=_ROLE,
@@ -221,7 +221,7 @@ class TestLinkEntitiesToEpisode:
                 await link_entities_to_episode(
                     ctx={"db_engine": MagicMock(), "db_session_factory": factory},
                     episode_id=_EPISODE_ID,
-                    org_id=_ORG_ID,
+                    user_id=_ORG_ID,
                     project_id=_PROJECT_ID,
                     content=_CONTENT,
                     role=_ROLE,

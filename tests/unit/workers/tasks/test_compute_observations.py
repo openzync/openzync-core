@@ -64,7 +64,7 @@ class TestComputeObservations:
             db = self._make_db()
             from workers.tasks.compute_observations import compute_observations
 
-            await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, org_id=_ORG_ID, project_id=_PROJECT_ID)
+            await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, user_id=_ORG_ID, project_id=_PROJECT_ID)
 
             mock_repo.get_by_id.assert_called_once()
             mock_svc.run_full_project_scan.assert_called_once()
@@ -88,7 +88,7 @@ class TestComputeObservations:
             db = self._make_db()
             from workers.tasks.compute_observations import compute_observations
 
-            await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, org_id=_ORG_ID, project_id=_PROJECT_ID)
+            await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, user_id=_ORG_ID, project_id=_PROJECT_ID)
 
             # Should NOT proceed to scan or set bit
             mock_repo.apply_enrichment_bits.assert_not_called()
@@ -109,7 +109,7 @@ class TestComputeObservations:
             from workers.tasks.compute_observations import compute_observations
 
             with pytest.raises(EpisodeNotFoundError):
-                await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, org_id=_ORG_ID, project_id=_PROJECT_ID)
+                await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, user_id=_ORG_ID, project_id=_PROJECT_ID)
 
     @pytest.mark.asyncio
     async def test_empty_scan(self) -> None:
@@ -136,7 +136,7 @@ class TestComputeObservations:
             db = self._make_db()
             from workers.tasks.compute_observations import compute_observations
 
-            await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, org_id=_ORG_ID, project_id=_PROJECT_ID)
+            await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, user_id=_ORG_ID, project_id=_PROJECT_ID)
 
             mock_svc.run_full_project_scan.assert_called_once()
             mock_repo.apply_enrichment_bits.assert_called_once()
@@ -156,7 +156,7 @@ class TestComputeObservations:
             db = self._make_db()
             from workers.tasks.compute_observations import compute_observations
 
-            await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, org_id=_ORG_ID, project_id=_PROJECT_ID)
+            await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, user_id=_ORG_ID, project_id=_PROJECT_ID)
 
             # ObservationService never constructed — _assert_backend would raise on None.
             mock_svc_cls.assert_not_called()
@@ -178,7 +178,7 @@ class TestComputeObservations:
             from workers.tasks.compute_observations import compute_observations
 
             with pytest.raises(Exception):
-                await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, org_id=_ORG_ID, project_id=_PROJECT_ID)
+                await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, user_id=_ORG_ID, project_id=_PROJECT_ID)
 
     @pytest.mark.asyncio
     async def test_observations_filtered_by_type(self) -> None:
@@ -205,7 +205,7 @@ class TestComputeObservations:
             db = self._make_db()
             from workers.tasks.compute_observations import compute_observations
 
-            await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, org_id=_ORG_ID, project_id=_PROJECT_ID)
+            await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, user_id=_ORG_ID, project_id=_PROJECT_ID)
 
             mock_svc.run_full_project_scan.assert_called_once()
             mock_repo.apply_enrichment_bits.assert_called_once()
@@ -239,7 +239,7 @@ class TestComputeObservations:
 
             await compute_observations(
                 ctx=self._ctx(db), episode_id=_EPISODE_ID,
-                org_id=_ORG_ID, project_id=_PROJECT_ID,
+                user_id=_ORG_ID, project_id=_PROJECT_ID,
                 trace_id="test-trace-001",
             )
 
@@ -285,7 +285,7 @@ class TestComputeObservations:
 
             await compute_observations(
                 ctx=ctx, episode_id=_EPISODE_ID,
-                org_id=_ORG_ID, project_id=_PROJECT_ID,
+                user_id=_ORG_ID, project_id=_PROJECT_ID,
             )
 
             mock_svc.run_full_project_scan.assert_called_once()
@@ -321,7 +321,7 @@ class TestComputeObservations:
 
             await compute_observations(
                 ctx=self._ctx(db), episode_id=_EPISODE_ID,
-                org_id=_ORG_ID, project_id=_PROJECT_ID,
+                user_id=_ORG_ID, project_id=_PROJECT_ID,
             )
 
             mock_svc.run_full_project_scan.assert_called_once()

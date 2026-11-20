@@ -23,7 +23,7 @@ class ProjectPin(TimestampMixin, Base):
         id: UUID primary key, generated server-side via gen_random_uuid().
         user_id: Foreign key to the user who pinned. CASCADE on delete.
         project_id: Foreign key to the pinned project. CASCADE on delete.
-        organization_id: Tenant scope. CASCADE on delete.
+        user_id: Tenant scope. CASCADE on delete.
         pinned_at: When the pin was created. Domain ordering key for
             ``pinned_only`` listing (most recent first). Kept distinct
             from ``created_at`` so pin ordering never shifts on row updates.
@@ -44,10 +44,6 @@ class ProjectPin(TimestampMixin, Base):
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
     )
-    organization_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="CASCADE"),
-        nullable=False,
-    )
     pinned_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=False,
@@ -61,7 +57,7 @@ class ProjectPin(TimestampMixin, Base):
             name="uq_project_pins_user_project",
         ),
         Index(
-            "ix_project_pins_user_org_pinned", "user_id", "organization_id", "pinned_at"
+            "ix_project_pins_user_pinned", "user_id", "pinned_at"
         ),
         Index("ix_project_pins_project_id", "project_id"),
     )
@@ -69,5 +65,5 @@ class ProjectPin(TimestampMixin, Base):
     def __repr__(self) -> str:
         return (
             f"<ProjectPin user={self.user_id} project={self.project_id} "
-            f"org={self.organization_id} pinned_at={self.pinned_at}>"
+            f"pinned_at={self.pinned_at}>"
         )

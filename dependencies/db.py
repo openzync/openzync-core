@@ -33,7 +33,7 @@ from core.rls import (
     init_context,
     release_tenant_context,
     set_bypass_rls,
-    set_tenant_context,
+    set_user_context,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,14 +64,14 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
     Yields:
         An :class:`AsyncSession` bound to the application's engine.
 
-    RLS context behavior by ``request.state.org_id`` value:
+    RLS context behavior by ``request.state.user_id`` value:
 
     * ``None`` — public endpoint: the context is initialised with an
-      **empty** tenant, so no org-scoped row is visible and no
-      org-scoped write can succeed.
+      **empty** owner, so no user-scoped row is visible and no
+      user-scoped write can succeed.
     * ``""`` / whitespace-only — fail-closed, treated exactly like
-      ``None`` (empty tenant, warning logged).
-    * Valid UUID string — ``app.org_id`` set to that organization.
+      ``None`` (empty owner, warning logged).
+    * Valid UUID string — ``app.user_id`` set to that user.
 
     Raises:
         RuntimeError: If ``db_session_factory`` has not been set on
@@ -102,15 +102,15 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
         # and re-applies it to the session's next transaction, so the
         # session keeps its own tenant on whichever connection it next
         # uses.
-        org_id: str | None = getattr(request.state, "org_id", None)
-        if org_id is not None and not org_id.strip():
+        user_id: str | None = getattr(request.state, "user_id", None)
+        if user_id is not None and not user_id.strip():
             logger.warning(
-                "skipping empty app.org_id RLS context: path=%s",
+                "skipping empty app.user_id RLS context: path=%s",
                 request.url.path,
             )
-            org_id = None
+            user_id = None
         try:
-            await init_context(session, org_id)
+            await init_context(session, user_id)
             yield session
             await session.commit()
         except Exception:
@@ -126,25 +126,24 @@ async def get_db_superadmin(
     """FastAPI dependency providing an RLS-bypass session for superadmins.
 
     Same contract as :func:`get_db` (session from ``app.state.db_session_factory``)
-    but with ``app.bypass_rls = 'true'`` and ``app.org_id`` set to the
-    platform org UUID — so the session can read and mutate rows across
-    **all** organizations (org listings, cross-org config, approvals).
+    but with ``app.bypass_rls = 'true'`` and ``app.user_id`` set to the
+    superadmin's own UUID — ownership checks pass for the admin's own rows
+    while the bypass covers the rest.
 
     **The bypass is granted only after a DB-verified superadmin check**
     (:func:`dependencies.auth._ensure_superadmin`).  Fail-closed: if the
-    check raises (non-superadmin, non-platform org, Redis/DB error), no
+    check raises (non-superadmin, Redis/DB error), no
     session is yielded and the bypass is never set.  Never enable the
-    bypass from the org_id/JWT alone.
+    bypass from the JWT alone.
 
     The bypass is bound **transaction-locally** (``core.rls``), so it is
     discarded by any commit, including a mid-request one.  The session is
     an :class:`core.rls.RlsAsyncSession`, which re-binds the whole
-    context (platform org + bypass) to the transaction that follows every
+    context (user ``app.user_id`` + bypass) to the transaction that follows every
     commit, so the bypass survives a mid-request commit and cannot
     outlive the transaction.
 
-    Use ONLY in ``routers/admin_system.py`` and the
-    ``approve_org`` transaction.
+    Use ONLY in ``routers/admin_system.py``.
 
     Yields:
         An :class:`AsyncSession` with RLS bypassed for the platform admin.
@@ -156,7 +155,6 @@ async def get_db_superadmin(
     """
     # Lazy import — dependencies/auth.py imports get_db from this module at
     # module level; importing back here at module level would be circular.
-    from core.config import PLATFORM_ORG_ID
     from dependencies.auth import _ensure_superadmin
 
     factory: async_sessionmaker[AsyncSession] | None = getattr(
@@ -169,24 +167,20 @@ async def get_db_superadmin(
             "app.state.db_session_factory = get_async_session(engine)."
         )
 
-    org_id: str | None = getattr(request.state, "org_id", None)
     user_id: str | None = getattr(request.state, "user_id", None)
-    if org_id is None or user_id is None:
+    if user_id is None:
         raise RuntimeError(
             "get_db_superadmin requires an authenticated JWT session — "
-            "org_id and user_id must be present on request.state."
+            "user_id must be present on request.state."
         )
 
     # ── 1. Verify superadmin (DB-verified role) on a clean session
     async with factory() as verify_session:
         # Same non-bypass RLS context as get_db: the role lookup must run
-        # under the role's own row visibility.  Under FORCE ROW LEVEL
-        # SECURITY the lookup either finds the superadmin row (the session
-        # is bound to the platform org) or fails loudly here instead of
-        # silently mis-verifying.
+        # under the user's own row visibility.
         try:
-            await init_context(verify_session, org_id)
-            await _ensure_superadmin(request, org_id, user_id, verify_session)
+            await init_context(verify_session, user_id)
+            await _ensure_superadmin(request, user_id, verify_session)
         finally:
             await release_tenant_context(verify_session)
 
@@ -197,7 +191,7 @@ async def get_db_superadmin(
         # next request will use.  ``RlsAsyncSession`` re-binds it to the
         # transaction that follows every commit, so the bypass survives a
         # mid-request commit too.
-        await set_tenant_context(session, PLATFORM_ORG_ID)
+        await set_user_context(session, user_id)
         await set_bypass_rls(session, True)
         try:
             yield session

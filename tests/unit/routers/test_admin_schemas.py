@@ -23,7 +23,7 @@ from core.sorting import SortSpec
 from routers.admin_schemas import router
 from schemas.extraction_schemas import UpdateExtractionSchemaRequest
 
-ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 SCHEMA_ID = UUID("00000000-0000-0000-0000-000000000003")
 NOW = datetime.now(UTC)
@@ -35,24 +35,24 @@ def _mock_org_admin_role(monkeypatch) -> None:
 
     The router gates reads with ``require_permission("configuration:read")``
     and writes with ``require_permission("configuration:write")``; both JWT
-    paths funnel into ``core.rbac.get_org_role`` via
+    paths funnel into ``core.rbac.get_user_role`` via
     ``dependencies.auth._check_permission``.  Patching the role lookup to
     return ``"admin"`` keeps the full dependency chain exercised (JWT state,
     Redis on app state, DB session) while mocking only the role source of
     truth.  RBAC itself is unit-tested in ``dependencies/test_rbac.py``.
     """
 
-    async def _fake_get_org_role(redis, db, org_id, user_id) -> str:
+    async def _fake_get_user_role(redis, db, user_id) -> str:
         return "admin"
 
-    monkeypatch.setattr("dependencies.auth.get_org_role", _fake_get_org_role)
+    monkeypatch.setattr("dependencies.auth.get_user_role", _fake_get_user_role)
 
 
 def _stub_schema_response(overrides: dict | None = None) -> dict:
     """Return a canonical extraction schema response dict."""
     base = {
         "id": str(SCHEMA_ID),
-        "organization_id": str(ORG_ID),
+        "user_id": str(USER_ID),
         "name": "invoice_extraction",
         "type": "structured",
         "json_schema": {"type": "object", "properties": {}},
@@ -75,16 +75,16 @@ def _build_app() -> FastAPI:
     app.state.redis = AsyncMock()
     app.include_router(router)
 
-    from dependencies.auth import require_org_id
+    from dependencies.auth import require_user_id
     from dependencies.db import get_db
 
     app.dependency_overrides = {}
-    app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+    app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
     app.dependency_overrides[get_db] = lambda: AsyncMock(spec=AsyncSession)
 
     @app.middleware("http")
     async def _mock_auth(request: Request, call_next):
-        request.state.org_id = str(ORG_ID)
+        request.state.user_id = str(USER_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "jwt"
         request.state.api_key_permissions = []
@@ -209,7 +209,7 @@ class TestListSchemas:
         response = await client.get("/v1/admin/schemas?type=classification")
         assert response.status_code == 200
         mock_schema_service.list_schemas.assert_awaited_once_with(
-            org_id=ORG_ID,
+            user_id=USER_ID,
             schema_type="classification",
             is_active=None,
             sort=SortSpec(None, "desc"),
@@ -225,7 +225,7 @@ class TestListSchemas:
         response = await client.get("/v1/admin/schemas?is_active=true")
         assert response.status_code == 200
         mock_schema_service.list_schemas.assert_awaited_once_with(
-            org_id=ORG_ID, schema_type=None, is_active=True, sort=SortSpec(None, "desc")
+            user_id=USER_ID, schema_type=None, is_active=True, sort=SortSpec(None, "desc")
         )
 
     async def test_returns_422_on_invalid_type_filter(
@@ -255,7 +255,7 @@ class TestGetSchema:
         assert body["id"] == str(SCHEMA_ID)
         assert body["name"] == "invoice_extraction"
         mock_schema_service.get_schema.assert_awaited_once_with(
-            org_id=ORG_ID, schema_id=SCHEMA_ID
+            user_id=USER_ID, schema_id=SCHEMA_ID
         )
 
     async def test_returns_422_on_invalid_uuid(
@@ -289,7 +289,7 @@ class TestUpdateSchema:
         body = response.json()
         assert body["name"] == "updated_schema"
         mock_schema_service.update_schema.assert_awaited_once_with(
-            org_id=ORG_ID,
+            user_id=USER_ID,
             schema_id=SCHEMA_ID,
             payload=UpdateExtractionSchemaRequest(**payload),
         )
@@ -332,7 +332,7 @@ class TestDeleteSchema:
         response = await client.delete(f"/v1/admin/schemas/{SCHEMA_ID}")
         assert response.status_code == 204
         mock_schema_service.delete_schema.assert_awaited_once_with(
-            org_id=ORG_ID, schema_id=SCHEMA_ID
+            user_id=USER_ID, schema_id=SCHEMA_ID
         )
 
     async def test_returns_422_on_invalid_uuid(

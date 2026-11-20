@@ -27,14 +27,14 @@ class CustomInstructionRepository:
 
     async def get_by_scope(
         self,
-        org_id: uuid.UUID,
+        user_id: uuid.UUID,
         scope: str,
         target_id: uuid.UUID | None = None,
     ) -> list[CustomInstruction]:
         """Fetch instructions for a given scope + target.
 
         Args:
-            org_id: The owning organization UUID.
+            user_id: The owning organization UUID.
             scope: Instruction scope (``extraction`` or ``user_summary``).
             target_id: Optional target entity UUID.  ``None`` fetches
                 org-level instructions for the scope.
@@ -44,7 +44,7 @@ class CustomInstructionRepository:
             by name alphabetically.
         """
         conditions = [
-            CustomInstruction.organization_id == org_id,
+            CustomInstruction.user_id == user_id,
             CustomInstruction.scope == scope,
         ]
         if target_id is not None:
@@ -59,7 +59,7 @@ class CustomInstructionRepository:
 
     async def set_by_scope(
         self,
-        org_id: uuid.UUID,
+        user_id: uuid.UUID,
         scope: str,
         target_id: uuid.UUID | None,
         instructions: list[dict],
@@ -72,7 +72,7 @@ class CustomInstructionRepository:
         as ``ValidationError`` via the unique index (fail-loud, no retry).
 
         Args:
-            org_id: The owning organization UUID.
+            user_id: The owning organization UUID.
             scope: Instruction scope.
             target_id: Optional target entity UUID.  ``None`` replaces
                 org-level instructions.
@@ -88,7 +88,7 @@ class CustomInstructionRepository:
         """
         # Delete all existing for this scope+target
         delete_conditions = [
-            CustomInstruction.organization_id == org_id,
+            CustomInstruction.user_id == user_id,
             CustomInstruction.scope == scope,
         ]
         if target_id is not None:
@@ -104,7 +104,7 @@ class CustomInstructionRepository:
         new_instructions: list[CustomInstruction] = []
         for instr in instructions:
             obj = CustomInstruction(
-                organization_id=org_id,
+                user_id=user_id,
                 scope=scope,
                 target_id=target_id,
                 name=instr["name"],
@@ -131,20 +131,20 @@ class CustomInstructionRepository:
 
     async def delete_by_scope(
         self,
-        org_id: uuid.UUID,
+        user_id: uuid.UUID,
         scope: str,
         target_id: uuid.UUID | None = None,
     ) -> None:
         """Delete all instructions for a scope + target.
 
         Args:
-            org_id: The owning organization UUID.
+            user_id: The owning organization UUID.
             scope: Instruction scope.
             target_id: Optional target entity UUID.  ``None`` deletes
                 org-level instructions for the given scope.
         """
         del_conds = [
-            CustomInstruction.organization_id == org_id,
+            CustomInstruction.user_id == user_id,
             CustomInstruction.scope == scope,
         ]
         if target_id is not None:

@@ -22,13 +22,13 @@ Endpoints:
 
 from __future__ import annotations
 
+import hashlib
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 
 from core.audit import audit_action
 from core.exceptions import AuthorizationError, ConflictError
-from core.system_config import get_system_config
 from dependencies.auth import get_dashboard_user
 from dependencies.services import (
     get_auth_service,
@@ -88,34 +88,42 @@ def _client_ip(request: Request) -> str:
     return "unknown"
 
 
+def _token_fingerprint(raw: str) -> str:
+    """Hash a bearer token for throttle keys (never log/slice raw tokens).
+
+    Args:
+        raw: The raw refresh or magic-link token.
+
+    Returns:
+        First 16 hex chars of the SHA-256 digest — stable per token,
+        useless to an attacker who reads the throttle store.
+    """
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
 @router.get(
     "/registration-status",
     response_model=RegistrationStatusResponse,
     summary="Public registration status",
     description=(
-        "Returns the platform's org-creation policy and approval scope so "
-        "the frontend can decide between signup, org-request, and disabled "
-        "states.  PUBLIC ENDPOINT — no auth required."
+        "Returns the platform registration mode so the frontend can decide "
+        "between signup, invite-only, and approval states. "
+        "PUBLIC ENDPOINT — no auth required."
     ),
 )
 async def registration_status(
-    request: Request,
+    service: SetupService = Depends(get_setup_service),  # noqa: B008
 ) -> RegistrationStatusResponse:
-    """Return the platform registration policy for the signup UI.
+    """Return the platform registration mode for the signup UI.
 
     Args:
-        request: Incoming HTTP request (app-state Redis/OpenBao access).
+        service: Injected setup service (owns the settings-row read).
 
     Returns:
-        The current ``org_creation_policy`` and ``approval_scope``
-        (defaults to ``allow_all``/``both`` when OpenBao has no record).
+        The current ``registration_mode`` (defaults to ``invite_only``).
     """
-    bao_client = getattr(request.app.state, "openbao_client", None)
-    redis = getattr(request.app.state, "redis", None)
-    config = await get_system_config(redis, bao_client)
     return RegistrationStatusResponse(
-        org_creation_policy=config.org_creation_policy,
-        approval_scope=config.approval_scope,
+        registration_mode=await service.get_registration_mode()
     )
 
 
@@ -126,8 +134,9 @@ async def registration_status(
     summary="One-time platform setup",
     description=(
         "Creates the platform root superadmin with the operator-chosen "
-        "password.  Usable exactly once — after the platform is set up "
-        "every call returns 403.  PUBLIC ENDPOINT — no auth required."
+        "password and names the singleton platform org.  Usable exactly "
+        "once — after the platform is set up every call returns 403.  "
+        "PUBLIC ENDPOINT — no auth required."
     ),
 )
 @audit_action("auth.setup", "user", "Platform root created")
@@ -140,7 +149,7 @@ async def setup_platform_root(
     """Create the platform root superadmin (one-time bootstrap).
 
     Args:
-        payload: Operator-chosen root password.
+        payload: Operator-chosen root password + singleton org name.
         request: Incoming HTTP request (for IP extraction).
         service: Injected setup service.
         throttle: Injected auth throttle.
@@ -156,7 +165,7 @@ async def setup_platform_root(
     """
     await throttle.check_signup_attempt(_client_ip(request))
     try:
-        await service.create_root_once(payload.password)
+        await service.create_root_once(payload.password, payload.org_name)
     except ConflictError as exc:
         raise AuthorizationError("Platform setup is not available.") from exc
     return SetupResponse(
@@ -166,16 +175,17 @@ async def setup_platform_root(
 
 @router.post(
     "/signup",
-    response_model=SignupResponse | PendingOrgResponse,
+    response_model=SignupResponse | PendingOrgResponse | TokenResponse,
     status_code=201,
-    summary="Create organization and admin user",
+    summary="Create dashboard user in the platform org",
     description=(
-        "Registers a new organization with an admin dashboard user "
+        "Registers a dashboard user in the singleton platform org, "
         "identified by email and password.  A verification code is sent "
-        "to the user's email.  The user must call ``POST /v1/auth/verify-email`` "
-        "with the code to complete signup and receive JWT tokens.  Under "
-        "the platform approvals policy, the org is created as pending and "
-        "the response carries ``status='pending'`` instead."
+        "to the user's email.  The user must call "
+        "``POST /v1/auth/verify-email`` with the code to complete signup "
+        "and receive JWT tokens.  Under the ``approval`` registration "
+        "mode the response carries ``status='pending'`` instead, and under "
+        "``invite_only`` signup returns 403."
     ),
 )
 @audit_action("auth.signup", "user", "User signed up")
@@ -184,20 +194,36 @@ async def signup(
     request: Request,
     service: AuthService = Depends(get_auth_service),  # noqa: B008
     throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
-) -> SignupResponse | PendingOrgResponse:
-    """Sign up a new organization with an admin dashboard user.
+    invites: InviteService = Depends(get_invite_service),  # noqa: B008
+) -> SignupResponse | PendingOrgResponse | TokenResponse:
+    """Sign up a dashboard user in the platform org.
 
     Args:
-        payload: Email, password, and organization name.
+        payload: Email + password, plus an optional ``invite_token``.
         request: Incoming HTTP request (for IP extraction).
         service: Injected auth service.
         throttle: Injected auth throttle.
+        invites: Injected invite service (invite-token path only).
 
     Returns:
-        Confirmation message (tokens obtained via verify-email), or a
-        pending-approval response under the approvals policy.
+        Confirmation message (tokens via verify-email), a
+        pending-approval response under the ``approval`` mode — or a JWT
+        pair immediately when ``invite_token`` claims an admin invite.
     """
     await throttle.check_signup_attempt(_client_ip(request))
+    if payload.invite_token:
+        # Invite path: claim the magic-link invite (same semantics as
+        # POST /v1/auth/invites/accept) — the token is the credential, so
+        # no OTP round-trip is needed.
+        await throttle.check_sensitive_attempt(
+            "invite_accept",
+            _token_fingerprint(payload.invite_token),
+            _client_ip(request),
+        )
+        return await invites.accept_invite(
+            token=payload.invite_token,
+            password=payload.password,
+        )
     return await service.signup(payload)
 
 
@@ -205,15 +231,14 @@ async def signup(
     "/join",
     response_model=SignupResponse,
     status_code=201,
-    summary="Join an existing organization with an org code",
+    summary="Join the platform organization",
     description=(
-        "Creates a member dashboard user inside the organization that owns "
-        "the given join code.  A verification code is sent to the user's "
-        "email.  The user must call ``POST /v1/auth/verify-email`` with the "
-        "code to complete signup and receive JWT tokens.  If the email is "
-        "already registered, the same generic response is returned.  "
-        "Invalid org codes return 422.  A valid code for an organization "
-        "that has disabled self-registration returns 403."
+        "Creates a member dashboard user in the singleton platform org. "
+        "A verification code is sent to the user's email.  The user must "
+        "call ``POST /v1/auth/verify-email`` with the code to complete "
+        "signup and receive JWT tokens.  If the email is already "
+        "registered, the same generic response is returned.  Under "
+        "``invite_only`` mode join returns 403."
     ),
 )
 @audit_action("auth.join", "user", "User joined organization")
@@ -223,10 +248,10 @@ async def join_organization(
     service: AuthService = Depends(get_auth_service),  # noqa: B008
     throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
 ) -> SignupResponse:
-    """Join an existing organization via its org code.
+    """Join the platform org as a member.
 
     Args:
-        payload: Email, password, and org code.
+        payload: Email and password.
         request: Incoming HTTP request (for IP extraction).
         service: Injected auth service.
         throttle: Injected auth throttle.
@@ -283,17 +308,22 @@ async def verify_email(
 @audit_action("auth.resend_otp", "user", "OTP resent")
 async def resend_otp(
     payload: SendOtpRequest,
+    request: Request,
     service: AuthService = Depends(get_auth_service),  # noqa: B008
+    throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
 ) -> SignupResponse:
     """Resend the email verification code.
 
     Args:
         payload: Email address.
+        request: Incoming HTTP request (for IP extraction).
         service: Injected auth service.
+        throttle: Injected auth throttle.
 
     Returns:
         Confirmation message.
     """
+    await throttle.check_sensitive_attempt("resend_otp", payload.email, _client_ip(request))
     return await service.resend_verification(payload.email)
 
 
@@ -588,17 +618,24 @@ async def mfa_disable(
 @audit_action("auth.refresh", "token", "Token refreshed")
 async def refresh(
     payload: RefreshRequest,
+    request: Request,
     service: AuthService = Depends(get_auth_service),  # noqa: B008
+    throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
 ) -> TokenResponse:
     """Refresh an expired access token.
 
     Args:
         payload: The current refresh token.
+        request: Incoming HTTP request (for IP extraction).
         service: Injected auth service.
+        throttle: Injected auth throttle.
 
     Returns:
         New access and refresh tokens.
     """
+    await throttle.check_sensitive_attempt(
+        "refresh", _token_fingerprint(payload.refresh_token), _client_ip(request)
+    )
     return await service.refresh(payload.refresh_token)
 
 
@@ -656,7 +693,7 @@ async def get_profile(
         user_id: Authenticated user UUID from JWT claims.
 
     Returns:
-        The user's public profile (email, name, role, org, verification).
+        The user's public profile (email, name, role, verification).
     """
     return await service.get_profile(user_id=UUID(user_id))
 
@@ -699,7 +736,7 @@ async def update_profile(
     response_model=InviteInfoResponse,
     summary="Resolve pending-invite details",
     description=(
-        "Returns the organization name and invitee identity for a valid "
+        "Returns the invitee identity (email, name) for a valid "
         "magic-link token, shown on the invite landing page.  Unknown, "
         "expired, and used tokens all return the same generic 404.  "
         "PUBLIC ENDPOINT — no auth required (the token IS the credential)."
@@ -708,7 +745,9 @@ async def update_profile(
 @audit_action("auth.invite_info", "user", "Invite info requested")
 async def invite_info(
     payload: InviteTokenRequest,
+    request: Request,
     service: InviteService = Depends(get_invite_service),  # noqa: B008
+    throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
 ) -> InviteInfoResponse:
     """Resolve the invite details behind a magic-link token.
 
@@ -717,14 +756,19 @@ async def invite_info(
 
     Args:
         payload: The raw magic-link token.
+        request: Incoming HTTP request (for IP extraction).
         service: Invite service (injected).
+        throttle: Injected auth throttle.
 
     Returns:
-        The invitee's org name, email, and name.
+        The invitee's email and name.
 
     Raises:
         NotFoundError: Generic 404 for unknown/expired/used tokens.
     """
+    await throttle.check_sensitive_attempt(
+        "invite_info", _token_fingerprint(payload.token), _client_ip(request)
+    )
     return await service.get_invite_info(payload.token)
 
 
@@ -741,7 +785,9 @@ async def invite_info(
 @audit_action("auth.invite_accept", "user", "Invite accepted")
 async def accept_invite(
     payload: AcceptInviteRequest,
+    request: Request,
     service: InviteService = Depends(get_invite_service),  # noqa: B008
+    throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
 ) -> TokenResponse:
     """Accept a pending invite and return a fresh token pair.
 
@@ -751,7 +797,9 @@ async def accept_invite(
 
     Args:
         payload: Raw magic-link token + chosen password.
+        request: Incoming HTTP request (for IP extraction).
         service: Invite service (injected).
+        throttle: Injected auth throttle.
 
     Returns:
         A fresh access + refresh token pair.
@@ -760,7 +808,11 @@ async def accept_invite(
         NotFoundError: Generic 404 for unknown/expired/used tokens.
         ValidationError: If the password is too weak (→ 422).
     """
+    await throttle.check_sensitive_attempt(
+        "invite_accept", _token_fingerprint(payload.token), _client_ip(request)
+    )
     return await service.accept_invite(
         token=payload.token,
         password=payload.password,
     )
+

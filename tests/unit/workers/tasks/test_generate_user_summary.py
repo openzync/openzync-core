@@ -109,7 +109,7 @@ class TestGenerateUserSummary:
 
             await generate_user_summary(
                 ctx=self._ctx(backend_db, persist_db),
-                org_id=_ORG_ID,
+                
                 user_id=_USER_ID,
                 project_id=_PROJECT_ID,
             )
@@ -123,9 +123,8 @@ class TestGenerateUserSummary:
                 "rollback",  # release the tenant context
             ]
             assert persist_db.execute.await_args_list[0].args[1] == {
-                "org_id": _ORG_ID,
+                "user_id": _USER_ID,
                 "bypass_rls": "false",
-                "lookup_code": "",
             }
             # The graph-backend session is bound and released the same way.
             assert _session_ops(backend_recorder) == [
@@ -161,7 +160,7 @@ class TestGenerateUserSummary:
 
             await generate_user_summary(
                 ctx=self._ctx(db),
-                org_id=_ORG_ID,
+                
                 user_id=_USER_ID,
             )
 
@@ -189,7 +188,7 @@ class TestGenerateUserSummary:
             with pytest.raises(Exception, match="LLM timeout"):
                 await generate_user_summary(
                     ctx=self._ctx(db),
-                    org_id=_ORG_ID,
+                    
                     user_id=_USER_ID,
                 )
 
@@ -212,7 +211,7 @@ class TestGenerateUserSummary:
             with pytest.raises(Exception, match="Template error"):
                 await generate_user_summary(
                     ctx=self._ctx(self._make_db()),
-                    org_id=_ORG_ID,
+                    
                     user_id=_USER_ID,
                 )
 
@@ -248,7 +247,7 @@ class TestGenerateUserSummary:
             with pytest.raises(RuntimeError, match="DB write failed"):
                 await generate_user_summary(
                     ctx=self._ctx(db),
-                    org_id=_ORG_ID,
+                    
                     user_id=_USER_ID,
                 )
 
@@ -283,7 +282,7 @@ class TestGenerateUserSummary:
 
             await generate_user_summary(
                 ctx=self._ctx(db),
-                org_id=_ORG_ID,
+                
                 user_id=_USER_ID,
             )
 
@@ -308,6 +307,6 @@ class TestGenerateUserSummary:
             with pytest.raises(ConnectionError, match="Connection refused"):
                 await generate_user_summary(
                     ctx=self._ctx(db),
-                    org_id=_ORG_ID,
+                    
                     user_id=_USER_ID,
                 )

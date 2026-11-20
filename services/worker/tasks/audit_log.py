@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 async def write_audit_log(
     ctx: dict[str, Any],
     *,
-    organization_id: str | None = None,
+    user_id: str | None = None,
     actor_id: str | None = None,
     actor_type: str | None = None,
     action: str,
@@ -42,7 +42,7 @@ async def write_audit_log(
 
     Args:
         ctx: ARQ context (contains ``redis``, ``job_id``, etc.).
-        organization_id: Organization UUID as string (nullable).
+        user_id: Organization UUID as string (nullable).
         actor_id: Identifier of the acting entity.
         actor_type: ``user``, ``api_key``, or ``system``.
         action: The action performed (e.g. ``session.create``).
@@ -59,7 +59,7 @@ async def write_audit_log(
     from core.config import settings
     from core.db import get_async_session, init_db_engine
 
-    org_uuid: UUID | None = UUID(organization_id) if organization_id else None
+    org_uuid: UUID | None = UUID(user_id) if user_id else None
     parsed_details: dict[str, Any] = orjson.loads(details.encode()) if details else {}
 
     _engine = init_db_engine(
@@ -86,7 +86,7 @@ async def write_audit_log(
                     await rls.set_bypass_rls(db_session, True)
                 service = AuditLogService(db_session)
                 await service.log_action(
-                    organization_id=org_uuid,
+                    user_id=org_uuid,
                     actor_id=actor_id,
                     actor_type=actor_type,
                     action=action,
