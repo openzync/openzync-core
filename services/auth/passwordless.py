@@ -24,7 +24,6 @@ class PasswordlessMixin:
     _otp_service: Any
     _redis: Any
     _email_service: Any
-    _bao_client: Any
 
     # ── Passwordless login ─────────────────────────────────────────────────
 

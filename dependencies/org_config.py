@@ -17,19 +17,22 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import Depends, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.auth import require_user_id
+from dependencies.db import get_db
 
 
 async def get_org_config(
     request: Request,
+    db: AsyncSession = Depends(get_db),
     user_id: str = Depends(require_user_id),
 ) -> OrgConfigBase:
     """FastAPI dependency that yields the stored org config for the current org.
 
-    The config is fetched from Redis cache (fast path) or OpenBao KV
-    (authoritative slow path).  Every field may be ``None`` — there is no
-    env-var fallback.
+    The config is fetched from Redis cache (fast path) or the DB
+    (``users.config_override``, authoritative slow path).  Every field may
+    be ``None`` — there is no env-var fallback.
 
     Usage::
 
@@ -39,9 +42,10 @@ async def get_org_config(
         ):
             model = org_config.llm_model  # str | None
     """
-    # Lazy import to avoid circular dependency on schemas
-    from core.org_config import get_org_config as _get_org_config
+    # Lazy imports to avoid circulars (schemas + core pull heavy deps).
+    from core.org_config import get_org_config as _get_org_config  # noqa: PLC0415
+    from schemas.organization_config import OrgConfigBase  # noqa: PLC0415
 
-    bao_client = getattr(request.app.state, "openbao_client", None)
     redis = getattr(request.app.state, "redis", None)
-    return await _get_org_config(UUID(user_id), redis=redis, bao_client=bao_client)
+    config: OrgConfigBase = await _get_org_config(UUID(user_id), redis=redis, db=db)
+    return config

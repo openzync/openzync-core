@@ -242,7 +242,6 @@ async def app(engine, redis_client) -> Any:
         DATABASE_URL=driver_url,
         REDIS_URL=redis_url,
         SECRET_KEY="i" * 32,
-        WEBHOOK_SIGNING_SECRET="j" * 32,
     )
     set_settings(settings)
 
@@ -256,16 +255,6 @@ async def app(engine, redis_client) -> Any:
     # Wire Redis client — the app's lifespan normally does this, but it
     # is not run when we call create_app() directly in tests.
     app.state.redis = redis_client
-
-    # Wire a mock OpenBao client — the real lifespan tries to establish
-    # a real connection, which we skip in integration tests.  Routes that
-    # depend on openbao_client (e.g. org config) will use this mock.
-    from unittest.mock import AsyncMock
-
-    mock_bao = AsyncMock()
-    mock_bao.read_org_config.return_value = {}
-    mock_bao.write_org_config.return_value = None
-    app.state.openbao_client = mock_bao
 
     async def _get_db_override() -> AsyncGenerator[AsyncSession, None]:
         async with session_factory() as session:
@@ -533,7 +522,6 @@ async def isolated_app(engine, redis_client, db_session) -> Any:
         DATABASE_URL=driver_url,
         REDIS_URL=redis_url,
         SECRET_KEY="i" * 32,
-        WEBHOOK_SIGNING_SECRET="j" * 32,
     )
     set_settings(settings)
 
@@ -546,13 +534,6 @@ async def isolated_app(engine, redis_client, db_session) -> Any:
     session_factory = get_async_session(engine)
     test_app.state.db_session_factory = session_factory
     test_app.state.redis = redis_client
-
-    from unittest.mock import AsyncMock
-
-    mock_bao = AsyncMock()
-    mock_bao.read_org_config.return_value = {}
-    mock_bao.write_org_config.return_value = None
-    test_app.state.openbao_client = mock_bao
 
     # Init ARQ (async Redis queue) so memory-ingestion tests can enqueue
     # enrichment jobs without hitting "ARQ pool not initialised".

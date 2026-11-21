@@ -150,28 +150,13 @@ async def generate_user_summary(
         )
         raise
 
-    # ── 5b. Fetch per-organization config for LLM resolution ─────────────
+    # ── 5b. Fetch per-user config for LLM resolution ──────────────────────
     llm_config_dict: dict | None = None
     try:
-        bao_client = ctx.get("openbao_client") if isinstance(ctx, dict) else None
-        if bao_client is not None:
+        async with session_factory() as _cfg_db:
             org_cfg = await get_org_config(
-                uuid.UUID(user_id), redis=None, bao_client=bao_client
+                uuid.UUID(user_id), redis=None, db=_cfg_db
             )
-        else:
-            from core.config import BootstrapSettings
-            from core.openbao import OpenBaoClient
-
-            bootstrap = BootstrapSettings()
-            async with OpenBaoClient(
-                bootstrap.OPENBAO_ADDR,
-                bootstrap.OPENBAO_ROLE_ID,
-                bootstrap.OPENBAO_SECRET_ID,
-                timeout=10.0,
-            ) as _tmp_bao:
-                org_cfg = await get_org_config(
-                    uuid.UUID(user_id), redis=None, bao_client=_tmp_bao
-                )
         llm_config_dict = org_cfg.to_llm_config_dict()
     except Exception:
         logger.warning(

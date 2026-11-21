@@ -23,17 +23,15 @@ class TestGetWebhookService:
 
     @pytest.mark.asyncio
     async def test_creates_webhook_service_with_repo(self) -> None:
-        """Returns WebhookService with repo + Transit manager from app state."""
+        """Returns WebhookService with the repo (Fernet crypto needs no client)."""
         from dependencies.services import get_webhook_service
 
         db = AsyncMock(spec=AsyncSession)
         request = MagicMock()
-        request.app.state.openbao_client = MagicMock()
 
         with (
             patch("dependencies.services.WebhookRepository") as mock_repo_cls,
             patch("dependencies.services.WebhookService") as mock_svc_cls,
-            patch("core.transit.TransitManager") as mock_transit_cls,
         ):
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo
@@ -42,12 +40,7 @@ class TestGetWebhookService:
             result = await get_webhook_service(request, db)
 
             mock_repo_cls.assert_called_once_with(db)
-            mock_transit_cls.assert_called_once_with(
-                request.app.state.openbao_client
-            )
-            mock_svc_cls.assert_called_once_with(
-                repo=mock_repo, transit=mock_transit_cls.return_value
-            )
+            mock_svc_cls.assert_called_once_with(repo=mock_repo)
             assert result == "webhook_service"
 
 
@@ -127,7 +120,6 @@ class TestGetAuthService:
 
         request = MagicMock(spec=Request)
         request.app.state.redis = AsyncMock()
-        request.app.state.openbao_client = MagicMock()
 
         db = AsyncMock(spec=AsyncSession)
 
@@ -162,7 +154,6 @@ class TestGetAuthService:
             assert call_kwargs["otp_service"] is mock_otp
             assert call_kwargs["redis"] is request.app.state.redis
             assert call_kwargs["email_service"] is mock_email
-            assert call_kwargs["bao_client"] is request.app.state.openbao_client
             assert "settings_repo" in call_kwargs
             assert result == "auth_service"
 
@@ -256,7 +247,6 @@ class TestGetMemoryService:
 
         request = MagicMock(spec=Request)
         request.app.state.redis = AsyncMock()
-        request.app.state.openbao_client = MagicMock()
         db = AsyncMock(spec=AsyncSession)
         webhook = MagicMock()
 
@@ -288,7 +278,6 @@ class TestGetMemoryService:
                 webhook_service=webhook,
                 blob_repo=m6.return_value,
                 project_repo=m7.return_value,
-                bao_client=request.app.state.openbao_client,
             )
             assert result == "memory_service"
 

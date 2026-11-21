@@ -32,7 +32,6 @@ from services.auth.token import TokenMixin
 if TYPE_CHECKING:
     from redis.asyncio import Redis as AsyncRedis
 
-    from core.openbao import OpenBaoClient
     from services.email_service import EmailService
     from services.otp_service import OtpService
 
@@ -56,8 +55,6 @@ class AuthService(
         redis: Async Redis client for MFA session storage.
         email_service: Optional email service for notification-only emails
             (e.g. password-change confirmation).  ``None`` skips notifications.
-        bao_client: Optional OpenBao client for bootstrapping org namespaces
-            during email verification.
         settings_repo: Singleton settings row (registration mode).
             Injected via ``dependencies.services.get_auth_service``.
     """
@@ -68,14 +65,12 @@ class AuthService(
         otp_service: OtpService,
         redis: AsyncRedis,
         email_service: EmailService | None = None,
-        bao_client: OpenBaoClient | None = None,
         settings_repo: InstanceSettingsRepository | None = None,
     ) -> None:
         self._repo = repo
         self._otp_service = otp_service
         self._redis = redis
         self._email_service = email_service
-        self._bao_client = bao_client
         self._settings_repo = settings_repo
 
 

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 _NO_CACHE = PromptCachingConfig(enabled=False)
 """Explicit caching-disabled config for benchmark judge calls.
 
-Benchmark processes never call ``init_settings()``, so leaving
+Benchmark processes never initialise ``Settings``, so leaving
 ``cache_config=None`` would make ``LLMBackend.chat()`` fall back to
 ``build_cache_config()`` → ``get_settings()`` → ``RuntimeError``.
 Judge verdicts must not be cached anyway.

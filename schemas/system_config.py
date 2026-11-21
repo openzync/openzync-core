@@ -2,7 +2,8 @@
 
 The platform operator (superadmin) manages a small whitelist of
 non-secret system-level defaults through ``core.system_config``, which
-persists them in the OpenBao system secret alongside the ``OZ_*`` settings.
+persists them in the platform root user's ``users.config_override``
+alongside other platform keys.
 
 **Secrets are never part of these schemas — by construction.**  The
 whitelist contains only non-secret tunables.  ``*_api_key``,
@@ -13,7 +14,7 @@ validation (``extra="forbid"``) and a response can never leak them.
 ⚠️ BREAKING: ``org_creation_policy`` / ``approval_scope`` are removed.
 Single platform org — registration is governed by
 ``instance_settings.registration_mode`` (``open`` / ``invite_only`` /
-``approval``), not by OpenBao policy keys.
+``approval``), not by config policy keys.
 """
 
 from __future__ import annotations
@@ -101,6 +102,6 @@ class SystemConfigResponse(BaseModel):
 
 # ── Whitelist helpers ─────────────────────────────────────────────────────────
 
-#: Every key ``core.system_config`` may read from / write to the OpenBao
-#: system secret.  Single source of truth for the whitelist.
+#: Every key ``core.system_config`` may read from / write to the platform
+#: root user's ``config_override``.  Single source of truth for the whitelist.
 SYSTEM_CONFIG_WHITELIST: frozenset[str] = frozenset(SystemConfigResponse.model_fields)

@@ -679,13 +679,12 @@ class TestMemoryServiceInternal:
 
     @pytest.mark.asyncio
     async def test_get_org_pii_config(self, service: MemoryService) -> None:
-        """_get_org_pii_config reads the OpenBao org config (fail-closed).
+        """_get_org_pii_config reads the DB-backed org config (fail-closed).
 
-        Observed prod contract: the legacy ``org_repo.get_pii_config``
-        path is gone — config comes from ``core.org_config.get_org_config``
-        via the service's OpenBao client, mapped to the flat PII dict.
+        Observed prod contract: config comes from
+        ``core.org_config.get_org_config`` (Redis cache-first, DB-backed),
+        mapped to the flat PII dict.
         """
-        service._bao_client = MagicMock()
         org_cfg = MagicMock()
         org_cfg.pii_mode = "mask"
         org_cfg.pii_sensitivity = "high"
@@ -704,7 +703,7 @@ class TestMemoryServiceInternal:
             "min_confidence": 0.8,
         }
         mock_get_config.assert_awaited_once_with(
-            self.ORG_ID, redis=None, bao_client=service._bao_client
+            self.ORG_ID, redis=service._redis, db=service._db
         )
 
     # ── _invalidate_context_cache ────────────────────────────────────

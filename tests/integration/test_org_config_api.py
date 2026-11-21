@@ -16,7 +16,6 @@ Tests depend on testcontainers (PostgreSQL + Redis) bootstrapped in
 from __future__ import annotations
 
 from typing import Any
-from uuid import UUID
 
 import pytest
 from httpx import AsyncClient
@@ -178,8 +177,6 @@ class TestCacheInvalidation:
         org_and_key: dict,
     ) -> None:
         """After a core-level update, the cache should be invalidated."""
-        from unittest.mock import AsyncMock
-
         user_id = org_and_key["user_id"]
         redis = app.state.redis
         cache_key = f"org_config:{user_id}"
@@ -195,13 +192,11 @@ class TestCacheInvalidation:
         cached_before = await redis.get(cache_key)
         assert cached_before is not None, "Cache should have been warmed"
 
-        # Update via core function with a mock OpenBao client
-        mock_bao = AsyncMock()
-        mock_bao.read_org_config.return_value = {"llm_backend": "old-value"}
-        mock_bao.write_org_config.return_value = None
-
+        # Update via core function against the real DB row.
         update = UpdateOrgConfigRequest(llm_backend="anthropic")
-        await update_org_config(user_id, update, bao_client=mock_bao, redis=redis)
+        async with app.state.db_session_factory() as db:
+            await update_org_config(user_id, update, redis=redis, db=db)
+            await db.commit()
 
         # Cache should be invalidated
         cached_after = await redis.get(cache_key)
@@ -222,16 +217,12 @@ class TestResolutionEndToEnd:
         org_and_key: dict,
     ) -> None:
         """An org with no stored config defaults graph_backend to falkordb."""
-        from unittest.mock import AsyncMock
-
-        mock_bao = AsyncMock()
-        mock_bao.read_org_config.return_value = {}
-
-        config = await get_org_config(
-            org_and_key["user_id"],
-            redis=app.state.redis,
-            bao_client=mock_bao,
-        )
+        async with app.state.db_session_factory() as db:
+            config = await get_org_config(
+                org_and_key["user_id"],
+                redis=app.state.redis,
+                db=db,
+            )
         assert isinstance(config, OrgConfigBase)
         # Empty config defaults graph_backend to 'falkordb'
         # (core/org_config.py) — every other field should be None.
@@ -242,33 +233,24 @@ class TestResolutionEndToEnd:
                 f"got {getattr(config, field_name)!r}"
             )
 
-    async def test_stored_config_reflects_openbao_overrides(
+    async def test_stored_config_reflects_db_overrides(
         self,
         app: Any,
         org_and_key: dict,
     ) -> None:
-        """After an OpenBao update, stored config should reflect the override."""
-        from unittest.mock import AsyncMock
-
+        """After a DB update, stored config should reflect the override."""
         user_id = org_and_key["user_id"]
-
-        mock_bao = AsyncMock()
-        mock_bao.read_org_config.return_value = {}
-
-        # Update via core function — write and then read back
-        def _side_effect(user_id: UUID, config: dict) -> None:
-            mock_bao.read_org_config.return_value = config
-
-        mock_bao.write_org_config = AsyncMock(side_effect=_side_effect)
 
         update = UpdateOrgConfigRequest(
             llm_backend="anthropic",
             llm_model="claude-3-5-sonnet",
             context_cache_ttl=120,
         )
-        config = await update_org_config(
-            user_id, update, bao_client=mock_bao, redis=app.state.redis
-        )
+        async with app.state.db_session_factory() as db:
+            config = await update_org_config(
+                user_id, update, redis=app.state.redis, db=db
+            )
+            await db.commit()
         assert config.llm_backend == "anthropic"
         assert config.llm_model == "claude-3-5-sonnet"
         assert config.context_cache_ttl == 120

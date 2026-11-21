@@ -30,9 +30,9 @@ VERSION ?= 0.0.0
 
 # ── Development servers ───────────────────────────────────────────────────────
 
-# One-time (idempotent) bring-up of postgres+redis+falkordb+mailpit+openbao,
-# OpenBao bootstrap and .env resync. Run this once; `dev` and `worker` assume
-# it already ran. It re-mints AppRole secret_ids every run, so don't chain it.
+# One-time (idempotent) bring-up of postgres+redis+falkordb+mailpit and
+# full runtime .env resync. Run this once; `dev` and `worker` assume
+# it already ran.
 deps:
 	@bash scripts/dev_preflight.sh
 
@@ -40,8 +40,9 @@ dev:
 	# Bind 0.0.0.0 so the Prometheus container can scrape host.docker.internal:8000 (uvicorn defaults to 127.0.0.1).
 	@set -a && source .env && set +a && uvicorn services.api.asgi:app --reload --host 0.0.0.0 --port $(PORT) --reload
 
-# Host-run ARQ worker. Same entrypoint the container execs (scripts/entrypoint_worker.sh
-# only adds waiting for the OpenBao Agent sidecar to render /run/secrets/system.env).
+# Host-run ARQ worker. Same entrypoint the container execs
+# (scripts/entrypoint_worker.sh fail-fasts on missing OZ_DATABASE_URL /
+# OZ_SECRET_KEY, then runs the worker loop).
 # Holds :8081 (health) and :9095 (Prometheus) — do not run alongside the compose worker.
 worker:
 	@set -a && source .env && set +a && $(PYTHON) -m services.worker.worker

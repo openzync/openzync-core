@@ -106,8 +106,7 @@ SYSTEM_SETTING_CATEGORIES: dict[str, str] = {
     "OZ_DB_MAX_OVERFLOW": "Infrastructure",
     # Security
     "OZ_SECRET_KEY": "Security",
-    "OZ_WEBHOOK_SIGNING_SECRET": "Security",
-    "OZ_ROOT_PASSWORD": "Security",
+    "OZ_SECRET_KEY_PREVIOUS": "Security",
     # Auth
     "OZ_JWT_ACCESS_TOKEN_TTL_MINUTES": "Auth",
     "OZ_JWT_REFRESH_TOKEN_TTL_DAYS": "Auth",
@@ -135,7 +134,7 @@ SYSTEM_SETTING_CATEGORIES: dict[str, str] = {
     "OZ_PROMPT_CACHING_ANTHROPIC_TTL": "Platform",
     "OZ_ALLOWED_ADDON_SRC": "Platform",
 }
-"""Functional category for every key in ``core.openbao.SYSTEM_KEY_MAPPING``."""
+"""Functional category for every key listable by ``core.system_settings``."""
 
 
 class SystemSettingItem(BaseModel):

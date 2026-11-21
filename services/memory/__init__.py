@@ -84,14 +84,12 @@ class MemoryService(
         blob_repo: EpisodeBlobRepository | None = None,
         idempotency_service: IdempotencyService | None = None,
         dedup_repo: IngestDedupRepository | None = None,
-        bao_client: Any | None = None,
         project_repo: ProjectRepository | None = None,
     ) -> None:
         self._db = db
         self._redis = redis_client
         self._webhook_service = webhook_service
         self._idem = idempotency_service or IdempotencyService(redis_client)
-        self._bao_client = bao_client
 
         # Repositories (injected or auto-created)
         self._episode_repo = episode_repo or EpisodeRepository(db)

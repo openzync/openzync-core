@@ -5,22 +5,16 @@
 #   1. builder — installs runtime dependencies into ~/.local
 #   2. runtime — minimal image that copies only the built artifacts + source
 #
-# Secrets & config:
-#   The worker depends on an OpenBao Agent sidecar that renders the system
-#   config (DB URL, Redis URL, app secrets) to a tmpfs at
-#   /openbao/agent/system.env. That tmpfs is bind-mounted into this container
-#   at /run/secrets/system.env. The entrypoint script blocks until that file
-#   exists, sources it, then execs the ARQ worker so the worker becomes PID 1
-#   and receives signals directly (graceful shutdown on SIGTERM).
-#
-#   This container MUST NOT start until the OpenBao Agent sidecar has
-#   authenticated and rendered /run/secrets/system.env. The entrypoint enforces
-#   that contract; do not bypass it by running the CMD directly.
+# Config — plain environment (no secrets manager, no sidecars):
+#   All config arrives via the environment (compose env_file plus direct
+#   OZ_* entries). The entrypoint fail-fasts when OZ_DATABASE_URL /
+#   OZ_SECRET_KEY are unset, then execs the ARQ worker so the worker
+#   becomes PID 1 and receives signals directly (graceful shutdown on
+#   SIGTERM). Do not bypass the entrypoint by running the CMD directly.
 #
 # Usage:
 #   docker build -t openzync-worker:latest -f services/worker/Dockerfile .
-#   docker run openzync-worker:latest
-#   (the OpenBao Agent sidecar must be running and its tmpfs mounted in)
+#   docker run -e OZ_DATABASE_URL=... -e OZ_SECRET_KEY=... openzync-worker:latest
 # ──────────────────────────────────────────────────────────────────────────────
 
 FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS builder
@@ -42,8 +36,7 @@ RUN if [ -n "$APP_VERSION" ]; then export SETUPTOOLS_SCM_PRETEND_VERSION="$APP_V
 
 # Embeddings are served by the external Ollama service
 # (nomic-embed-text:v1.5 via /api/embed) — no weights are baked into this
-# image. The Ollama server address comes from the OpenBao system secret
-# (OZ_OLLAMA_EMBED_URL).
+# image. The Ollama server address comes from the OZ_OLLAMA_EMBED_URL env var.
 
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -64,7 +57,7 @@ COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
 # Copy application source.
 COPY --chown=appuser:appuser . .
 
-# Copy the entrypoint script — sources OpenBao Agent's rendered secrets,
+# Copy the entrypoint script — fail-fasts on missing required env,
 # then execs the ARQ worker so it becomes PID 1 and receives signals directly.
 COPY scripts/entrypoint_worker.sh /entrypoint_worker.sh
 RUN chmod +x /entrypoint_worker.sh
@@ -78,13 +71,12 @@ ENV PATH=/home/appuser/.local/bin:$PATH \
 USER appuser
 
 # Worker exposes an aiohttp /health endpoint on settings.HEALTH_PORT (default 8081)
-# managed by the ARQ worker loop. The 30s start-period covers the OpenBao Agent
-# auth + render cycle; if /health is not up by then, the container is unhealthy.
+# managed by the ARQ worker loop. If /health is not up by the end of the
+# 30s start-period, the container is unhealthy.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
     CMD python -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=3).status == 200 else 1)" || exit 1
 
-# Entrypoint waits for /run/secrets/system.env (rendered by OpenBao Agent
-# sidecar), sources it, then execs the ARQ worker. CMD is intentionally
-# empty — all process selection lives in the entrypoint script.
+# Entrypoint fail-fasts on missing required env, then execs the ARQ worker.
+# CMD is intentionally empty — all process selection lives in the entrypoint script.
 ENTRYPOINT ["/entrypoint_worker.sh"]
 CMD []

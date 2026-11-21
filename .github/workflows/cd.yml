@@ -122,8 +122,6 @@ jobs:
           # Create tar archive of deployment files (runs on runner — resolves correctly)
             tar czf /tmp/deploy-files.tar.gz \
               infra/docker-compose.backend.yml \
-              infra/Dockerfile.openbao-tooling \
-              infra/openbao/ \
               infra/nginx/templates/openzync.conf \
               infra/nginx/templates/openzync.ssl.conf \
               scripts/
@@ -141,7 +139,6 @@ jobs:
           OZ_DATABASE_URL: ${{ secrets.OZ_DATABASE_URL }}
           OZ_SECRET_KEY: ${{ secrets.OZ_SECRET_KEY }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
-          BAO_STATIC_SEAL_KEY: ${{ secrets.BAO_STATIC_SEAL_KEY }}
           OZ_WEBHOOK_SIGNING_SECRET: ${{ secrets.OZ_WEBHOOK_SIGNING_SECRET }}
           OZ_SMTP_HOST: ${{ secrets.OZ_SMTP_HOST }}
           OZ_SMTP_PORT: ${{ secrets.OZ_SMTP_PORT }}
@@ -157,7 +154,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: OZ_DATABASE_URL,OZ_SECRET_KEY,VPS_HOST,BAO_STATIC_SEAL_KEY,OZ_WEBHOOK_SIGNING_SECRET,OZ_SMTP_HOST,OZ_SMTP_PORT,OZ_SMTP_USERNAME,OZ_SMTP_PASSWORD,OZ_SMTP_FROM_ADDR,OZ_SMTP_USE_TLS,OZ_SMTP_START_TLS,GF_ADMIN_PASSWORD,MINIO_ROOT_USER,MINIO_ROOT_PASSWORD
+          envs: OZ_DATABASE_URL,OZ_SECRET_KEY,VPS_HOST,OZ_WEBHOOK_SIGNING_SECRET,OZ_SMTP_HOST,OZ_SMTP_PORT,OZ_SMTP_USERNAME,OZ_SMTP_PASSWORD,OZ_SMTP_FROM_ADDR,OZ_SMTP_USE_TLS,OZ_SMTP_START_TLS,GF_ADMIN_PASSWORD,MINIO_ROOT_USER,MINIO_ROOT_PASSWORD
           script: |
             set -e
             # Images are public on ghcr.io since 2026-08-31 — no docker login needed
@@ -184,7 +181,6 @@ jobs:
             OZ_RATE_LIMIT_WINDOW_SEC=60
             OZ_JWT_ACCESS_TOKEN_TTL_MINUTES=30
             OZ_JWT_REFRESH_TOKEN_TTL_DAYS=7
-            BAO_STATIC_SEAL_KEY=$BAO_STATIC_SEAL_KEY
             OZ_WEBHOOK_SIGNING_SECRET=$OZ_WEBHOOK_SIGNING_SECRET
             OZ_SMTP_HOST=$OZ_SMTP_HOST
             OZ_SMTP_PORT=$OZ_SMTP_PORT

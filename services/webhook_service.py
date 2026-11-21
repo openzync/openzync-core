@@ -11,8 +11,8 @@ Each endpoint carries its **own** signing secret, stored on the endpoint
 row and returned exactly once at create/rotate time.  Signing with the
 endpoint's own secret means one tenant can never forge signatures that
 another tenant's consumers trust.  The legacy global
-``WEBHOOK_SIGNING_SECRET`` config field is **deprecated** for signing —
-kept for backward-compat reads, no longer used here.
+Signing secrets are encrypted at rest with ``core.crypto`` (Fernet
+subkeys derived from ``OZ_SECRET_KEY``) — never stored in plaintext.
 """
 
 from __future__ import annotations
@@ -25,21 +25,17 @@ import secrets
 import time
 import uuid
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
-
 import orjson
 
+from core import crypto
 from core.arq import get_arq
 from core.config import get_settings
-from core.exceptions import ExternalServiceError
+from core.exceptions import ExternalServiceError, ValidationError
 from core.queue_names import get_queue_name
 from core.sorting import SortSpec
 from middleware.metrics import webhook_decrypt_skips_total, webhook_emit_failures_total
 from models.webhook import WebhookEndpoint
 from repositories.webhook_repository import WebhookRepository
-
-if TYPE_CHECKING:
-    from core.transit import TransitManager
 
 logger = logging.getLogger("openzync.webhooks")
 
@@ -48,13 +44,13 @@ ARQ_WEBHOOK_QUEUE = "low"
 real-time ingestion tasks (classify, embed, extract)."""
 
 
-def _is_transit_ciphertext(value: str) -> bool:
-    """Return whether a stored secret is Transit ciphertext vs legacy plaintext.
+def _is_legacy_transit_ciphertext(value: str) -> bool:
+    """Return whether a stored secret is an old OpenBao Transit ciphertext.
 
-    OpenBao Transit returns ``"vault:v<version>:..."`` strings; anything
-    else in the column is a pre-encryption plaintext secret.
+    OpenBao Transit returned ``"vault:v<version>:..."`` strings.  These are
+    undecryptable now — the secret must be re-created via rotate.
     """
-    return value.startswith("vault:v")
+    return value.startswith("vault:")
 
 
 def sign_payload(secret: str, payload: bytes) -> str:
@@ -84,38 +80,21 @@ class WebhookService:
 
     Args:
         repo: The webhook repository for endpoint CRUD.
-        transit: Transit encryption manager (from ``app.state.openbao_client``).
-            Required for create/rotate — secrets are encrypted with
-            ``WEBHOOK_SECRET_KEY`` (AAD = endpoint id) before any write.
-            ``None`` only in unit tests that never touch secrets.
     """
 
-    def __init__(
-        self, repo: WebhookRepository, transit: TransitManager | None = None
-    ) -> None:
+    def __init__(self, repo: WebhookRepository) -> None:
         self._repo = repo
-        self._transit = transit
 
     async def _encrypt_secret(self, endpoint_id: uuid.UUID, secret: str) -> str:
-        """Encrypt a signing secret for storage.
+        """Encrypt a signing secret for storage (``core.crypto``, AAD = endpoint id).
 
         Raises:
-            ExternalServiceError: If no Transit manager is wired — a
+            ExternalServiceError: On unexpected encryption failure — a
                 secret is never persisted in plaintext on the write path.
         """
-        if self._transit is None:
-            raise ExternalServiceError(
-                "Webhook signing requires Transit encryption, but no "
-                "TransitManager is wired (OpenBao client missing)."
-            )
         try:
-            return await self._transit.encrypt_webhook_secret(endpoint_id, secret)
-        except ExternalServiceError:
-            raise
+            return crypto.encrypt("webhook-secret", str(endpoint_id), secret)
         except Exception as exc:
-            # note: TransitManager already wraps OpenBaoError, but any other
-            # unexpected failure must still surface as JSON 502, never leak
-            # as a plain-text 500 from the request path.
             raise ExternalServiceError(
                 "Webhook secret encryption failed.",
                 detail={"endpoint_id": str(endpoint_id)},
@@ -127,23 +106,31 @@ class WebhookService:
         """Return the plaintext for a stored secret value, or ``None``.
 
         Legacy plaintext rows (pre-encryption) are used as-is and
-        re-encrypted on next rotation; undecryptable rows log loudly and
-        yield ``None`` so the caller skips the endpoint instead of
-        signing with the wrong key.
+        re-encrypted on next rotation; undecryptable rows (including old
+        ``vault:`` Transit ciphertexts, which raise ``ValidationError``
+        asking for re-creation) log loudly and yield ``None`` so the
+        caller skips the endpoint instead of signing with the wrong key.
         """
         if not raw:
             return None
-        if not _is_transit_ciphertext(raw):
+        if not crypto.is_crypto_ciphertext(raw):
+            if _is_legacy_transit_ciphertext(raw):
+                logger.error(
+                    "webhook.secret_needs_recreate",
+                    extra={"endpoint_id": str(endpoint_id)},
+                )
+                webhook_decrypt_skips_total.labels(reason="legacy_vault").inc()
+                return None
             return raw
-        if self._transit is None:
+        try:
+            return crypto.decrypt("webhook-secret", str(endpoint_id), raw)
+        except ValidationError:
             logger.error(
-                "webhook.secret_undecryptable_no_transit",
+                "webhook.secret_needs_recreate",
                 extra={"endpoint_id": str(endpoint_id)},
             )
-            webhook_decrypt_skips_total.labels(reason="no_transit").inc()
+            webhook_decrypt_skips_total.labels(reason="legacy_vault").inc()
             return None
-        try:
-            return await self._transit.decrypt_webhook_secret(endpoint_id, raw)
         except Exception:
             logger.error(
                 "webhook.secret_decrypt_failed",
@@ -164,6 +151,9 @@ class WebhookService:
 
         Default ``created_at/desc``; whitelist ``name``, ``created_at``.
         """
+        # note: no LIMIT — per-org endpoints are operator-created config rows
+        # (single digits); the emit path reads this same set, so a cap here
+        # would diverge list from delivery without any real cost saving.
         endpoints = await self._repo.get_by_organization(user_id, sort=sort)
         return [self._serialize(e) for e in endpoints]
 
@@ -201,10 +191,10 @@ class WebhookService:
         """
         signing_secret = secrets.token_urlsafe(43)
         endpoint_id = uuid.uuid4()
-        # Pre-generated so it doubles as the Transit AAD context.
+        # Pre-generated so it doubles as the crypto AAD context.
         ciphertext = await self._encrypt_secret(endpoint_id, signing_secret)
         endpoint = await self._repo.create(
-
+            user_id=user_id,
             name=name,
             url=url,
             events=events,
@@ -342,7 +332,7 @@ class WebhookService:
                 plaintext: str | None
                 stored = ep.signing_secret
                 if stored:
-                    # Decrypt at sign time — the row holds Transit
+                    # Decrypt at sign time — the row holds ``core.crypto``
                     # ciphertext (or legacy plaintext, used as-is).
                     plaintext = await self._decrypt_secret_value(ep.id, stored)
                 else:
@@ -351,17 +341,6 @@ class WebhookService:
                     # conditional UPDATE (WHERE signing_secret IS NULL) so two
                     # concurrent emitters cannot race and write different secrets —
                     # the loser re-reads the winner's secret instead of overwriting.
-                    # Without Transit there is no safe write — skip the endpoint
-                    # (counted, dashboard-visible) instead of persisting plaintext.
-                    if self._transit is None:
-                        logger.error(
-                            "webhook.backfill_skipped_no_transit",
-                            extra={"endpoint_id": str(ep.id)},
-                        )
-                        webhook_decrypt_skips_total.labels(
-                            reason="backfill_no_transit"
-                        ).inc()
-                        return
                     raw = secrets.token_urlsafe(43)
                     stored = await self._encrypt_secret(ep.id, raw)
                     if await self._repo.set_signing_secret_if_null(

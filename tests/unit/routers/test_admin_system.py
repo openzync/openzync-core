@@ -118,8 +118,6 @@ async def test_update_platform_config_200_flat_persists() -> None:
     from schemas.system_config import SystemConfigResponse, SystemConfigUpdate
 
     app = _make_app()
-    bao_client = AsyncMock()
-    app.state.openbao_client = bao_client
 
     with (
         patch(
@@ -148,14 +146,17 @@ async def test_update_platform_config_200_flat_persists() -> None:
     assert body["llm_backend"] == "openai"
     assert body["graph_backend"] == "falkordb"
     assert "stored" not in body
-    # The update function received the parsed body + the app-state deps.
+    # The update function received the parsed body + the app-state deps
+    # (redis second, DB session third — positional, per the router call).
+    from unittest.mock import ANY
+
     mock_update.assert_awaited_once_with(
         SystemConfigUpdate(
             llm_backend="openai",
             graph_backend="falkordb",
         ),
-        bao_client,
         app.state.redis,
+        ANY,
     )
 
 

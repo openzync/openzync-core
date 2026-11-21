@@ -12,7 +12,6 @@ from core.exceptions import (
     AuthenticationError,
     AuthorizationError,
 )
-from core.openbao_exceptions import OpenBaoConnectionError
 from core.rls import set_user_context
 from core.rbac import (
     MEMBER_DEFAULT_PERMISSIONS,
@@ -35,7 +34,6 @@ class OrgJoinMixin:
     _otp_service: Any
     _redis: Any
     _email_service: Any
-    _bao_client: Any
     _settings_repo: Any
 
     def _settings(self) -> InstanceSettingsRepository:
@@ -169,15 +167,6 @@ class OrgJoinMixin:
         # Only update DB if email was not already verified
         if not user.is_email_verified:
             await self._repo.mark_email_verified(user.id)
-
-        # Bootstrap OpenBao namespace for the org (idempotent — skips if exists).
-        # Fail loud, never silent: a missing client means every subsequent
-        # config write breaks, so raise instead of skipping.
-        if self._bao_client is None:
-            raise OpenBaoConnectionError(
-                "OpenBao client required to bootstrap the org namespace"
-            )
-        await self._bao_client.create_org_namespace(user.id)
 
         # Issue tokens now that email is verified
         return await self.issue_tokens(

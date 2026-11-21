@@ -250,45 +250,29 @@ async def _dispatch_extraction(mime_type: str, data: bytes) -> str | None:
 
 async def _get_org_storage_config(
     user_id: str,
-    bao_client: object | None,
+    db: object,
 ) -> dict:
-    """Fetch the org's blob storage config from OpenBao — fail loud.
+    """Fetch the user's blob storage config from the DB — fail loud.
 
     Args:
-        user_id: The organization UUID string.
-        bao_client: An authenticated OpenBao client from the ARQ context.
+        user_id: The user UUID string.
+        db: Open async DB session (RLS context already set).
 
     Returns:
         A dict suitable for ``BlobStorageConfig.from_org_config()``.
 
     Raises:
-        ExternalServiceError: If there is no OpenBao client or the org
-            config cannot be fetched (→ 502, task retries). Never returns
-            shared-bucket defaults.
+        ExternalServiceError: If the user config cannot be fetched
+            (→ 502, task retries). Never returns shared-bucket defaults.
     """
-    # ⚠️ BREAKING: a missing OpenBao client used to fall back to the shared
-    # MinIO defaults (org blobs silently written to ``openzync-blobs``); it
-    # now raises ExternalServiceError, matching
-    # MemoryService._resolve_storage_config's 502 behavior.
     from core.exceptions import ExternalServiceError
-
-    if bao_client is None:
-        logger.error(
-            "extract_blob_text.storage_config_no_client",
-            user_id=user_id,
-        )
-        raise ExternalServiceError(
-            f"Blob storage config for org {user_id} could not be read: "
-            "no OpenBao client in worker context."
-        )
-
     from core.org_config import get_org_config
 
     try:
         org_cfg = await get_org_config(
             UUID(user_id),
             redis=None,
-            bao_client=bao_client,
+            db=db,  # type: ignore[arg-type]
         )
     except ExternalServiceError:
         raise
@@ -299,7 +283,7 @@ async def _get_org_storage_config(
             exc_info=True,
         )
         raise ExternalServiceError(
-            f"Blob storage config for org {user_id} could not be read from OpenBao."
+            f"Blob storage config for user {user_id} could not be read from the DB."
         ) from exc
     return org_cfg.to_blob_storage_config()
 
@@ -311,23 +295,22 @@ async def _redact_extracted_text(
     extracted_text: str,
     *,
     user_id: str,
-    bao_client: object | None,
+    db: object,
     trace_id: str,
     log: structlog.typing.FilteringBoundLogger,
 ) -> str:
     """Redact PII from extracted blob text, fail-closed.
 
-    Fetches the org PII policy from OpenBao (no quotas fallback).  A
-    missing client, a fetch failure, or a redaction failure raises
-    ``PIIUnavailableError`` — the caller then skips
-    ``update_extracted_text``, skips the ``ENRICHMENT_BLOB_TEXT`` bit, and
-    lets ``@with_retry`` retry.  A block-mode ``ValidationError``
+    Fetches the user PII policy from the DB.  A fetch failure or a
+    redaction failure raises ``PIIUnavailableError`` — the caller then
+    skips ``update_extracted_text``, skips the ``ENRICHMENT_BLOB_TEXT``
+    bit, and lets ``@with_retry`` retry.  A block-mode ``ValidationError``
     downgrades to a single mask pass (preserved semantic).
 
     Args:
         extracted_text: Raw text from the MIME extractor.
-        user_id: The organization UUID string (log context only).
-        bao_client: An authenticated OpenBao client from the ARQ context.
+        user_id: The user UUID string (log context only).
+        db: Open async DB session (RLS context already set).
         trace_id: Request trace ID for end-to-end correlation.
         log: Bound structlog logger.
 
@@ -340,22 +323,13 @@ async def _redact_extracted_text(
     """
     from core.exceptions import PIIUnavailableError, ValidationError
 
-    if bao_client is None:
-        logger.error(
-            "pii.fail_closed",
-            user_id=user_id,
-            trace_id=trace_id,
-            reason="no OpenBao client in worker context",
-        )
-        raise PIIUnavailableError("pii_unavailable")
-
     try:
         from core.org_config import get_org_config
 
         org_cfg = await get_org_config(
             UUID(user_id),
             redis=None,
-            bao_client=bao_client,  # type: ignore[arg-type]
+            db=db,  # type: ignore[arg-type]
         )
     except Exception as exc:
         logger.error(
@@ -444,17 +418,16 @@ async def extract_blob_text(
     Pipeline:
         1. Open DB session with RLS context.
         2. Load the blob record; skip if ``ENRICHMENT_BLOB_TEXT`` already set.
-        3. Fetch org blob storage config from OpenBao.
+        3. Fetch user blob storage config from the DB.
         4. Download blob bytes from S3 via ``BlobStorage``.
         5. Route to the appropriate text extractor by MIME type.
         6. Store extracted text on the ``episode_blobs`` record.
         7. Set ``ENRICHMENT_BLOB_TEXT`` bit on the episode.
 
     Args:
-        ctx: ARQ worker context (``db_session_factory``, ``redis``,
-            ``openbao_client``).
+        ctx: ARQ worker context (``db_session_factory``, ``redis``).
         blob_id: UUID of the ``episode_blobs`` record (string).
-        user_id: UUID of the owning organization (string).
+        user_id: UUID of the owning user (string).
         project_id: UUID of the project (string).
         episode_id: UUID of the source episode (string).
         storage_key: S3 object key for the blob.
@@ -504,8 +477,6 @@ async def extract_blob_text(
     if session_factory is None:
         session_factory = get_async_session(engine)
 
-    bao_client = ctx.get("openbao_client") if isinstance(ctx, dict) else None
-
     try:
         async with session_factory() as db:
             # ── Set RLS context ─────────────────────────────────────────
@@ -545,8 +516,8 @@ async def extract_blob_text(
                 )
                 return
 
-            # ── Fetch org storage config ────────────────────────────────
-            storage_config = await _get_org_storage_config(user_id, bao_client)
+            # ── Fetch user storage config ───────────────────────────────
+            storage_config = await _get_org_storage_config(user_id, db)
             blob_config = BlobStorageConfig.from_org_config(storage_config)
             storage = BlobStorage(blob_config)
 
@@ -572,7 +543,7 @@ async def extract_blob_text(
                 extracted_text = await _redact_extracted_text(
                     extracted_text,
                     user_id=user_id,
-                    bao_client=bao_client,
+                    db=db,
                     trace_id=trace_id,
                     log=log,
                 )

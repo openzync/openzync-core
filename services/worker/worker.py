@@ -40,11 +40,10 @@ from prometheus_client import Counter, Gauge, Histogram
 from prometheus_client import start_http_server as start_prometheus_server
 from redis.asyncio import Redis as AsyncRedis
 
-from core.config import BootstrapSettings, init_settings
-from core.openbao import OpenBaoClient
+from core.config import get_settings
 from core.queue_names import get_queue_name
 from services.worker.worker_settings import (
-    init_worker_settings_from_bao,
+    init_worker_settings,
     settings,
 )
 
@@ -391,9 +390,6 @@ async def on_shutdown(_ctx: dict[str, Any]) -> None:
     Args:
         _ctx: ARQ worker context dict (unused on shutdown).
     """
-    bao = _ctx.get("openbao_client")
-    if bao is not None:
-        await bao.__aexit__(None, None, None)
     logger.info("worker.shutdown_complete")
 
 
@@ -593,8 +589,7 @@ async def main() -> NoReturn:
 
     Startup sequence:
 
-    1. Bootstrap from OpenBao — load secrets (DATABASE_URL, REDIS_URL) via
-       worker-specific or main AppRole credentials (fail-fast).
+    1. Load settings from ``OZ_*`` env vars (fail-fast).
     2. Configure structured logging
     3. Start the Prometheus metrics HTTP server on ``PROMETHEUS_PORT``
     4. Create ARQ Redis connection settings from ``REDIS_URL``
@@ -608,36 +603,13 @@ async def main() -> NoReturn:
         Never returns normally — always exits via signal handler.
     """
     # ═══════════════════════════════════════════════════════════════
-    # Phase 1: Bootstrap from OpenBao (fail-fast)
+    # Phase 1: Load settings from env (fail-fast on missing OZ_* vars)
     # ═══════════════════════════════════════════════════════════════
-    # Use worker-specific AppRole credentials if provided, falling back
-    # to the main OpenBao credentials.  This allows operators to scope
-    # worker permissions independently from the API service.
-    _bootstrap = BootstrapSettings()
-    _role_id = _bootstrap.OPENBAO_WORKER_ROLE_ID or _bootstrap.OPENBAO_ROLE_ID
-    _secret_id = _bootstrap.OPENBAO_WORKER_SECRET_ID or _bootstrap.OPENBAO_SECRET_ID
-    async with OpenBaoClient(
-        _bootstrap.OPENBAO_ADDR,
-        _role_id,
-        _secret_id,
-        timeout=15.0,
-    ) as _bao:
-        await init_worker_settings_from_bao(_bao)
-        await init_settings(_bao)
-
-    # ── Persistent OpenBao client for org config resolution ──────────────
-    # Used by _resolve_org_config in workers/backend.py to fetch per-org
-    # config from OpenBao without creating a new client per task.
-    _openbao_client = OpenBaoClient(
-        _bootstrap.OPENBAO_ADDR,
-        _role_id,
-        _secret_id,
-        timeout=15.0,
-    )
-    await _openbao_client.__aenter__()
+    init_worker_settings()
+    get_settings()
 
     # ═══════════════════════════════════════════════════════════════
-    # Phase 2: Normal startup (uses settings from OpenBao)
+    # Phase 2: Normal startup (uses env-backed settings)
     # ═══════════════════════════════════════════════════════════════
     setup_logging()
 
@@ -756,7 +728,6 @@ async def main() -> NoReturn:
         "graph_backend_dispatcher": dispatcher,
         "surreal_connection_pool": surreal_pool,
         "falkordb_client": falkordb_client,
-        "openbao_client": _openbao_client,
     }
 
     logger.info(

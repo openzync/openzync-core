@@ -1,8 +1,8 @@
 """Connection testing for per-organization config candidates.
 
 Overlays a candidate :class:`UpdateOrgConfigRequest` in-memory on the
-stored OpenBao config and probes the requested domain against the live
-backend.  Nothing is ever written to OpenBao or Redis by this service.
+stored DB config and probes the requested domain against the live
+backend.  Nothing is ever written to the DB or Redis by this service.
 
 Probe transport notes:
 
@@ -25,10 +25,11 @@ import re
 import time
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from core.config import get_settings
 from core.exceptions import ValidationError
 from core.graph_backend import GraphBackendDispatcher, init_dispatcher
-from core.openbao_exceptions import OpenBaoConnectionError
 from core.org_config import get_org_config
 from schemas.organization_config import (
     SYSTEM_MANAGED_FALKORDB_FIELDS,
@@ -44,7 +45,6 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from core.blob_storage import BlobStorageConfig
-    from core.openbao import OpenBaoClient
 
 logger = logging.getLogger(__name__)
 
@@ -66,14 +66,13 @@ class OrgConfigConnectionService:
     """Probe live backend connectivity for a candidate org config.
 
     Args:
-        bao_client: An authenticated :class:`OpenBaoClient`.  Required —
-            the stored config is always read fresh (cache bypassed).
+        db: Async DB session for the stored-config read (cache bypassed).
         redis: Accepted for constructor symmetry with
             :class:`OrgConfigService`; unused — probes bypass the cache.
     """
 
-    def __init__(self, bao_client: OpenBaoClient, redis: Any | None = None) -> None:
-        self._bao_client = bao_client
+    def __init__(self, db: AsyncSession, redis: Any | None = None) -> None:
+        self._db = db
         self._redis = redis
 
     async def test_connections(
@@ -98,17 +97,14 @@ class OrgConfigConnectionService:
             A :class:`TestOrgConfigResponse` with one entry per probe.
 
         Raises:
-            OpenBaoConnectionError: If the secrets backend is unreachable.
             ValidationError: If *candidate* overrides system-managed
                 fields, or *domain* is unknown.
         """
-        if self._bao_client is None:
-            raise OpenBaoConnectionError("OpenBao client required for org config test")
         self._reject_system_managed_overrides(candidate)
         stored = await get_org_config(
             user_id,
             redis=self._redis,
-            bao_client=self._bao_client,
+            db=self._db,
             skip_cache=True,
         )
         merged = self._overlay_candidate(stored, candidate)

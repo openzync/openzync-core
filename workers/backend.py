@@ -72,6 +72,8 @@ async def resolve_graph_backend(
             missing from ctx (worker misconfiguration), the dispatcher fails
             to resolve a configured backend, or a configured backend name
             resolves to ``None``.
+            Also raises when user-config resolution fails — a backend must
+            never be picked under unknown defaults.
     """
     dispatcher = ctx.get("graph_backend_dispatcher")
     if dispatcher is None:
@@ -231,25 +233,10 @@ async def _resolve_user_config(
     """
     # ── Primary path: standard user-config resolution (cache-first) ───────
     try:
-        from core.config import BootstrapSettings
-        from core.openbao import OpenBaoClient
         from core.org_config import get_org_config
 
         redis = ctx.get("redis")  # may not be present in worker ctx
-        bao_client = ctx.get("openbao_client")
-        if bao_client is None:
-            # Fallback: create a short-lived client using bootstrap settings.
-            bootstrap = BootstrapSettings()
-            async with OpenBaoClient(
-                bootstrap.OPENBAO_ADDR,
-                bootstrap.OPENBAO_ROLE_ID,
-                bootstrap.OPENBAO_SECRET_ID,
-                timeout=10.0,
-            ) as bao_client:
-                return await get_org_config(
-                    user_id, redis=redis, bao_client=bao_client
-                )
-        return await get_org_config(user_id, redis=redis, bao_client=bao_client)
+        return await get_org_config(user_id, redis=redis, db=db)
     except ImportError:
         logger.debug("worker.org_config_module_not_available")
     except Exception:
@@ -280,7 +267,7 @@ async def _resolve_user_config(
             exc_info=True,
         )
         raise GraphBackendUnavailableError(
-            f"Failed to resolve user config for user {user_id}: OpenBao and "
+            f"Failed to resolve user config for user {user_id}: cache and "
             "the DB fallback both failed — cannot run enrichment under "
             "unknown defaults."
         ) from None

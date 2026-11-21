@@ -86,8 +86,8 @@ class User(TimestampMixin, Base):
         server_default="true",
     )
     # First-login password reset gate — True for the seeded root user (whose
-    # password comes from OZ_ROOT_PASSWORD in OpenBao, or a random one-time
-    # value when unset) until they set a real password.  Enforced in
+    # password is operator-chosen at POST /v1/auth/setup) until they set a
+    # real password.  Enforced in
     # dependencies/auth.py get_dashboard_user.
     must_change_password: Mapped[bool] = mapped_column(
         Boolean,

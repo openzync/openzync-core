@@ -31,7 +31,7 @@ class InstanceSettings(Base):
         initialized: Whether the instance setup wizard has completed.
         bootstrap_token_hash: SHA-256 hex digest of the one-time bootstrap
             token.  The plaintext is printed once at boot and written to
-            ``/openbao-bootstrap/bootstrap-token`` — never stored here.
+            ``/run/secrets/bootstrap-token`` — never stored here.
         default_backends: JSONB ``{"llm": {...}|null, "graph": "falkordb"|...}``
             applied to orgs created by the setup wizard.
         updated_at: Last write timestamp.

@@ -5,7 +5,7 @@ Tests cover:
 - ``resolve_graph_backend()`` — all resolution paths: raise on failure
   (missing dispatcher, dispatcher error, None result for a configured
   backend), None on explicitly-disabled graph (no org config, ``"none"``).
-- ``_resolve_user_config()`` — primary path (with/without ``bao_client``),
+- ``_resolve_user_config()`` — primary path (redis forwarded, ``db``-backed),
   ImportError/Exception fallthrough, DB fallback, and full failure.
 """
 
@@ -328,56 +328,41 @@ class TestResolveOrgConfig:
 
         return OrgConfigBase(graph_backend="postgres")
 
-    # ── Primary path: bao_client in ctx ───────────────────────────────────
+    # ── Primary path: DB-backed resolution ──────────────────────────────
 
-    async def test_primary_path_with_bao_client(
+    async def test_primary_path_reads_db_backed_config(
         self,
         mock_db: MagicMock,
         mock_org_config: MagicMock,
     ) -> None:
-        """Primary path with ``bao_client`` in ctx → calls ``get_org_config`` and returns result.
-
-        ``BootstrapSettings`` is never instantiated because the function
-        short-circuits when ``bao_client`` is already in ``ctx``.
-        """
-        bao_client = MagicMock()
+        """Primary path calls ``get_org_config`` with redis + db and returns it."""
         mock_get = AsyncMock(return_value=mock_org_config)
 
         with patch("core.org_config.get_org_config", mock_get):
             from workers.backend import _resolve_user_config
 
-            ctx = {"openbao_client": bao_client, "redis": MagicMock()}
+            ctx = {"redis": MagicMock()}
             result = await _resolve_user_config(ctx, self.USER_ID, mock_db)
 
-        mock_get.assert_awaited_once_with(self.USER_ID, redis=ctx["redis"], bao_client=bao_client)
+        mock_get.assert_awaited_once_with(
+            self.USER_ID, redis=ctx["redis"], db=mock_db
+        )
         assert result is mock_org_config
         assert result.graph_backend == "postgres"
 
-    async def test_primary_path_without_bao_client(
+    async def test_primary_path_without_redis_passes_none(
         self,
         mock_db: MagicMock,
         mock_org_config: MagicMock,
     ) -> None:
-        """Primary path without ``bao_client`` → creates a short-lived client.
-
-        Patching at the real module paths because ``BootstrapSettings`` and
-        ``OpenBaoClient`` are imported *inside* the function body.
-        """
-        mock_bao_client = AsyncMock()
-        mock_bao_client.__aenter__.return_value = mock_bao_client
-        mock_bao_client.__aexit__.return_value = None
-
-        with (
-            patch("core.org_config.get_org_config", AsyncMock(return_value=mock_org_config)),
-            patch("core.config.BootstrapSettings") as mock_bootstrap,
-            patch("core.openbao.OpenBaoClient", return_value=mock_bao_client),
+        """No ``redis`` in ctx → ``get_org_config`` gets ``redis=None``."""
+        with patch(
+            "core.org_config.get_org_config", AsyncMock(return_value=mock_org_config)
         ):
             from workers.backend import _resolve_user_config
 
-            ctx = {"redis": MagicMock()}
-            result = await _resolve_user_config(ctx, self.USER_ID, mock_db)
+            result = await _resolve_user_config(ctx={}, user_id=self.USER_ID, db=mock_db)
 
-        mock_bootstrap.assert_called_once()
         assert result is mock_org_config
         assert result.graph_backend == "postgres"
 
@@ -388,15 +373,14 @@ class TestResolveOrgConfig:
     ) -> None:
         """Redis client from ctx is forwarded to ``get_org_config``."""
         redis_client = MagicMock()
-        bao_client = MagicMock()
 
         with patch("core.org_config.get_org_config", AsyncMock(return_value=mock_org_config)) as mock_get:
             from workers.backend import _resolve_user_config
 
-            ctx = {"openbao_client": bao_client, "redis": redis_client}
+            ctx = {"redis": redis_client}
             result = await _resolve_user_config(ctx, self.USER_ID, mock_db)
 
-        mock_get.assert_awaited_once_with(self.USER_ID, redis=redis_client, bao_client=bao_client)
+        mock_get.assert_awaited_once_with(self.USER_ID, redis=redis_client, db=mock_db)
         assert result is mock_org_config
 
     # ── Primary path: fallthrough on ImportError ──────────────────────────
@@ -420,7 +404,7 @@ class TestResolveOrgConfig:
 
             from workers.backend import _resolve_user_config
 
-            ctx = {"openbao_client": MagicMock(), "redis": MagicMock()}
+            ctx = {"redis": MagicMock()}
             result = await _resolve_user_config(ctx, self.USER_ID, mock_db)
 
         assert isinstance(result, OrgConfigBase)
@@ -445,7 +429,7 @@ class TestResolveOrgConfig:
 
             from workers.backend import _resolve_user_config
 
-            ctx = {"openbao_client": MagicMock()}
+            ctx = {"redis": MagicMock()}
             result = await _resolve_user_config(ctx, self.USER_ID, mock_db)
 
         assert isinstance(result, OrgConfigBase)

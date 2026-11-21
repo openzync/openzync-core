@@ -34,7 +34,7 @@ from core.exceptions import NotFoundError
 from core.system_config import get_system_config, update_system_config
 from core.system_settings import list_system_settings, reveal_system_setting
 from dependencies.auth import require_superadmin
-from dependencies.db import get_db_superadmin
+from dependencies.db import get_db, get_db_superadmin
 from repositories.user_repository import UserRepository
 from schemas.admin_system import (
     MemberRoleResponse,
@@ -54,16 +54,9 @@ router = APIRouter(
 # ── Dependency factories ─────────────────────────────────────────────────────
 
 
-def _get_openbao_and_redis(request: Request) -> tuple[object, object]:
-    """Return ``(openbao_client, redis)`` from app state, fail-fast on missing."""
-    bao_client = getattr(request.app.state, "openbao_client", None)
-    if bao_client is None:
-        raise HTTPException(
-            status_code=503,
-            detail="OpenBao client not available — secrets backend not initialised",
-        )
-    redis = getattr(request.app.state, "redis", None)
-    return bao_client, redis
+def _get_redis(request: Request) -> object:
+    """Return the Redis client from app state (``None`` when unavailable)."""
+    return getattr(request.app.state, "redis", None)
 
 
 def _get_user_service(
@@ -98,18 +91,19 @@ def _get_user_service(
 async def get_platform_config(
     request: Request,
     _user_id: str = Depends(require_superadmin),  # noqa: B008
+    db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> SystemConfigResponse:
     """Return the current platform system config.
 
     Args:
-        request: Incoming HTTP request (app-state Redis/OpenBao access).
+        request: Incoming HTTP request (app-state Redis access).
         _user_id: Superadmin user UUID (superadmin-gated).
+        db: Async DB session (platform root-row read).
 
     Returns:
         A :class:`SystemConfigResponse` with the whitelisted fields.
     """
-    bao_client, redis = _get_openbao_and_redis(request)
-    return await get_system_config(redis, bao_client)
+    return await get_system_config(_get_redis(request), db)
 
 
 @router.patch(
@@ -127,19 +121,22 @@ async def update_platform_config(
     body: SystemConfigUpdate,
     request: Request,
     _user_id: str = Depends(require_superadmin),  # noqa: B008
+    db: AsyncSession = Depends(get_db_superadmin),  # noqa: B008
 ) -> SystemConfigResponse:
     """Partially update the platform system config.
 
     Args:
         body: Whitelisted fields to update (``None`` removes a key).
-        request: Incoming HTTP request (app-state Redis/OpenBao access).
+        request: Incoming HTTP request (app-state Redis access).
         _user_id: Superadmin user UUID (superadmin-gated).
+        db: RLS-bypass session (the root row belongs to the platform
+            root, not the acting superadmin — the tenant policy would
+            otherwise match zero rows fail-closed).
 
     Returns:
         The freshly stored config.
     """
-    bao_client, redis = _get_openbao_and_redis(request)
-    return await update_system_config(body, bao_client, redis)
+    return await update_system_config(body, _get_redis(request), db)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -165,14 +162,13 @@ async def list_platform_system_settings(
     """List all known system settings, masked.
 
     Args:
-        request: Incoming HTTP request (app-state OpenBao access).
+        request: Incoming HTTP request (unused — kept for signature parity).
         _user_id: Superadmin user UUID (superadmin-gated).
 
     Returns:
         A :class:`SystemSettingsResponse` with masked values.
     """
-    bao_client, _redis = _get_openbao_and_redis(request)
-    return await list_system_settings(bao_client)
+    return await list_system_settings()
 
 
 # ⚠️ BREAKING: reveal moved from GET /settings/{key} to POST
@@ -202,7 +198,7 @@ async def reveal_platform_system_setting(
 
     Args:
         key: An ``OZ_*`` setting key.
-        request: Incoming HTTP request (app-state OpenBao access).
+        request: Incoming HTTP request (unused — kept for signature parity).
         _user_id: Superadmin user UUID (superadmin-gated).
 
     Returns:
@@ -211,9 +207,8 @@ async def reveal_platform_system_setting(
     Raises:
         HTTPException: 404 if the key is unknown or not set.
     """
-    bao_client, _redis = _get_openbao_and_redis(request)
     try:
-        return await reveal_system_setting(key, bao_client)
+        return await reveal_system_setting(key)
     except NotFoundError:
         raise HTTPException(
             status_code=404,

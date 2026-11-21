@@ -6,7 +6,7 @@ Tests cover:
 - ``_extract_text_plain`` helper (UTF-8 decode, replacement chars, empty)
 - ``_extract_image_ocr`` helper (pytesseract OCR, missing deps, errors, empty result)
 - ``_dispatch_extraction`` MIME routing (text/*, PDF, DOCX, image/*, magic fallback, unknown)
-- ``_get_org_storage_config`` (OpenBao path, fetch failure, default fallback)
+- ``_get_org_storage_config`` (DB-backed path, fetch failure → fail-closed)
 - ``extract_blob_text`` main decorated task (happy path, idempotency, blob/episode not
   found, download failures, no text extracted, ctx resource resolution, engine lifecycle)
 """
@@ -543,49 +543,44 @@ class TestGetOrgStorageConfig:
     """``_get_org_storage_config`` — org blob storage config resolution."""
 
     @pytest.mark.asyncio
-    async def test_uses_bao_client_when_provided(self) -> None:
-        """OpenBao client present → fetches config via ``get_org_config``."""
+    async def test_reads_config_from_db(self) -> None:
+        """DB-backed config fetch → returns the storage config dict."""
         from workers.tasks.extract_blob_text import _get_org_storage_config
 
-        mock_bao = MagicMock()
+        mock_db = AsyncMock()
         mock_org_cfg = MagicMock()
         mock_org_cfg.to_blob_storage_config.return_value = {
             "backend": "s3",
             "bucket_name": "custom-bucket",
         }
 
-        with patch(
-            "core.org_config.get_org_config", AsyncMock(return_value=mock_org_cfg)
+        with (
+            patch(
+                "core.org_config.get_org_config",
+                AsyncMock(return_value=mock_org_cfg),
+            ) as mock_get,
         ):
-            result = await _get_org_storage_config(_ORG_ID, mock_bao)
+            result = await _get_org_storage_config(_ORG_ID, mock_db)
 
+        mock_get.assert_awaited_once()
         assert result == {"backend": "s3", "bucket_name": "custom-bucket"}
 
     @pytest.mark.asyncio
-    async def test_returns_defaults_on_config_fetch_failure(self) -> None:
-        """OpenBao fetch failure raises ExternalServiceError (fail-closed, retryable)."""
+    async def test_fetch_failure_raises_external_service_error(self) -> None:
+        """DB fetch failure raises ExternalServiceError (fail-closed, retryable)."""
         from core.exceptions import ExternalServiceError
         from workers.tasks.extract_blob_text import _get_org_storage_config
 
-        mock_bao = MagicMock()
+        mock_db = AsyncMock()
 
         with (
             patch(
                 "core.org_config.get_org_config",
-                AsyncMock(side_effect=RuntimeError("Bao down")),
+                AsyncMock(side_effect=RuntimeError("DB down")),
             ),
             pytest.raises(ExternalServiceError, match="could not be read"),
         ):
-            await _get_org_storage_config(_ORG_ID, mock_bao)
-
-    @pytest.mark.asyncio
-    async def test_returns_defaults_when_bao_client_none(self) -> None:
-        """No OpenBao client → ExternalServiceError (fail-closed, no defaults)."""
-        from core.exceptions import ExternalServiceError
-        from workers.tasks.extract_blob_text import _get_org_storage_config
-
-        with pytest.raises(ExternalServiceError, match="no OpenBao client"):
-            await _get_org_storage_config(_ORG_ID, None)
+            await _get_org_storage_config(_ORG_ID, mock_db)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -610,13 +605,11 @@ class TestExtractBlobText:
     def _make_ctx(
         self,
         db: AsyncMock,
-        include_bao: bool = True,
     ) -> dict:
         """Create a minimal ARQ worker context dict.
 
         Args:
             db: Mock DB session.
-            include_bao: Whether to include an ``openbao_client`` key.
 
         Returns:
             A dict suitable as ``ctx`` for ``extract_blob_text``.
@@ -625,8 +618,6 @@ class TestExtractBlobText:
             "db_engine": MagicMock(),
             "db_session_factory": self._make_session_factory(db),
         }
-        if include_bao:
-            ctx["openbao_client"] = MagicMock()
         return ctx
 
     def _make_db(
@@ -1095,17 +1086,17 @@ class TestExtractBlobText:
             mock_get_session.assert_called_once()
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Without bao_client
+    # Storage config failure
     # ═══════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
-    async def test_without_bao_client_uses_default_config(self) -> None:
-        """No ``openbao_client`` in ctx → ExternalServiceError, no download."""
+    async def test_storage_config_failure_skips_download(self) -> None:
+        """Storage config fetch failure → ExternalServiceError, no download."""
         from core.exceptions import ExternalServiceError
         from workers.tasks.extract_blob_text import extract_blob_text
 
         db = self._make_db()
-        ctx = self._make_ctx(db, include_bao=False)
+        ctx = self._make_ctx(db)
 
         with (
             patch("workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f),
@@ -1116,6 +1107,10 @@ class TestExtractBlobText:
             patch(
                 "workers.tasks.extract_blob_text._dispatch_extraction",
                 AsyncMock(return_value=None),
+            ),
+            patch(
+                "workers.tasks.extract_blob_text._get_org_storage_config",
+                AsyncMock(side_effect=ExternalServiceError("no storage config")),
             ),
         ):
             mock_blob_repo = AsyncMock()
@@ -1132,7 +1127,7 @@ class TestExtractBlobText:
             mock_storage.download = AsyncMock(return_value=b"data")
             mock_storage_cls.return_value = mock_storage
 
-            with pytest.raises(ExternalServiceError, match="no OpenBao client"):
+            with pytest.raises(ExternalServiceError, match="no storage config"):
                 await extract_blob_text(
                     ctx=ctx,
                     blob_id=_BLOB_ID,

@@ -40,7 +40,6 @@ def _init_settings() -> None:
         DATABASE_URL="postgresql+asyncpg://u:p@localhost:5432/test",
         REDIS_URL="redis://localhost:6379/1",
         SECRET_KEY="a" * 32,
-        WEBHOOK_SIGNING_SECRET="b" * 32,
         ENVIRONMENT="test",
     )
     set_settings(settings)
@@ -66,7 +65,6 @@ def _make_service(db: AsyncSession) -> AuthService:
         otp_service=AsyncMock(),
         redis=AsyncMock(),
         email_service=None,
-        bao_client=None,
         settings_repo=settings_repo,
     )
 

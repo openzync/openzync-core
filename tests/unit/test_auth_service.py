@@ -66,10 +66,6 @@ class TestAuthService:
         return AsyncMock()
 
     @pytest.fixture
-    def mock_bao_client(self) -> AsyncMock:
-        return AsyncMock()
-
-    @pytest.fixture
     def mock_settings_repo(self) -> AsyncMock:
         """Registration-mode repo mock — pinned to ``open`` (legacy default)."""
         repo = AsyncMock()
@@ -83,7 +79,6 @@ class TestAuthService:
         mock_otp: AsyncMock,
         mock_redis: AsyncMock,
         mock_email_service: AsyncMock,
-        mock_bao_client: AsyncMock,
         mock_settings_repo: AsyncMock,
     ) -> AuthService:
         return AuthService(
@@ -91,25 +86,6 @@ class TestAuthService:
             otp_service=mock_otp,
             redis=mock_redis,
             email_service=mock_email_service,
-            bao_client=mock_bao_client,
-            settings_repo=mock_settings_repo,
-        )
-
-    @pytest.fixture
-    def service_no_bao(
-        self,
-        mock_repo: AsyncMock,
-        mock_otp: AsyncMock,
-        mock_redis: AsyncMock,
-        mock_email_service: AsyncMock,
-        mock_settings_repo: AsyncMock,
-    ) -> AuthService:
-        return AuthService(
-            repo=mock_repo,
-            otp_service=mock_otp,
-            redis=mock_redis,
-            email_service=mock_email_service,
-            bao_client=None,
             settings_repo=mock_settings_repo,
         )
 
@@ -119,7 +95,6 @@ class TestAuthService:
         mock_repo: AsyncMock,
         mock_otp: AsyncMock,
         mock_redis: AsyncMock,
-        mock_bao_client: AsyncMock,
         mock_settings_repo: AsyncMock,
     ) -> AuthService:
         return AuthService(
@@ -127,7 +102,6 @@ class TestAuthService:
             otp_service=mock_otp,
             redis=mock_redis,
             email_service=None,
-            bao_client=mock_bao_client,
             settings_repo=mock_settings_repo,
         )
 
@@ -526,14 +500,13 @@ class TestAuthService:
     # ═══════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
-    async def test_verify_email_happy_path_with_bao(
+    async def test_verify_email_happy_path(
         self,
         service: AuthService,
         mock_repo: AsyncMock,
         mock_otp: AsyncMock,
-        mock_bao_client: AsyncMock,
     ) -> None:
-        """Verify email with Bao client — creates org namespace."""
+        """Verify email marks the address verified and issues tokens."""
         user = self._make_mock_user(is_email_verified=False)
         mock_repo.find_user_by_email.return_value = user
         mock_otp.verify.return_value = True
@@ -553,28 +526,6 @@ class TestAuthService:
 
         assert result.access_token == "at"
         mock_repo.mark_email_verified.assert_awaited_once_with(self.USER_ID)
-        mock_bao_client.create_org_namespace.assert_awaited_once_with(
-            self.USER_ID
-        )
-
-    @pytest.mark.asyncio
-    async def test_verify_email_happy_path_without_bao(
-        self,
-        service_no_bao: AuthService,
-        mock_repo: AsyncMock,
-        mock_otp: AsyncMock,
-    ) -> None:
-        """Verify email without Bao client — fail-loud (no silent skip)."""
-        from core.openbao_exceptions import OpenBaoConnectionError
-
-        user = self._make_mock_user(is_email_verified=False)
-        mock_repo.find_user_by_email.return_value = user
-        mock_otp.verify.return_value = True
-
-        payload = VerifyEmailRequest(email="admin@acme.com", otp="123456")
-
-        with pytest.raises(OpenBaoConnectionError):
-            await service_no_bao.verify_email(payload)
 
     @pytest.mark.asyncio
     async def test_verify_email_already_verified_skips_db_update(

@@ -77,11 +77,11 @@ class AdminStatsService:
         """Return daily usage counts for the user, newest first.
 
         Resolves the user's stored config internally (for graph backend
-        selection) from app-state OpenBao/Redis — no extra caller wiring.
+        selection) from app-state Redis/DB — no extra caller wiring.
 
         Args:
             request: FastAPI request (graph backend dispatcher + pools,
-                app-state OpenBao/Redis for user-config resolution).
+                app-state Redis for user-config resolution).
             user_id: Authenticated user ID.
             start: Window start (inclusive).
             end_exclusive: Window end (exclusive), or ``None`` for open-ended.
@@ -94,10 +94,9 @@ class AdminStatsService:
 
         from core.org_config import get_org_config as _get_org_config
 
-        bao_client = getattr(request.app.state, "openbao_client", None)
         redis = getattr(request.app.state, "redis", None)
         user_config = await _get_org_config(
-            user_id, redis=redis, bao_client=bao_client
+            user_id, redis=redis, db=self._db
         )
 
         def _ensure(date_str: str) -> dict[str, int]:

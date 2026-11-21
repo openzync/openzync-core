@@ -1,4 +1,4 @@
-"""Worker-specific configuration — loaded from pydantic-settings.
+"""Worker-specific configuration — read directly from ``OZ_*`` env vars.
 
 All worker configuration lives here rather than in ``core.config`` because the
 worker process is independently deployable and should not depend on API-specific
@@ -16,9 +16,11 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from typing import Any
 
-from core.openbao import SYSTEM_KEY_MAPPING, OpenBaoClient
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 from core.queue_names import get_queue_name
 
 # The queue-name builder lives in ``core.queue_names`` — the API enqueues
@@ -27,22 +29,29 @@ from core.queue_names import get_queue_name
 # module's public surface.
 
 
-class WorkerSettings(BaseModel):
-    """Worker-specific configuration — populated from OpenBao or env vars.
+class WorkerSettings(BaseSettings):
+    """Worker-specific configuration — read directly from ``OZ_*`` env vars.
 
     All durations are in **seconds** unless otherwise noted.
 
-    Create via :meth:`from_openbao` for production, or instantiate directly
-    for local development / testing.
+    Instantiate directly (env vars) or via :func:`get_worker_settings`
+    after :func:`init_worker_settings` has run.
     """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",
+        populate_by_name=True,
+    )
 
     # ── Database ──────────────────────────────────────────────────────────────
     DATABASE_URL: str = Field(
         description=(
             "PostgreSQL connection string used by SQLAlchemy async engine. "
             "Must use the ``postgresql+asyncpg://`` scheme. "
-            "Loaded from OpenBao — no default."
+            "Loaded from the environment (``OZ_DATABASE_URL``) — no default."
         ),
+        validation_alias="OZ_DATABASE_URL",
     )
     DB_POOL_SIZE: int = Field(
         default=4,
@@ -53,6 +62,7 @@ class WorkerSettings(BaseModel):
             "replicas x (pool_size + max_overflow) < Postgres max_connections.  "
             "Must match core Settings — 4 + 1 keeps 15 Helm replicas at 75."
         ),
+        validation_alias="OZ_DB_POOL_SIZE",
     )
     DB_MAX_OVERFLOW: int = Field(
         default=1,
@@ -62,14 +72,16 @@ class WorkerSettings(BaseModel):
             "Extra connections a worker process may open above "
             "DB_POOL_SIZE before tasks queue."
         ),
+        validation_alias="OZ_DB_MAX_OVERFLOW",
     )
 
     # ── Redis ────────────────────────────────────────────────────────────────
     REDIS_URL: str = Field(
         description=(
             "Redis connection string for the ARQ job queue. "
-            "Loaded from OpenBao — no default."
+            "Loaded from the environment (``OZ_REDIS_URL``) — no default."
         ),
+        validation_alias="OZ_REDIS_URL",
     )
 
     # ── Environment ──────────────────────────────────────────────────────────
@@ -79,6 +91,7 @@ class WorkerSettings(BaseModel):
             "Environment name used in queue name prefix: "
             "``OpenZync:{env}:queue:{queue_name}``."
         ),
+        validation_alias="OZ_ENVIRONMENT",
     )
 
     # ── Concurrency ──────────────────────────────────────────────────────────
@@ -91,6 +104,7 @@ class WorkerSettings(BaseModel):
             "Set to CPU count for CPU-bound work, higher for I/O-bound tasks "
             "(LLM API calls, DB queries, embedding)."
         ),
+        validation_alias="OZ_MAX_WORKERS",
     )
     LOW_MAX_WORKERS: int = Field(
         default=2,
@@ -101,6 +115,7 @@ class WorkerSettings(BaseModel):
             "The low queue holds 12 batch tasks — a floor below 2 starves it "
             "whenever MAX_WORKERS is small. Floor is contractually 2."
         ),
+        validation_alias="OZ_LOW_MAX_WORKERS",
     )
 
     # ── Job defaults ─────────────────────────────────────────────────────────
@@ -155,6 +170,7 @@ class WorkerSettings(BaseModel):
     LOG_LEVEL: str = Field(
         default="INFO",
         description="Minimum log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).",
+        validation_alias="OZ_LOG_LEVEL",
     )
     STRUCTLOG_FORMAT: Literal["json", "console"] = Field(
         default="json",
@@ -189,6 +205,7 @@ class WorkerSettings(BaseModel):
             "When set at system level, orgs share a single FalkorDB instance.  "
             "When None (default), per-org falkordb_url from org_config may be used."
         ),
+        validation_alias="OZ_FALKORDB_URL",
     )
     FALKORDB_MAX_CONNECTIONS: int = Field(
         default=10,
@@ -199,11 +216,13 @@ class WorkerSettings(BaseModel):
             "core Settings (single canonical value — never hardcode a pool "
             "size at a call site; 15 max Helm replicas x 10 = 150 worst-case)."
         ),
+        validation_alias="OZ_FALKORDB_MAX_CONNECTIONS",
     )
     FALKORDB_SOCKET_TIMEOUT: int = Field(
         default=10,
         ge=1,
         description="Socket timeout in seconds for FalkorDB connections.",
+        validation_alias="OZ_FALKORDB_SOCKET_TIMEOUT",
     )
 
     # ── SurrealDB (graph backend — optional system-level) ────────────────────
@@ -216,6 +235,7 @@ class WorkerSettings(BaseModel):
             "from org identity.  When None (default), per-org surrealdb_* "
             "fields from org_config are used."
         ),
+        validation_alias="OZ_SURREALDB_URL",
     )
 
     # ── Community Detection ──────────────────────────────────────────────────
@@ -241,76 +261,17 @@ class WorkerSettings(BaseModel):
         return get_queue_name(self.ENV, self.LOW_QUEUE_NAME)
 
     # ═════════════════════════════════════════════════════════════════════════
-    # OpenBao factory
+    # Env factory
     # ═════════════════════════════════════════════════════════════════════════
 
     @classmethod
-    async def from_openbao(cls, bao_client: OpenBaoClient) -> WorkerSettings:
-        """Create a ``WorkerSettings`` by reading system config from OpenBao.
-
-        Maps OpenBao snake_case keys to ``WorkerSettings`` field names.
-        Queue names, timeouts, and ports that are deployment-specific are
-        kept at their defaults (or can be overridden via env vars).
-
-        Args:
-            bao_client: An authenticated :class:`OpenBaoClient` instance.
+    def from_env(cls) -> WorkerSettings:
+        """Create a ``WorkerSettings`` by reading ``OZ_*`` env vars.
 
         Returns:
             A fully-populated :class:`WorkerSettings` instance.
         """
-        config = await bao_client.read_system_config()
-
-        # Worker reads a subset of the canonical SYSTEM_KEY_MAPPING keys.
-        # Defined explicitly here but validated against the canonical source
-        # so a drift is caught at startup, not at runtime.
-        _WORKER_KEYS: frozenset[str] = frozenset({
-            "OZ_DATABASE_URL",
-            "OZ_REDIS_URL",
-            "OZ_ENVIRONMENT",
-            "OZ_LOG_LEVEL",
-            "OZ_FALKORDB_URL",
-            "OZ_FALKORDB_MAX_CONNECTIONS",
-            "OZ_FALKORDB_SOCKET_TIMEOUT",
-            "OZ_SURREALDB_URL",
-            "OZ_MAX_WORKERS",
-            "OZ_LOW_MAX_WORKERS",
-            "OZ_DB_POOL_SIZE",
-            "OZ_DB_MAX_OVERFLOW",
-        })
-        # Canary: fail fast if SYSTEM_KEY_MAPPING drifts from worker keys
-        _canary = _WORKER_KEYS - SYSTEM_KEY_MAPPING.keys()
-        if _canary:
-            raise ValueError(
-                f"Worker keys not found in SYSTEM_KEY_MAPPING: {_canary}. "
-                "Add missing keys to both mappings.",
-            )
-
-        # OpenBao key → WorkerSettings field name.
-        # Most keys strip the ``OZ_`` prefix, except:
-        #   OZ_ENVIRONMENT → 'ENV' (not 'ENVIRONMENT' like Settings).
-        _FIELD_OVERRIDES: dict[str, str] = {"OZ_ENVIRONMENT": "ENV"}
-        _INT_FIELDS: frozenset[str] = frozenset({
-            "OZ_MAX_WORKERS",
-            "OZ_LOW_MAX_WORKERS",
-            "OZ_FALKORDB_MAX_CONNECTIONS",
-            "OZ_FALKORDB_SOCKET_TIMEOUT",
-            "OZ_DB_POOL_SIZE",
-            "OZ_DB_MAX_OVERFLOW",
-        })
-
-        kwargs: dict[str, Any] = {}
-        for bao_key in _WORKER_KEYS:
-            value = config.get(bao_key)
-            if value is not None:
-                field_name = _FIELD_OVERRIDES.get(bao_key, bao_key.removeprefix("OZ_"))
-                kwargs[field_name] = int(value) if bao_key in _INT_FIELDS else value
-
-        # Deployment-specific defaults (env-alterable but not stored in OpenBao)
-        kwargs.setdefault("JOB_TIMEOUT_DEFAULT", 300)
-        kwargs.setdefault("HIGH_QUEUE_NAME", "high")
-        kwargs.setdefault("LOW_QUEUE_NAME", "low")
-
-        return cls(**kwargs)
+        return cls()  # type: ignore[call-arg]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -318,7 +279,7 @@ class WorkerSettings(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _settings: WorkerSettings | None = None
-"""Module-level singleton, populated by :func:`init_worker_settings_from_bao`."""
+"""Module-level singleton, populated by :func:`init_worker_settings`."""
 
 
 def get_worker_settings() -> WorkerSettings:
@@ -328,24 +289,21 @@ def get_worker_settings() -> WorkerSettings:
         The module-level singleton instance.
 
     Raises:
-        RuntimeError: If :func:`init_worker_settings_from_bao` has not
+        RuntimeError: If :func:`init_worker_settings` has not
             been called yet.
     """
     if _settings is None:
         raise RuntimeError(
-            "WorkerSettings not initialised. Call init_worker_settings_from_bao() "
+            "WorkerSettings not initialised. Call init_worker_settings() "
             "before get_worker_settings().",
         )
     return _settings
 
 
-async def init_worker_settings_from_bao(bao_client: OpenBaoClient) -> WorkerSettings:
-    """Initialise the global :class:`WorkerSettings` singleton from OpenBao.
+def init_worker_settings() -> WorkerSettings:
+    """Initialise the global :class:`WorkerSettings` singleton from env.
 
     Must be called once at worker startup, before any task is dispatched.
-
-    Args:
-        bao_client: An authenticated :class:`OpenBaoClient` instance.
 
     Returns:
         The newly-created :class:`WorkerSettings` instance (also stored
@@ -353,7 +311,7 @@ async def init_worker_settings_from_bao(bao_client: OpenBaoClient) -> WorkerSett
     """
     global _settings  # noqa: PLW0603  — intentional module-level state
 
-    ws = await WorkerSettings.from_openbao(bao_client)
+    ws = WorkerSettings.from_env()
     _settings = ws
     return ws
 
@@ -372,5 +330,5 @@ class _SettingsProxy:
 # Module-level singleton — import this, never instantiate WorkerSettings directly.
 # NOTE: ``settings`` is a proxy, not a ``WorkerSettings`` instance.  It resolves
 # attribute access at runtime via ``get_worker_settings()``, so the singleton
-# must be initialised via ``init_worker_settings_from_bao()`` before any usage.
+# must be initialised via ``init_worker_settings()`` before any usage.
 settings = _SettingsProxy()  # type: ignore[assignment]

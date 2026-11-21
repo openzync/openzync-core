@@ -2,12 +2,12 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # OpenZync — API Service Container Entrypoint
 # ──────────────────────────────────────────────────────────────────────────────
-# Runs in the `api` container as PID 1. A sidecar `openbao-agent-api`
-# container shares the `api-secrets` tmpfs volume at /run/secrets, auths
-# to OpenBao via AppRole, and renders system config to /run/secrets/system.env
-# as KEY=VALUE lines. This script waits for that file, sources it, then
-# execs uvicorn so the process receives signals directly (graceful SIGTERM).
-# Deps (in python:3.12-slim): sh, sed, grep, sleep, uvicorn.
+# Runs in the `api` container as PID 1. All config arrives via the
+# environment (compose env_file: ../.env plus direct OZ_* entries) — no
+# sidecars, no rendered secret files. This script fail-fasts on the two
+# keys the app cannot boot without, logs a redacted summary, then execs
+# uvicorn so the process receives signals directly (graceful SIGTERM).
+# Deps (in python:3.12-slim): sh, sed, uvicorn.
 # ──────────────────────────────────────────────────────────────────────────────
 set -e
 set -u
@@ -19,44 +19,19 @@ log() { echo "[entrypoint_api] $(date -Iseconds) $*"; }
 # 'set -e' handles error exits; the trap would just add diagnostics.
 # If ERR trap support is needed, wrap in: trap ... ERR 2>/dev/null || true
 
-log "Waiting for OpenBao Agent to render secrets to /run/secrets/system.env ..."
-
-. /app/scripts/wait_for_secrets.sh
-
-if ! wait_for_secrets "/run/secrets/system.env" 90; then
-  exit 1
+# ── Fail fast on required config ──────────────────────────────────────────
+if [ -z "${OZ_DATABASE_URL:-${DATABASE_URL:-}}" ]; then
+    log "FATAL: OZ_DATABASE_URL (or DATABASE_URL) is not set — refusing to boot."
+    exit 1
+fi
+if [ -z "${OZ_SECRET_KEY:-}" ]; then
+    log "FATAL: OZ_SECRET_KEY is not set — refusing to boot."
+    exit 1
 fi
 
-log "OpenBao Agent secrets ready. Sourcing /run/secrets/system.env ..."
-
-# Load env file safely — values may contain shell-special chars (e.g. ')'
-# from URL-encoded passwords.  Simple `. file` would fail; this loop reads
-# key=value pairs with 'read -r' and exports with proper quoting.
-while IFS='=' read -r _key _rest || [ -n "$_key" ]; do
-  [ -z "$_key" ] && continue
-  case "$_key" in (\#*) continue ;; esac
-  export "${_key}=${_rest}"
-done < /run/secrets/system.env
-
-# Fallback: if OZ_OPENBAO_ROLE_ID / OZ_OPENBAO_SECRET_ID were not in the
-# system.env (they are NOT part of the system secret), read them from the
-# bootstrap files written by init_openbao.sh to the shared init-data volume.
-# The api sidecar Agent authenticates using api-role_id / api-secret_id;
-# the Python OpenBaoClient reuses the same credentials for runtime auth.
-if [ -z "${OZ_OPENBAO_ROLE_ID:-}" ] || [ -z "${OZ_OPENBAO_SECRET_ID:-}" ]; then
-    if [ -f /openbao-bootstrap/api-role_id ] && [ -f /openbao-bootstrap/api-secret_id ]; then
-        log "Reading OpenBao AppRole credentials from bootstrap files ..."
-        OZ_OPENBAO_ROLE_ID=$(cat /openbao-bootstrap/api-role_id)
-        OZ_OPENBAO_SECRET_ID=$(cat /openbao-bootstrap/api-secret_id)
-        export OZ_OPENBAO_ROLE_ID OZ_OPENBAO_SECRET_ID
-    else
-        log "WARNING: OZ_OPENBAO_ROLE_ID not set and bootstrap files not found at /openbao-bootstrap/"
-        log "WARNING: Python OpenBaoClient will fail at startup without these credentials."
-    fi
-fi
-
-log "DATABASE_URL set: $(echo "$OZ_DATABASE_URL" | sed 's|://[^:]*:[^@]*@|://***:***@|')"
-log "SECRET_KEY set: ${OZ_SECRET_KEY:+yes (length=${#OZ_SECRET_KEY})}"
+# Mask the password if a full URL leaked into a log line elsewhere.
+log "DATABASE_URL set: $(echo "${OZ_DATABASE_URL:-$DATABASE_URL}" | sed 's|://[^:]*:[^@]*@|://***:***@|')"
+log "SECRET_KEY set: yes (length=${#OZ_SECRET_KEY})"
 
 log "Starting uvicorn ..."
 # --proxy-headers makes uvicorn rewrite scope["client"] from X-Forwarded-For

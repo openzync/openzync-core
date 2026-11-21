@@ -1,8 +1,8 @@
-"""Organization config service — CRUD backed by OpenBao.
+"""Organization config service — CRUD backed by the DB.
 
 This service orchestrates the config update flow:
 1. Validate the update payload.
-2. Delegate to ``core.org_config`` for the OpenBao update + cache invalidation.
+2. Delegate to ``core.org_config`` for the DB update + cache invalidation.
 3. Return the stored config.
 
 Wire-up in router::
@@ -16,7 +16,8 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from core.openbao import OpenBaoClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from core.org_config import get_org_config
 from core.org_config import (
     update_org_config as core_update_org_config,
@@ -32,12 +33,12 @@ class OrgConfigService:
     """Business logic for per-organization configuration management.
 
     Args:
-        bao_client: An authenticated :class:`OpenBaoClient`.
+        db: Async DB session for ``users.config_override`` access.
         redis: An optional async Redis client (for caching).
     """
 
-    def __init__(self, bao_client: OpenBaoClient, redis: Any | None = None) -> None:
-        self._bao_client = bao_client
+    def __init__(self, db: AsyncSession, redis: Any | None = None) -> None:
+        self._db = db
         self._redis = redis
 
     async def get_config(self, user_id: UUID) -> OrgConfigBase:
@@ -53,7 +54,7 @@ class OrgConfigService:
         return await get_org_config(
             user_id,
             redis=self._redis,
-            bao_client=self._bao_client,
+            db=self._db,
         )
 
     async def get_config_response(self, user_id: UUID) -> OrgConfigResponse:
@@ -87,6 +88,6 @@ class OrgConfigService:
         return await core_update_org_config(
             user_id,
             update_data=payload,
-            bao_client=self._bao_client,
             redis=self._redis,
+            db=self._db,
         )

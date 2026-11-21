@@ -74,14 +74,14 @@ class WebhookRepository:
     ) -> WebhookEndpoint:
         """Create a new webhook endpoint.
 
-        ``signing_secret`` must already be the Transit ciphertext — the
+        ``signing_secret`` must already be the crypto ciphertext — the
         service encrypts before calling; the repository never sees
         plaintext.  ``endpoint_id`` is accepted so the service can
-        pre-generate the UUID and use it as the Transit AAD context.
+        pre-generate the UUID and use it as the crypto AAD context.
         """
         endpoint = WebhookEndpoint(
             id=endpoint_id if endpoint_id is not None else uuid.uuid4(),
-
+            user_id=user_id,
             name=name,
             url=url,
             # orjson.dumps returns bytes; the column is TEXT and asyncpg

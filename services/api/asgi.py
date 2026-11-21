@@ -1,8 +1,9 @@
 """ASGI entry point for uvicorn.
 
-Bootstraps OpenBao before creating the FastAPI application.  If OpenBao is
-unreachable the process exits immediately — the container orchestrator
-(Docker/K8s) handles restart.
+Validates system configuration from ``OZ_*`` environment variables before
+creating the FastAPI application.  If required env vars are missing the
+process exits immediately — the container orchestrator (Docker/K8s)
+handles restart.
 
 Usage::
 
@@ -11,7 +12,6 @@ Usage::
 
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 
@@ -21,36 +21,10 @@ import sys
 _project_root = os.path.join(os.path.dirname(__file__), "../..")
 sys.path.insert(0, os.path.abspath(_project_root))
 
-from core.config import BootstrapSettings
-from core.openbao import OpenBaoClient
-from core.openbao_settings import init_settings
+from core.config import get_settings
 
-
-async def _bootstrap() -> None:
-    """Connect to OpenBao and load all system settings.
-
-    Fail-fast: raises OpenBaoConnectionError if OpenBao is unreachable.
-    """
-    bootstrap = BootstrapSettings()
-    async with OpenBaoClient(
-        bootstrap.OPENBAO_ADDR,
-        bootstrap.OPENBAO_ROLE_ID,
-        bootstrap.OPENBAO_SECRET_ID,
-        timeout=15.0,
-    ) as bao:
-        await init_settings(bao)
-
-
-# Fail fast at import time — uvicorn never starts without OpenBao.
-try:
-    asyncio.run(_bootstrap())
-except RuntimeError:
-    # ── Running in uvicorn --reload subprocess (uvloop already active).
-    #    Run bootstrap in a separate thread with its own event loop.
-    import concurrent.futures
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
-        _pool.submit(lambda: asyncio.run(_bootstrap())).result()
+# Fail fast at import time — uvicorn never starts without valid config.
+get_settings()
 
 from services.api.main import create_app  # noqa: E402
 

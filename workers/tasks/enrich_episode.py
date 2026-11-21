@@ -227,7 +227,6 @@ async def enrich_episode(
         session_factory = get_async_session(engine)
 
     arq_redis = ctx.get("redis") if isinstance(ctx, dict) else None
-    bao_client = ctx.get("openbao_client") if isinstance(ctx, dict) else None
 
     try:
         async with session_factory() as db:
@@ -356,24 +355,9 @@ async def enrich_episode(
             org_cfg: OrgConfigBase | None = None
             llm_config_dict: dict | None = None
             try:
-                if bao_client is not None:
-                    org_cfg = await get_org_config(
-                        uuid.UUID(user_id), redis=None, bao_client=bao_client
-                    )
-                else:
-                    from core.config import BootstrapSettings
-                    from core.openbao import OpenBaoClient
-
-                    bootstrap = BootstrapSettings()
-                    async with OpenBaoClient(
-                        bootstrap.OPENBAO_ADDR,
-                        bootstrap.OPENBAO_ROLE_ID,
-                        bootstrap.OPENBAO_SECRET_ID,
-                        timeout=10.0,
-                    ) as _tmp_bao:
-                        org_cfg = await get_org_config(
-                            uuid.UUID(user_id), redis=None, bao_client=_tmp_bao
-                        )
+                org_cfg = await get_org_config(
+                    uuid.UUID(user_id), redis=None, db=db
+                )
                 llm_config_dict = org_cfg.to_llm_config_dict()
             except Exception:
                 # No silent default fallback: enriching under the wrong

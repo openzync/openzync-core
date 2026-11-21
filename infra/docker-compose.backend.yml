@@ -1,75 +1,56 @@
-# ──────────────────────────────────────────────────────────────────────────────
-# OpenZync — Backend Stack (v2: zero-fallback secrets bootstrap)
-# ──────────────────────────────────────────────────────────────────────────────
-# Self-contained: no external networks, no pre-created resources, no manual
-# unseal. `docker compose -f infra/docker-compose.backend.yml up -d` brings
-# the entire stack from a cold start to a working api + worker, with every
-# secret auto-generated, stored in OpenBao, and rendered at runtime to the
-# api/worker via OpenBao Agent sidecars.
+# ------------------------------------------------------------------------------
+# OpenZync - Backend Stack (plain-.env config, no secrets manager)
+# ------------------------------------------------------------------------------
+# Self-contained: no external networks, no pre-created resources.
+# `docker compose --env-file .env -f infra/docker-compose.backend.yml up -d`
+# brings the entire stack from a cold start to a working api + worker, with
+# every setting read from the host .env file (env_file on each service) plus
+# the direct OZ_* entries below.
 #
-# Service graph (default — falkordb always on; no local database, Supabase/CloudSQL):
+# Service graph (default - falkordb always on; no local database, Supabase/CloudSQL):
 #
-#   openbao ─► openbao-init ───────────────────────────────────┐
-#                                                              │
-#                ┌─────────────────────────────────────────────┘
-#                ▼
-#        openbao-agent-api            openbao-agent-worker
-#           (sidecar)                     (sidecar)
-#                │                           │
-#                ▼                           ▼
-#               api                        worker
-#                │                           │
-#                └─────────► redis ◄─────────┘
+#   postgres-init -→ postgres-migrate
+#        |                |
+#        +------→ redis ←-+
+#                 |    |
+#                 v    v
+#                api  worker
 #
-  # With --profile local-db:
+#   With --profile local-db:
 #
-#   postgres ─► postgres-init ─► postgres-migrate ─► openbao-write-db
-#                                                         │
-#                ┌────────────────────────────────────────┘
-#                ▼
-#        openbao-agent-api ── (same as default graph above)
+#   postgres -→ postgres-init -→ postgres-migrate
 #
 # Default stack always includes falkordb (graph is falkordb by default).
 # SurrealDB stays optional under --profile alt-graph.
 #
 # One-shot services (exit 0, restart: no) sit on the critical path. Restart-
-# loop services (openbao, postgres, api, worker, agent sidecars, redis) come
-# up last and stay up.
+# loop services (postgres, api, worker, redis) come up last and stay up.
 #
-# Secrets model:
-#   - OpenBao holds the system secret at system/config/data/system as a
-#     SINGLE flat object (REDIS_URL, SECRET_KEY, DATABASE_URL, JWT TTLs,
-#     rate limits, etc.). The init_openbao.sh script writes the static OZ_*
-#     env vars; write_db_to_openbao.sh appends DATABASE_URL once postgres
-#     has minted the application credentials.
-#   - Each app container has an OpenBao Agent sidecar that authenticates
-#     via AppRole and renders the system secret to a shared volume as
-#     /run/secrets/system.env (env-file format). The api/worker entrypoint
-#     scripts wait for that file, source it, and exec the app.
-#   - The migration container does NOT use an Agent sidecar — it reads the
-#     migrator password directly from /bao-init/db-creds.json (the file
-#     postgres-init wrote) via scripts/entrypoint_migrate.sh.
-#
-# Volume note:
-# api-secrets and worker-secrets are regular named volumes (not tmpfs)
-# so the sidecar (writer) and the app (reader) can share a single path
-# across container boundaries. system.env must NEVER be persisted to disk
-# outside these volumes — for production, replace them with tmpfs mounts
-# (e.g. Kubernetes emptyDir.medium: Memory) — see the
-# `# TechLead note:` in the services block.
+# Config model:
+#   - Every service takes env_file: ../.env (repo-root .env, the same file
+#     `make dev` sources), so compose runs and host runs share one source
+#     of truth - no sidecars, no rendered-secret volumes, no bootstrap
+#     artefacts.
+#   - First boot with --profile local-db: postgres-init creates the
+#     openzync database + migrator/app roles (passwords from
+#     POSTGRES_MIGRATOR_PASSWORD / POSTGRES_APP_PASSWORD when set,
+#     auto-generated otherwise - the script prints an export snippet to
+#     copy into .env), then postgres-migrate applies Alembic using
+#     DATABASE_URL / OZ_DATABASE_URL from the environment.
 #
 # Profiles:
 #   --profile observability  (Prometheus + Grafana + Alloy)
-#   --profile local-db       (Postgres + init + migrate + write-db to OpenBao)
-#   --profile alt-graph      (SurrealDB — optional extra graph backend;
+#   --profile local-db       (Postgres + init + migrate)
+#   --profile alt-graph      (SurrealDB - optional extra graph backend;
 #                             FalkorDB is now part of the default stack)
 # Ollama is DEFAULT (not a profile): one shared container replaces 2x
 # in-process ONNX embedders (~700-785MB/process OOM on the 1.9GB VPS).
 #
-# Required env vars (no defaults — compose will refuse to start if absent):
-#   BAO_STATIC_SEAL_KEY      64-char hex (openssl rand -hex 32)
-#   OZ_SECRET_KEY            app SECRET_KEY (stored in OpenBao system secret)
-#   OZ_WEBHOOK_SIGNING_SECRET app webhook signing secret
+# Required env vars (no defaults - compose will refuse to start if absent):
+#   OZ_SECRET_KEY            app SECRET_KEY (JWT signing; 48+ char url-safe)
+#   OZ_WEBHOOK_SIGNING_SECRET app webhook signing secret (32+ char url-safe)
+#   OZ_DATABASE_URL          asyncpg URL for api/worker/migrate
+#                            (e.g. postgresql+asyncpg://user:pass@postgres:5432/openzync)
 #
 # Required with --profile local-db (only):
 #   POSTGRES_PASSWORD        superuser password for first-boot cluster init
@@ -82,13 +63,12 @@
 #   OZ_JWT_ACCESS_TOKEN_TTL_MINUTES=30
 #   OZ_JWT_REFRESH_TOKEN_TTL_DAYS=7
 #   OZ_PROMETHEUS_URL=http://prometheus:9090
-#   OZ_FALKORDB_URL=redis://falkordb:6379  (required — FalkorDB is default graph)
+#   OZ_REDIS_URL=redis://redis:6379/0
+#   OZ_FALKORDB_URL=redis://falkordb:6379  (required - FalkorDB is default graph)
 #   OZ_FALKORDB_MAX_CONNECTIONS=10  (budget: 15 max Helm replicas x 10 = 150
-#   worst-case — Helm FalkorDB is external with no chart-managed maxclients,
-#   so the pool stays small instead of relying on the server default)
+#   worst-case - the pool stays small instead of relying on the server default)
 #   OZ_FALKORDB_SOCKET_TIMEOUT=30
-#   OZ_SURREALDB_URL=          (empty default; key absent from the system
-#                              secret while unset, so the gate stays off)
+#   OZ_SURREALDB_URL=          (empty default; the gate stays off while unset)
 #   OZ_RATE_LIMIT_IP_MAX=10
 #   OZ_RATE_LIMIT_WINDOW_SEC=60
 #   OZ_DB_POOL_SIZE=4
@@ -98,8 +78,8 @@
 # SurrealDB still needs --profile alt-graph:
 #   OZ_SURREALDB_URL=ws://surrealdb:8000/rpc \
 #     docker compose --profile alt-graph up -d
-# FalkorDB is always on — no profile needed.
-# ──────────────────────────────────────────────────────────────────────────────
+# FalkorDB is always on - no profile needed.
+# ------------------------------------------------------------------------------
 
 # ── Logging defaults ─────────────────────────────────────────────────────────
 x-logging: &default-logging
@@ -109,111 +89,7 @@ x-logging: &default-logging
     max-file: "3"
 
 services:
-  # ── 1. OpenBao (secrets management) ───────────────────────────────────────
-  # The Raft storage backend holds KV data; the static_kv seal wraps the
-  # master key with BAO_STATIC_SEAL_KEY so the server auto-unseals on
-  # every restart. cap_add: IPC_LOCK lets the seal hold memory pages.
-  openbao:
-    image: openbao/openbao:2.5
-    container_name: openzync-openbao
-    # The image drops to the openbao user (UID 100) via su-exec, which can't write
-    # to the root-owned /vault/data volume.  chown the volume first, then run the
-    # stock entrypoint so it can proceed without permission errors.
-    entrypoint: ["/usr/bin/dumb-init", "--"]
-    command: ["/bin/sh", "-c", "chown -R openbao:openbao /vault/data 2>/dev/null; exec /usr/local/bin/docker-entrypoint.sh server -config=/etc/openbao/config.hcl"]
-    cap_add: [IPC_LOCK]
-    ports: ["127.0.0.1:8200:8200"]
-    volumes:
-      - openbao-data:/vault/data
-      - ./openbao/config.hcl:/etc/openbao/config.hcl:ro,z
-      - openbao-audit-logs:/vault/logs
-    environment:
-      BAO_STATIC_SEAL_KEY: "${BAO_STATIC_SEAL_KEY:?BAO_STATIC_SEAL_KEY is required (generate with: openssl rand -hex 32)}"
-      BAO_ADDR: "http://0.0.0.0:8200"
-    healthcheck:
-      # Healthy only when initialised AND unsealed. `bao status` returns
-      # valid JSON in both states; the sealed flag flips to false once
-      # the static seal has decrypted the master key.
-      test: ["CMD-SHELL", "bao status -address http://127.0.0.1:8200 -format=json 2>&1 | grep -q '\"sealed\": *false'"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-    logging: *default-logging
-    restart: unless-stopped
-
-  # ── 2. OpenBao init (one-shot bootstrap) ──────────────────────────────────
-  # Idempotent (marker file in /bao-init). On first run: init + unseal +
-  # write the static OZ_* system secret + create AppRoles + write role_id /
-  # secret_id files for the api/worker Agent sidecars. On subsequent runs:
-  # short-circuits to exit 0 once the marker is present.
-  openbao-init:
-    build:
-      context: .
-      dockerfile: Dockerfile.openbao-tooling
-    container_name: openzync-openbao-init
-    depends_on:
-      openbao:
-        condition: service_started   # script has its own retry logic
-    environment:
-      BAO_ADDR: "http://openbao:8200"
-      BAO_SKIP_VERIFY: "true"
-      # All OZ_* env vars are written to the system secret (lowercase snake_case keys).
-      # DATABASE_URL is intentionally NOT here — write_db_to_openbao.sh
-      # appends it after postgres-init + postgres-migrate complete.
-      OZ_REDIS_URL: "redis://redis:6379/0"
-      OZ_SECRET_KEY: "${OZ_SECRET_KEY:?OZ_SECRET_KEY is required for system secret}"
-      OZ_ENVIRONMENT: "${OZ_ENVIRONMENT:-development}"
-      OZ_CORS_ORIGINS: "${OZ_CORS_ORIGINS:-http://localhost:3000}"
-      OZ_LOG_LEVEL: "${OZ_LOG_LEVEL:-INFO}"
-      OZ_MAX_WORKERS: "${OZ_MAX_WORKERS:-4}"
-      OZ_JWT_ACCESS_TOKEN_TTL_MINUTES: "${OZ_JWT_ACCESS_TOKEN_TTL_MINUTES:-30}"
-      OZ_JWT_REFRESH_TOKEN_TTL_DAYS: "${OZ_JWT_REFRESH_TOKEN_TTL_DAYS:-7}"
-      OZ_WEBHOOK_SIGNING_SECRET: "${OZ_WEBHOOK_SIGNING_SECRET:?OZ_WEBHOOK_SIGNING_SECRET is required}"
-      OZ_SMTP_HOST: "${OZ_SMTP_HOST:-}"
-      OZ_SMTP_PORT: "${OZ_SMTP_PORT:-587}"
-      OZ_SMTP_USERNAME: "${OZ_SMTP_USERNAME:-}"
-      OZ_SMTP_PASSWORD: "${OZ_SMTP_PASSWORD:-}"
-      OZ_SMTP_FROM_ADDR: "${OZ_SMTP_FROM_ADDR:-noreply@openzync.tech}"
-      OZ_SMTP_USE_TLS: "${OZ_SMTP_USE_TLS:-false}"
-      OZ_SMTP_START_TLS: "${OZ_SMTP_START_TLS:-true}"
-      OZ_PROMETHEUS_URL: "${OZ_PROMETHEUS_URL:-http://prometheus:9090}"
-      OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-redis://falkordb:6379}"
-      OZ_FALKORDB_MAX_CONNECTIONS: "${OZ_FALKORDB_MAX_CONNECTIONS:-10}"
-      OZ_FALKORDB_SOCKET_TIMEOUT: "${OZ_FALKORDB_SOCKET_TIMEOUT:-30}"
-      # SurrealDB system URL — empty by default so the key is skipped by
-      # init_openbao.sh (see KEY_MAPPING) and the org-config gate stays off.
-      # Set with --profile alt-graph: OZ_SURREALDB_URL=ws://surrealdb:8000/rpc
-      OZ_SURREALDB_URL: "${OZ_SURREALDB_URL:-}"
-      OZ_RATE_LIMIT_IP_MAX: "${OZ_RATE_LIMIT_IP_MAX:-10}"
-      OZ_RATE_LIMIT_WINDOW_SEC: "${OZ_RATE_LIMIT_WINDOW_SEC:-60}"
-      # DB pool budget — replicas x (pool_size + max_overflow) must stay
-      # below Postgres max_connections (100 by default).  The compose stack
-      # runs one api + one worker, so 4 + 1 per process is far inside it.
-      OZ_DB_POOL_SIZE: "${OZ_DB_POOL_SIZE:-4}"
-      OZ_DB_MAX_OVERFLOW: "${OZ_DB_MAX_OVERFLOW:-1}"
-      # Peers allowed to set X-Forwarded-For.  Defaults to the compose
-      # network subnet (see the `networks` block) because the api sits
-      # behind the nginx reverse proxy on that network — without it every
-      # request would be attributed to the proxy and the per-IP rate
-      # limiters would become platform-wide buckets.
-      OZ_TRUSTED_PROXY_IPS: "${OZ_TRUSTED_PROXY_IPS:-172.28.0.0/24}"
-      OZ_HOSTS_ALLOWED: "${OZ_HOSTS_ALLOWED:-localhost:8000}"
-      OZ_PROMPT_CACHING_ENABLED: "${OZ_PROMPT_CACHING_ENABLED:-true}"
-      OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS: "${OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS:-1024}"
-      OZ_PROMPT_CACHING_ANTHROPIC_TTL: "${OZ_PROMPT_CACHING_ANTHROPIC_TTL:-5m}"
-      OZ_DATABASE_URL: "${OZ_DATABASE_URL:-}"
-    volumes:
-      # Shared init volume — every downstream step reads or writes files
-      # here (unseal keys, AppRole creds, db-creds.json, write markers).
-      - openbao-init-data:/bao-init
-      - ./openbao/policies:/policies:ro,z
-      - ../scripts/init_openbao.sh:/init_openbao.sh:ro,z
-    entrypoint: ["/bin/sh", "/init_openbao.sh"]
-    logging: *default-logging
-    restart: "no"
-
-  # ── 3. Postgres (database) ────────────────────────────────────────────────
+  # ── 1. Postgres (database) ────────────────────────────────────────────────
   # pgvector image ships the vector extension types required by the
   # embeddings schema. POSTGRES_PASSWORD must be set on FIRST boot;
   # subsequent restarts use the password stored in postgres-data.
@@ -236,12 +112,13 @@ services:
     logging: *default-logging
     restart: unless-stopped
 
-  # ── 4. Postgres init (one-shot — create DB + users) ──────────────────────
+  # ── 2. Postgres init (one-shot — create DB + users) ──────────────────────
   # Creates the openzync database and two roles:
   #   openzync_migrator  DDL (used by alembic upgrade head)
   #   openzync_app       CRUD (used by api + worker at runtime)
-  # Always auto-generates fresh migrator + app passwords (rotation-friendly)
-  # and writes the JSON to /bao-init/db-creds.json for downstream steps.
+  # Role passwords come from POSTGRES_MIGRATOR_PASSWORD /
+  # POSTGRES_APP_PASSWORD when set, otherwise the script auto-generates
+  # them and prints an export snippet to copy into .env.
   # If POSTGRES_SUPERUSER_PASSWORD matches the env-provided POSTGRES_PASSWORD,
   # the superuser is left untouched (so subsequent restarts still work).
   postgres-init:
@@ -257,24 +134,22 @@ services:
       DB_NAME: openzync
       # POSTGRES_SUPERUSER_PASSWORD is optional. If set, the script uses it
       # and does NOT rotate the superuser. If unset, the script auto-generates
-      # one and rotates the superuser (preferred for zero-fallback).
+      # one and rotates the superuser.
       # We pass POSTGRES_PASSWORD so the superuser password matches what
       # the postgres container used for first-boot cluster init.
       POSTGRES_SUPERUSER_PASSWORD: "${POSTGRES_PASSWORD:-}"
+      POSTGRES_MIGRATOR_PASSWORD: "${POSTGRES_MIGRATOR_PASSWORD:-}"
+      POSTGRES_APP_PASSWORD: "${POSTGRES_APP_PASSWORD:-}"
     volumes:
-      - openbao-init-data:/bao-init
       - ../scripts/init_postgres.sh:/init_postgres.sh:ro,z
     entrypoint: ["/bin/sh", "-c", "if ! command -v python3 >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq python3; fi; exec /bin/bash /init_postgres.sh"]
     logging: *default-logging
     restart: "no"
 
-  # ── 5. Postgres migrate (one-shot — alembic upgrade head) ────────────────
-  # Reads the migrator password from /bao-init/db-creds.json (the file
-  # postgres-init wrote) and constructs DATABASE_URL on the fly. No
-  # OpenBao Agent sidecar — the migrator URL differs from the app URL,
-  # so reusing the api/worker Agent config would mean either widening
-  # the template or forking the AppRole policy. The direct-read approach
-  # is lighter and still uses the shared init volume for the credential.
+  # ── 3. Postgres migrate (one-shot — alembic upgrade head) ────────────────
+  # Reads DATABASE_URL / OZ_DATABASE_URL straight from the environment
+  # (repo-root .env via env_file) — entrypoint_migrate.sh fail-fasts when
+  # neither is set. Use the migrator URL here (openzync_migrator, DDL).
   postgres-migrate:
     profiles: [local-db]
     build:
@@ -285,80 +160,23 @@ services:
     depends_on:
       postgres-init:
         condition: service_completed_successfully
+    env_file:
+      - path: ../.env
+        required: true
     environment:
       OZ_ENVIRONMENT: development   # suppress any prod-only startup checks
     volumes:
-      - openbao-init-data:/bao-init:ro
       - ../scripts/entrypoint_migrate.sh:/entrypoint_migrate.sh:ro,z
     entrypoint: ["/bin/bash", "/entrypoint_migrate.sh"]
     command: ["alembic", "upgrade", "head"]
     logging: *default-logging
     restart: "no"
 
-  # ── 6. OpenBao write-db (one-shot — inject DB creds into KV) ─────────────
-  # Reads the existing system secret from OpenBao, merges DATABASE_URL
-  # (built from db-creds.json) into it, and writes the merged result
-  # back. After this step, the system secret contains every key the
-  # api/worker Agent templates render.
-  openbao-write-db:
-    profiles: [local-db]
-    build:
-      context: .
-      dockerfile: Dockerfile.openbao-tooling
-    container_name: openzync-openbao-write-db
-    depends_on:
-      postgres-migrate:
-        condition: service_completed_successfully
-    environment:
-      BAO_ADDR: "http://openbao:8200"
-      BAO_SKIP_VERIFY: "true"
-    volumes:
-      - openbao-init-data:/bao-init
-      - ../scripts/write_db_to_openbao.sh:/write_db_to_openbao.sh:ro,z
-    entrypoint: ["/bin/bash", "/write_db_to_openbao.sh"]
-    logging: *default-logging
-    restart: "no"
-
-  # ── 7a. OpenBao Agent for api (sidecar) ──────────────────────────────────
-  # Authenticates as AppRole 'openzync-app' and renders system config to
-  # /openbao/agent/system.env (shared volume → /run/secrets/system.env in
-  # the api container). entrypoint_api.sh waits for that file before
-  # exec'ing uvicorn.
-  #
-  # TechLead note: api-secrets is a regular named volume here (NOT tmpfs)
-  # because the sidecar (writer) and the api (reader) must share a single
-  # path. In production / Kubernetes, replace this with a tmpfs-backed
-  # emptyDir (medium: Memory) at the pod spec level — the compose
-  # abstraction can't express a shared tmpfs across two containers.
-  openbao-agent-api:
-    image: openbao/openbao:2.5
-    container_name: openzync-openbao-agent-api
-    depends_on:
-      openbao-init:
-        condition: service_completed_successfully
-    entrypoint: ["/usr/bin/dumb-init", "--"]
-    command: ["/bin/sh", "-c", "chown -R openbao:openbao /openbao/agent 2>/dev/null; exec bao agent -config=/etc/bao/agent.hcl"]
-    environment:
-      VAULT_NAMESPACE: "system/"
-    volumes:
-      - openbao-init-data:/openbao-bootstrap:ro
-      - api-secrets:/openbao/agent:rw
-      - ./openbao/agent/api.hcl:/etc/bao/agent.hcl:ro,z
-    healthcheck:
-      # Healthy once system.env exists AND contains OZ_SECRET_KEY= (the
-      # key every system secret must have after openbao-init completes).
-      test: ["CMD-SHELL", "test -s /openbao/agent/system.env && grep -q '^OZ_SECRET_KEY=' /openbao/agent/system.env"]
-      interval: 5s
-      timeout: 3s
-      retries: 18   # 90s total — covers first-time auth + render
-      start_period: 10s
-    logging: *default-logging
-    restart: unless-stopped
-
-  # ── 7b. API service ──────────────────────────────────────────────────────
-  # The api entrypoint (/entrypoint_api.sh, baked into the image) blocks
-  # until /run/secrets/system.env appears, sources it, then execs uvicorn
-  # so the worker becomes PID 1 and receives SIGTERM directly.
+  # ── 4. API service ─────────────────────────────────────────────────────
+  # Plain-.env config: repo-root .env via env_file plus the direct OZ_*
+  # entries below. The entrypoint (/entrypoint_api.sh, baked into the image)
+  # fail-fasts when OZ_DATABASE_URL / OZ_SECRET_KEY are unset, then execs
+  # uvicorn so it becomes PID 1 and receives SIGTERM directly.
   api:
     build:
       context: ..
@@ -366,11 +184,10 @@ services:
     # public on ghcr.io — docker pull needs no auth since 2026-08-31
     image: ghcr.io/openzync/openzync-core/api:latest
     container_name: openzync-api
+    env_file:
+      - path: ../.env
+        required: true
     environment:
-      # OZ_OPENBAO_ADDR tells the api code where to find OpenBao at runtime
-      # (for org namespace management, transit decrypt, etc.). All other
-      # OZ_* vars come from /run/secrets/system.env (rendered by the Agent).
-      OZ_OPENBAO_ADDR: "http://openbao:8200"
       UVICORN_WORKERS: "1"
       # Peers allowed to set X-Forwarded-For — uvicorn's
       # --forwarded-allow-ips.  Must cover the reverse proxy (nginx) that
@@ -379,14 +196,11 @@ services:
       # than whatever the default bridge happens to be.  Never "*": a
       # client could then forge its own IP and bypass the per-IP limiters.
       OZ_TRUSTED_PROXY_IPS: "${OZ_TRUSTED_PROXY_IPS:-172.28.0.0/24}"
-      # Graph-backend system URLs (alt-graph profile). The runtime value
-      # comes from the OpenBao system secret (sourced from system.env by the
-      # entrypoint AFTER container env), which wins over these parity entries.
+      # Graph-backend URLs (alt-graph profile). Container env wins over
+      # the .env file values above.
       OZ_SURREALDB_URL: "${OZ_SURREALDB_URL:-}"
-      OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-}"  # parity — OpenBao system.env wins
+      OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-}"
     depends_on:
-      openbao-agent-api:
-        condition: service_healthy
       redis:
         condition: service_healthy
       # Aux deps start-order only — FalkorDB/Ollama outages degrade the
@@ -395,9 +209,6 @@ services:
         condition: service_started
       ollama:
         condition: service_started
-    volumes:
-      - api-secrets:/run/secrets:ro   # RO — the app must never write secrets
-      - openbao-init-data:/openbao-bootstrap:ro  # AppRole credentials for runtime auth
     ports: ["127.0.0.1:8000:8000"]
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -408,35 +219,10 @@ services:
     logging: *default-logging
     restart: unless-stopped
 
-  # ── 8a. OpenBao Agent for worker (sidecar) ───────────────────────────────
-  # Same pattern as the api sidecar, but uses the 'openzync-worker'
-  # AppRole (read-only policy — workers never write org config).
-  openbao-agent-worker:
-    image: openbao/openbao:2.5
-    container_name: openzync-openbao-agent-worker
-    depends_on:
-      openbao-init:
-        condition: service_completed_successfully
-    entrypoint: ["/usr/bin/dumb-init", "--"]
-    command: ["/bin/sh", "-c", "chown -R openbao:openbao /openbao/agent 2>/dev/null; exec bao agent -config=/etc/bao/agent.hcl"]
-    environment:
-      VAULT_NAMESPACE: "system/"
-    volumes:
-      - openbao-init-data:/openbao-bootstrap:ro
-      - worker-secrets:/openbao/agent:rw
-      - ./openbao/agent/worker.hcl:/etc/bao/agent.hcl:ro,z
-    healthcheck:
-      test: ["CMD-SHELL", "test -s /openbao/agent/system.env && grep -q '^OZ_SECRET_KEY=' /openbao/agent/system.env"]
-      interval: 5s
-      timeout: 3s
-      retries: 18
-      start_period: 10s
-    logging: *default-logging
-    restart: unless-stopped
-
-  # ── 8b. Worker service ───────────────────────────────────────────────────
-  # ARQ worker. entrypoint_worker.sh (baked into the image) waits for
-  # /run/secrets/system.env, sources it, then execs the worker loop.
+  # ── 5. Worker service ──────────────────────────────────────────────────
+  # ARQ worker. Plain-.env config like the api: entrypoint_worker.sh
+  # fail-fasts when OZ_DATABASE_URL / OZ_SECRET_KEY are unset, then execs
+  # the worker loop as PID 1.
   worker:
     build:
       context: ..
@@ -444,15 +230,13 @@ services:
     # public on ghcr.io — docker pull needs no auth since 2026-08-31
     image: ghcr.io/openzync/openzync-core/worker:latest
     container_name: openzync-worker
+    env_file:
+      - path: ../.env
+        required: true
     environment:
-      OZ_OPENBAO_ADDR: "http://openbao:8200"
-      # Parity entries only — authoritative values come from the OpenBao
-      # system secret via the worker sidecar (sourced after container env).
       OZ_SURREALDB_URL: "${OZ_SURREALDB_URL:-}"
-      OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-}"  # parity — OpenBao system.env wins
+      OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-}"
     depends_on:
-      openbao-agent-worker:
-        condition: service_healthy
       redis:
         condition: service_healthy
       # Aux deps start-order only — FalkorDB/Ollama outages degrade the
@@ -461,9 +245,6 @@ services:
         condition: service_started
       ollama:
         condition: service_started
-    volumes:
-      - worker-secrets:/run/secrets:ro
-      - openbao-init-data:/openbao-bootstrap:ro  # AppRole credentials for runtime auth
     extra_hosts:
       - "host.docker.internal:host-gateway"
     deploy:
@@ -685,7 +466,7 @@ services:
 
   # ── FalkorDB (graph backend — property-graph over RESP) — DEFAULT ──────────
   # Always on — default graph backend is falkordb.
-  # Wire the app via OZ_FALKORDB_URL=redis://falkordb:6379 (written to OpenBao).
+  # Wire the app via OZ_FALKORDB_URL=redis://falkordb:6379 (from .env).
   # Host port 6381 — redis owns host 6380 (falkordb was 6380 under alt-graph,
   # moved to 6381 when promoted to default to avoid host-port collision).
   falkordb:
@@ -708,16 +489,11 @@ services:
     restart: unless-stopped
 
 # ── Named volumes ────────────────────────────────────────────────────────────
-# openbao-data:        Raft storage + seal
-# openbao-init-data:   Shared bootstrap artefacts (unseal keys, root token,
-#                      AppRole role_id/secret_id files, db-creds.json, markers)
 # postgres-data:       Postgres data directory
-# api-secrets:         Sidecar (writer) + api (reader) shared render path
-# worker-secrets:      Sidecar (writer) + worker (reader) shared render path
-# ⚠️ Production: replace api-secrets and worker-secrets with tmpfs-backed
-#    mounts (Kubernetes emptyDir.medium: Memory, or `--tmpfs /run/secrets`
-#    on a swarm config). Compose can't express a shared tmpfs between two
-#    containers, so we use regular named volumes here as a portable default.
+# Secrets are NOT stored in volumes: every service reads the repo-root .env
+# (env_file) directly. For production, inject the same keys via your
+# orchestrator's secret store (e.g. Kubernetes Secrets / external-secrets)
+# instead of committing .env anywhere.
 networks:
   default:
     name: openzync_network
@@ -729,10 +505,5 @@ volumes:
   ollama-data: {}
   grafana-data: {}
   prometheus-data: {}
-  openbao-audit-logs: {}
-  openbao-data: {}
-  openbao-init-data: {}
   postgres-data: {}
   falkordb-data: {}
-  api-secrets: {}
-  worker-secrets: {}
