@@ -1,10 +1,10 @@
-"""Unit tests for worker configuration — queue naming, OpenBao bootstrap, singleton.
+"""Unit tests for worker configuration — queue naming, env bootstrap, singleton.
 
 Tests cover:
 - ``get_queue_name`` formatting and validation
 - ``WorkerSettings`` model defaults and derived properties
-- ``WorkerSettings.from_openbao`` factory with key mapping
-- ``init_worker_settings_from_bao`` singleton initialisation
+- ``WorkerSettings.from_env`` factory reading ``OZ_*`` env vars
+- ``init_worker_settings`` singleton initialisation
 - ``get_worker_settings`` accessor with guard
 - ``_SettingsProxy`` transparent forwarding
 - Default values for all worker-specific fields
@@ -12,9 +12,25 @@ Tests cover:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+import os
+from unittest.mock import patch
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_worker_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Defeat ``.env`` + real-env leakage for ``WorkerSettings`` construction.
+
+    ``WorkerSettings`` reads ``OZ_*`` vars (and the repo ``.env`` by
+    default).  Unit tests see explicit kwargs / ``setenv`` values only.
+    """
+    from services.worker.worker_settings import WorkerSettings
+
+    monkeypatch.setitem(WorkerSettings.model_config, "env_file", "/dev/null")
+    for var in list(os.environ):
+        if var.startswith("OZ_"):
+            monkeypatch.delenv(var, raising=False)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # get_queue_name
@@ -68,7 +84,7 @@ class TestGetQueueName:
 
 @pytest.mark.unit
 class TestWorkerSettingsDefaults:
-    """``WorkerSettings`` default values (no OpenBao)."""
+    """``WorkerSettings`` default values (explicit required kwargs only)."""
 
     def test_minimal_instantiation(self) -> None:
         """WorkerSettings can be created with only required fields."""
@@ -240,152 +256,118 @@ class TestWorkerSettingsProperties:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# WorkerSettings.from_openbao
+# WorkerSettings.from_env
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.unit
-class TestWorkerSettingsFromOpenBao:
-    """``WorkerSettings.from_openbao`` factory."""
+class TestWorkerSettingsFromEnv:
+    """``WorkerSettings.from_env`` factory (``OZ_*`` env vars, no .env)."""
 
-    @pytest.mark.asyncio
-    async def test_reads_system_config_from_bao(self) -> None:
-        """System config is fetched from OpenBao."""
+    def _seed_env(self, monkeypatch: pytest.MonkeyPatch, **extra: str) -> None:
+        """Set the required DB/Redis env vars plus any extras."""
+        monkeypatch.setenv("OZ_DATABASE_URL", "postgresql+asyncpg://localhost/db")
+        monkeypatch.setenv("OZ_REDIS_URL", "redis://localhost:6379/0")
+        for key, value in extra.items():
+            monkeypatch.setenv(key, value)
+
+    def test_reads_required_config_from_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """DB/Redis URLs come from the environment."""
         from services.worker.worker_settings import WorkerSettings
 
-        mock_bao = AsyncMock()
-        mock_bao.read_system_config.return_value = {
-            "OZ_DATABASE_URL": "postgresql+asyncpg://bao-host/db",
-            "OZ_REDIS_URL": "redis://bao-host:6379/0",
-            "OZ_ENVIRONMENT": "prod",
-            "OZ_LOG_LEVEL": "WARNING",
-        }
+        self._seed_env(
+            monkeypatch,
+            OZ_ENVIRONMENT="prod",
+            OZ_LOG_LEVEL="WARNING",
+        )
 
-        ws = await WorkerSettings.from_openbao(mock_bao)
+        ws = WorkerSettings.from_env()
 
-        mock_bao.read_system_config.assert_awaited_once()
-        assert ws.DATABASE_URL == "postgresql+asyncpg://bao-host/db"
-        assert ws.REDIS_URL == "redis://bao-host:6379/0"
+        assert ws.DATABASE_URL == "postgresql+asyncpg://localhost/db"
+        assert ws.REDIS_URL == "redis://localhost:6379/0"
         assert ws.ENV == "prod"
         assert ws.LOG_LEVEL == "WARNING"
 
-    @pytest.mark.asyncio
-    async def test_converts_int_fields(self) -> None:
+    def test_converts_int_fields(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Integer fields are cast from string values."""
         from services.worker.worker_settings import WorkerSettings
 
-        mock_bao = AsyncMock()
-        mock_bao.read_system_config.return_value = {
-            "OZ_DATABASE_URL": "postgresql+asyncpg://localhost/db",
-            "OZ_REDIS_URL": "redis://localhost:6379/0",
-            "OZ_MAX_WORKERS": "8",
-            "OZ_FALKORDB_MAX_CONNECTIONS": "15",
-            "OZ_FALKORDB_SOCKET_TIMEOUT": "30",
-        }
+        self._seed_env(
+            monkeypatch,
+            OZ_MAX_WORKERS="8",
+            OZ_FALKORDB_MAX_CONNECTIONS="15",
+            OZ_FALKORDB_SOCKET_TIMEOUT="30",
+        )
 
-        ws = await WorkerSettings.from_openbao(mock_bao)
+        ws = WorkerSettings.from_env()
 
         assert ws.MAX_WORKERS == 8
         assert ws.FALKORDB_MAX_CONNECTIONS == 15
         assert ws.FALKORDB_SOCKET_TIMEOUT == 30
 
-    @pytest.mark.asyncio
-    async def test_handles_oz_environment_mapping(self) -> None:
-        """``OZ_ENVIRONMENT`` maps to ``ENV`` field."""
+    def test_handles_oz_environment_mapping(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``OZ_ENVIRONMENT`` maps to the ``ENV`` field."""
         from services.worker.worker_settings import WorkerSettings
 
-        mock_bao = AsyncMock()
-        mock_bao.read_system_config.return_value = {
-            "OZ_DATABASE_URL": "postgresql+asyncpg://localhost/db",
-            "OZ_REDIS_URL": "redis://localhost:6379/0",
-            "OZ_ENVIRONMENT": "staging",
-        }
+        self._seed_env(monkeypatch, OZ_ENVIRONMENT="staging")
 
-        ws = await WorkerSettings.from_openbao(mock_bao)
+        ws = WorkerSettings.from_env()
 
         assert ws.ENV == "staging"
 
-    @pytest.mark.asyncio
-    async def test_skips_missing_keys_gracefully(self) -> None:
-        """Missing optional keys are not included."""
+    def test_skips_missing_keys_gracefully(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Missing optional keys fall back to their defaults."""
         from services.worker.worker_settings import WorkerSettings
 
-        mock_bao = AsyncMock()
-        mock_bao.read_system_config.return_value = {
-            "OZ_DATABASE_URL": "postgresql+asyncpg://localhost/db",
-            "OZ_REDIS_URL": "redis://localhost:6379/0",
-        }
+        self._seed_env(monkeypatch)
 
-        ws = await WorkerSettings.from_openbao(mock_bao)
+        ws = WorkerSettings.from_env()
 
         # Missing keys use their default values
         assert ws.LOG_LEVEL == "INFO"  # default
         assert ws.MAX_WORKERS == 4  # default
 
-    @pytest.mark.asyncio
-    async def test_sets_deployment_defaults(self) -> None:
-        """Deployment-specific defaults are applied when not in OpenBao."""
+    def test_sets_deployment_defaults(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Queue/job defaults apply when unset in the environment."""
         from services.worker.worker_settings import WorkerSettings
 
-        mock_bao = AsyncMock()
-        mock_bao.read_system_config.return_value = {
-            "OZ_DATABASE_URL": "postgresql+asyncpg://localhost/db",
-            "OZ_REDIS_URL": "redis://localhost:6379/0",
-        }
+        self._seed_env(monkeypatch)
 
-        ws = await WorkerSettings.from_openbao(mock_bao)
+        ws = WorkerSettings.from_env()
 
         assert ws.JOB_TIMEOUT_DEFAULT == 300
         assert ws.HIGH_QUEUE_NAME == "high"
         assert ws.LOW_QUEUE_NAME == "low"
 
-    @pytest.mark.asyncio
-    async def test_fails_fast_on_drift(self) -> None:
-        """Worker keys not in SYSTEM_KEY_MAPPING raise ValueError."""
+    def test_falkordb_url_sets_when_provided(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """FalkorDB URL from the environment is stored."""
         from services.worker.worker_settings import WorkerSettings
 
-        mock_bao = AsyncMock()
-        mock_bao.read_system_config.return_value = {
-            "OZ_DATABASE_URL": "postgresql+asyncpg://localhost/db",
-            "OZ_REDIS_URL": "redis://localhost:6379/0",
-        }
+        self._seed_env(monkeypatch, OZ_FALKORDB_URL="redis://falkordb:6379")
 
-        with patch(
-            "services.worker.worker_settings.SYSTEM_KEY_MAPPING",
-            {},  # empty — no keys match
-        ):
-            with pytest.raises(ValueError, match="Worker keys not found"):
-                await WorkerSettings.from_openbao(mock_bao)
-
-    @pytest.mark.asyncio
-    async def test_falkordb_url_sets_when_provided(self) -> None:
-        """FalkorDB URL from OpenBao is stored."""
-        from services.worker.worker_settings import WorkerSettings
-
-        mock_bao = AsyncMock()
-        mock_bao.read_system_config.return_value = {
-            "OZ_DATABASE_URL": "postgresql+asyncpg://localhost/db",
-            "OZ_REDIS_URL": "redis://localhost:6379/0",
-            "OZ_FALKORDB_URL": "redis://falkordb:6379",
-        }
-
-        ws = await WorkerSettings.from_openbao(mock_bao)
+        ws = WorkerSettings.from_env()
 
         assert ws.FALKORDB_URL == "redis://falkordb:6379"
 
-    @pytest.mark.asyncio
-    async def test_surrealdb_url_sets_when_provided(self) -> None:
-        """SurrealDB URL from OpenBao is stored."""
+    def test_surrealdb_url_sets_when_provided(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """SurrealDB URL from the environment is stored."""
         from services.worker.worker_settings import WorkerSettings
 
-        mock_bao = AsyncMock()
-        mock_bao.read_system_config.return_value = {
-            "OZ_DATABASE_URL": "postgresql+asyncpg://localhost/db",
-            "OZ_REDIS_URL": "redis://localhost:6379/0",
-            "OZ_SURREALDB_URL": "ws://surrealdb:8000/rpc",
-        }
+        self._seed_env(monkeypatch, OZ_SURREALDB_URL="ws://surrealdb:8000/rpc")
 
-        ws = await WorkerSettings.from_openbao(mock_bao)
+        ws = WorkerSettings.from_env()
 
         assert ws.SURREALDB_URL == "ws://surrealdb:8000/rpc"
 
@@ -397,23 +379,19 @@ class TestWorkerSettingsFromOpenBao:
 
 @pytest.mark.unit
 class TestWorkerSettingsSingleton:
-    """``get_worker_settings`` and ``init_worker_settings_from_bao``."""
+    """``get_worker_settings`` and ``init_worker_settings``."""
 
-    @pytest.mark.asyncio
-    async def test_init_stores_singleton(self) -> None:
-        """``init_worker_settings_from_bao`` stores the instance."""
-        mock_bao = AsyncMock()
-        mock_bao.read_system_config.return_value = {
-            "OZ_DATABASE_URL": "postgresql+asyncpg://localhost/db",
-            "OZ_REDIS_URL": "redis://localhost:6379/0",
-        }
+    def test_init_stores_singleton(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``init_worker_settings`` reads env and stores the instance."""
+        monkeypatch.setenv("OZ_DATABASE_URL", "postgresql+asyncpg://localhost/db")
+        monkeypatch.setenv("OZ_REDIS_URL", "redis://localhost:6379/0")
 
         from services.worker.worker_settings import (
             get_worker_settings,
-            init_worker_settings_from_bao,
+            init_worker_settings,
         )
 
-        ws = await init_worker_settings_from_bao(mock_bao)
+        ws = init_worker_settings()
         retrieved = get_worker_settings()
 
         assert retrieved is ws

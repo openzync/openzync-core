@@ -242,26 +242,21 @@ class TestOnJobEnd:
 
 @pytest.mark.unit
 class TestOnShutdown:
-    """``on_shutdown`` — worker pool cleanup."""
+    """``on_shutdown`` — worker pool cleanup (no-op, never raises)."""
 
     @pytest.mark.asyncio
-    async def test_closes_openbao_client_when_present(self) -> None:
-        """OpenBao client is closed via __aexit__ on shutdown."""
-        from services.worker.worker import on_shutdown
-
-        mock_bao = AsyncMock()
-        ctx = {"openbao_client": mock_bao}
-
-        await on_shutdown(ctx)
-
-        mock_bao.__aexit__.assert_called_once_with(None, None, None)
-
-    @pytest.mark.asyncio
-    async def test_skips_when_no_openbao(self) -> None:
-        """Missing openbao_client does not raise."""
+    async def test_shutdown_is_noop(self) -> None:
+        """Shutdown completes without touching any client."""
         from services.worker.worker import on_shutdown
 
         await on_shutdown({})  # should not raise
+
+    @pytest.mark.asyncio
+    async def test_shutdown_ignores_ctx_contents(self) -> None:
+        """Stale ctx keys (ex-OpenBao client) are ignored, not closed."""
+        from services.worker.worker import on_shutdown
+
+        await on_shutdown({"openbao_client": MagicMock(), "anything": 1})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1107,7 +1102,7 @@ class TestMain:
                 await main()
 
             assert _mocks["create_arq_worker"].call_count == 2
-            _mocks["prewarm_embeddings"].assert_awaited_once()
+            _mocks["prewarm_with_retry"].assert_awaited_once()
             _mocks["init_arq"].assert_awaited_once()
         finally:
             _unpatch_main_deps(_mocks)
@@ -1283,13 +1278,9 @@ class TestEntrypoint:
 def _seed_worker_settings() -> None:
     """Initialise the ``WorkerSettings`` singleton so ``settings.X`` access works.
 
-    ``worker.py`` imports ``from services.worker import worker_settings as settings``,
-    and ``worker_settings`` has a module-level ``__getattr__`` that proxies to
-    ``get_worker_settings()``, which raises if ``_settings`` is ``None``.
-
-    Call this before any test that touches ``settings.*`` — including
-    ``create_arq_worker``, ``monitor_queue_depth``, ``setup_logging``, and
-    any code path that indirectly reads settings.
+    Uses explicit kwargs (never env/``.env``) so the repo ``.env`` cannot
+    leak in — ``FALKORDB_URL`` is pinned to ``None`` so ``main()`` skips
+    the FalkorDB pool instead of raising on a shadow pool.
     """
     from services.worker import worker_settings as _ws
     from services.worker.worker_settings import WorkerSettings
@@ -1298,6 +1289,7 @@ def _seed_worker_settings() -> None:
         DATABASE_URL="postgresql+asyncpg://localhost:5432/test",
         REDIS_URL="redis://localhost:6379/0",
         ENV="test",
+        FALKORDB_URL=None,
     )
 
 
@@ -1308,7 +1300,10 @@ def _patch_main_deps() -> dict:
     - ``core.db.init_db_engine`` / ``core.db.get_async_session`` (lazy, not in worker module)
     - ``core.graph_backend.init_dispatcher`` (lazy)
     - ``core.surreal_pool.SurrealConnectionPool`` (lazy)
-    - ``services.worker.worker.BootstrapSettings`` / ``OpenBaoClient`` (module-level)
+    - ``services.worker.worker.init_worker_settings`` (env bootstrap,
+      seeded deterministically — never the real ``.env``)
+    - ``services.worker.worker.try_acquire_leader_lock`` (forced leader so
+      cron assertions see the full schedule)
     """
     import core.db as _cdb
     import core.graph_backend as _cgb
@@ -1325,36 +1320,30 @@ def _patch_main_deps() -> dict:
     # Every patcher is appended here so ``_unpatch_main_deps`` can stop them.
     _patchers: list[patch] = []
 
-    # ── BootstrapSettings (module-level import in worker.py) ─────────────
-    _bs = MagicMock()
-    _bs.OPENBAO_WORKER_ROLE_ID = None
-    _bs.OPENBAO_ROLE_ID = "role"
-    _bs.OPENBAO_WORKER_SECRET_ID = None
-    _bs.OPENBAO_SECRET_ID = "secret"  # noqa: S105  — mock value, not a credential
-    _bs.OPENBAO_ADDR = "http://localhost:8200"
-
-    bs_patch = patch("services.worker.worker.BootstrapSettings", return_value=_bs)
-    bs_patch.start()
-    _patchers.append(bs_patch)
-    mocks["BootstrapSettings"] = _bs
-
-    # ── OpenBaoClient (module-level import) ──────────────────────────────
-    _bao_cls = MagicMock()
-    _bao = AsyncMock()
-    _bao_cls.return_value.__aenter__.return_value = _bao
-    bao_patch = patch("services.worker.worker.OpenBaoClient", _bao_cls)
-    bao_patch.start()
-    _patchers.append(bao_patch)
-    mocks["bao_client"] = _bao
-    mocks["OpenBaoClient"] = _bao_cls
-
-    # ── init_worker_settings_from_bao / init_settings ────────────────────
-    iws_patch = patch("services.worker.worker.init_worker_settings_from_bao")
+    # ── init_worker_settings (module-level import in worker.py) ─────────
+    # Seed deterministically instead of reading the real ``.env``.
+    iws_patch = patch(
+        "services.worker.worker.init_worker_settings",
+        side_effect=lambda: _seed_worker_settings(),
+    )
     iws_patch.start()
     _patchers.append(iws_patch)
-    is_patch = patch("services.worker.worker.init_settings")
-    is_patch.start()
-    _patchers.append(is_patch)
+
+    # ── Leader election: this replica wins ──────────────────────────────
+    # The real ``try_acquire_leader_lock`` dials Redis; force the leader
+    # path so cron jobs are registered (cron assertions depend on it).
+    # ``renew_leader_lock`` is stubbed — the real one sleeps in a loop.
+    leader_patch = patch(
+        "services.worker.worker.try_acquire_leader_lock",
+        new=AsyncMock(return_value=True),
+    )
+    leader_patch.start()
+    _patchers.append(leader_patch)
+    renew_patch = patch(
+        "services.worker.worker.renew_leader_lock", new=AsyncMock()
+    )
+    renew_patch.start()
+    _patchers.append(renew_patch)
 
     # ── setup_logging ────────────────────────────────────────────────────
     sl_patch = patch("services.worker.worker.setup_logging")
@@ -1402,16 +1391,16 @@ def _patch_main_deps() -> dict:
     mocks["_cgb_init_dispatcher_orig"] = _cgb_init_dispatcher_orig
     mocks["_csp_surreal_pool_orig"] = _csp_surreal_pool_orig
 
-    # ── prewarm_embeddings (lazy import from core.embeddings in main()) ─
+    # ── prewarm_with_retry (lazy import from core.embeddings in main()) ─
     # Source-module target so the ``from core.embeddings import
-    # prewarm_embeddings`` inside ``main()`` resolves to the mock.
+    # prewarm_with_retry`` inside ``main()`` resolves to the mock.
     # CI unit env lacks fastembed — without this the real prewarm raises
     # ImportError and all 7 TestMain tests fail.
     _prewarm = AsyncMock()
-    prewarm_patch = patch("core.embeddings.prewarm_embeddings", new=_prewarm)
+    prewarm_patch = patch("core.embeddings.prewarm_with_retry", new=_prewarm)
     prewarm_patch.start()
     _patchers.append(prewarm_patch)
-    mocks["prewarm_embeddings"] = _prewarm
+    mocks["prewarm_with_retry"] = _prewarm
 
     # ── init_arq / close_arq (lazy import from core.arq in main()) ─────
     # Source-module target so the ``from core.arq import close_arq,

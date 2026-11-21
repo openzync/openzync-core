@@ -16,7 +16,10 @@ from uuid import UUID, uuid4
 import orjson
 import pytest
 
+from core import crypto
+from core.exceptions import ExternalServiceError
 from core.sorting import SortSpec
+from middleware.metrics import webhook_decrypt_skips_total
 from models.webhook import WebhookEndpoint
 from services.webhook_service import WebhookService, sign_payload
 
@@ -92,21 +95,13 @@ class TestWebhookService:
     # ── Helpers ──────────────────────────────────────────────────────────────
 
     def _make_service(self) -> tuple[WebhookService, AsyncMock]:
-        """Create WebhookService with mocked repository + Transit."""
-        mock_repo = AsyncMock()
-        mock_transit = AsyncMock()
-        mock_transit.encrypt_webhook_secret.side_effect = (
-            lambda eid, sec: f"vault:v1:{sec}"
-        )
-        async def _decrypt(eid, raw: str | None) -> str | None:
-            if raw is None:
-                return None
-            if raw.startswith("vault:v1:"):
-                return raw[len("vault:v1:") :]
-            return raw
+        """Create WebhookService with a mocked repository.
 
-        mock_transit.decrypt_webhook_secret.side_effect = _decrypt
-        service = WebhookService(repo=mock_repo, transit=mock_transit)
+        Secrets are encrypted with the real ``core.crypto`` Fernet stack
+        (``Settings.SECRET_KEY`` is seeded by the unit conftest) — no mocks.
+        """
+        mock_repo = AsyncMock()
+        service = WebhookService(repo=mock_repo)
         return service, mock_repo
 
     def _make_endpoint(
@@ -231,11 +226,12 @@ class TestWebhookService:
         assert len(secret) >= 32
         assert secret != "b" * 32  # global WEBHOOK_SIGNING_SECRET from conftest
         mock_repo.create.assert_awaited_once()
-        # Secret is persisted encrypted (Transit ciphertext), decrypts to secret
+        # Secret is persisted encrypted (Fernet envelope), decrypts to secret
         stored = mock_repo.create.await_args.kwargs["signing_secret"]
+        endpoint_id = mock_repo.create.await_args.kwargs["endpoint_id"]
         assert stored != secret
-        assert stored.startswith("vault:v1:")
-        assert stored[len("vault:v1:") :] == secret
+        assert stored.startswith("v1:webhook-secret:")
+        assert crypto.decrypt("webhook-secret", str(endpoint_id), stored) == secret
 
     @pytest.mark.asyncio
     async def test_create_endpoint_generates_unique_secrets(self) -> None:
@@ -271,6 +267,50 @@ class TestWebhookService:
         assert "signing_secret" not in listed[0]
         assert "signing_secret" not in fetched
 
+    # ── crypto failure paths (ex-Transit B2/W3) ────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_create_encrypt_failure_returns_502_no_rows(self) -> None:
+        """``core.crypto`` failure on create → JSON 502, zero rows persisted."""
+        service, mock_repo = self._make_service()
+
+        with patch(
+            "services.webhook_service.crypto.encrypt",
+            side_effect=RuntimeError("HSM down"),
+        ):
+            with pytest.raises(ExternalServiceError) as exc_info:
+                await service.create_endpoint(
+                    user_id=self.ORG_ID,
+                    name="h",
+                    url="https://x.example/h",
+                    events=[],
+                )
+
+        assert exc_info.value.status_code == 502
+        # Encrypt happens BEFORE repo.create — nothing persisted.
+        mock_repo.create.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_emit_legacy_vault_ciphertext_skipped_and_counted(self) -> None:
+        """Old ``vault:`` Transit row → skipped, counted, never signed."""
+        service, mock_repo = self._make_service()
+        mock_repo.get_active_endpoints_for_event.return_value = [
+            self._make_endpoint(signing_secret="vault:v1:deadbeef"),
+        ]
+
+        mock_arq_pool = AsyncMock()
+        before = webhook_decrypt_skips_total.labels(reason="legacy_vault")._value.get()
+        with patch("services.webhook_service.get_arq", return_value=mock_arq_pool):
+            assert await service.emit(
+                user_id=self.ORG_ID,
+                event_type="session.created",
+                payload={},
+            ) is True
+
+        mock_arq_pool.enqueue.assert_not_awaited()
+        after = webhook_decrypt_skips_total.labels(reason="legacy_vault")._value.get()
+        assert after == before + 1
+
     # ── rotate_endpoint_secret ───────────────────────────────────────────────
 
     @pytest.mark.asyncio
@@ -289,8 +329,11 @@ class TestWebhookService:
         assert len(new_secret) >= 32
         assert new_secret != "whsec_old"  # noqa: S105
         stored = mock_repo.update.await_args.kwargs["signing_secret"]
-        assert stored.startswith("vault:v1:")
-        assert stored[len("vault:v1:") :] == new_secret
+        assert stored.startswith("v1:webhook-secret:")
+        assert (
+            crypto.decrypt("webhook-secret", str(self.ENDPOINT_ID), stored)
+            == new_secret
+        )
 
     @pytest.mark.asyncio
     async def test_rotate_endpoint_secret_wrong_org_returns_none(self) -> None:
@@ -605,8 +648,8 @@ class TestWebhookService:
         ]
         assert mock_repo.set_signing_secret_if_null.await_args.args[0] == legacy_ep.id
         assert isinstance(backfilled, str)
-        assert backfilled.startswith("vault:v1:")
-        raw = backfilled[len("vault:v1:") :]
+        assert backfilled.startswith("v1:webhook-secret:")
+        raw = crypto.decrypt("webhook-secret", str(legacy_ep.id), backfilled)
         assert len(raw) >= 32
         signature = mock_arq_pool.enqueue.await_args.kwargs["signature"]
         body_bytes = orjson.dumps(

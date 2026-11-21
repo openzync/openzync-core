@@ -216,7 +216,7 @@ class TestCleanupOrphanBlobs:
             with pytest.raises(Exception):
                 await cleanup_orphan_blobs(ctx=self._ctx(db), user_id=_ORG_ID)
 
-    # ── Coverage gap: trace_id, engine, bao_client paths ───────────────────
+    # ── Coverage gap: trace_id, engine, DB-config paths ───────────────────
 
     @pytest.mark.asyncio
     async def test_with_trace_id(self) -> None:
@@ -257,11 +257,11 @@ class TestCleanupOrphanBlobs:
             assert result == len(blobs)
 
     @pytest.mark.asyncio
-    async def test_no_bao_client_uses_bootstrap(self) -> None:
-        """No openbao_client → BootstrapSettings + OpenBaoClient succeed.
+    async def test_config_resolved_from_db(self) -> None:
+        """Org config resolves DB-backed — no bootstrap client involved.
 
-        Covers the else branch for bao_client (lines 126-137) where
-        BootstrapSettings and OpenBaoClient are used to fetch org config.
+        Covers the DB-backed config fetch: ``get_org_config`` is called
+        with the per-org session and returns storage overrides.
         """
         blobs = [self._make_blob()]
 
@@ -275,8 +275,6 @@ class TestCleanupOrphanBlobs:
             ) as mock_repo_cls,
             patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
             patch("core.org_config.get_org_config") as mock_cfg,
-            patch("core.config.BootstrapSettings") as mock_bs,
-            patch("core.openbao.OpenBaoClient") as mock_bao_cls,
             patch("asyncio.sleep", AsyncMock()),
         ):
             mock_repo = AsyncMock()
@@ -293,16 +291,10 @@ class TestCleanupOrphanBlobs:
             }
             mock_cfg.return_value = org_cfg
 
-            mock_bao = MagicMock()
-            mock_bao.__aenter__ = AsyncMock(return_value=mock_bao)
-            mock_bao.__aexit__ = AsyncMock(return_value=None)
-            mock_bao_cls.return_value = mock_bao
-
             db = AsyncMock()
             db.__aenter__.return_value = db
             db.__aexit__.return_value = None
 
-            # ctx WITHOUT openbao_client → triggers else branch
             ctx = {
                 "db_engine": MagicMock(),
                 "db_session_factory": self._make_session_factory(db),
@@ -316,8 +308,6 @@ class TestCleanupOrphanBlobs:
             )
 
             assert result == len(blobs)
-            mock_bs.assert_called_once()
-            mock_bao_cls.assert_called_once()
             mock_cfg.assert_called_once()
 
     @pytest.mark.asyncio
@@ -369,8 +359,8 @@ class TestCleanupOrphanBlobs:
             mock_engine.dispose.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_with_openbao_client_in_ctx(self) -> None:
-        """OpenBao client in ctx → used for org config fetch."""
+    async def test_org_config_fetched_from_db(self) -> None:
+        """Org config comes from the DB-backed resolver with the org session."""
         blobs = [self._make_blob()]
 
         with (
@@ -406,7 +396,6 @@ class TestCleanupOrphanBlobs:
             ctx = {
                 "db_engine": MagicMock(),
                 "db_session_factory": self._make_session_factory(db),
-                "openbao_client": MagicMock(),
             }
 
             from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
@@ -423,9 +412,8 @@ class TestCleanupOrphanBlobs:
     async def test_config_fetch_failure_continues(self) -> None:
         """Config fetch failure is logged but does not block cleanup.
 
-        Covers the else branch (bao_client is None) in the config fetch
-        try/except — BootstrapSettings / OpenBaoClient failure logged and
-        cleanup proceeds with default S3 config.
+        The DB-backed ``get_org_config`` raising is swallowed by the
+        config-fetch try/except — cleanup proceeds with default S3 config.
         """
         blobs = [self._make_blob()]
 
@@ -439,8 +427,8 @@ class TestCleanupOrphanBlobs:
             ) as mock_repo_cls,
             patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
             patch(
-                "core.config.BootstrapSettings",
-                side_effect=Exception("Bootstrap failed"),
+                "core.org_config.get_org_config",
+                side_effect=Exception("DB unreachable"),
             ),
             patch("asyncio.sleep", AsyncMock()),
         ):
@@ -528,6 +516,7 @@ class TestCleanupOrphanBlobs:
                 "repositories.episode_blob_repository.EpisodeBlobRepository"
             ) as mock_repo_cls,
             patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
+            patch("core.org_config.get_org_config") as mock_cfg,
         ):
             mock_repo = AsyncMock()
             mock_repo.get_orphaned_blobs.side_effect = [blobs_1, blobs_2]
@@ -539,6 +528,10 @@ class TestCleanupOrphanBlobs:
 
             mock_svc = AsyncMock()
             mock_svc_cls.return_value = mock_svc
+
+            mock_cfg.return_value = MagicMock(
+                to_blob_storage_config=MagicMock(return_value={})
+            )
 
             from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 
@@ -641,6 +634,7 @@ class TestCleanupOrphanBlobs:
                 "repositories.episode_blob_repository.EpisodeBlobRepository"
             ) as mock_repo_cls,
             patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
+            patch("core.org_config.get_org_config") as mock_cfg,
         ):
             mock_repo = AsyncMock()
             mock_repo.get_orphaned_blobs.side_effect = [blobs_1, blobs_2]
@@ -649,6 +643,10 @@ class TestCleanupOrphanBlobs:
 
             mock_svc = AsyncMock()
             mock_svc_cls.return_value = mock_svc
+
+            mock_cfg.return_value = MagicMock(
+                to_blob_storage_config=MagicMock(return_value={})
+            )
 
             from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 
@@ -696,6 +694,7 @@ class TestCleanupOrphanBlobs:
                 "repositories.episode_blob_repository.EpisodeBlobRepository"
             ) as mock_repo_cls,
             patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
+            patch("core.org_config.get_org_config") as mock_cfg,
         ):
             mock_repo = AsyncMock()
             mock_repo.get_orphaned_blobs.side_effect = [
@@ -710,6 +709,10 @@ class TestCleanupOrphanBlobs:
 
             mock_svc = AsyncMock()
             mock_svc_cls.return_value = mock_svc
+
+            mock_cfg.return_value = MagicMock(
+                to_blob_storage_config=MagicMock(return_value={})
+            )
 
             from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 

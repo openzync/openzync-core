@@ -99,16 +99,17 @@ class TestGenerateUserSummary:
             mock_repo = AsyncMock()
             mock_repo_cls.return_value = mock_repo
 
-            # Two sessions: the task opens one to resolve the graph backend
-            # and one to persist the summary.
+            # Three sessions: one to resolve the graph backend, one for the
+            # per-user config fetch, one to persist the summary.
             backend_db = self._make_db()
+            cfg_db = self._make_db()
             persist_db = self._make_db()
             backend_recorder = _session_recorder(backend_db)
             persist_recorder = _session_recorder(persist_db)
             from workers.tasks.generate_user_summary import generate_user_summary
 
             await generate_user_summary(
-                ctx=self._ctx(backend_db, persist_db),
+                ctx=self._ctx(backend_db, cfg_db, persist_db),
                 
                 user_id=_USER_ID,
                 project_id=_PROJECT_ID,
@@ -149,9 +150,10 @@ class TestGenerateUserSummary:
                 return_value="No history.",
             ),
             patch("core.llm.resolve_backend", return_value=mock_llm),
-            patch("core.org_config.get_org_config"),
+            patch("core.org_config.get_org_config") as mock_cfg,
             patch("repositories.user_repository.UserRepository") as mock_repo_cls,
         ):
+            mock_cfg.return_value = MagicMock(to_llm_config_dict=lambda: {})
             mock_repo = AsyncMock()
             mock_repo_cls.return_value = mock_repo
 
@@ -232,9 +234,10 @@ class TestGenerateUserSummary:
                 return_value="Prompt.",
             ),
             patch("core.llm.resolve_backend", return_value=mock_llm),
-            patch("core.org_config.get_org_config"),
+            patch("core.org_config.get_org_config") as mock_cfg,
             patch("repositories.user_repository.UserRepository") as mock_repo_cls,
         ):
+            mock_cfg.return_value = MagicMock(to_llm_config_dict=lambda: {})
             mock_repo = AsyncMock()
             # Prod logs and bare-``raise``s (generate_user_summary.py:228-235)
             # — it does not wrap, so the injected type is the asserted type.
