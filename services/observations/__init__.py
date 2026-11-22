@@ -14,7 +14,7 @@ unchanged. ``services/observation_service.py`` re-exports it.
 
 from __future__ import annotations
 
-import logging
+import structlog
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -41,7 +41,7 @@ from services.observations.persistence import PersistenceMixin
 if TYPE_CHECKING:
     from packages.graph_backend.interface import GraphBackend
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class ObservationService(DetectionMixin, DescriptionMixin, PersistenceMixin):

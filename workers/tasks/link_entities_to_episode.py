@@ -61,6 +61,7 @@ async def link_entities_to_episode(
     content: str | None = None,
     trace_id: str = "",
     metadata: dict | None = None,
+    enrichments: dict | None = None,
 ) -> None:
     """Link entities extracted from this episode via the graph backend.
 
@@ -86,6 +87,8 @@ async def link_entities_to_episode(
             default) matches entity names against the episode row instead.
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
         metadata: Optional metadata dict forwarded from the enrichment pipeline.
+        enrichments: Effective per-episode toggles (``None`` → all-ON).
+            When ``entity_links`` is disabled the bit is mark-skipped.
 
     """
     if trace_id:
@@ -138,31 +141,47 @@ async def link_entities_to_episode(
                     )
 
                 # ── 2. Resolve graph backend ─────────────────────────────────────
+                # Disabled via the ``entity_links`` enrichment toggle (old
+                # jobs without the field default to all-ON): skip
+                # resolve/match/link, but still stamp bit 3 below
+                # (mark-skipped) and still trigger observations (own toggle).
+                links_enabled = not (
+                    isinstance(enrichments, dict)
+                    and not enrichments.get("entity_links", True)
+                )
                 backend: GraphBackend | None
-                try:
-                    ctx_dict: dict = ctx if isinstance(ctx, dict) else {}
-                    backend = await resolve_graph_backend(
-                        ctx_dict, UUID(user_id), db,
-                    )
-                except GraphBackendUnavailableError:
-                    # Backend is explicitly configured but unreachable — this is
-                    # NOT the "disabled" case. Re-raise so ARQ retries; swallowing
-                    # here silently drops entity links for this episode.
-                    logger.warning(
-                        "link_entities_to_episode.backend_unavailable",
-                        user_id=user_id,
-                        exc_info=True,
-                    )
-                    raise
-                except Exception:
-                    # Unexpected resolver errors must surface too — re-raise so
-                    # ARQ retries rather than silently unlinking the episode.
-                    logger.warning(
-                        "link_entities_to_episode.backend_resolution_failed",
+                if not links_enabled:
+                    backend = None
+                    logger.info(
+                        "link_entities_to_episode.enrichment_skipped",
                         user_id=user_id,
                         episode_id=episode_id,
                     )
-                    raise
+                else:
+                    try:
+                        ctx_dict: dict = ctx if isinstance(ctx, dict) else {}
+                        backend = await resolve_graph_backend(
+                            ctx_dict, UUID(user_id), db,
+                        )
+                    except GraphBackendUnavailableError:
+                        # Backend is explicitly configured but unreachable — this is
+                        # NOT the "disabled" case. Re-raise so ARQ retries; swallowing
+                        # here silently drops entity links for this episode.
+                        logger.warning(
+                            "link_entities_to_episode.backend_unavailable",
+                            user_id=user_id,
+                            exc_info=True,
+                        )
+                        raise
+                    except Exception:
+                        # Unexpected resolver errors must surface too — re-raise so
+                        # ARQ retries rather than silently unlinking the episode.
+                        logger.warning(
+                            "link_entities_to_episode.backend_resolution_failed",
+                            user_id=user_id,
+                            episode_id=episode_id,
+                        )
+                        raise
                 # Any other exception from the resolver also propagates — no
                 # silent swallow that would set the link bit with 0 links.
 
@@ -176,11 +195,12 @@ async def link_entities_to_episode(
                 }
 
                 if backend is None:
-                    logger.info(
-                        "link_entities_to_episode.graph_disabled_skipping",
-                        user_id=user_id,
-                        episode_id=episode_id,
-                    )
+                    if links_enabled:
+                        logger.info(
+                            "link_entities_to_episode.graph_disabled_skipping",
+                            user_id=user_id,
+                            episode_id=episode_id,
+                        )
                     # Skip entity linking — not critical for enrichment pipeline.
                     # Episodes can be re-linked later when the graph is available.
                     linked = 0
@@ -318,6 +338,7 @@ async def link_entities_to_episode(
                                 user_id=user_id,
                                 project_id=project_id,
                                 trace_id=trace_id,
+                                enrichments=enrichments,
                                 _queue_name=w_settings.low_queue_full,
                             )
                             # Set only after a successful enqueue — a stale marker

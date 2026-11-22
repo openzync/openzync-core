@@ -1,0 +1,1 @@
+Fix observations bit crash: compute_observations passed stdlib-logging kwargs into the structlog logger, raising TypeError and blocking the observations section. The call now uses the structlog calling convention.

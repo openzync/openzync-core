@@ -44,6 +44,7 @@ async def embed_episode(
     content: str | None = None,
     trace_id: str = "",
     metadata: dict | None = None,
+    enrichments: dict | None = None,
 ) -> None:
     """Generate an embedding for an episode and store it in pgvector.
 
@@ -61,6 +62,8 @@ async def embed_episode(
             default) loads the text from the episode row instead.
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
         metadata: Optional metadata dict forwarded from the enrichment pipeline.
+        enrichments: Effective per-episode toggles (``None`` → all-ON).
+            When ``embedding`` is disabled the bit is mark-skipped.
 
     Raises:
         EpisodeNotFoundError: If no episode exists for ``episode_id``.
@@ -152,6 +155,21 @@ async def embed_episode(
                         episode_id=episode_id,
                         user_id=user_id,
                         project_id=project_id,
+                    )
+                    return
+
+                # Enrichment toggle: mark-skipped when ``embedding`` is
+                # disabled (old jobs without the field default to all-ON).
+                if isinstance(enrichments, dict) and not enrichments.get(
+                    "embedding", True
+                ):
+                    await episode_repo.apply_enrichment_bits(
+                        uuid.UUID(episode_id), ENRICHMENT_EMBEDDING
+                    )
+                    await db.commit()
+                    logger.info(
+                        "embed_episode.enrichment_skipped",
+                        episode_id=episode_id,
                     )
                     return
             finally:

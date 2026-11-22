@@ -52,6 +52,7 @@ async def compute_observations(
     user_id: str,
     project_id: str,
     trace_id: str = "",
+    enrichments: dict | None = None,
 ) -> None:
     """Run graph-topology observations pass for a project.
 
@@ -79,6 +80,8 @@ async def compute_observations(
         user_id: UUID of the owning organization.
         project_id: UUID of the project for project scoping.
         trace_id: Request trace ID for end-to-end correlation.
+        enrichments: Effective per-episode toggles (``None`` → all-ON).
+            When ``observations`` is disabled the bit is mark-skipped.
 
     Raises:
         Exception: Re-raises after retry exhaustion (``on_exhaustion="raise"``).
@@ -199,6 +202,24 @@ async def compute_observations(
                     "compute_observations.project_archived_skipping",
                     episode_id=episode_id,
                     user_id=user_id,
+                    project_id=project_id,
+                )
+                return
+
+            # Enrichment toggle: mark-skipped when ``observations`` is
+            # disabled (old jobs without the field default to all-ON).
+            # The pending marker above was already cleared, so no
+            # re-trigger loop.
+            if isinstance(enrichments, dict) and not enrichments.get(
+                "observations", True
+            ):
+                await episode_repo.apply_enrichment_bits(
+                    UUID(episode_id), ENRICHMENT_OBSERVATIONS
+                )
+                await db.commit()
+                logger.info(
+                    "compute_observations.enrichment_skipped",
+                    episode_id=episode_id,
                     project_id=project_id,
                 )
                 return

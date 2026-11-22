@@ -13,11 +13,12 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.llm import UsageRecord
+from core.rls import init_context
 from core.sorting import SortSpec, resolve_order_by
 from models.llm_usage import LLMUsage
 
@@ -59,7 +60,7 @@ class LLMUsageRepository:
         stmt = (
             pg_insert(LLMUsage)
             .values(
-
+                user_id=record.user_id,
                 provider=record.provider,
                 model=record.model,
                 task_type=record.worker,
@@ -90,9 +91,10 @@ class LLMUsageRepository:
         """Insert a metering record via an isolated RLS-scoped session.
 
         Opens a fresh session from ``session_factory``, binds it to the
-        record's org, inserts, and commits. Used by the usage sink's
-        factory path (workers) so metering never joins the caller's
-        transaction.
+        record's org with :func:`core.rls.init_context` (fail-closed, bypass
+        pinned off — same pattern as the audit worker), inserts, and
+        commits. Used by the usage sink's factory path (workers) so metering
+        never joins the caller's transaction.
 
         Args:
             session_factory: Callable returning a new async session
@@ -105,10 +107,7 @@ class LLMUsageRepository:
         if record.user_id is None:
             raise RuntimeError("usage sink received a record without user_id")
         async with session_factory() as session:
-            await session.execute(
-                text("SELECT set_config('app.user_id', :oid, true)"),
-                {"oid": str(record.user_id)},
-            )
+            await init_context(session, str(record.user_id))
             await cls(session).create(record)
             await session.commit()
 

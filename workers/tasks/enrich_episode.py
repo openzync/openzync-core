@@ -135,6 +135,7 @@ async def enrich_episode(
     trace_id: str = "",
     metadata: dict | None = None,
     role: str = "user",
+    enrichments: dict | None = None,
 ) -> None:
     """Single enrichment pass: classify + extract entities/facts/structured.
 
@@ -171,6 +172,9 @@ async def enrich_episode(
         metadata: Optional metadata dict from the episode.
         role: Message role (default ``"user"``; passed for compatibility
             with the memory service enqueue but not used internally).
+        enrichments: Effective per-episode toggles forwarded from ingest
+            (``None`` on old jobs → all-ON). Disabled LLM sections are
+            mark-skipped, never run.
 
     Raises:
         EpisodeNotFoundError: If the episode does not exist.
@@ -180,6 +184,27 @@ async def enrich_episode(
     """
     if trace_id:
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
+    # Effective toggles for this episode — resolved at ingest
+    # (system < org < request param) and forwarded in the ARQ payload.
+    # Old jobs without the field default to all-ON.
+    from core.enrichment_config import ENRICHMENT_KEY_BITS, all_enabled
+
+    enabled: dict[str, bool] = dict(all_enabled())
+    if isinstance(enrichments, dict):
+        unknown = set(enrichments) - set(ENRICHMENT_KEY_BITS)
+        if unknown:
+            raise ValidationError(
+                f"Unknown enrichment keys: {sorted(unknown)}. "
+                f"Expected a subset of: {sorted(ENRICHMENT_KEY_BITS)}."
+            )
+        for key, value in enrichments.items():
+            if not isinstance(value, bool):
+                raise ValidationError(
+                    f"Enrichment toggle {key!r} must be a boolean, "
+                    f"got {type(value).__name__}."
+                )
+            enabled[key] = value
 
     # Lazy imports — ARQ workers run in a separate process.
     from core import rls
@@ -251,7 +276,7 @@ async def enrich_episode(
                 | ENRICHMENT_STRUCTURED_EXTRACTION
                 | LLM_INVALIDATION_BIT
             )
-            if episode.enrichment_status & llm_bits == llm_bits:
+            if (episode.enrichment_status & llm_bits) == llm_bits:
                 log.info("enrich_episode.already_done")
                 return
 
@@ -270,6 +295,38 @@ async def enrich_episode(
                 return
 
             user_id: str = str(episode.user_id)
+
+            # ── 2c. Mark-skipped: stamp bits for disabled LLM sections ──
+            # Disabled work is never run, but its bit is still set so the
+            # episode reads as fully enriched to reconcile/monitoring.
+            # The in-memory status is updated too so the section guards
+            # below (and the LLM-need check) skip naturally.
+            for _key, _bit in (
+                ("entities", ENRICHMENT_ENTITIES),
+                ("facts", ENRICHMENT_FACTS),
+                ("classification", ENRICHMENT_CLASSIFICATION),
+                ("structured", ENRICHMENT_STRUCTURED_EXTRACTION),
+                ("llm_invalidation", LLM_INVALIDATION_BIT),
+            ):
+                if not enabled.get(_key, True) and not (
+                    episode.enrichment_status & _bit
+                ):
+                    await episode_repo.apply_enrichment_bits(
+                        uuid.UUID(episode_id), _bit
+                    )
+                    episode.enrichment_status |= _bit
+                    log.info(
+                        "enrich_episode.enrichment_skipped",
+                        section=_key,
+                        episode_id=episode_id,
+                    )
+
+            # All LLM sections done or disabled — persist the
+            # mark-skipped bits and return without an LLM call.
+            if (episode.enrichment_status & llm_bits) == llm_bits:
+                await db.commit()
+                log.info("enrich_episode.all_skipped_or_done")
+                return
 
             # ── 2c. Resolve graph backend BEFORE render — the
             # SESSION_ENTITIES provider needs it for known_entities;
@@ -373,7 +430,7 @@ async def enrich_episode(
             log.info("enrich_episode.llm_call_start")
             try:
                 sink = make_sink(
-                    session_factory,
+                    db,
                     user_id=uuid.UUID(user_id),
                     worker="enrich_episode",
                     project_id=uuid.UUID(project_id),
@@ -423,7 +480,7 @@ async def enrich_episode(
             invalidation_enabled = (
                 org_cfg is not None
                 and org_cfg.llm_fact_invalidation_enabled is not False
-            )
+            ) and enabled.get("llm_invalidation", True)
 
             # ── 6b. Graph backend (resolved pre-render in §2c, reused) ──
             # No Postgres fallback here: a disabled org ("none" / no config)
@@ -520,6 +577,9 @@ async def enrich_episode(
                 set_bits |= ENRICHMENT_ENTITIES
 
             # ── SECTION 3: Facts (bit 2) + LLM invalidations (bit 8) ────
+            # Runs only when ``facts`` is enabled (disabled sections were
+            # mark-skipped above, so this guard also gates the embed_fact
+            # chaining inside ``process_facts_output``).
             if not (episode.enrichment_status & ENRICHMENT_FACTS):
                 try:
                     async with db.begin_nested():

@@ -22,6 +22,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field, field_validator
 
 from schemas.organization_config import (  # noqa: TC001 — runtime import: pydantic resolves field types
+    ENRICHMENT_KEYS,
     LlmBackend,
 )
 
@@ -52,6 +53,40 @@ class SystemConfigUpdate(BaseModel):
     reranker_top_k: int | None = Field(default=None, ge=10, le=200)
     reranker_top_n: int | None = Field(default=None, ge=1, le=100)
     context_cache_ttl: int | None = Field(default=None, ge=1)
+    enrichment: dict[str, bool] | None = Field(
+        default=None,
+        description="System-level default enrichment toggles (entities, "
+        "embedding, facts, entity_links, classification, structured, "
+        "observations, blob_text, llm_invalidation). Unset keys default "
+        "to True; org config and per-ingest params override.",
+    )
+
+    @field_validator("enrichment", mode="before")
+    @classmethod
+    def _validate_enrichment(
+        cls, v: dict[str, bool] | None
+    ) -> dict[str, bool] | None:
+        """Reject unknown toggle keys and non-boolean values (→ 422).
+
+        Values must be real booleans — truthy coercion would silently
+        enable a toggle the caller tried to disable (``bool("false")``
+        is ``True``).
+        """
+        if v is None:
+            return v
+        unknown = set(v) - ENRICHMENT_KEYS
+        if unknown:
+            raise ValueError(
+                f"Unknown enrichment keys: {sorted(unknown)}. "
+                f"Expected a subset of: {sorted(ENRICHMENT_KEYS)}."
+            )
+        for key, value in v.items():
+            if not isinstance(value, bool):
+                raise ValueError(
+                    f"Enrichment toggle {key!r} must be a boolean, "
+                    f"got {type(value).__name__}."
+                )
+        return v
 
     @field_validator("graph_backend", mode="before")
     @classmethod
@@ -86,6 +121,21 @@ class SystemConfigResponse(BaseModel):
     reranker_top_k: int | None = None
     reranker_top_n: int | None = None
     context_cache_ttl: int | None = None
+    enrichment: dict[str, bool] = Field(
+        default_factory=lambda: {
+            "entities": True,
+            "embedding": True,
+            "facts": True,
+            "entity_links": True,
+            "classification": True,
+            "structured": True,
+            "observations": True,
+            "blob_text": True,
+            "llm_invalidation": True,
+        },
+        description="Effective system-level enrichment toggles — all-True "
+        "when nothing is stored.",
+    )
 
     @field_validator("graph_backend", mode="before")
     @classmethod

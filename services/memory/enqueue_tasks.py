@@ -47,6 +47,7 @@ class EnqueueTasksMixin:
         project_id: str,
         session_id: str,
         episodes: list[dict[str, Any]],
+        enrichments: dict[str, bool] | None = None,
     ) -> None:
         """Enqueue ARQ background tasks for episode enrichment.
 
@@ -73,6 +74,8 @@ class EnqueueTasksMixin:
             project_id: The project UUID string.
             session_id: The session UUID string.
             episodes: List of episode dicts with ``id`` and ``role``.
+            enrichments: Effective per-episode toggles (forwarded into
+                every ARQ payload; workers mark-skipped disabled bits).
         """
         episode_ids = [ep["id"] for ep in episodes]
         trace_id = structlog.contextvars.get_contextvars().get(
@@ -97,6 +100,7 @@ class EnqueueTasksMixin:
                         qname_low,
                         str(episode["id"]),
                         episode.get("role", "user"),
+                        enrichments,
                     )
                     for episode in episodes
                 )
@@ -172,6 +176,7 @@ class EnqueueTasksMixin:
         blob_count: int,
         idempotency_key: str | None,
         body_hash: str | None,
+        enrichments: dict[str, bool] | None = None,
     ) -> IngestMemoryResponse:
         """Run post-commit fan-out and build the 202 response.
 
@@ -189,6 +194,8 @@ class EnqueueTasksMixin:
             blob_count: Number of persisted blob records.
             idempotency_key: Optional client idempotency key.
             body_hash: Optional canonical body hash.
+            enrichments: Effective per-episode toggles (forwarded into
+                every ARQ payload).
 
         Returns:
             The accepted ``IngestMemoryResponse``.
@@ -207,6 +214,7 @@ class EnqueueTasksMixin:
                 project_id=str(project_id),
                 session_id=str(session_id),
                 episodes=episode_dicts,
+                enrichments=enrichments,
             )
         except Exception:
             logger.critical(
@@ -226,6 +234,7 @@ class EnqueueTasksMixin:
                 blob_records=blob_records,
                 user_id=user_id,
                 project_id=project_id,
+                enrichments=enrichments,
             )
 
         # ── Store idempotency key (best-effort) ──────────────────────────

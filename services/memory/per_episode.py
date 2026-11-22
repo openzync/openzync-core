@@ -25,6 +25,7 @@ class PerEpisodeEnqueueMixin:
         qname_low: str,
         episode_id: str,
         role: str,
+        enrichments: dict[str, bool] | None = None,
     ) -> None:
         """Enqueue the three enrichment tasks for one episode, idempotently.
 
@@ -55,6 +56,8 @@ class PerEpisodeEnqueueMixin:
             episode_id: The episode UUID string.
             role: Message role (kept — small, and needed before the
                 episode row is re-read by workers).
+            enrichments: Effective per-episode toggles (forwarded into
+                every ARQ payload; ``None`` means all-ON for old jobs).
         """
         tasks = (
             ("enrich_episode", qname_high, {"session_id": session_id, "role": role}),
@@ -84,6 +87,7 @@ class PerEpisodeEnqueueMixin:
                     user_id=user_id,
                     project_id=project_id,
                     trace_id=trace_id,
+                    enrichments=enrichments,
                     **extra,
                 )
             except Exception:

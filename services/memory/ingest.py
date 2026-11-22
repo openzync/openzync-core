@@ -46,21 +46,25 @@ class IngestMixin:
         uploaded_blobs: list[UploadFile] | None = None,
         idempotency_key: str | None = None,
         body_hash: str | None = None,
+        enrichments: dict[str, bool] | None = None,
     ) -> IngestMemoryResponse:
         """Ingest messages into a project's memory.
 
         Flow:
         1. Reject archived/missing projects (404, before any state).
-        2. Idempotency check (Redis) — replay or 409 on key reuse.
-        3. Resolve the session (never auto-created).
-        4. Atomically claim the batch (Redis Lua + ``ingest_dedup``
+        2. Resolve + validate the effective enrichment toggles
+           (system < org < per-ingest param, all-ON by default) — 422
+           on unknown keys or violated dependencies, before any state.
+        3. Idempotency check (Redis) — replay or 409 on key reuse.
+        4. Resolve the session (never auto-created).
+        5. Atomically claim the batch (Redis Lua + ``ingest_dedup``
            UNIQUE backstop) — losers replay the winner.
-        5. Build episode dicts, PII-redact (fail-closed, BEFORE the
+        6. Build episode dicts, PII-redact (fail-closed, BEFORE the
            lock), lock the session row, assign sequences, batch-insert.
-        6. Upload blobs + persist blob rows (same transaction;
+        7. Upload blobs + persist blob rows (same transaction;
            pre-commit failures compensate S3 inline).
-        7. Commit — workers can now see episodes + blobs.
-        8. Post-commit: enqueue ARQ tasks + blob extraction, store the
+        8. Commit — workers can now see episodes + blobs.
+        9. Post-commit: enqueue ARQ tasks + blob extraction, store the
            idempotency key, purge context cache, emit webhooks
            (all best-effort — never fail a committed ingest).
 
@@ -76,6 +80,8 @@ class IngestMixin:
             idempotency_key: Optional ``Idempotency-Key`` header value.
             body_hash: Optional SHA-256 of the canonical request body,
                 pre-computed by the router when ``idempotency_key`` is set.
+            enrichments: Optional per-ingest enrichment toggles (highest
+                precedence — overrides system and org config).
 
         Returns:
             An ``IngestMemoryResponse`` with job_id, episode_count,
@@ -87,6 +93,8 @@ class IngestMixin:
             NotFoundError: Project missing/archived, or session unknown.
             PIIUnavailableError: PII policy fetch/redaction failed (503).
             ExternalServiceError: Blob storage config unreadable (502).
+            ValidationError: Unknown enrichment keys or violated
+                toggle dependencies (422).
         """
         # ── Step 0: Block ingests to archived projects ───────────────────
         project = await self._project_repo.get_by_id(user_id, project_id)
@@ -95,6 +103,12 @@ class IngestMixin:
                 message=f"Project {project_id} not found",
                 detail={"project_id": str(project_id)},
             )
+
+        # ── Step 0b: Resolve + validate enrichment toggles ──────────────
+        # Before any state — a 422 here never claims, inserts, or enqueues.
+        effective_enrichments = await self._resolve_enrichments(
+            user_id, enrichments
+        )
 
         # ── Steps 1–2: Idempotency check + session resolve ───────────────
         if idempotency_key is not None:
@@ -211,7 +225,52 @@ class IngestMixin:
             blob_count=blob_count,
             idempotency_key=idempotency_key,
             body_hash=body_hash,
+            enrichments=effective_enrichments,
         )
+
+    async def _resolve_enrichments(
+        self,
+        user_id: UUID,
+        request_param: dict[str, bool] | None,
+    ) -> dict[str, bool]:
+        """Resolve the effective per-episode enrichment toggles.
+
+        Precedence: system root default < org stored override <
+        per-ingest request param; unset keys default to ``True``.
+        Dependencies are hard-validated (facts/entity_links require
+        entities, llm_invalidation requires facts, embedding=False is
+        incompatible with vector/hybrid search).
+
+        Args:
+            user_id: The organization UUID (config scope).
+            request_param: Per-ingest toggles from the request body.
+
+        Returns:
+            A complete ``dict[str, bool]`` with every enrichment key.
+
+        Raises:
+            ValidationError: On unknown keys or violated dependencies.
+        """
+        from core.enrichment_config import (
+            resolve_enrichment,
+            validate_enrichment_combo,
+        )
+        from core.org_config import get_org_config
+        from core.system_config import get_system_config
+
+        system_cfg = await get_system_config(redis=self._redis, db=self._db)
+        org_cfg = await get_org_config(user_id, redis=self._redis, db=self._db)
+        effective = resolve_enrichment(
+            system_cfg.enrichment,
+            org_cfg.enrichment,
+            request_param,
+        )
+        validate_enrichment_combo(
+            effective,
+            graph_search_type=org_cfg.graph_search_type
+            or system_cfg.graph_search_type,
+        )
+        return effective
 
     async def _resolve_user(
         self,

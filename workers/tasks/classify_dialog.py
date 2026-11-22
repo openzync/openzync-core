@@ -53,7 +53,7 @@ async def _fetch_validation_sets(
     schemas = result.all()
 
     if not schemas:
-        logger.warning(
+        logger.info(
             "classify_dialog.no_classification_schemas",
             user_id=user_id,
         )
@@ -101,6 +101,15 @@ def _validate_label(label: Any, allowed_set: set[str]) -> str | None:
     return label if label in allowed_set else None
 
 
+def _raw_label(label: Any) -> str | None:
+    """Return *label* as-is when it is a non-blank string, else ``None``.
+
+    Used when the org has no validation sets — there is nothing to
+    validate against, so the LLM's raw string is stored untouched.
+    """
+    return label if isinstance(label, str) and label.strip() else None
+
+
 # ── Exportable post-processing helper (used by combined worker) ─────────────
 
 
@@ -118,6 +127,12 @@ async def process_classification_output(
     This function is called by both the standalone ``classify_dialog`` task
     and the combined ``enrich_episode`` worker.  It does **not** manage
     transactions — the caller is responsible for commit/rollback.
+
+    When the org has no validation sets (both empty), allow-list validation
+    is skipped: the LLM's raw labels are stored as-is (nulls for
+    blank/missing), the full output is still kept in ``raw``, and the
+    classification enrichment bit is still applied.  An unconfigured org is
+    expected, so this path logs at info level, not warning.
 
     Args:
         db: Database session (caller manages transaction).
@@ -137,27 +152,37 @@ async def process_classification_output(
     if validation_sets is None:
         validation_sets = await _fetch_validation_sets(db, user_id)
 
-    intent = _validate_label(parsed.intent, validation_sets["intent_set"])
-    emotion = _validate_label(parsed.emotion, validation_sets["emotion_set"])
+    if not validation_sets["intent_set"] and not validation_sets["emotion_set"]:
+        # No org validation sets — skip allow-list validation and persist
+        # the LLM's raw labels (nulls for blank/missing). An unconfigured
+        # org is expected, so this is info, not a warning.
+        logger.info(
+            "classification.validation_skipped_no_sets",
+            episode_id=episode_id,
+        )
+        intent = _raw_label(parsed.intent)
+        emotion = _raw_label(parsed.emotion)
+    else:
+        intent = _validate_label(parsed.intent, validation_sets["intent_set"])
+        emotion = _validate_label(parsed.emotion, validation_sets["emotion_set"])
+        if intent is None and parsed.intent is not None:
+            logger.warning(
+                "classification.invalid_intent",
+                episode_id=episode_id,
+                received=parsed.intent,
+                allowed=list(validation_sets["intent_set"]),
+            )
+        if emotion is None and parsed.emotion is not None:
+            logger.warning(
+                "classification.invalid_emotion",
+                episode_id=episode_id,
+                received=parsed.emotion,
+                allowed=list(validation_sets["emotion_set"]),
+            )
     valence = parsed.valence if parsed.valence in ALLOWED_VALENCES else None
     arousal = parsed.arousal if parsed.arousal in ALLOWED_AROUSALS else None
     confidence = min(max(parsed.confidence, 0.0), 1.0)
     raw = parsed.model_dump()
-
-    if intent is None and parsed.intent is not None:
-        logger.warning(
-            "classification.invalid_intent",
-            episode_id=episode_id,
-            received=parsed.intent,
-            allowed=list(validation_sets["intent_set"]),
-        )
-    if emotion is None and parsed.emotion is not None:
-        logger.warning(
-            "classification.invalid_emotion",
-            episode_id=episode_id,
-            received=parsed.emotion,
-            allowed=list(validation_sets["emotion_set"]),
-        )
 
     # ── Insert classification row ──────────────────────────────────────────
     await db.execute(

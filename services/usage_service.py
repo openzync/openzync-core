@@ -5,7 +5,9 @@ Write path: :func:`make_sink` builds a :class:`UsageSink
 :func:`core.llm.resolve_backend` callers. The sink persists records via
 :class:`LLMUsageRepository <repositories.llm_usage_repository
 .LLMUsageRepository>` in an isolated session (session factory) or a
-savepoint (active session), logging failures then re-raising into ARQ retry.
+savepoint (active session). The sink is fail-open: persistence failures
+are logged (``usage.sink_failed``) and swallowed — metering must never
+fail the call it meters.
 
 Read path: :func:`list_usage` / :func:`summarize_usage` forward filters
 to the repository for the admin read API.
@@ -35,8 +37,12 @@ logger = logging.getLogger(__name__)
 SessionTarget = AsyncSession | Callable[[], AsyncSession]
 """Isolated-session factory (e.g. ``async_sessionmaker``) or an active session.
 
-Factories get a fresh RLS-scoped session + commit; active sessions get a
-savepoint owned by the caller's transaction.
+Prefer the caller's active session whenever one is open (workers): the
+sink then writes in a savepoint owned by that transaction — no extra pool
+checkout, and a sink failure rolls back only the metering row. Pass a
+factory only when no session is open (request-path previews); the sink
+then opens an isolated RLS-scoped session + commit. Holding a session
+*and* passing a factory double-checkouts the pool under concurrency.
 """
 
 
@@ -75,12 +81,15 @@ def make_sink(
     """Build a metering sink carrying org/worker/entity scope.
 
     The returned sink fills scope fields the metering wrapper leaves
-    empty, then persists via :func:`_persist`. Failures are logged and
-    re-raised into the ARQ retry loop — never swallowed, so a metering
-    outage is visible instead of silently dropping usage rows.
+    empty, then persists via :func:`_persist`. Fail-open by contract (see
+    :class:`UsageSink <core.llm.UsageSink>`): persistence failures are
+    logged as ``usage.sink_failed`` and swallowed, so a metering outage is
+    visible in logs instead of failing the call it meters or spamming
+    retries with duplicate usage rows.
 
     Args:
-        target: Session factory (workers) or active session (services).
+        target: Active session (preferred when the caller holds one) or
+            session factory (only when no session is open).
         user_id: Owning organization.
         worker: Task vocabulary label (e.g. ``"enrich_episode"``).
         project_id: Project scope, when known.
@@ -90,14 +99,13 @@ def make_sink(
         task_run_id: Owning task run, when applicable.
 
     Returns:
-        An async callable accepting a :class:`UsageRecord`.
-
-    Raises:
-        Exception: Whatever :func:`_persist` raised (after logging).
+        An async callable accepting a :class:`UsageRecord`. Never raises
+        except on task cancellation (``asyncio.CancelledError`` always
+        propagates).
     """
 
     async def _sink(record: UsageRecord) -> None:
-        """Fill scope and persist. Logs failures, then re-raises for retry."""
+        """Fill scope and persist. Fail-open: logs failures, never raises."""
         full = replace(
             record,
             user_id=record.user_id or user_id,
@@ -113,11 +121,12 @@ def make_sink(
         except asyncio.CancelledError:
             raise
         except Exception:
+            # Fail-open: metering must never fail enrichment. The row is
+            # lost; the log line is the alert.
             logger.exception(
                 "usage.sink_failed",
                 extra={"worker": worker, "user_id": str(user_id)},
             )
-            raise
 
     return _sink
 
