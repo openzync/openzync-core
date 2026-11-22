@@ -412,6 +412,7 @@ async def extract_blob_text(
     mime_type: str,
     file_name: str = "",
     trace_id: str = "",
+    enrichments: dict | None = None,
 ) -> None:
     """Extract text from a blob and store it on the episode_blobs record.
 
@@ -434,6 +435,8 @@ async def extract_blob_text(
         mime_type: MIME type of the blob for dispatch.
         file_name: Original filename (for logging).
         trace_id: Request trace ID for end-to-end correlation.
+        enrichments: Effective per-episode toggles (``None`` → all-ON).
+            When ``blob_text`` is disabled the bit is mark-skipped.
 
     Raises:
         PIIUnavailableError: If the PII policy cannot be fetched or
@@ -514,6 +517,18 @@ async def extract_blob_text(
                     user_id=user_id,
                     project_id=project_id,
                 )
+                return
+
+            # Enrichment toggle: mark-skipped when ``blob_text`` is
+            # disabled (old jobs without the field default to all-ON).
+            if isinstance(enrichments, dict) and not enrichments.get(
+                "blob_text", True
+            ):
+                await episode_repo.apply_enrichment_bits(
+                    UUID(episode_id), ENRICHMENT_BLOB_TEXT
+                )
+                await db.commit()
+                log.info("extract_blob_text.enrichment_skipped")
                 return
 
             # ── Fetch user storage config ───────────────────────────────

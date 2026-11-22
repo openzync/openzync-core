@@ -251,6 +251,7 @@ async def ingest_messages(
         uploaded_blobs=blobs,
         idempotency_key=idempotency_key,
         body_hash=body_hash,
+        enrichments=payload.enrichments,
     )
 
     # Set Location header for job status tracking

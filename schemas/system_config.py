@@ -52,6 +52,40 @@ class SystemConfigUpdate(BaseModel):
     reranker_top_k: int | None = Field(default=None, ge=10, le=200)
     reranker_top_n: int | None = Field(default=None, ge=1, le=100)
     context_cache_ttl: int | None = Field(default=None, ge=1)
+    enrichment: dict[str, bool] | None = Field(
+        default=None,
+        description="System-level default enrichment toggles (entities, "
+        "embedding, facts, entity_links, classification, structured, "
+        "observations, blob_text, llm_invalidation). Unset keys default "
+        "to True; org config and per-ingest params override.",
+    )
+
+    @field_validator("enrichment", mode="before")
+    @classmethod
+    def _validate_enrichment(
+        cls, v: dict[str, bool] | None
+    ) -> dict[str, bool] | None:
+        """Reject unknown enrichment toggle keys (→ 422)."""
+        if v is None:
+            return v
+        allowed = {
+            "entities",
+            "embedding",
+            "facts",
+            "entity_links",
+            "classification",
+            "structured",
+            "observations",
+            "blob_text",
+            "llm_invalidation",
+        }
+        unknown = set(v) - allowed
+        if unknown:
+            raise ValueError(
+                f"Unknown enrichment keys: {sorted(unknown)}. "
+                f"Expected a subset of: {sorted(allowed)}."
+            )
+        return v
 
     @field_validator("graph_backend", mode="before")
     @classmethod
@@ -86,6 +120,21 @@ class SystemConfigResponse(BaseModel):
     reranker_top_k: int | None = None
     reranker_top_n: int | None = None
     context_cache_ttl: int | None = None
+    enrichment: dict[str, bool] = Field(
+        default_factory=lambda: {
+            "entities": True,
+            "embedding": True,
+            "facts": True,
+            "entity_links": True,
+            "classification": True,
+            "structured": True,
+            "observations": True,
+            "blob_text": True,
+            "llm_invalidation": True,
+        },
+        description="Effective system-level enrichment toggles — all-True "
+        "when nothing is stored.",
+    )
 
     @field_validator("graph_backend", mode="before")
     @classmethod

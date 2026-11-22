@@ -44,6 +44,36 @@ SYSTEM_MANAGED_FALKORDB_FIELDS: frozenset[str] = frozenset(
     }
 )
 
+#: Allowed per-episode enrichment toggle keys (mirrors
+#: ``core.enrichment_config.ENRICHMENT_KEYS`` — duplicated here because
+#: schemas must never import from ``core/``).
+ENRICHMENT_KEYS: frozenset[str] = frozenset(
+    {
+        "entities",
+        "embedding",
+        "facts",
+        "entity_links",
+        "classification",
+        "structured",
+        "observations",
+        "blob_text",
+        "llm_invalidation",
+    }
+)
+
+
+def _validate_enrichment_keys(v: dict[str, bool] | None) -> dict[str, bool] | None:
+    """Reject unknown enrichment toggle keys (→ 422)."""
+    if v is None:
+        return v
+    unknown = set(v) - ENRICHMENT_KEYS
+    if unknown:
+        raise ValueError(
+            f"Unknown enrichment keys: {sorted(unknown)}. "
+            f"Expected a subset of: {sorted(ENRICHMENT_KEYS)}."
+        )
+    return v
+
 
 class PromptCachingOrgConfig(BaseModel):
     """Per-org overrides for provider-side prompt caching.
@@ -137,6 +167,14 @@ class OrgConfigBase(BaseModel):
         default=None,
         description="Enable LLM-driven fact invalidation during episode "
         "enrichment (defaults to ON when unset).",
+    )
+    enrichment: dict[str, bool] | None = Field(
+        default=None,
+        description="Per-episode enrichment toggles (entities, embedding, "
+        "facts, entity_links, classification, structured, observations, "
+        "blob_text, llm_invalidation). Unset keys default to True. "
+        "Validated on ingest: facts/entity_links require entities, "
+        "llm_invalidation requires facts.",
     )
     prompt_caching: PromptCachingOrgConfig | None = Field(
         default=None,
@@ -300,6 +338,14 @@ class OrgConfigBase(BaseModel):
         le=1.0,
     )
 
+    @field_validator("enrichment", mode="before")
+    @classmethod
+    def _validate_enrichment(
+        cls, v: dict[str, bool] | None
+    ) -> dict[str, bool] | None:
+        """Reject unknown enrichment toggle keys (→ 422)."""
+        return _validate_enrichment_keys(v)
+
     @field_validator("pii_enabled_types", mode="before")
     @classmethod
     def _validate_pii_types(cls, v: list[str] | None) -> list[str] | None:
@@ -419,6 +465,14 @@ class UpdateOrgConfigRequest(BaseModel):
         description="Enable LLM-driven fact invalidation during episode "
         "enrichment (defaults to ON when unset).",
     )
+    enrichment: dict[str, bool] | None = Field(
+        default=None,
+        description="Per-episode enrichment toggles (entities, embedding, "
+        "facts, entity_links, classification, structured, observations, "
+        "blob_text, llm_invalidation). Unset keys default to True. "
+        "Validated on ingest: facts/entity_links require entities, "
+        "llm_invalidation requires facts.",
+    )
     prompt_caching: PromptCachingOrgConfig | None = None
     # ⚠️ BREAKING: embedding_* fields removed — see the note on
     # ``OrgConfigBase``. Embedding settings now live in no config surface at all.
@@ -484,6 +538,14 @@ class UpdateOrgConfigRequest(BaseModel):
         ge=0.0,
         le=1.0,
     )
+
+    @field_validator("enrichment", mode="before")
+    @classmethod
+    def _validate_enrichment_update(
+        cls, v: dict[str, bool] | None
+    ) -> dict[str, bool] | None:
+        """Reject unknown enrichment toggle keys (→ 422)."""
+        return _validate_enrichment_keys(v)
 
     @field_validator("pii_enabled_types", mode="before")
     @classmethod

@@ -257,6 +257,7 @@ class BlobIngestMixin:
         blob_records: list[Any],
         user_id: UUID,
         project_id: UUID,
+        enrichments: dict[str, bool] | None = None,
     ) -> None:
         """Enqueue ARQ ``extract_blob_text`` tasks for each uploaded blob.
 
@@ -270,6 +271,8 @@ class BlobIngestMixin:
                 by ``_process_blobs``.
             user_id: Organization UUID.
             project_id: Project UUID.
+            enrichments: Effective per-episode toggles (forwarded into
+                every ARQ payload; workers mark-skipped disabled bits).
         """
         from core.config import get_settings
         from core.queue_names import get_queue_name
@@ -294,6 +297,7 @@ class BlobIngestMixin:
                         mime_type=blob.mime_type,
                         file_name=blob.file_name,
                         trace_id=trace_id,
+                        enrichments=enrichments,
                     )
                     for blob in blob_records
                 )

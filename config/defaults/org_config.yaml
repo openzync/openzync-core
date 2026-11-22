@@ -30,6 +30,19 @@ graph_max_traversal_depth: 2
 context_cache_ttl: 300
 audit_log_response_body: false
 
+# Per-episode enrichment toggles — all-ON by default. Unset keys resolve
+# to true at ingest (system < org < per-request); see core/enrichment_config.
+enrichment:
+  entities: true
+  embedding: true
+  facts: true
+  entity_links: true
+  classification: true
+  structured: true
+  observations: true
+  blob_text: true
+  llm_invalidation: true
+
 # Re-ranker (RET-05) — both backends disabled by default
 # Set reranker_backend to "sentence_transformers" or "cohere" to enable
 reranker_backend: null

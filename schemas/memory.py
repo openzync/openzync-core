@@ -148,6 +148,38 @@ class IngestMemoryRequest(BaseModel):
         min_length=1,
         max_length=1000,
     )
+    enrichments: dict[str, bool] | None = Field(
+        default=None,
+        description="Per-ingest enrichment toggles (highest precedence — "
+        "overrides system and org config). Unset keys default to True.",
+    )
+
+    @field_validator("enrichments", mode="before")
+    @classmethod
+    def _validate_enrichments(
+        cls, v: dict[str, bool] | None
+    ) -> dict[str, bool] | None:
+        """Reject unknown enrichment toggle keys (→ 422)."""
+        if v is None:
+            return v
+        allowed = {
+            "entities",
+            "embedding",
+            "facts",
+            "entity_links",
+            "classification",
+            "structured",
+            "observations",
+            "blob_text",
+            "llm_invalidation",
+        }
+        unknown = set(v) - allowed
+        if unknown:
+            raise ValueError(
+                f"Unknown enrichment keys: {sorted(unknown)}. "
+                f"Expected a subset of: {sorted(allowed)}."
+            )
+        return v
 
 
 class IngestMemoryResponse(BaseModel):
