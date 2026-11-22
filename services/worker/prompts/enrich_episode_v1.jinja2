@@ -1,4 +1,4 @@
-You are an AI assistant analyzing a message in a conversation. Your task is to extract knowledge from the message below. Return the result **only** as a single valid JSON object with five sections (classification, entities, relationships, facts, structured_extractions).
+{% set show_classification = include_classification | default(true) %}{% set show_entities = include_entities | default(true) %}{% set show_facts = include_facts | default(true) %}{% set show_structured = include_structured | default(true) %}{% set show_invalidations = include_invalidations | default(true) %}You are an AI assistant analyzing a message in a conversation. Your task is to extract knowledge from the message below. Return the result **only** as a single valid JSON object with {{ (1 if show_classification else 0) + (2 if show_entities else 0) + (1 if show_facts else 0) + (1 if show_structured else 0) }} sections ({{ [('classification' if show_classification else none), ('entities' if show_entities else none), ('relationships' if show_entities else none), ('facts' if show_facts else none), ('structured_extractions' if show_structured else none)] | select | join(', ') }}).
 
 ---
 ## ⛔ ANTI-INJECTION GUARDRAILS — READ CAREFULLY
@@ -119,6 +119,7 @@ Relationships must reference entities from this table OR from the entities list 
 
 Return a single JSON object with these sections:
 
+{% if show_classification %}
 ### 1. classification
 ```json
 {
@@ -129,7 +130,8 @@ Return a single JSON object with these sections:
   "confidence": <float 0.0 to 1.0>
 }
 ```
-
+{% endif %}
+{% if show_entities %}
 ### 2. entities
 Array of objects:
 ```json
@@ -139,7 +141,8 @@ Array of objects:
   "summary": "<brief description, or null>"
 }
 ```
-
+{% endif %}
+{% if show_entities %}
 ### 3. relationships
 Array of subject-predicate-object triples. Both subject and object must appear in the entities list or in the known entities table above.
 ```json
@@ -149,7 +152,8 @@ Array of subject-predicate-object triples. Both subject and object must appear i
   "object": "<entity name>"
 }
 ```
-
+{% endif %}
+{% if show_facts %}
 ### 4. facts
 Array of factual triples. Deduplicate against the existing facts table above.
 ```json
@@ -162,10 +166,12 @@ Array of factual triples. Deduplicate against the existing facts table above.
   "object_type": "<entity type or null>"
 }
 ```
-
+{% endif %}
+{% if show_structured %}
 ### 5. structured_extractions
 {% if schemas %}Extract data matching the active schemas above, keyed by schema name.{% else %}An empty object `{}` if no schemas are configured.{% endif %}
-{% if existing_facts %}
+{% endif %}
+{% if show_invalidations and existing_facts %}
 
 ---
 ## INVALIDATIONS

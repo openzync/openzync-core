@@ -32,7 +32,14 @@ from datetime import (
 )
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Entity extraction
@@ -180,6 +187,16 @@ class InvalidationOutput(BaseModel):
     only retracts/negates (no replacement value given)."""
 
 
+_DISABLED_SECTION_FIELDS: dict[str, tuple[str, ...]] = {
+    "classification": ("classification",),
+    "entities": ("entities", "relationships"),
+    "facts": ("facts",),
+    "invalidations": ("invalidations",),
+    "structured": ("structured_extractions",),
+}
+"""Disabled-toggle key → ``CombinedLLMOutput`` fields that must stay empty."""
+
+
 class CombinedLLMOutput(BaseModel):
     """Single LLM response combining all episode enrichment tasks.
 
@@ -207,3 +224,46 @@ class CombinedLLMOutput(BaseModel):
     """Existing facts this message contradicts, each optionally replaced by
     a successor fact from the ``facts`` array.  Empty by default — keeps
     the schema stable for older model outputs that predate invalidation."""
+
+    @model_validator(mode="after")
+    def _reject_disabled_sections(self, info: ValidationInfo) -> CombinedLLMOutput:
+        """Reject non-empty output for sections disabled via context.
+
+        Reads ``info.context["disabled"]`` — the set of enrichment toggle
+        keys the prompt omitted (see ``enrich_episode``).  A disabled
+        section's prompt block was never sent, so any content for it is a
+        hallucination the mark-skipped pipeline must not persist.
+
+        Args:
+            info: Pydantic validation info carrying the ``context`` dict
+                forwarded by :meth:`core.llm.LLMBackend.chat`.
+
+        Returns:
+            The validated model unchanged.
+
+        Raises:
+            ValueError: If a disabled section's field is non-empty
+                (lists/dicts must be falsy; classification must have null
+                intent and emotion — it default-constructs, so only an
+                explicit label counts as content).
+        """
+        context = info.context
+        disabled = context.get("disabled") if isinstance(context, dict) else None
+        if not disabled:
+            return self
+        for key in disabled:
+            fields = _DISABLED_SECTION_FIELDS.get(key)
+            if fields is None:
+                continue
+            for field_name in fields:
+                value = getattr(self, field_name)
+                if isinstance(value, ClassificationOutput):
+                    is_empty = value.intent is None and value.emotion is None
+                else:
+                    is_empty = not value
+                if not is_empty:
+                    raise ValueError(
+                        f"LLM emitted non-empty '{field_name}' while "
+                        f"enrichment section '{key}' is disabled."
+                    )
+        return self

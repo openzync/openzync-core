@@ -24,7 +24,11 @@ from core.exceptions import (
     GraphBackendUnavailableError,
     ValidationError,
 )
-from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
+from services.worker.prompt_renderer import (
+    DataSource,
+    build_enrichment_prompt,
+    render_prompt,
+)
 from workers.tasks.base import (
     ENRICHMENT_CLASSIFICATION,
     ENRICHMENT_ENTITIES,
@@ -357,6 +361,33 @@ async def enrich_episode(
                 raise
 
             # ── 3. Render prompt with auto-injected context ──────────────
+            # Cost-aware: disabled toggles skip their DB providers (no
+            # context tokens, no provider reads) and hide their OUTPUT
+            # SCHEMA sections via include_* flags (no output tokens).
+            # Always kept: EPISODE_CONTENT, SESSION_RECENT_HISTORY,
+            # EPISODE_METADATA. SIMILAR_EPISODES only pays off when
+            # entities or facts need it. Invalidation-off skips no
+            # source (facts still need SESSION_FACTS) — only the
+            # INVALIDATIONS block is hidden.
+            # note: no RELATED_FACTS DataSource exists — the related_facts
+            # context key is produced by the SIMILAR_FACTS provider.
+            skip_sources: set[DataSource] = set()
+            if not enabled.get("entities", True):
+                skip_sources |= {
+                    DataSource.SESSION_ENTITIES,
+                    DataSource.ORG_ENTITY_TYPES,
+                }
+            if not enabled.get("facts", True):
+                skip_sources |= {
+                    DataSource.SESSION_FACTS,
+                    DataSource.SIMILAR_FACTS,
+                }
+            if not enabled.get("structured", True):
+                skip_sources.add(DataSource.ORG_STRUCTURED_SCHEMAS)
+            if not enabled.get("classification", True):
+                skip_sources.add(DataSource.ORG_CLASSIFICATION_LABELS)
+            if not (enabled.get("entities", True) or enabled.get("facts", True)):
+                skip_sources.add(DataSource.SIMILAR_EPISODES)
             try:
                 system_prompt, prompt_ctx = await render_prompt(
                     "enrich_episode",
@@ -367,9 +398,18 @@ async def enrich_episode(
                     graph_backend=graph_backend,
                     db_session_factory=session_factory,
                     return_context=True,
+                    skip_sources=skip_sources,
                     metadata=metadata,
                 )
-                prompt = build_enrichment_prompt(system_prompt, prompt_ctx)
+                prompt = build_enrichment_prompt(
+                    system_prompt,
+                    prompt_ctx,
+                    include_classification=enabled.get("classification", True),
+                    include_entities=enabled.get("entities", True),
+                    include_facts=enabled.get("facts", True),
+                    include_structured=enabled.get("structured", True),
+                    include_invalidations=enabled.get("llm_invalidation", True),
+                )
             except Exception:
                 log.exception("enrich_episode.prompt_render_failed")
                 raise
@@ -427,7 +467,11 @@ async def enrich_episode(
                 raise
 
             # ── 5. Single LLM call ──────────────────────────────────────
-            log.info("enrich_episode.llm_call_start")
+            disabled_keys = frozenset(k for k, v in enabled.items() if not v)
+            log.info(
+                "enrich_episode.llm_call_start",
+                enabled_sections=sorted(k for k, v in enabled.items() if v),
+            )
             try:
                 sink = make_sink(
                     db,
@@ -451,6 +495,7 @@ async def enrich_episode(
                     max_tokens=8192,
                     cache_config=build_cache_config(org_config=llm_config_dict),
                     metered=True,
+                    validation_context={"disabled": disabled_keys},
                 )
             except Exception:
                 log.exception("enrich_episode.llm_call_failed")
