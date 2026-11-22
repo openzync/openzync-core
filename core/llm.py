@@ -227,7 +227,9 @@ def build_cache_config(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _last_validation_error(content: str, model: type[BaseModel]) -> str:
+def _last_validation_error(
+    content: str, model: type[BaseModel], context: dict | None = None
+) -> str:
     """Return a short diagnostic message for a validation failure.
 
     Tries to parse *content* and validate it against *model*, then returns
@@ -242,7 +244,7 @@ def _last_validation_error(content: str, model: type[BaseModel]) -> str:
 
     # Try model validation
     try:
-        model.model_validate(parsed)
+        model.model_validate(parsed, context=context)
     except Exception as exc:
         return str(exc)
 
@@ -289,6 +291,7 @@ class LLMBackend(ABC):
         cache_config: PromptCachingConfig | None = None,
         sink: UsageSink | None = None,
         metered: bool = False,
+        validation_context: dict | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Send a chat completion, optionally validating against a Pydantic model.
@@ -328,6 +331,11 @@ class LLMBackend(ABC):
             metered: Only when ``True`` is a usage record emitted (final
                 attempt only — validation/provider retries never emit).
                 Connection pings pass ``False`` to stay out of metering.
+            validation_context: Optional context dict forwarded to
+                ``response_model`` validation (``model_validate_json`` and
+                the ``model_validate`` fallback).  Used for cross-cutting
+                checks such as the disabled-section guard on
+                ``CombinedLLMOutput`` — ``None`` (default) disables them.
             **kwargs: Additional provider-specific parameters (temperature,
                 max_tokens, top_p, etc.).
 
@@ -366,7 +374,7 @@ class LLMBackend(ABC):
             # ── Try clean model_validate_json first ───────────────────────────
             try:
                 response.validated_data = response_model.model_validate_json(
-                    response.content
+                    response.content, context=validation_context
                 )
                 await self._maybe_emit_usage(sink, metered, response, start)
                 return response
@@ -377,7 +385,9 @@ class LLMBackend(ABC):
             extracted: Any = self._extract_json(response.content)
             if extracted is not None:
                 try:
-                    response.validated_data = response_model.model_validate(extracted)
+                    response.validated_data = response_model.model_validate(
+                        extracted, context=validation_context
+                    )
                     # Normalise content to clean JSON so callers can use
                     # ``model_validate_json()`` without pre-processing.
                     response.content = orjson.dumps(extracted).decode()
@@ -394,7 +404,7 @@ class LLMBackend(ABC):
                     model_name=self.model_name,
                     content_preview=response.content[:300],
                     validation_error=_last_validation_error(
-                        response.content, response_model
+                        response.content, response_model, validation_context
                     ),
                 )
 

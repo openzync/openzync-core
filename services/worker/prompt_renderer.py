@@ -837,6 +837,7 @@ async def render_prompt(
     graph_backend: GraphBackend | None = None,
     db_session_factory: SessionFactory | None = None,
     return_context: bool = False,
+    skip_sources: set[DataSource] | None = None,
     **extra_context: Any,
 ) -> str | tuple[str, dict[str, Any]]:
     """Fetch and return a system prompt with auto-injected context.
@@ -851,8 +852,8 @@ async def render_prompt(
     ``template_text`` are used.  This is the direct-invocation mode
     suitable for eval tests and one-off prompts.
 
-    The returned ``template_text`` is plain text (no Jinja2).  Call
-    ``build_enrichment_prompt()`` to assemble the full prompt.
+    The returned ``template_text`` is raw Jinja2 (unrendered).  Call
+    ``build_enrichment_prompt()`` to render it with the context.
 
     Args:
         prompt_type: The template type (e.g. ``"enrich_episode"``).
@@ -878,12 +879,18 @@ async def render_prompt(
             instead of just the prompt string.  Useful for callers that
             need the injected context for post-processing (e.g. entity
             resolution after fact extraction).
+        skip_sources: Optional set of ``DataSource`` members to skip during
+            auto-injection.  Skipped providers run no DB queries and leave
+            their context keys absent (the template's ``{% if %}`` guards
+            hide those blocks).  ``None`` (default) keeps current
+            behavior — every registered source runs.
         **extra_context: Explicit template variables.  These override
             any auto-injected values with the same key.
 
     Returns:
-        The system prompt text (plain text, no Jinja2).  When
-        ``return_context=True``, returns ``(prompt, context_dict)``.
+        The raw template text (Jinja2, unrendered).  When
+        ``return_context=True``, returns ``(template_text, context_dict)``
+        — pass both to ``build_enrichment_prompt()`` to render.
 
     Raises:
         ValueError: If no cached default exists for ``prompt_type``.
@@ -935,6 +942,8 @@ async def render_prompt(
                 # session to the org before the first query.
                 await rls.set_tenant_context(db, resolved_org_id)
                 for source in sources:
+                    if skip_sources is not None and source in skip_sources:
+                        continue
                     provider = _PROVIDER_DISPATCH.get(source)
                     if provider is None:
                         continue
@@ -962,8 +971,9 @@ async def render_prompt(
             context["episode_count"] = len(context["episodes"])
 
     # ── Render ─────────────────────────────────────────────────────────
-    # The template text is plain text (no Jinja2 variables). Context is
-    # injected by the caller via build_enrichment_prompt().
+    # The template text stays raw Jinja2 here — rendering happens in
+    # build_enrichment_prompt(), which also applies the include_* flags.
+    # Context is returned as-is for the caller to pass through.
     if return_context:
         return template_text, context
     return template_text
@@ -999,81 +1009,74 @@ def resolve_prompt_template_by_type(type: str) -> str:
 # ── 7. Prompt assembly helper ─────────────────────────────────────────────────
 
 
-def build_enrichment_prompt(system_prompt: str, ctx: dict[str, Any]) -> str:
-    """Build a full enrichment prompt by appending context sections.
+def build_enrichment_prompt(
+    system_prompt: str,
+    ctx: dict[str, Any],
+    *,
+    include_classification: bool | None = None,
+    include_entities: bool | None = None,
+    include_facts: bool | None = None,
+    include_structured: bool | None = None,
+    include_invalidations: bool | None = None,
+) -> str:
+    """Render the enrichment prompt from the Jinja template and context.
 
-    Takes the raw system instructions from the disk-cached default template
-    and automatically injects all available context (metadata, entities,
-    facts, history, semantic search results) as structured sections after
-    the instructions.
+    Renders ``system_prompt`` (the raw ``enrich_episode_v1.jinja2`` text)
+    with Jinja2 using ``ctx`` plus per-section ``include_*`` flags, then
+    appends MESSAGE METADATA as pretty-printed JSON.  Context sections
+    (entities, facts, history, similar matches, schemas, conversation)
+    render inside the template — the old manual appends are gone so the
+    EXISTING FACTS table keeps the template's ``E{i}`` refs that
+    invalidation resolution depends on.
 
     Args:
-        system_prompt: Raw system instructions from the disk-cached template.
+        system_prompt: Raw template text from ``render_prompt``.
         ctx: Context dict from ``render_prompt(return_context=True)``.
+            May also carry ``include_*`` keys; explicit kwargs win.
+        include_classification: Show the classification OUTPUT SCHEMA
+            block.  Defaults to ``ctx["include_classification"]``, else
+            ``True``.
+        include_entities: Show the entities/relationships OUTPUT SCHEMA
+            blocks.  Defaults to ``ctx["include_entities"]``, else ``True``.
+        include_facts: Show the facts OUTPUT SCHEMA block.  Defaults to
+            ``ctx["include_facts"]``, else ``True``.
+        include_structured: Show the structured_extractions OUTPUT SCHEMA
+            block.  Defaults to ``ctx["include_structured"]``, else ``True``.
+        include_invalidations: Show the INVALIDATIONS block.  Defaults to
+            ``ctx["include_invalidations"]``, else ``True``.
 
     Returns:
-        A fully assembled prompt string ready for the LLM.
+        A fully rendered prompt string ready for the LLM.
     """
-    parts: list[str] = [system_prompt.strip()]
+    from jinja2 import Environment  # noqa: PLC0415 — render-only dependency
+
+    flags = {
+        "include_classification": include_classification
+        if include_classification is not None
+        else ctx.get("include_classification", True),
+        "include_entities": include_entities
+        if include_entities is not None
+        else ctx.get("include_entities", True),
+        "include_facts": include_facts
+        if include_facts is not None
+        else ctx.get("include_facts", True),
+        "include_structured": include_structured
+        if include_structured is not None
+        else ctx.get("include_structured", True),
+        "include_invalidations": include_invalidations
+        if include_invalidations is not None
+        else ctx.get("include_invalidations", True),
+    }
+    # S701: plain-text LLM prompt, not HTML — escaping would corrupt it.
+    template = Environment(autoescape=False).from_string(  # noqa: S701
+        system_prompt
+    )
+    parts: list[str] = [template.render({**ctx, **flags}).strip()]
 
     # ── Metadata ─────────────────────────────────────────────────────────
     metadata = ctx.get("message_metadata")
     if metadata:
         metadata_json = orjson.dumps(metadata, option=orjson.OPT_INDENT_2).decode()
         parts.append(f"\n\n## MESSAGE METADATA\n\n{metadata_json}")
-
-    # ── Known entities ──────────────────────────────────────────────────
-    known_entities: list = ctx.get("known_entities", [])
-    if known_entities:
-        parts.append("\n\n## KNOWN ENTITIES\n\n")
-        parts.append("| Name | Type |\n|------|------|\n")
-        for ent in known_entities:
-            parts.append(f"| {ent.get('name', '')} | {ent.get('entity_type', '')} |\n")
-
-    # ── Existing facts ──────────────────────────────────────────────────
-    existing_facts: list = ctx.get("existing_facts", [])
-    if existing_facts:
-        parts.append("\n\n## EXISTING FACTS\n\n")
-        parts.append("| Ref | Subject | Predicate | Object |\n")
-        parts.append("|-----|---------|-----------|--------|\n")
-        for i, f in enumerate(existing_facts, start=1):
-            parts.append(
-                f"| E{i} | {f.get('subject', '')} | {f.get('predicate', '')} "
-                f"| {f.get('object', '')} |\n"
-            )
-
-    # ── Recent history ──────────────────────────────────────────────────
-    recent_history: list = ctx.get("recent_history", [])
-    if recent_history:
-        parts.append("\n\n## RECENT CONVERSATION\n\n")
-        for turn in recent_history:
-            parts.append(f"[{turn.get('role', '?')}]\n{turn.get('content', '')}\n")
-
-    # ── Similar episodes (semantic search) ──────────────────────────────
-    similar_episodes: list = ctx.get("similar_episodes", [])
-    if similar_episodes:
-        parts.append("\n\n## SIMILAR EPISODES FROM HISTORY\n\n")
-        for ep in similar_episodes:
-            role = ep.get("role", "?")
-            content_preview = ep.get("content", "")[:300]
-            score = ep.get("score", 0)
-            parts.append(f"[{role}] (score: {score:.3f})\n{content_preview}\n\n")
-
-    # ── Related facts (semantic search) ─────────────────────────────────
-    related_facts: list = ctx.get("related_facts", [])
-    if related_facts:
-        parts.append("\n\n## RELATED FACTS FROM HISTORY\n\n")
-        parts.append("| Subject | Predicate | Object | Score |\n")
-        parts.append("|---------|-----------|--------|-------|\n")
-        for f in related_facts:
-            parts.append(
-                f"| {f.get('subject', '')} | {f.get('predicate', '')} "
-                f"| {f.get('object', '')} | {f.get('score', 0):.3f} |\n"
-            )
-
-    # ── Conversation to extract from ───────────────────────────────────
-    conversation = ctx.get("conversation", "")
-    if conversation:
-        parts.append(f"\n\n## NOW EXTRACT FROM THIS CONVERSATION\n\n{conversation}")
 
     return "".join(parts)

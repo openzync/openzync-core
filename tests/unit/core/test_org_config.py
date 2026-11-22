@@ -527,3 +527,63 @@ class TestOrgConfigConstants:
 
     def test_cache_key_prefix(self) -> None:
         assert CACHE_KEY_PREFIX == "org_config"
+
+
+@pytest.mark.unit
+class TestEnrichmentNullReset:
+    """Null-reset semantics for the nested ``enrichment`` override.
+
+    Top-level ``{"enrichment": null}`` removes the whole key; nested
+    ``{"enrichment": {"<toggle>": null}}`` resets just that toggle
+    (restoring its default ``True``) without touching siblings; unknown
+    nested keys are a 422.
+    """
+
+    @pytest.mark.asyncio
+    async def test_top_level_null_removes_enrichment_key(
+        self,
+        mock_redis: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """G(27): ``{"enrichment": null}`` drops the stored override."""
+        _STORE[USER_ID] = {"enrichment": {"facts": False}}
+        _patch_repo(monkeypatch)
+
+        config = await update_org_config(
+            USER_ID,
+            UpdateOrgConfigRequest(enrichment=None),
+            redis=mock_redis,
+            db=mock_db,
+        )
+
+        assert config.enrichment is None
+        assert "enrichment" not in _STORE[USER_ID]
+
+    @pytest.mark.asyncio
+    async def test_nested_null_resets_only_that_toggle(
+        self,
+        mock_redis: AsyncMock,
+        mock_db: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """G(28): ``{"enrichment": {"facts": null}}`` resets facts only."""
+        _STORE[USER_ID] = {"enrichment": {"facts": False, "entities": False}}
+        _patch_repo(monkeypatch)
+
+        config = await update_org_config(
+            USER_ID,
+            UpdateOrgConfigRequest(enrichment={"facts": None}),
+            redis=mock_redis,
+            db=mock_db,
+        )
+
+        assert config.enrichment == {"entities": False}
+        assert _STORE[USER_ID]["enrichment"] == {"entities": False}
+
+    def test_unknown_nested_key_422(self) -> None:
+        """G(29): ``{"enrichment": {"bogus": ...}}`` fails validation."""
+        from pydantic import ValidationError as PydanticValidationError
+
+        with pytest.raises(PydanticValidationError, match="Unknown enrichment keys"):
+            UpdateOrgConfigRequest(enrichment={"bogus": True})  # type: ignore[dict-item]
