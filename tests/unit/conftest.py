@@ -25,6 +25,53 @@ from core.config import Settings, set_settings
 
 
 @pytest.fixture(autouse=True)
+def _mock_enrichment_config(request: pytest.FixtureRequest) -> object:
+    """Stub enrichment resolvers for ingest-path unit tests only.
+
+    ``IngestMixin._resolve_enrichments`` does fresh lazy
+    ``from core.{system_config,org_config} import get_*_config`` per call,
+    so patching the source-module attributes covers every ingest test
+    without touching ``mock_db`` (which must stay a plain repo-level seam).
+    Defaults are all-ON (``SystemConfigResponse()`` /
+    ``OrgConfigBase()``) — the production default for a fresh platform.
+
+    Scoped to the four ingest-path modules: a global patch would shadow
+    the real resolvers for suites that test them directly
+    (``core/test_org_config.py`` and ``core/test_system_config.py`` call
+    the real ``update_*`` → ``get_*`` round-trip; prompt/worker suites
+    assert on real resolver-driven behaviour).
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from schemas.organization_config import OrgConfigBase
+    from schemas.system_config import SystemConfigResponse
+
+    module = getattr(request.node, "module", None)
+    name = getattr(module, "__name__", "") or ""
+    short = name.rsplit(".", 1)[-1]
+    if short not in {
+        "test_memory_service",
+        "test_ingest_dedup_replay",
+        "test_ingest_purge_failure",
+        "test_pii_fail_closed",
+    }:
+        yield
+        return
+
+    with (
+        patch(
+            "core.system_config.get_system_config",
+            new=AsyncMock(return_value=SystemConfigResponse()),
+        ),
+        patch(
+            "core.org_config.get_org_config",
+            new=AsyncMock(return_value=OrgConfigBase()),
+        ),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _init_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """Initialise the ``Settings`` singleton with dummy values.
 

@@ -191,7 +191,7 @@ _DISABLED_SECTION_FIELDS: dict[str, tuple[str, ...]] = {
     "classification": ("classification",),
     "entities": ("entities", "relationships"),
     "facts": ("facts",),
-    "invalidations": ("invalidations",),
+    "llm_invalidation": ("invalidations",),
     "structured": ("structured_extractions",),
 }
 """Disabled-toggle key → ``CombinedLLMOutput`` fields that must stay empty."""

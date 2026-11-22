@@ -575,7 +575,14 @@ class TestEnrichEpisodeBlobText:
 
     @pytest.mark.asyncio
     async def test_blob_text_appended_to_prompt(self) -> None:
-        """Episode with blobs has text appended to the prompt."""
+        """Episode with blobs: ``build_enrichment_prompt`` gets the
+        ``include_*`` call shape and the LLM receives blob text appended.
+
+        Contract: all five LLM ``include_*`` flags are forwarded explicitly
+        (all-``True`` here); blob ``extracted_text`` is appended to the
+        rendered prompt *after* the build call, so the builder is never
+        called with appended text.
+        """
         from workers.tasks.enrich_episode import enrich_episode
 
         mock_db = _mock_successful_db()
@@ -632,8 +639,22 @@ class TestEnrichEpisodeBlobText:
 
             assert result is None
             # build_enrichment_prompt should NOT have been called with appended text
-            # (that happens in the function body after build)
-            mock_build.assert_called_once_with("p", ANY)
+            # (that happens in the function body after build) — instead the
+            # include_* call shape carries every LLM flag explicitly.
+            mock_build.assert_called_once_with(
+                "p",
+                ANY,
+                include_classification=True,
+                include_entities=True,
+                include_facts=True,
+                include_structured=True,
+                include_invalidations=True,
+            )
+            # The LLM receives the built prompt with the blob text appended.
+            sent_messages = mock_llm.chat.await_args.args[0]
+            sent_prompt = sent_messages[1]["content"]
+            assert sent_prompt.startswith("base prompt")
+            assert "PDF content here" in sent_prompt
 
     @pytest.mark.asyncio
     async def test_blob_fetch_failure_does_not_block(self) -> None:
@@ -1065,3 +1086,628 @@ def _make_combined_output() -> MagicMock:
     output.structured_extractions = []
 
     return output
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Toggle-gated enrichment (C12 / D13–D17 / F24 / F26)
+#
+# One parametrized class pins the whole toggle contract end to end:
+# - C(12): a partially-enriched episode is NOT done (both bitmask checks).
+# - D(13)+F(24): each disabled toggle (x9) mark-skips its bit, skips its
+#   persistence, hides its OUTPUT SCHEMA block, and skips its DB providers.
+# - D(14): all-disabled commits and returns without an LLM call.
+# - D(15): enabled siblings run with facts off.
+# - D(16): unknown ARQ key → non-retryable ValidationError.
+# - D(17): llm_invalidation is ANDed with the org opt-out.
+# - F(26): llm_call_start logs the enabled set.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _render_ctx() -> dict:
+    """Context for the REAL template: every conditional block can render."""
+    from uuid import uuid4 as _uuid4
+
+    return {
+        "entity_types": ["Person"],
+        "known_entities": [{"name": "Known", "entity_type": "Person"}],
+        "existing_facts": [
+            {
+                "id": str(_uuid4()),
+                "subject": "S",
+                "predicate": "P",
+                "object": "O",
+            }
+        ],
+        "schemas": [],
+        "conversation": "Hello world",
+        "recent_history": [],
+        "similar_episodes": [],
+        "related_facts": [],
+    }
+
+
+def _stamped_bits(mock_db: AsyncMock) -> set[int]:
+    """Bitmask values passed to ``apply_enrichment_bits`` (UPDATE params)."""
+    stamped: set[int] = set()
+    for call in mock_db.execute.call_args_list:
+        args = call.args
+        if len(args) >= 2 and isinstance(args[1], dict) and "bitmask" in args[1]:
+            stamped.add(args[1]["bitmask"])
+    return stamped
+
+
+@pytest.mark.unit
+class TestPartialMaskIsNotDone:
+    """C(12): entities-bit-only (and other partial masks) is NOT done.
+
+    Regression: both ``(status & bits) == bits`` checks must stay
+    parenthesized — an unparenthesized ``status & bits == bits`` parses as
+    ``status & (bits == bits)`` and an entities-only episode would wrongly
+    early-return, permanently skipping enrichment.
+    """
+
+    @pytest.mark.parametrize(
+        "status",
+        [
+            1 << 0,  # entities-bit-only
+            1 << 2,  # facts-only
+            1 << 4,  # classification-only
+            1 << 5,  # structured-only
+            1 << 8,  # invalidation-only
+            (1 << 0) | (1 << 2),  # entities + facts
+            (1 << 0) | (1 << 2) | (1 << 4) | (1 << 5),  # pre-invalidation mask
+        ],
+        ids=[
+            "entities-only",
+            "facts-only",
+            "classification-only",
+            "structured-only",
+            "invalidation-only",
+            "entities+facts",
+            "old-four-bit-mask",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_partial_mask_runs_full_flow(self, status: int) -> None:
+        """A partial mask runs the LLM pass — never the early-return path."""
+        from workers.tasks.enrich_episode import enrich_episode
+
+        mock_db = _mock_successful_db(enrichment_status=status)
+
+        with (
+            patch("workers.tasks.enrich_episode.render_prompt") as mock_render,
+            patch("core.llm.resolve_backend") as mock_resolve_backend,
+            patch("core.org_config.get_org_config") as mock_org_config,
+            patch("workers.backend.resolve_graph_backend"),
+            patch("workers.tasks.classify_dialog.process_classification_output"),
+            patch("workers.tasks.extract_entities.process_entities_output") as mock_ent,
+            patch("workers.tasks.extract_facts.process_facts_output"),
+            patch("workers.tasks.extract_structured.process_structured_output"),
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository"),
+        ):
+            from services.worker.prompt_renderer import (
+                resolve_prompt_template_by_type,
+            )
+
+            mock_render.return_value = (
+                resolve_prompt_template_by_type("enrich_episode"),
+                _render_ctx(),
+            )
+            mock_ent.return_value = {}
+
+            mock_org_cfg = MagicMock()
+            mock_org_cfg.to_llm_config_dict.return_value = {}
+            mock_org_config.return_value = mock_org_cfg
+
+            mock_llm = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.validated_data = _make_combined_output()
+            mock_llm.chat.return_value = mock_response
+            mock_resolve_backend.return_value = mock_llm
+
+            ctx = _make_ctx(db=mock_db)
+
+            result = await enrich_episode(
+                ctx=ctx,
+                episode_id=_EPISODE_ID,
+                content=_CONTENT,
+                user_id=_ORG_ID,
+                project_id=_PROJECT_ID,
+                session_id=_SESSION_ID,
+            )
+
+            assert result is None
+            mock_resolve_backend.assert_awaited_once()
+            mock_llm.chat.assert_awaited_once()
+            mock_db.commit.assert_awaited_once()
+
+
+@pytest.mark.unit
+class TestDisabledToggleContract:
+    """D(13) + F(24): per-toggle-off contract, parametrized x9.
+
+    For the 5 LLM keys this worker owns (entities, facts, classification,
+    structured, llm_invalidation): the bit is mark-skipped, the section
+    never persists, the OUTPUT SCHEMA block is absent from the rendered
+    prompt, and the key's DB providers are skipped (``skip_sources``).
+
+    The other 4 keys (embedding, entity_links, observations, blob_text)
+    belong to sibling workers — this worker ignores them, so the full LLM
+    pass still runs with no skips.  That no-op is the observed contract.
+    """
+
+    _LLM_KEYS = {
+        "entities",
+        "facts",
+        "classification",
+        "structured",
+        "llm_invalidation",
+    }
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "entities",
+            "embedding",
+            "facts",
+            "entity_links",
+            "classification",
+            "structured",
+            "observations",
+            "blob_text",
+            "llm_invalidation",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_disabled_toggle_contract(self, key: str) -> None:
+        """Each toggle off → stamp + skip persistence + hide block + skip IO."""
+        from workers.tasks.enrich_episode import enrich_episode
+
+        from core.enrichment_bits import ENRICHMENT_KEYS, ENRICHMENT_KEY_BITS
+        from services.worker.prompt_renderer import (
+            DataSource,
+            resolve_prompt_template_by_type,
+        )
+
+        assert set(ENRICHMENT_KEYS) == {
+            "entities",
+            "embedding",
+            "facts",
+            "entity_links",
+            "classification",
+            "structured",
+            "observations",
+            "blob_text",
+            "llm_invalidation",
+        }
+
+        enabled = {k: True for k in ENRICHMENT_KEYS}
+        enabled[key] = False
+
+        expected_skips: dict[str, set] = {
+            "entities": {
+                DataSource.SESSION_ENTITIES,
+                DataSource.ORG_ENTITY_TYPES,
+            },
+            "facts": {DataSource.SESSION_FACTS, DataSource.SIMILAR_FACTS},
+            "structured": {DataSource.ORG_STRUCTURED_SCHEMAS},
+            "classification": {DataSource.ORG_CLASSIFICATION_LABELS},
+        }
+        expected_skip = expected_skips.get(key, set())
+
+        block_markers: dict[str, list[str]] = {
+            "entities": ["### 2. entities", "### 3. relationships"],
+            "facts": ["### 4. facts"],
+            "classification": ["### 1. classification"],
+            "structured": ["### 5. structured_extractions"],
+            "llm_invalidation": ["## INVALIDATIONS"],
+        }
+
+        mock_db = _mock_successful_db()
+
+        with (
+            patch("workers.tasks.enrich_episode.render_prompt") as mock_render,
+            # NOTE: build_enrichment_prompt is intentionally NOT mocked —
+            # the block-absent assertions need the real Jinja render.
+            patch("core.llm.resolve_backend") as mock_resolve_backend,
+            patch("core.org_config.get_org_config") as mock_org_config,
+            patch("workers.backend.resolve_graph_backend"),
+            patch(
+                "workers.tasks.classify_dialog.process_classification_output"
+            ) as mock_cls,
+            patch(
+                "workers.tasks.extract_entities.process_entities_output"
+            ) as mock_ent,
+            patch("workers.tasks.extract_facts.process_facts_output") as mock_fct,
+            patch(
+                "workers.tasks.extract_structured.process_structured_output"
+            ) as mock_str,
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository"),
+            patch(
+                "services.fact_invalidation_service.FactInvalidationService"
+            ) as mock_inval_svc,
+        ):
+            mock_render.return_value = (
+                resolve_prompt_template_by_type("enrich_episode"),
+                _render_ctx(),
+            )
+            mock_ent.return_value = {}
+
+            mock_org_cfg = MagicMock()
+            mock_org_cfg.to_llm_config_dict.return_value = {}
+            mock_org_config.return_value = mock_org_cfg
+
+            mock_llm = AsyncMock()
+            mock_response = MagicMock()
+            parsed = _make_combined_output()
+            if key == "llm_invalidation":
+                # Non-empty invalidations prove the service is skipped
+                # because the toggle is off — never because there was
+                # nothing to invalidate.
+                parsed.invalidations = [
+                    {
+                        "existing_fact_ref": "E1",
+                        "action": "invalidate",
+                        "reason": "Retracted.",
+                        "successor_fact_ref": None,
+                    }
+                ]
+            mock_response.validated_data = parsed
+            mock_llm.chat.return_value = mock_response
+            mock_resolve_backend.return_value = mock_llm
+
+            ctx = _make_ctx(db=mock_db)
+
+            result = await enrich_episode(
+                ctx=ctx,
+                episode_id=_EPISODE_ID,
+                content=_CONTENT,
+                user_id=_ORG_ID,
+                project_id=_PROJECT_ID,
+                session_id=_SESSION_ID,
+                enrichments=enabled,
+            )
+
+            assert result is None
+
+            # ── Providers skipped exactly per the worker's skip map ──
+            assert (
+                mock_render.await_args.kwargs["skip_sources"] == expected_skip
+            )
+
+            # ── Prompt blocks: toggled section absent, siblings present ──
+            sent_prompt = mock_llm.chat.await_args.args[0][1]["content"]
+            for section, markers in block_markers.items():
+                for marker in markers:
+                    if section == key:
+                        assert marker not in sent_prompt
+                    else:
+                        assert marker in sent_prompt
+
+            stamped = _stamped_bits(mock_db)
+            if key in self._LLM_KEYS:
+                # ── Bit mark-skipped ──
+                assert ENRICHMENT_KEY_BITS[key] in stamped
+                # ── Section never persists ──
+                if key == "entities":
+                    mock_ent.assert_not_called()
+                elif key == "facts":
+                    mock_fct.assert_not_called()
+                elif key == "classification":
+                    mock_cls.assert_not_called()
+                elif key == "structured":
+                    mock_str.assert_not_called()
+                elif key == "llm_invalidation":
+                    mock_inval_svc.assert_not_called()
+                    # Facts still run — only invalidation is gated.
+                    mock_fct.assert_called_once()
+            else:
+                # ── Sibling-worker keys are no-ops here: full pass runs ──
+                assert ENRICHMENT_KEY_BITS[key] not in stamped
+                mock_cls.assert_called_once()
+                mock_ent.assert_called_once()
+                mock_fct.assert_called_once()
+                mock_str.assert_called_once()
+
+
+@pytest.mark.unit
+class TestAllDisabledCommitsWithoutLLM:
+    """D(14): every toggle off → stamp, commit, return; ``llm.chat`` sleeps."""
+
+    @pytest.mark.asyncio
+    async def test_all_disabled_no_llm_call(self) -> None:
+        """All-disabled commits the mark-skipped bits and never calls the LLM."""
+        from workers.tasks.enrich_episode import enrich_episode
+
+        from core.enrichment_bits import ENRICHMENT_KEYS
+
+        mock_db = _mock_successful_db()
+
+        with (
+            patch("workers.tasks.enrich_episode.render_prompt") as mock_render,
+            patch("workers.tasks.enrich_episode.build_enrichment_prompt") as mock_build,
+            patch("core.llm.resolve_backend") as mock_resolve_backend,
+            patch("core.org_config.get_org_config") as mock_org_config,
+            patch("workers.backend.resolve_graph_backend"),
+            patch("workers.tasks.classify_dialog.process_classification_output") as mock_cls,
+            patch("workers.tasks.extract_entities.process_entities_output") as mock_ent,
+            patch("workers.tasks.extract_facts.process_facts_output") as mock_fct,
+            patch("workers.tasks.extract_structured.process_structured_output") as mock_str,
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository"),
+        ):
+            ctx = _make_ctx(db=mock_db)
+
+            result = await enrich_episode(
+                ctx=ctx,
+                episode_id=_EPISODE_ID,
+                content=_CONTENT,
+                user_id=_ORG_ID,
+                project_id=_PROJECT_ID,
+                session_id=_SESSION_ID,
+                enrichments={k: False for k in ENRICHMENT_KEYS},
+            )
+
+            assert result is None
+            # Mark-skipped path commits and returns before any LLM work.
+            mock_db.commit.assert_awaited_once()
+            mock_resolve_backend.assert_not_called()
+            mock_render.assert_not_called()
+            mock_build.assert_not_called()
+            mock_cls.assert_not_called()
+            mock_ent.assert_not_called()
+            mock_fct.assert_not_called()
+            mock_str.assert_not_called()
+
+
+@pytest.mark.unit
+class TestEnabledSiblingsRunWithFactsOff:
+    """D(15): disabling facts skips only the facts section."""
+
+    @pytest.mark.asyncio
+    async def test_facts_off_siblings_run(self) -> None:
+        """Facts off → facts processor skipped, siblings + LLM still run."""
+        from workers.tasks.enrich_episode import enrich_episode
+
+        mock_db = _mock_successful_db()
+
+        with (
+            patch("workers.tasks.enrich_episode.render_prompt") as mock_render,
+            patch("workers.tasks.enrich_episode.build_enrichment_prompt") as mock_build,
+            patch("core.llm.resolve_backend") as mock_resolve_backend,
+            patch("core.org_config.get_org_config") as mock_org_config,
+            patch("workers.backend.resolve_graph_backend"),
+            patch("workers.tasks.classify_dialog.process_classification_output") as mock_cls,
+            patch("workers.tasks.extract_entities.process_entities_output") as mock_ent,
+            patch("workers.tasks.extract_facts.process_facts_output") as mock_fct,
+            patch("workers.tasks.extract_structured.process_structured_output") as mock_str,
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository"),
+        ):
+            mock_render.return_value = (
+                "p",
+                {
+                    "entity_types": [],
+                    "known_entities": [],
+                    "existing_facts": [],
+                    "schemas": [],
+                },
+            )
+            mock_build.return_value = "prompt"
+            mock_ent.return_value = {}
+
+            mock_org_cfg = MagicMock()
+            mock_org_cfg.to_llm_config_dict.return_value = {}
+            mock_org_config.return_value = mock_org_cfg
+
+            mock_llm = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.validated_data = _make_combined_output()
+            mock_llm.chat.return_value = mock_response
+            mock_resolve_backend.return_value = mock_llm
+
+            ctx = _make_ctx(db=mock_db)
+
+            result = await enrich_episode(
+                ctx=ctx,
+                episode_id=_EPISODE_ID,
+                content=_CONTENT,
+                user_id=_ORG_ID,
+                project_id=_PROJECT_ID,
+                session_id=_SESSION_ID,
+                enrichments={"facts": False, "llm_invalidation": False},
+            )
+
+            assert result is None
+            mock_llm.chat.assert_awaited_once()
+            mock_fct.assert_not_called()
+            mock_cls.assert_called_once()
+            mock_ent.assert_called_once()
+            mock_str.assert_called_once()
+            mock_db.commit.assert_awaited_once()
+
+
+@pytest.mark.unit
+class TestUnknownArqKeyNonRetryable:
+    """D(16): an unknown ARQ enrichment key fails fast — never retried."""
+
+    @pytest.mark.asyncio
+    async def test_unknown_key_raises_non_retryable_validation_error(self) -> None:
+        """Unknown key → ``ValidationError`` and ``_is_retryable`` is False."""
+        from core.exceptions import ValidationError
+        from workers.tasks.enrich_episode import _is_retryable, enrich_episode
+
+        mock_db = _mock_successful_db()
+        ctx = _make_ctx(db=mock_db)
+
+        with pytest.raises(ValidationError, match="Unknown enrichment keys"):
+            await enrich_episode(
+                ctx=ctx,
+                episode_id=_EPISODE_ID,
+                content=_CONTENT,
+                user_id=_ORG_ID,
+                project_id=_PROJECT_ID,
+                session_id=_SESSION_ID,
+                enrichments={"bogus_key": True},  # type: ignore[dict-item]
+            )
+
+        assert _is_retryable(ValidationError("Unknown enrichment keys")) is False
+
+
+@pytest.mark.unit
+class TestInvalidationAndedWithOrgOptOut:
+    """D(17): the org ``llm_fact_invalidation_enabled=false`` opt-out ANDs
+    with the per-episode ``llm_invalidation`` toggle — either off suppresses
+    the invalidation service while facts still persist."""
+
+    @pytest.mark.asyncio
+    async def test_org_opt_out_suppresses_invalidation(self) -> None:
+        """Toggle on + org opt-out off → facts persist, invalidations skipped."""
+        from workers.tasks.enrich_episode import enrich_episode
+
+        mock_db = _mock_successful_db()
+
+        with (
+            patch("workers.tasks.enrich_episode.render_prompt") as mock_render,
+            patch("workers.tasks.enrich_episode.build_enrichment_prompt") as mock_build,
+            patch("core.llm.resolve_backend") as mock_resolve_backend,
+            patch("core.org_config.get_org_config") as mock_org_config,
+            patch("workers.backend.resolve_graph_backend"),
+            patch("workers.tasks.classify_dialog.process_classification_output"),
+            patch("workers.tasks.extract_entities.process_entities_output") as mock_ent,
+            patch("workers.tasks.extract_facts.process_facts_output") as mock_fct,
+            patch("workers.tasks.extract_structured.process_structured_output"),
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository"),
+            patch(
+                "services.fact_invalidation_service.FactInvalidationService"
+            ) as mock_inval_svc,
+        ):
+            mock_render.return_value = (
+                "p",
+                {
+                    "entity_types": [],
+                    "known_entities": [],
+                    "existing_facts": [
+                        {"id": str(uuid4()), "subject": "S", "predicate": "P", "object": "O"}
+                    ],
+                    "schemas": [],
+                },
+            )
+            mock_build.return_value = "prompt"
+            mock_ent.return_value = {}
+
+            # Org opts OUT of LLM-driven invalidation (default is opt-in).
+            mock_org_cfg = MagicMock()
+            mock_org_cfg.to_llm_config_dict.return_value = {}
+            mock_org_cfg.llm_fact_invalidation_enabled = False
+            mock_org_config.return_value = mock_org_cfg
+
+            mock_llm = AsyncMock()
+            mock_response = MagicMock()
+            parsed = _make_combined_output()
+            parsed.invalidations = [
+                {
+                    "existing_fact_ref": "E1",
+                    "action": "invalidate",
+                    "reason": "Superseded.",
+                    "successor_fact_ref": None,
+                }
+            ]
+            mock_response.validated_data = parsed
+            mock_llm.chat.return_value = mock_response
+            mock_resolve_backend.return_value = mock_llm
+
+            ctx = _make_ctx(db=mock_db)
+
+            result = await enrich_episode(
+                ctx=ctx,
+                episode_id=_EPISODE_ID,
+                content=_CONTENT,
+                user_id=_ORG_ID,
+                project_id=_PROJECT_ID,
+                session_id=_SESSION_ID,
+                enrichments={"llm_invalidation": True},
+            )
+
+            assert result is None
+            # Facts still persist …
+            mock_fct.assert_called_once()
+            # … but the invalidation service never runs.
+            mock_inval_svc.assert_not_called()
+            mock_db.commit.assert_awaited_once()
+
+
+@pytest.mark.unit
+class TestLlmCallStartLogsEnabledSet:
+    """F(26): ``enrich_episode.llm_call_start`` carries the enabled set."""
+
+    @pytest.mark.asyncio
+    async def test_llm_call_start_logs_enabled_sections(self) -> None:
+        """The start event lists exactly the enabled toggles, sorted."""
+        from workers.tasks.enrich_episode import enrich_episode
+
+        from structlog.testing import capture_logs
+
+        mock_db = _mock_successful_db()
+
+        with (
+            patch("workers.tasks.enrich_episode.render_prompt") as mock_render,
+            patch("workers.tasks.enrich_episode.build_enrichment_prompt") as mock_build,
+            patch("core.llm.resolve_backend") as mock_resolve_backend,
+            patch("core.org_config.get_org_config") as mock_org_config,
+            patch("workers.backend.resolve_graph_backend"),
+            patch("workers.tasks.classify_dialog.process_classification_output"),
+            patch("workers.tasks.extract_entities.process_entities_output") as mock_ent,
+            patch("workers.tasks.extract_facts.process_facts_output"),
+            patch("workers.tasks.extract_structured.process_structured_output"),
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository"),
+        ):
+            mock_render.return_value = (
+                "p",
+                {
+                    "entity_types": [],
+                    "known_entities": [],
+                    "existing_facts": [],
+                    "schemas": [],
+                },
+            )
+            mock_build.return_value = "prompt"
+            mock_ent.return_value = {}
+
+            mock_org_cfg = MagicMock()
+            mock_org_cfg.to_llm_config_dict.return_value = {}
+            mock_org_config.return_value = mock_org_cfg
+
+            mock_llm = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.validated_data = _make_combined_output()
+            mock_llm.chat.return_value = mock_response
+            mock_resolve_backend.return_value = mock_llm
+
+            ctx = _make_ctx(db=mock_db)
+
+            with capture_logs() as logs:
+                result = await enrich_episode(
+                    ctx=ctx,
+                    episode_id=_EPISODE_ID,
+                    content=_CONTENT,
+                    user_id=_ORG_ID,
+                    project_id=_PROJECT_ID,
+                    session_id=_SESSION_ID,
+                    enrichments={"facts": False, "classification": False},
+                )
+
+            assert result is None
+            starts = [
+                log
+                for log in logs
+                if log.get("event") == "enrich_episode.llm_call_start"
+            ]
+            assert len(starts) == 1
+            assert starts[0]["enabled_sections"] == [
+                "blob_text",
+                "embedding",
+                "entities",
+                "entity_links",
+                "llm_invalidation",
+                "observations",
+                "structured",
+            ]

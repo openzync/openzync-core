@@ -1592,7 +1592,18 @@ class TestProviderFetchCustomInstructions:
 
 @pytest.mark.unit
 class TestBuildEnrichmentPrompt:
-    """Tests for build_enrichment_prompt — prompt assembly from system text + context."""
+    """Tests for build_enrichment_prompt — Jinja render of the real template.
+
+    Contract: context sections render inside ``enrich_episode_v1.jinja2``
+    (the EXISTING FACTS table keeps the template's ``E{i}`` refs that
+    invalidation resolution depends on); per-section ``include_*`` flags
+    hide only the OUTPUT SCHEMA blocks, never the context tables.
+    """
+
+    @staticmethod
+    def _template() -> str:
+        """The real ``enrich_episode`` template from the startup disk cache."""
+        return resolve_prompt_template_by_type("enrich_episode")
 
     def test_basic_system_prompt(self) -> None:
         """Just the system prompt, no context sections appended."""
@@ -1608,38 +1619,55 @@ class TestBuildEnrichmentPrompt:
         assert '"web"' in result
 
     def test_with_known_entities(self) -> None:
-        """Adds KNOWN ENTITIES table."""
+        """KNOWN ENTITIES context table renders; flag hides only the schema."""
         ctx = {
             "known_entities": [
                 {"name": "Acme Corp", "entity_type": "Organization"},
                 {"name": "John", "entity_type": "Person"},
             ],
         }
-        result = build_enrichment_prompt("System prompt", ctx)
+        result = build_enrichment_prompt(self._template(), ctx)
         assert "## KNOWN ENTITIES" in result
         assert "| Acme Corp | Organization |" in result
         assert "| John | Person |" in result
+        # include_entities=False hides the OUTPUT SCHEMA blocks …
+        hidden = build_enrichment_prompt(
+            self._template(), ctx, include_entities=False
+        )
+        assert "### 2. entities" not in hidden
+        assert "### 3. relationships" not in hidden
+        # … but the context table stays (the LLM still sees known entities).
+        assert "## KNOWN ENTITIES" in hidden
 
     def test_with_existing_facts(self) -> None:
-        """Adds EXISTING FACTS table."""
+        """EXISTING FACTS table keeps the template's ``E{i}`` refs."""
         ctx = {
             "existing_facts": [
                 {"subject": "S1", "predicate": "P1", "object": "O1"},
+                {"subject": "S2", "predicate": "P2", "object": "O2"},
             ],
         }
-        result = build_enrichment_prompt("System prompt", ctx)
+        result = build_enrichment_prompt(self._template(), ctx)
         assert "## EXISTING FACTS" in result
-        assert "| S1 | P1 | O1 |" in result
+        assert "| E1 | S1 | P1 | O1 |" in result
+        assert "| E2 | S2 | P2 | O2 |" in result
+        # include_facts=False hides the OUTPUT SCHEMA block …
+        hidden = build_enrichment_prompt(
+            self._template(), ctx, include_facts=False
+        )
+        assert "### 4. facts" not in hidden
+        # … but the E{i} context table stays (invalidation needs the refs).
+        assert "| E1 | S1 | P1 | O1 |" in hidden
 
     def test_with_recent_history(self) -> None:
-        """Adds RECENT CONVERSATION section."""
+        """RECENT CONVERSATION renders turns chronologically."""
         ctx = {
             "recent_history": [
                 {"role": "user", "content": "Hello"},
                 {"role": "assistant", "content": "Hi there"},
             ],
         }
-        result = build_enrichment_prompt("System prompt", ctx)
+        result = build_enrichment_prompt(self._template(), ctx)
         assert "## RECENT CONVERSATION" in result
         assert "[user]" in result
         assert "Hello" in result
@@ -1647,42 +1675,43 @@ class TestBuildEnrichmentPrompt:
         assert "Hi there" in result
 
     def test_with_similar_episodes(self) -> None:
-        """Adds SIMILAR EPISODES section."""
+        """SIMILAR EPISODES section renders matches with scores."""
         ctx = {
             "similar_episodes": [
                 {"role": "user", "content": "Similar query", "score": 0.85},
             ],
         }
-        result = build_enrichment_prompt("System prompt", ctx)
-        assert "## SIMILAR EPISODES FROM HISTORY" in result
+        result = build_enrichment_prompt(self._template(), ctx)
+        assert "## SIMILAR EPISODES" in result
         assert "Similar query" in result
-        assert "0.850" in result
 
     def test_with_related_facts(self) -> None:
-        """Adds RELATED FACTS table."""
+        """RELATED FACTS table renders."""
         ctx = {
             "related_facts": [
                 {"subject": "RS", "predicate": "RP", "object": "RO", "score": 0.95},
             ],
         }
-        result = build_enrichment_prompt("System prompt", ctx)
-        assert "## RELATED FACTS FROM HISTORY" in result
+        result = build_enrichment_prompt(self._template(), ctx)
+        assert "## RELATED FACTS" in result
         assert "| RS | RP | RO |" in result
-        assert "0.950" in result
 
     def test_with_conversation(self) -> None:
-        """Adds NOW EXTRACT FROM section."""
+        """NOW EXTRACT block carries the episode content."""
         ctx = {"conversation": "User said something important."}
-        result = build_enrichment_prompt("System prompt", ctx)
-        assert "## NOW EXTRACT FROM THIS CONVERSATION" in result
+        result = build_enrichment_prompt(self._template(), ctx)
+        assert "## NOW EXTRACT FROM THIS MESSAGE" in result
         assert "User said something important." in result
 
     def test_all_sections_together(self) -> None:
-        """Full prompt with all context sections in correct order."""
+        """All-on golden render: every OUTPUT SCHEMA block + E{i} refs."""
         ctx = {
             "message_metadata": {"key": "val"},
             "known_entities": [{"name": "E1", "entity_type": "Type"}],
-            "existing_facts": [{"subject": "S", "predicate": "P", "object": "O"}],
+            "existing_facts": [
+                {"subject": "S1", "predicate": "P1", "object": "O1"},
+                {"subject": "S2", "predicate": "P2", "object": "O2"},
+            ],
             "recent_history": [{"role": "user", "content": "Hi"}],
             "similar_episodes": [
                 {"role": "assistant", "content": "Prev answer", "score": 0.8}
@@ -1692,19 +1721,26 @@ class TestBuildEnrichmentPrompt:
             ],
             "conversation": "Extract from this.",
         }
-        result = build_enrichment_prompt("System prompt", ctx)
-        assert "MESSAGE METADATA" in result
-        assert "KNOWN ENTITIES" in result
-        assert "EXISTING FACTS" in result
-        assert "RECENT CONVERSATION" in result
-        assert "SIMILAR EPISODES FROM HISTORY" in result
-        assert "RELATED FACTS FROM HISTORY" in result
-        assert "NOW EXTRACT FROM THIS CONVERSATION" in result
-        # Metadata appears first, conversation last
-        assert result.index("MESSAGE METADATA") < result.index("KNOWN ENTITIES")
-        assert result.index("NOW EXTRACT FROM THIS CONVERSATION") > result.index(
-            "EXISTING FACTS"
-        )
+        result = build_enrichment_prompt(self._template(), ctx)
+        # Context sections …
+        assert "## KNOWN ENTITIES" in result
+        assert "## EXISTING FACTS" in result
+        assert "| E1 | S1 | P1 | O1 |" in result
+        assert "| E2 | S2 | P2 | O2 |" in result
+        assert "## RECENT CONVERSATION" in result
+        assert "## SIMILAR EPISODES" in result
+        assert "## RELATED FACTS" in result
+        assert "## NOW EXTRACT FROM THIS MESSAGE" in result
+        assert "Extract from this." in result
+        # … and every OUTPUT SCHEMA block exactly once.
+        for marker in (
+            "### 1. classification",
+            "### 2. entities",
+            "### 3. relationships",
+            "### 4. facts",
+            "### 5. structured_extractions",
+        ):
+            assert result.count(marker) == 1, marker
 
     def test_empty_context(self) -> None:
         """Empty context produces just the system prompt."""

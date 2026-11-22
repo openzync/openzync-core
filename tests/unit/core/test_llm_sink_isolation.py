@@ -148,3 +148,82 @@ class TestRetryMetering:
             3,
             1,
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# H(30). make_sink fail-open: persistence failure swallowed, commit proceeds;
+# asyncio.CancelledError always propagates.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestMakeSinkFailOpen:
+    """The metering sink never fails the call it meters."""
+
+    async def test_sink_failure_swallowed(self) -> None:
+        """H(30): a raising persistence target is logged, never raised."""
+        import uuid
+
+        from services.usage_service import make_sink
+
+        async def _doomed(target: object, record: object) -> None:
+            raise RuntimeError("metering store down")
+
+        import services.usage_service as usage_module
+        from unittest.mock import patch
+
+        sink = make_sink(
+            target=AsyncMock(),
+            user_id=uuid.uuid4(),
+            worker="enrich_episode",
+        )
+        record = UsageRecord(provider="stub", model="stub-model")
+
+        with patch.object(usage_module, "_persist", side_effect=_doomed):
+            # Must not raise — metering is fail-open.
+            await sink(record)
+
+    async def test_sink_failure_leaves_outer_commit_intact(self) -> None:
+        """H(30): after a swallowed sink failure the caller can still commit."""
+        import uuid
+        from unittest.mock import patch
+
+        import services.usage_service as usage_module
+        from services.usage_service import make_sink
+
+        async def _doomed(target: object, record: object) -> None:
+            raise RuntimeError("metering store down")
+
+        db = AsyncMock()
+        sink = make_sink(
+            target=db,
+            user_id=uuid.uuid4(),
+            worker="enrich_episode",
+        )
+
+        with patch.object(usage_module, "_persist", side_effect=_doomed):
+            await sink(UsageRecord(provider="stub", model="stub-model"))
+
+        await db.commit()
+        db.commit.assert_awaited_once()
+
+    async def test_sink_cancelled_error_propagates(self) -> None:
+        """H(30): task cancellation is never swallowed by the sink."""
+        import asyncio as _asyncio
+        import uuid
+        from unittest.mock import patch
+
+        import services.usage_service as usage_module
+        from services.usage_service import make_sink
+
+        async def _cancelled(target: object, record: object) -> None:
+            raise _asyncio.CancelledError()
+
+        sink = make_sink(
+            target=AsyncMock(),
+            user_id=uuid.uuid4(),
+            worker="enrich_episode",
+        )
+
+        with patch.object(usage_module, "_persist", side_effect=_cancelled):
+            with pytest.raises(_asyncio.CancelledError):
+                await sink(UsageRecord(provider="stub", model="stub-model"))
