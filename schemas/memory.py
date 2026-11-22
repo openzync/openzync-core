@@ -16,10 +16,29 @@ __all__ = [
     "BlobResponse",
     "DeleteMemoryConfirm",
     "DeleteMemoryResponse",
+    "ENRICHMENT_KEYS",
     "IngestMemoryRequest",
     "IngestMemoryResponse",
     "Message",
 ]
+
+#: Allowed per-episode enrichment toggle keys. Local copy — schemas must
+#: never import from ``core/``; parity with the canonical
+#: ``core.enrichment_bits.ENRICHMENT_KEYS`` is enforced by the import-time
+#: assert in ``core.enrichment_config``.
+ENRICHMENT_KEYS: frozenset[str] = frozenset(
+    {
+        "entities",
+        "embedding",
+        "facts",
+        "entity_links",
+        "classification",
+        "structured",
+        "observations",
+        "blob_text",
+        "llm_invalidation",
+    }
+)
 
 
 class BlobMetadata(BaseModel):
@@ -159,26 +178,26 @@ class IngestMemoryRequest(BaseModel):
     def _validate_enrichments(
         cls, v: dict[str, bool] | None
     ) -> dict[str, bool] | None:
-        """Reject unknown enrichment toggle keys (→ 422)."""
+        """Reject unknown toggle keys and non-boolean values (→ 422).
+
+        Values must be real booleans — truthy coercion would silently
+        enable a toggle the caller tried to disable (``bool("false")``
+        is ``True``).
+        """
         if v is None:
             return v
-        allowed = {
-            "entities",
-            "embedding",
-            "facts",
-            "entity_links",
-            "classification",
-            "structured",
-            "observations",
-            "blob_text",
-            "llm_invalidation",
-        }
-        unknown = set(v) - allowed
+        unknown = set(v) - ENRICHMENT_KEYS
         if unknown:
             raise ValueError(
                 f"Unknown enrichment keys: {sorted(unknown)}. "
-                f"Expected a subset of: {sorted(allowed)}."
+                f"Expected a subset of: {sorted(ENRICHMENT_KEYS)}."
             )
+        for key, value in v.items():
+            if not isinstance(value, bool):
+                raise ValueError(
+                    f"Enrichment toggle {key!r} must be a boolean, "
+                    f"got {type(value).__name__}."
+                )
         return v
 
 

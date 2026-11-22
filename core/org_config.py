@@ -207,9 +207,12 @@ async def update_org_config(
 ) -> OrgConfigBase:
     """Update stored user config in the DB, invalidate cache, return fresh config.
 
-    Performs a shallow merge: provided keys replace existing stored values.
-    Keys set to ``None`` are removed from the stored config (returning
-    ``None`` on next read).
+    Performs a one-level-deep merge: provided keys replace existing stored
+    values; nested dicts (e.g. ``enrichment``) merge key-by-key instead of
+    replacing wholesale.  Keys set to ``None`` are removed from the stored
+    config (returning ``None`` on next read) — including nested keys, so
+    ``{"enrichment": {"facts": None}}`` resets just the ``facts`` toggle
+    (restoring its default ``True``) without touching sibling toggles.
 
     The DB (``users.config_override``) is the sole authoritative store —
     there is no dual-write.
@@ -238,10 +241,20 @@ async def update_org_config(
     # 1. Read existing config from DB
     existing = dict(await repo.get_config_override(user_id))
 
-    # 2. Shallow merge: provided keys override; None values remove the key.
+    # 2. Merge: provided keys override; None values remove the key.
+    # Nested dicts merge one level deep so a partial ``enrichment``
+    # patch (or a nested ``None`` reset) never wipes sibling keys.
     for key, value in update_dict.items():
         if value is None:
             existing.pop(key, None)
+        elif isinstance(value, dict) and isinstance(existing.get(key), dict):
+            nested = dict(existing[key])
+            for nested_key, nested_value in value.items():
+                if nested_value is None:
+                    nested.pop(nested_key, None)
+                else:
+                    nested[nested_key] = nested_value
+            existing[key] = nested
         else:
             existing[key] = value
 

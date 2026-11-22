@@ -44,9 +44,10 @@ SYSTEM_MANAGED_FALKORDB_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-#: Allowed per-episode enrichment toggle keys (mirrors
-#: ``core.enrichment_config.ENRICHMENT_KEYS`` — duplicated here because
-#: schemas must never import from ``core/``).
+#: Allowed per-episode enrichment toggle keys. Local copy — schemas must
+#: never import from ``core/`` (canonical home is
+#: ``core.enrichment_bits.ENRICHMENT_KEYS``); parity is enforced by the
+#: import-time assert in ``core.enrichment_config``.
 ENRICHMENT_KEYS: frozenset[str] = frozenset(
     {
         "entities",
@@ -61,6 +62,9 @@ ENRICHMENT_KEYS: frozenset[str] = frozenset(
     }
 )
 
+EnrichmentMap = dict[str, bool]
+"""Per-episode enrichment toggles (every key defaults to ``True``)."""
+
 
 def _validate_enrichment_keys(v: dict[str, bool] | None) -> dict[str, bool] | None:
     """Reject unknown enrichment toggle keys (→ 422)."""
@@ -72,6 +76,27 @@ def _validate_enrichment_keys(v: dict[str, bool] | None) -> dict[str, bool] | No
             f"Unknown enrichment keys: {sorted(unknown)}. "
             f"Expected a subset of: {sorted(ENRICHMENT_KEYS)}."
         )
+    return v
+
+
+def _validate_enrichment_values(
+    v: dict[str, bool] | dict[str, bool | None] | None,
+) -> dict[str, bool] | dict[str, bool | None] | None:
+    """Reject non-boolean toggle values (→ 422).
+
+    Truthy coercion would silently enable a toggle the caller tried to
+    disable (``bool("false")`` is ``True``), so only real booleans pass.
+    ``None`` values pass through untouched — they are staged resets (key
+    removal), honoured by the merge path, not validation.
+    """
+    if v is None:
+        return v
+    for key, value in v.items():
+        if value is not None and not isinstance(value, bool):
+            raise ValueError(
+                f"Enrichment toggle {key!r} must be a boolean or null, "
+                f"got {type(value).__name__}."
+            )
     return v
 
 
@@ -343,7 +368,8 @@ class OrgConfigBase(BaseModel):
     def _validate_enrichment(
         cls, v: dict[str, bool] | None
     ) -> dict[str, bool] | None:
-        """Reject unknown enrichment toggle keys (→ 422)."""
+        """Reject unknown toggle keys and non-boolean values (→ 422)."""
+        _validate_enrichment_values(v)
         return _validate_enrichment_keys(v)
 
     @field_validator("pii_enabled_types", mode="before")
@@ -465,11 +491,13 @@ class UpdateOrgConfigRequest(BaseModel):
         description="Enable LLM-driven fact invalidation during episode "
         "enrichment (defaults to ON when unset).",
     )
-    enrichment: dict[str, bool] | None = Field(
+    enrichment: dict[str, bool | None] | None = Field(
         default=None,
         description="Per-episode enrichment toggles (entities, embedding, "
         "facts, entity_links, classification, structured, observations, "
         "blob_text, llm_invalidation). Unset keys default to True. "
+        "Set a toggle to null to reset it (removes the stored override, "
+        "restoring the default True). "
         "Validated on ingest: facts/entity_links require entities, "
         "llm_invalidation requires facts.",
     )
@@ -542,10 +570,15 @@ class UpdateOrgConfigRequest(BaseModel):
     @field_validator("enrichment", mode="before")
     @classmethod
     def _validate_enrichment_update(
-        cls, v: dict[str, bool] | None
-    ) -> dict[str, bool] | None:
-        """Reject unknown enrichment toggle keys (→ 422)."""
-        return _validate_enrichment_keys(v)
+        cls, v: dict[str, bool | None] | None
+    ) -> dict[str, bool | None] | None:
+        """Reject unknown keys and non-boolean values (→ 422).
+
+        ``None`` values are staged resets: the merge path removes that
+        toggle from the stored override (restoring the default ``True``).
+        """
+        _validate_enrichment_values(v)
+        return _validate_enrichment_keys(v)  # type: ignore[return-value]
 
     @field_validator("pii_enabled_types", mode="before")
     @classmethod

@@ -192,9 +192,19 @@ async def enrich_episode(
 
     enabled: dict[str, bool] = dict(all_enabled())
     if isinstance(enrichments, dict):
+        unknown = set(enrichments) - set(ENRICHMENT_KEY_BITS)
+        if unknown:
+            raise ValidationError(
+                f"Unknown enrichment keys: {sorted(unknown)}. "
+                f"Expected a subset of: {sorted(ENRICHMENT_KEY_BITS)}."
+            )
         for key, value in enrichments.items():
-            if key in ENRICHMENT_KEY_BITS:
-                enabled[key] = bool(value)
+            if not isinstance(value, bool):
+                raise ValidationError(
+                    f"Enrichment toggle {key!r} must be a boolean, "
+                    f"got {type(value).__name__}."
+                )
+            enabled[key] = value
 
     # Lazy imports — ARQ workers run in a separate process.
     from core import rls
@@ -266,7 +276,7 @@ async def enrich_episode(
                 | ENRICHMENT_STRUCTURED_EXTRACTION
                 | LLM_INVALIDATION_BIT
             )
-            if episode.enrichment_status & llm_bits == llm_bits:
+            if (episode.enrichment_status & llm_bits) == llm_bits:
                 log.info("enrich_episode.already_done")
                 return
 
@@ -313,7 +323,7 @@ async def enrich_episode(
 
             # All LLM sections done or disabled — persist the
             # mark-skipped bits and return without an LLM call.
-            if episode.enrichment_status & llm_bits == llm_bits:
+            if (episode.enrichment_status & llm_bits) == llm_bits:
                 await db.commit()
                 log.info("enrich_episode.all_skipped_or_done")
                 return
@@ -420,7 +430,7 @@ async def enrich_episode(
             log.info("enrich_episode.llm_call_start")
             try:
                 sink = make_sink(
-                    session_factory,
+                    db,
                     user_id=uuid.UUID(user_id),
                     worker="enrich_episode",
                     project_id=uuid.UUID(project_id),

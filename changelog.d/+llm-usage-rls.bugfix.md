@@ -1,0 +1,1 @@
+Fix llm_usage RLS violations: create() now writes user_id and create_scoped binds via init_context, so enrichment metering rows pass the user_isolation policy. The usage sink is also fail-open (metering never fails enrichment) and reuses the task session instead of a second checkout, fixing QueuePool exhaustion.

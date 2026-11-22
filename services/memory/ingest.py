@@ -263,7 +263,6 @@ class IngestMixin:
         effective = resolve_enrichment(
             system_cfg.enrichment,
             org_cfg.enrichment,
-            None,
             request_param,
         )
         validate_enrichment_combo(

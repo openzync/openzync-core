@@ -460,14 +460,14 @@ class UserRepository:
         """Deep-merge ``patch`` onto the user's config override.
 
         Nested dicts merge recursively (see :func:`core.dict_merge.deep_merge`);
-        ``None`` removes that **top-level** key only — a nested ``None``
-        never deletes a deep path.  Returns the stored override.
-        Same PK-scoping rationale as :meth:`get_config_override`
-        (no bypass — other users' rows stay invisible fail-closed).
+        ``None`` removes the key it is set on — top-level ``None`` removes
+        the top-level key, and a nested ``None`` removes that nested key
+        (e.g. ``{"enrichment": {"facts": None}}`` resets just the
+        ``facts`` toggle, restoring its default ``True``).
 
         Args:
             user_id: The internal OpenZync user UUID.
-            patch: Partial keys to merge (``None`` removes a top-level key).
+            patch: Partial keys to merge (``None`` removes a key).
 
         Returns:
             The updated override dict.
@@ -489,6 +489,14 @@ class UserRepository:
         merged = deep_merge(existing, overlay)
         for key in removed:
             merged.pop(key, None)
+        # Nested resets: a nested ``None`` removes that nested key instead
+        # of persisting a ``None`` value (one level — enrichment-style
+        # flat toggle dicts; deeper nesting keeps deep_merge semantics).
+        for key, value in overlay.items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                for nested_key, nested_value in value.items():
+                    if nested_value is None:
+                        merged[key].pop(nested_key, None)
         user.config_override = merged
         await self._db.flush()
         await self._db.refresh(user)

@@ -1,0 +1,1 @@
+Fix enrich_episode classification crash-loop: migration `0071` restores UNIQUE(user_id, episode_id) on dialog_classifications after migration `0069` dropped the org-scoped constraint with no replacement. Eliminates the duplicate-row PartialEnrichmentError and stuck pending_enrichment_count on re-enrichment.

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from core.exceptions import GraphBackendUnavailableError
+from core.exceptions import ExternalServiceError, GraphBackendUnavailableError
 from workers.tasks.base import ENRICHMENT_FACTS
 
 if TYPE_CHECKING:
@@ -470,6 +470,11 @@ async def process_facts_output(
 
         persisted_ids: list[str] = []
 
+        # Edges that failed materialization with a data-shape error.
+        # Nonzero fails the section below — the ENRICHMENT_FACTS bit must
+        # not be stamped while the graph silently diverged from Postgres.
+        skipped_edge_count = 0
+
         duplicates_count = len(resolved_facts) - len(new_facts)
         if duplicates_count:
             logger.info(
@@ -576,10 +581,37 @@ async def process_facts_output(
                         object=input_fact["object"],
                         exc_info=True,
                     )
+                except (ValueError, TypeError, KeyError, AttributeError):
+                    # Narrow: only data-shape errors from the edge path are
+                    # tolerated per-edge — and they fail the section below.
+                    # Stamping ENRICHMENT_FACTS while edges silently diverged
+                    # would wedge reconcile/monitoring.  Anything else
+                    # propagates immediately (fail loud, ARQ retries).
+                    skipped_edge_count += 1
+                    logger.error(
+                        "fact_extraction.relationship_upsert_skipped",
+                        episode_id=episode_id,
+                        subject=input_fact["subject"],
+                        predicate=input_fact["predicate"],
+                        object=input_fact["object"],
+                        skipped_edge_count=skipped_edge_count,
+                        exc_info=True,
+                    )
     else:
         new_facts = []
         persisted_ids = []
+        skipped_edge_count = 0
         content_to_fact = {}
+
+    if skipped_edge_count:
+        raise ExternalServiceError(
+            f"{skipped_edge_count} graph edge(s) failed to materialize "
+            f"for episode {episode_id} — facts section failed, bit not set.",
+            detail={
+                "episode_id": episode_id,
+                "skipped_edge_count": skipped_edge_count,
+            },
+        )
 
     # ── Enrichment bit ──────────────────────────────────────────────────────
     # Set after fact persistence, inside the same transaction —

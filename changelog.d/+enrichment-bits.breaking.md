@@ -1,0 +1,1 @@
+BREAKING: resolve_enrichment drops from 4 args to 3 (the redundant override arg is removed; callers pass user-effective config only), and core enrichment bit constants move to core/enrichment_bits.py (workers re-export them, so existing import paths keep working).

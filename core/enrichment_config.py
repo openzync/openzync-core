@@ -18,54 +18,32 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.exceptions import ValidationError
-from workers.tasks.base import (
-    ENRICHMENT_BLOB_TEXT,
-    ENRICHMENT_CLASSIFICATION,
-    ENRICHMENT_EMBEDDING,
-    ENRICHMENT_ENTITIES,
-    ENRICHMENT_ENTITY_LINKS,
-    ENRICHMENT_FACTS,
-    ENRICHMENT_OBSERVATIONS,
-    ENRICHMENT_STRUCTURED_EXTRACTION,
-    LLM_INVALIDATION_BIT,
+from core.enrichment_bits import (
+    ENRICHMENT_KEY_BITS,
+    ENRICHMENT_KEYS,
+    EnrichmentMap,
 )
+from core.exceptions import ValidationError
 
-ENRICHMENT_KEYS: list[str] = [
-    "entities",
-    "embedding",
-    "facts",
-    "entity_links",
-    "classification",
-    "structured",
-    "observations",
-    "blob_text",
-    "llm_invalidation",
+__all__ = [
+    "ENRICHMENT_KEY_BITS",
+    "ENRICHMENT_KEYS",
+    "all_enabled",
+    "resolve_enrichment",
+    "validate_enrichment_combo",
 ]
-"""All per-episode enrichment toggles. Order is stable — do not reorder."""
+"""Re-exported from :mod:`core.enrichment_bits` (canonical home) so
+existing ``core.enrichment_config`` import paths keep working."""
 
-ENRICHMENT_KEY_BITS: dict[str, int] = {
-    "entities": ENRICHMENT_ENTITIES,
-    "embedding": ENRICHMENT_EMBEDDING,
-    "facts": ENRICHMENT_FACTS,
-    "entity_links": ENRICHMENT_ENTITY_LINKS,
-    "classification": ENRICHMENT_CLASSIFICATION,
-    "structured": ENRICHMENT_STRUCTURED_EXTRACTION,
-    "observations": ENRICHMENT_OBSERVATIONS,
-    "blob_text": ENRICHMENT_BLOB_TEXT,
-    "llm_invalidation": LLM_INVALIDATION_BIT,
-}
-"""Toggle key → ``episodes.enrichment_status`` bit (mark-skipped stamping)."""
-
-_ALL_ON: dict[str, bool] = {key: True for key in ENRICHMENT_KEYS}
+_ALL_ON: EnrichmentMap = {key: True for key in ENRICHMENT_KEYS}
 
 
-def all_enabled() -> dict[str, bool]:
+def all_enabled() -> EnrichmentMap:
     """Return a fresh all-``True`` enrichment dict (schema defaults, old jobs)."""
     return dict(_ALL_ON)
 
 
-def _as_dict(layer: dict[str, bool] | Any | None) -> dict[str, bool] | None:
+def _as_dict(layer: EnrichmentMap | Any | None) -> EnrichmentMap | None:
     """Unwrap a layer to a plain dict.
 
     Accepts a raw ``dict`` or any object carrying an ``enrichment`` attribute
@@ -85,21 +63,26 @@ def _as_dict(layer: dict[str, bool] | Any | None) -> dict[str, bool] | None:
 
 
 def resolve_enrichment(
-    system: dict[str, bool] | Any | None = None,
-    org: dict[str, bool] | Any | None = None,
-    override: dict[str, bool] | Any | None = None,
-    request_param: dict[str, bool] | Any | None = None,
-) -> dict[str, bool]:
+    system: EnrichmentMap | Any | None = None,
+    org: EnrichmentMap | Any | None = None,
+    request_param: EnrichmentMap | Any | None = None,
+) -> EnrichmentMap:
     """Merge enrichment layers, lowest → highest precedence.
 
-    Precedence: *system* < *org* < *override* < *request_param*.  Any key
+    Precedence: *system* < *org* < *request_param*.  Any key
     absent from every layer defaults to ``True``.  Unknown keys raise —
     they indicate a client/schema version skew that must not be absorbed.
+
+    .. note:: A previous 4-layer signature carried a dead ``override``
+       parameter that no caller ever set (always ``None``).  It was
+       removed — the documented contract is 3 layers: the per-user
+       override IS the ``org`` layer (both read the same
+       ``users.config_override`` row).  ``BREAKING:`` positional callers
+       passing four args must drop the third.
 
     Args:
         system: System root default enrichment dict (or config object).
         org: Org/user stored override (or config object).
-        override: Per-user stored override (or config object).
         request_param: Per-ingest request param (highest precedence).
 
     Returns:
@@ -107,10 +90,12 @@ def resolve_enrichment(
         :data:`ENRICHMENT_KEYS`.
 
     Raises:
-        ValidationError: On unknown toggle keys.
+        ValidationError: On unknown toggle keys or non-boolean values
+            (``bool("false")`` is ``True`` — truthy coercion would
+            silently enable a toggle the caller tried to disable).
     """
-    resolved: dict[str, bool] = dict(_ALL_ON)
-    for layer in (system, org, override, request_param):
+    resolved: EnrichmentMap = dict(_ALL_ON)
+    for layer in (system, org, request_param):
         raw = _as_dict(layer)
         if not raw:
             continue
@@ -121,12 +106,17 @@ def resolve_enrichment(
                 f"Expected a subset of: {ENRICHMENT_KEYS}."
             )
         for key, value in raw.items():
-            resolved[key] = bool(value)
+            if not isinstance(value, bool):
+                raise ValidationError(
+                    f"Enrichment toggle {key!r} must be a boolean, "
+                    f"got {type(value).__name__}."
+                )
+            resolved[key] = value
     return resolved
 
 
 def validate_enrichment_combo(
-    enabled: dict[str, bool],
+    enabled: EnrichmentMap,
     graph_search_type: str | None = None,
 ) -> None:
     """Enforce cross-toggle dependencies; raises ``ValidationError`` (→ 422).
@@ -169,3 +159,32 @@ def validate_enrichment_combo(
             f"enrichment 'embedding' cannot be disabled when graph_search_type "
             f"is {graph_search_type!r} — retrieval would lose its vector leg."
         )
+
+
+def _assert_schema_key_parity() -> None:
+    """Fail import when a ``schemas/`` toggle-key copy drifts from canonical.
+
+    ``schemas/`` must never import from ``core/``, so each schema module
+    keeps a local ``ENRICHMENT_KEYS`` copy.  This check (run once at
+    import time) makes drift loud instead of silent: a renamed/added key
+    in one layer would otherwise 422-or-ignore across layers.
+    ``schemas/system_config.py`` needs no separate check — it imports
+    the constant from ``schemas/organization_config.py`` structurally.
+    """
+    from schemas.memory import ENRICHMENT_KEYS as _MEMORY_KEYS
+    from schemas.organization_config import ENRICHMENT_KEYS as _ORG_KEYS
+
+    canonical = set(ENRICHMENT_KEYS)
+    for name, keys in (
+        ("schemas.memory", _MEMORY_KEYS),
+        ("schemas.organization_config", _ORG_KEYS),
+    ):
+        if set(keys) != canonical:
+            raise ImportError(
+                f"{name}.ENRICHMENT_KEYS drifted from "
+                f"core.enrichment_bits.ENRICHMENT_KEYS: "
+                f"{sorted(set(keys) ^ canonical)}."
+            )
+
+
+_assert_schema_key_parity()

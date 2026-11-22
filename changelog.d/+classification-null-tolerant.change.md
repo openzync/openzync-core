@@ -1,0 +1,1 @@
+Make classification null-tolerant for orgs with no validation sets: stores raw LLM labels with an info-level log instead of failing the section. Relationship upserts in extract_facts are now per-edge contained, so a failed edge increments skipped_edge_count and fails its section rather than silently diverging from the reported counts.

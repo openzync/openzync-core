@@ -61,11 +61,11 @@ class UserConfigService:
     async def update_override(
         self, user_id: UUID, patch: dict[str, Any]
     ) -> dict[str, Any]:
-        """Deep-merge ``patch`` onto the user's override (``None`` removes a top-level key).
+        """Deep-merge ``patch`` onto the user's override (``None`` removes a key).
 
-        Nested dicts merge recursively; removal is top-level only by
-        design (a ``None`` nested value removes that nested key's parent
-        entry at the top level, never a deep path).
+        Nested dicts merge recursively; a nested ``None`` removes that
+        nested key (e.g. ``{"enrichment": {"facts": None}}`` resets just
+        the ``facts`` toggle, restoring its default ``True``).
 
         Args:
             user_id: The internal OpenZync user UUID.
