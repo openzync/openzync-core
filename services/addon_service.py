@@ -7,6 +7,7 @@ import logging
 import posixpath
 import secrets
 from pathlib import Path
+from typing import Any, cast
 
 import orjson
 from fastapi import FastAPI
@@ -19,7 +20,11 @@ from core.addons.installer import (
 )
 from core.addons.hooks import resolve_addon_router, resolve_worker_ops
 from core.addons.loader import load_addon
-from core.addons.manifest import parse_manifest
+from core.addons.manifest import (
+    AddonManifest,
+    check_setting_value,
+    parse_manifest,
+)
 from core.addons.registry import (
     AddonRecord,
     get_registry,
@@ -35,7 +40,12 @@ from core.exceptions import (
 )
 from models.addon_state import AddonState
 from repositories.addon_repository import AddonRepository
-from schemas.addons import AddonPanelResponse, AddonResponse
+from schemas.addons import (
+    AddonPanelResponse,
+    AddonResponse,
+    AddonSettingSchemaEntry,
+    AddonSettingsResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,14 +71,63 @@ def _panels_for(row: AddonState) -> list[AddonPanelResponse]:
 
 
 def to_addon_response(row: AddonState) -> AddonResponse:
-    """Build an ``AddonResponse`` with panels attached.
+    """Build an ``AddonResponse`` with panels + settings attached.
 
-    ``panels`` is not a model column, so ``model_validate`` alone would
-    always leave it empty — validate the row, then attach explicitly.
+    ``panels``/``settings``/``settings_schema`` are not plain columns, so
+    ``model_validate`` alone would leave them empty — validate the row,
+    then attach explicitly.
     """
+    if row.settings is None:
+        # Pre-0072 transient rows (never from the DB — the column is
+        # NOT NULL) normalize to the column default here.
+        row.settings = {}
     response = AddonResponse.model_validate(row)
     response.panels = _panels_for(row)
+    settings, schema = _settings_for(row)
+    response.settings = settings
+    response.settings_schema = schema
     return response
+
+
+def _settings_response(
+    manifest: AddonManifest, stored: dict[str, Any] | None
+) -> AddonSettingsResponse:
+    """Build the settings payload: schema defaults overlaid with stored."""
+    effective: dict[str, Any] = {
+        s.key: s.default for s in manifest.settings_schema if s.default is not None
+    }
+    effective.update(stored or {})
+    return AddonSettingsResponse(
+        settings=effective,
+        settings_schema=[
+            AddonSettingSchemaEntry(
+                key=s.key,
+                type=cast("Any", s.type),
+                default=s.default,
+                enum=list(s.enum) if s.enum is not None else None,
+            )
+            for s in manifest.settings_schema
+        ],
+    )
+
+
+def _settings_for(
+    row: AddonState,
+) -> tuple[dict[str, Any], list[AddonSettingSchemaEntry]]:
+    """Settings + schema for ``to_addon_response`` (degrades like panels).
+
+    Unreadable toml yields stored-values/``[]`` with a loud log — the
+    endpoint degrades, never 500s, over a settings file problem.
+    """
+    try:
+        manifest = parse_manifest(ADDON_ROOT / _slug(row, row.id))
+    except Exception as exc:
+        logger.warning(
+            "addon.settings_unreadable", extra={"addon": row.id, "e": str(exc)}
+        )
+        return dict(row.settings or {}), []
+    response = _settings_response(manifest, row.settings)
+    return response.settings, response.settings_schema
 
 
 def _db_url() -> str:
@@ -372,6 +431,62 @@ class AddonService:
     async def get_one(self, addon_id: str) -> AddonState:
         """Return one addon row; 404 via ``_require`` when unknown."""
         return await self._require(addon_id)
+
+    async def get_settings(self, addon_id: str) -> AddonSettingsResponse:
+        """Return effective settings + schema for one addon.
+
+        The toml is the source of truth for the schema; a missing or
+        unreadable manifest raises loudly (unlike the degraded list-view
+        fields) so a broken ``addon.toml`` cannot silently serve stale
+        settings to an admin write path.
+        """
+        row = await self._require(addon_id)
+        manifest = parse_manifest(ADDON_ROOT / _slug(row, addon_id))
+        return _settings_response(manifest, row.settings)
+
+    async def update_settings(
+        self, addon_id: str, patch: dict[str, Any]
+    ) -> AddonSettingsResponse:
+        """Upsert settings keys after per-key schema validation.
+
+        Unknown keys, type mismatches, and enum violations raise
+        ``ValidationError`` (422). Unknown keys are rejected even when
+        the schema is empty — with no schema, nothing is writable.
+
+        Args:
+            addon_id: Target addon id.
+            patch: Keys to upsert (partial update; omitted keys keep
+                their stored/default values).
+
+        Returns:
+            The effective settings + schema after the patch.
+        """
+        row = await self._require(addon_id)
+        manifest = parse_manifest(ADDON_ROOT / _slug(row, addon_id))
+        by_key = {s.key: s for s in manifest.settings_schema}
+        for key in patch:
+            if key not in by_key:
+                raise ValidationError(
+                    f"Unknown setting: {key!r}.", {"valid_keys": sorted(by_key)}
+                )
+        stored = dict(row.settings or {})
+        for key, value in patch.items():
+            spec = by_key[key]
+            if not check_setting_value(spec.type, value):
+                raise ValidationError(
+                    f"Setting {key!r} must be {spec.type}.", {"key": key}
+                )
+            if spec.enum is not None and value not in spec.enum:
+                raise ValidationError(
+                    f"Setting {key!r} must be one of {list(spec.enum)}.",
+                    {"key": key},
+                )
+            stored[key] = value
+        # Reassign (never mutate in place) so SQLAlchemy tracks the
+        # JSONB change; the request dependency commits on return.
+        row.settings = stored
+        logger.info("addon.settings_updated", extra={"addon": addon_id})
+        return _settings_response(manifest, row.settings)
 
     async def health(self, addon_id: str) -> dict[str, object]:
         """Return the health snapshot for one addon."""

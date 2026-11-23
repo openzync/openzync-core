@@ -9,6 +9,7 @@ from __future__ import annotations
 import uuid
 
 from sqlalchemy import Boolean, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,6 +28,7 @@ class AddonState(TimestampMixin, Base):
         latest_seen: Newest tag/version observed by the hourly check.
         enabled: Whether the addon is active platform-wide.
         update_available: Set by the hourly version check.
+        settings: Per-addon values keyed by ``settings_schema`` entries.
     """
 
     __tablename__ = "addon_states"
@@ -44,6 +46,9 @@ class AddonState(TimestampMixin, Base):
         Boolean, nullable=False, default=False, server_default="false"
     )
     generation: Mapped[int] = mapped_column(nullable=False, default=0)
+    settings: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
 
     uid: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),

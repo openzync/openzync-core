@@ -13,6 +13,8 @@ from schemas.addons import (
     AddonInstallRequest,
     AddonListResponse,
     AddonResponse,
+    AddonSettingsResponse,
+    AddonSettingsUpdateRequest,
     PanelTicketRequest,
     PanelTicketResponse,
 )
@@ -160,6 +162,27 @@ async def addon_health(
 ) -> AddonHealthResponse:
     """Health snapshot for one addon."""
     return AddonHealthResponse(**await service.health(addon_id))  # type: ignore[arg-type]
+
+
+@router.get("/{addon_id}/settings", response_model=AddonSettingsResponse)
+async def get_addon_settings(
+    addon_id: str,
+    _user_id: str = Depends(require_superadmin),  # noqa: B008
+    service: AddonService = Depends(_service),  # noqa: B008
+) -> AddonSettingsResponse:
+    """Effective settings + schema for one addon (superadmin only)."""
+    return await service.get_settings(addon_id)
+
+
+@router.patch("/{addon_id}/settings", response_model=AddonSettingsResponse)
+async def update_addon_settings(
+    addon_id: str,
+    body: AddonSettingsUpdateRequest,
+    _user_id: str = Depends(require_superadmin),  # noqa: B008
+    service: AddonService = Depends(_service),  # noqa: B008
+) -> AddonSettingsResponse:
+    """Patch settings for one addon (superadmin only; 422 on invalid)."""
+    return await service.update_settings(addon_id, body.settings)
 
 
 __all__ = ["router"]

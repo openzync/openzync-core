@@ -47,6 +47,20 @@ class AddonPanel:
 
 
 @dataclass(frozen=True, slots=True)
+class AddonSettingSpec:
+    """One generic per-addon setting declared in ``addon.toml``.
+
+    JSON-Schema subset: ``type`` is ``string`` | ``number`` | ``boolean``,
+    with an optional ``default`` and an optional ``enum`` of allowed values.
+    """
+
+    key: str
+    type: str
+    default: object = None
+    enum: tuple[object, ...] | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class AddonManifest:
     """Validated ``addon.toml`` contents."""
 
@@ -58,6 +72,7 @@ class AddonManifest:
     tables: tuple[str, ...] = ()
     panels: tuple[AddonPanel, ...] = ()
     entrypoint: str = "hooks.py"
+    settings_schema: tuple[AddonSettingSpec, ...] = ()
 
 
 _LEADING_TRIPLE_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
@@ -68,6 +83,75 @@ def _semver_tuple(v: str) -> tuple[int, int, int]:
     if match is None:
         raise ValueError(f"no leading MAJOR.MINOR.PATCH in {v!r}")
     return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+
+SETTING_TYPES = frozenset({"string", "number", "boolean"})
+
+
+def check_setting_value(kind: str, value: object) -> bool:
+    """Type-check one setting value against its declared ``kind``.
+
+    ``bool`` is not a ``number`` and numbers are not ``boolean`` —
+    ``isinstance(True, int)`` would otherwise conflate them.
+    """
+    if kind == "string":
+        return isinstance(value, str)
+    if kind == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if kind == "boolean":
+        return isinstance(value, bool)
+    return False
+
+
+def _parse_settings_schema(raw_schema: object) -> tuple[AddonSettingSpec, ...]:
+    """Validate the optional ``settings_schema`` table (loud, no fallback).
+
+    Shape (TOML table per key)::
+
+        [settings_schema.poll_interval]
+        type = "number"
+        default = 30
+
+    Raises:
+        ValidationError: On any malformed key, type, default, or enum.
+    """
+    if raw_schema is None:
+        return ()
+    if not isinstance(raw_schema, dict):
+        raise ValidationError("settings_schema must be a table keyed by name.")
+    specs: list[AddonSettingSpec] = []
+    for key, spec in raw_schema.items():
+        if not isinstance(key, str) or not ID_RE.match(key):
+            raise ValidationError(f"Invalid setting key: {key!r}.")
+        if not isinstance(spec, dict):
+            raise ValidationError(f"Setting {key!r} must be a table.")
+        kind = spec.get("type")
+        if kind not in SETTING_TYPES:
+            raise ValidationError(
+                f"Setting {key!r} has unknown type {kind!r} (string|number|boolean)."
+            )
+        default = spec.get("default")
+        if default is not None and not check_setting_value(str(kind), default):
+            raise ValidationError(f"Setting {key!r} default {default!r} is not {kind}.")
+        raw_enum = spec.get("enum")
+        enum: tuple[object, ...] | None = None
+        if raw_enum is not None:
+            if not isinstance(raw_enum, list) or not raw_enum:
+                raise ValidationError(f"Setting {key!r} enum must be a non-empty list.")
+            for member in raw_enum:
+                if not check_setting_value(str(kind), member):
+                    raise ValidationError(
+                        f"Setting {key!r} enum member {member!r} is not {kind}."
+                    )
+            enum = tuple(raw_enum)
+            if default is not None and default not in enum:
+                raise ValidationError(
+                    f"Setting {key!r} default {default!r} not in enum."
+                )
+        specs.append(
+            AddonSettingSpec(key=key, type=str(kind), default=default, enum=enum)
+        )
+    return tuple(specs)
 
 
 def _normalize_panel_path(raw_path: str) -> str:
@@ -194,9 +278,19 @@ def parse_manifest(addon_dir: Path) -> AddonManifest:
         tables=tables,
         panels=tuple(panels),
         entrypoint=str(_pick("entrypoint") or "hooks.py"),
+        settings_schema=_parse_settings_schema(_pick("settings_schema")),
     )
     _MANIFEST_CACHE[cache_key] = manifest
     return manifest
 
 
-__all__ = ["AddonManifest", "AddonPanel", "HOOKS_ALLOWLIST", "field", "parse_manifest"]
+__all__ = [
+    "AddonManifest",
+    "AddonPanel",
+    "AddonSettingSpec",
+    "HOOKS_ALLOWLIST",
+    "SETTING_TYPES",
+    "check_setting_value",
+    "field",
+    "parse_manifest",
+]

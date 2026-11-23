@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 — pydantic resolves at runtime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -22,6 +22,32 @@ class AddonPanelResponse(BaseModel):
     id: str = Field(..., description="Panel id.")
     title: str = Field(..., description="Panel display title.")
     path: str = Field(..., description="Panel path relative to the addon ui dir.")
+
+
+class AddonSettingSchemaEntry(BaseModel):
+    """One declared setting from an addon's ``settings_schema`` table."""
+
+    key: str = Field(..., description="Setting key.")
+    type: Literal["string", "number", "boolean"] = Field(..., description="Value type.")
+    default: Any = Field(default=None, description="Manifest default, if any.")
+    enum: list[Any] | None = Field(
+        default=None, description="Allowed values, if constrained."
+    )
+
+
+class AddonSettingsResponse(BaseModel):
+    """Effective settings + schema for one addon."""
+
+    settings: dict[str, Any] = Field(..., description="Effective settings.")
+    settings_schema: list[AddonSettingSchemaEntry] = Field(
+        ..., description="Declared settings from addon.toml."
+    )
+
+
+class AddonSettingsUpdateRequest(BaseModel):
+    """Partial settings patch — only schema-declared keys, type-checked."""
+
+    settings: dict[str, Any] = Field(..., description="Keys to upsert.")
 
 
 class AddonResponse(BaseModel):
@@ -43,6 +69,14 @@ class AddonResponse(BaseModel):
     panels: list[AddonPanelResponse] = Field(
         default_factory=list,
         description="Panel descriptors from the installed addon.toml.",
+    )
+    settings: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Effective settings (schema defaults + stored overrides).",
+    )
+    settings_schema: list[AddonSettingSchemaEntry] = Field(
+        default_factory=list,
+        description="Declared settings from the installed addon.toml.",
     )
 
 
@@ -83,6 +117,9 @@ __all__ = [
     "AddonListResponse",
     "AddonPanelResponse",
     "AddonResponse",
+    "AddonSettingSchemaEntry",
+    "AddonSettingsResponse",
+    "AddonSettingsUpdateRequest",
     "PanelTicketRequest",
     "PanelTicketResponse",
 ]
