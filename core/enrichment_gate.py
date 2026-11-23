@@ -1,9 +1,10 @@
-"""In-process enrichment gate — MiniLM skip signal before the LLM call.
+"""In-process enrichment gate — MiniLM should_enrich signal before the LLM call.
 
 A fine-tuned ``BertForSequenceClassification`` (MiniLM-L6-v2) scores the
-episode text; a score at or above threshold means the episode carries no
-memorable content, so the worker stamps the LLM enrichment bits via the
-existing mark-skipped path and returns without the single LLM call.
+episode text as P(should_enrich) (Hub column ``should_enrich``); a score
+below threshold means the episode carries no memorable content, so the
+worker stamps the LLM enrichment bits via the existing mark-skipped
+path and returns without the single LLM call.  High scores enrich.
 Embed + link still run as their own ARQ tasks.
 
 Fail-open contract (explicit user approval): this module NEVER RAISES.
@@ -27,7 +28,7 @@ DEFAULT_MODEL: str = "OpenZync/enrichment-gating-v1"
 """Hub repo holding the fine-tuned gating classifier."""
 
 DEFAULT_THRESHOLD: float = 0.5
-"""Sigmoid score at or above which the episode skips LLM enrichment."""
+"""Minimum should_enrich score to run the LLM; below it the episode skips."""
 
 MAX_LENGTH: int = 512
 """Truncation cap — MiniLM absolute positions stop at 512."""
@@ -160,13 +161,18 @@ async def prewarm(model: str = DEFAULT_MODEL) -> None:
 async def score(text: str, model: str = DEFAULT_MODEL) -> float:
     """Score episode text; sigmoid of the positive logit.
 
+    The score is P(should_enrich): high means worth enriching, low
+    means low-signal.
+
     Args:
         text: Episode text to score.
         model: Hub repo id (defaults to the fine-tuned gate model).
 
     Returns:
-        The ``skip`` signal in ``[0, 1]`` — ``0.0`` on any failure or
-        blank text (fail-open: no signal means enrich normally). Never raises.
+        The ``should_enrich`` signal in ``[0, 1]`` — ``0.0`` on any
+        failure (fail-open: no signal means enrich normally) or blank
+        text (nothing to extract; the caller skips at any threshold
+        above zero). Never raises.
     """
     if not text or not text.strip():
         return 0.0
@@ -191,14 +197,38 @@ async def should_skip(
 ) -> tuple[bool, float]:
     """Decide whether the episode skips LLM enrichment.
 
+    The gate model outputs P(should_enrich): the episode skips when the
+    score falls *below* threshold (low-signal), and enriches at or
+    above it.
+
     Args:
         text: Episode text to score.
-        threshold: Score at or above which the episode is skipped.
+        threshold: Minimum should_enrich score to run the LLM.
         model: Hub repo id.
 
     Returns:
-        ``(skip, score)`` — ``skip`` is ``score >= threshold``;
-        ``(False, 0.0)`` on any failure (fail-open). Never raises.
+        ``(skip, score)`` — ``skip`` is ``score < threshold``;
+        ``(False, 0.0)`` on load/infer failure (fail-open must enrich).
+        Blank text scores ``0.0`` and flows into the comparison (skips
+        at any threshold above zero — nothing to extract). Never raises.
     """
-    gate_score = await score(text, model)
-    return gate_score >= threshold, gate_score
+    if not text or not text.strip():
+        gate_score = 0.0
+    else:
+        # Fail-open must enrich: load/infer failures return explicitly
+        # here and never reach the ``gate_score < threshold`` comparison
+        # below, where a failure ``0.0`` would wrongly skip.
+        pair = await _ensure_model(model)
+        if pair is None:
+            return False, 0.0
+        tokenizer, clf = pair
+        try:
+            loop = asyncio.get_running_loop()
+            logit = await loop.run_in_executor(
+                None, lambda: _infer(tokenizer, clf, text)
+            )
+        except Exception:
+            logger.error("enrichment_gate.fail_open", extra={"reason": "infer_failed"})
+            return False, 0.0
+        gate_score = _sigmoid(logit)
+    return gate_score < threshold, gate_score

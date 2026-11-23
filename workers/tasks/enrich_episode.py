@@ -337,12 +337,13 @@ async def enrich_episode(
                 log.info("enrich_episode.all_skipped_or_done")
                 return
 
-            # ── 2d. In-process enrichment gate (MiniLM skip signal) ────
+            # ── 2d. In-process enrichment gate (MiniLM should_enrich signal) ────
             # When the gate resolves ON (system.enabled AND org is not
-            # False), score the episode text in-process.  A score at or
-            # above threshold means no memorable content — stamp the LLM
+            # False), score the episode text in-process.  A score below
+            # threshold means low-signal — stamp the LLM
             # bits via the same mark-skipped path as disabled toggles and
-            # return without the LLM call.  Embed + link still run as
+            # return without the LLM call.  High scores enrich normally.
+            # Embed + link still run as
             # their own ARQ tasks.  Old jobs (no gate field) default off.
             # The payload is parsed defensively — a poisoned value fails
             # open (gate off), never into an ARQ retry loop.  Scoring
@@ -374,6 +375,7 @@ async def enrich_episode(
                     threshold=gate_threshold,
                     model=gate_model,
                 )
+                # skipped=True means low-signal (score below threshold).
                 log.info(
                     "enrich_episode.enrichment_gate",
                     score=round(gate_score, 6),

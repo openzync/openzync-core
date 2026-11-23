@@ -36,7 +36,12 @@ class EnrichmentGateSystemConfig(BaseModel):
     """
 
     enabled: bool = False
-    threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Minimum should_enrich score to run the LLM.",
+    )
     model: str = "OpenZync/enrichment-gating-v1"
 
 

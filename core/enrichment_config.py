@@ -165,7 +165,7 @@ def validate_enrichment_combo(
 
 
 GATE_DEFAULT_THRESHOLD: float = 0.5
-"""Gate score at or above which the episode skips LLM enrichment."""
+"""Minimum should_enrich score to run the LLM; below it the episode skips."""
 
 GATE_DEFAULT_MODEL: str = "OpenZync/enrichment-gating-v1"
 """Hub repo id of the fine-tuned gating classifier."""
