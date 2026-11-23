@@ -104,6 +104,8 @@ SYSTEM_SETTING_CATEGORIES: dict[str, str] = {
     "OZ_PROMETHEUS_URL": "Infrastructure",
     "OZ_DB_POOL_SIZE": "Infrastructure",
     "OZ_DB_MAX_OVERFLOW": "Infrastructure",
+    "OZ_MAX_BLOBS_PER_MESSAGE": "Infrastructure",
+    "OZ_MAX_BLOBS_PER_REQUEST": "Infrastructure",
     # Security
     "OZ_SECRET_KEY": "Security",
     "OZ_SECRET_KEY_PREVIOUS": "Security",

@@ -1,0 +1,1 @@
+Add superadmin-only `GET`/`PATCH /admin/system/registration` endpoints returning `InstanceSettingsResponse` (`registration_mode`, `initialized`, `default_backends`) with an audited mode update that rejects invalid modes with 422.

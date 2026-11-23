@@ -17,6 +17,8 @@ Endpoints:
     PATCH  /admin/system/config                        — update platform system config
     GET    /admin/system/settings                      — list settings (masked)
     POST   /admin/system/settings/{key}/reveal         — reveal one setting (audited)
+    GET    /admin/system/registration                  — instance registration mode
+    PATCH  /admin/system/registration                  — update registration mode
     PATCH  /admin/system/users/{user_id}/role          — promote/demote
 """
 
@@ -35,12 +37,18 @@ from core.system_config import get_system_config, update_system_config
 from core.system_settings import list_system_settings, reveal_system_setting
 from dependencies.auth import require_superadmin
 from dependencies.db import get_db, get_db_superadmin
+from repositories.instance_settings_repository import InstanceSettingsRepository
 from repositories.user_repository import UserRepository
 from schemas.admin_system import (
     MemberRoleResponse,
     SystemSettingRevealResponse,
     SystemSettingsResponse,
     UpdateMemberRoleRequest,
+)
+from schemas.instance_settings import (
+    DefaultBackends,
+    InstanceSettingsResponse,
+    UpdateRegistrationModeRequest,
 )
 from schemas.system_config import SystemConfigResponse, SystemConfigUpdate
 from services.user_service import UserService
@@ -214,6 +222,83 @@ async def reveal_platform_system_setting(
             status_code=404,
             detail=f"System setting '{key}' not found.",
         ) from None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Instance registration (superadmin-only view of the singleton settings row)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _to_registration_response(row: object) -> InstanceSettingsResponse:
+    """Map an InstanceSettings row to its secrets-free response shape."""
+    return InstanceSettingsResponse(
+        registration_mode=getattr(row, "registration_mode") or "invite_only",
+        initialized=bool(getattr(row, "initialized")),
+        default_backends=DefaultBackends.model_validate(
+            getattr(row, "default_backends") or {}
+        ),
+    )
+
+
+@router.get(
+    "/registration",
+    response_model=InstanceSettingsResponse,
+    summary="Get instance registration mode",
+    description=(
+        "Returns the platform registration mode, setup-wizard state, and "
+        "default backends.  Secrets are never returned.  Requires the "
+        "platform super-admin role."
+    ),
+)
+async def get_instance_registration(
+    _user_id: str = Depends(require_superadmin),  # noqa: B008
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> InstanceSettingsResponse:
+    """Return the singleton instance registration settings.
+
+    Args:
+        _user_id: Superadmin user UUID (superadmin-gated).
+        db: Async DB session (``instance_settings`` has no RLS).
+
+    Returns:
+        Secrets-free :class:`InstanceSettingsResponse`.
+    """
+    row = await InstanceSettingsRepository(db).get()
+    return _to_registration_response(row)
+
+
+@router.patch(
+    "/registration",
+    response_model=InstanceSettingsResponse,
+    summary="Update instance registration mode",
+    description=(
+        "Updates the platform registration mode.  Invalid modes are "
+        "rejected with 422 at the schema boundary.  Requires the platform "
+        "super-admin role."
+    ),
+)
+@audit_action(
+    "system.registration.update", "system", "Registration mode updated"
+)
+async def update_instance_registration(
+    body: UpdateRegistrationModeRequest,
+    _user_id: str = Depends(require_superadmin),  # noqa: B008
+    db: AsyncSession = Depends(get_db_superadmin),  # noqa: B008
+) -> InstanceSettingsResponse:
+    """Update the platform registration mode.
+
+    Args:
+        body: New registration mode (``open``/``invite_only``/``approval``).
+        _user_id: Superadmin user UUID (superadmin-gated).
+        db: RLS-bypass session (singleton-row write).
+
+    Returns:
+        Secrets-free :class:`InstanceSettingsResponse` with the new mode.
+    """
+    row = await InstanceSettingsRepository(db).update(
+        registration_mode=body.registration_mode
+    )
+    return _to_registration_response(row)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
