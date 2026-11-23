@@ -17,9 +17,13 @@ Every failure path — missing ``transformers``/``torch``, missing
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import math
 import os
+import time
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -37,11 +41,29 @@ MAX_LENGTH: int = 512
 # Mirrors ``packages.reranker.sentence_transformers._MODEL_CACHE``: one loaded
 # (tokenizer, model) pair per model name, shared across worker coroutines.
 
-_GATE_CACHE: dict[str, tuple[Any, Any]] = {}
+_MAX_GATE_MODELS: int = 2
+"""Model-pair cap — each resident pair costs ~90MB RSS, so LRU-evict."""
+
+_MAX_SCORE_ENTRIES: int = 2048
+"""Score-cache cap — entries are ``(model, sha256(text))`` → score."""
+
+_SCORE_TTL_S: float = 600.0
+"""Score-cache TTL in seconds — scores are threshold-independent."""
+
+_GATE_CACHE: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
 """Lazy-loaded ``(tokenizer, model)`` pairs, keyed by Hub model name."""
 
 _GATE_LOCKS: dict[str, asyncio.Lock] = {}
 """Per-model-name asyncio locks to prevent concurrent model loading."""
+
+_SCORE_CACHE: OrderedDict[tuple[str, str], tuple[float, float]] = OrderedDict()
+"""``(model, sha256(text))`` → ``(score, monotonic expiry)``; failures never cached."""
+
+_INFER_POOL: ThreadPoolExecutor | None = None
+"""Lazy singleton infer pool (max 2 concurrent infers); loads stay on default."""
+
+_THRESHOLD_SATURATED_WARNED: bool = False
+"""Once-per-process guard for the saturated-threshold (``>= 1.0``) warning."""
 
 
 def _sigmoid(x: float) -> float:
@@ -52,6 +74,47 @@ def _sigmoid(x: float) -> float:
 def _read_hf_token() -> str | None:
     """Read the Hub token at call time (never import time, never logged)."""
     return os.environ.get("HF_TOKEN") or None
+
+
+def _infer_pool() -> ThreadPoolExecutor:
+    """Return the lazy singleton infer pool (max 2 concurrent infers).
+
+    Created on first use so importing this module never spawns threads;
+    the stdlib joins pool threads at interpreter exit, so no ``atexit``
+    handling is needed here.
+    """
+    global _INFER_POOL
+    if _INFER_POOL is None:
+        _INFER_POOL = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="enrich-gate"
+        )
+    return _INFER_POOL
+
+
+def _store_gate_pair(model_name: str, pair: tuple[Any, Any]) -> None:
+    """Insert a loaded pair into the bounded model cache with LRU eviction."""
+    if model_name in _GATE_CACHE:
+        _GATE_CACHE[model_name] = pair
+        _GATE_CACHE.move_to_end(model_name)
+        return
+    while len(_GATE_CACHE) >= _MAX_GATE_MODELS:
+        _GATE_CACHE.popitem(last=False)
+    _GATE_CACHE[model_name] = pair
+
+
+def _warn_threshold_saturated(threshold: float) -> None:
+    """Warn once per process when threshold ``>= 1.0`` (everything skips).
+
+    Sigmoid scores never reach ``1.0``, so such a threshold skips every
+    scorable episode — always a misconfiguration.
+    """
+    global _THRESHOLD_SATURATED_WARNED
+    if threshold >= 1.0 and not _THRESHOLD_SATURATED_WARNED:
+        _THRESHOLD_SATURATED_WARNED = True
+        logger.warning(
+            "enrichment_gate.threshold_saturated",
+            extra={"threshold": threshold},
+        )
 
 
 def _load_pair(model_name: str, token: str | None) -> tuple[Any, Any]:
@@ -113,10 +176,12 @@ async def _ensure_model(model_name: str) -> tuple[Any, Any] | None:
         (fail-open — the caller degrades to ``skip=False``).
     """
     if model_name in _GATE_CACHE:
+        _GATE_CACHE.move_to_end(model_name)
         return _GATE_CACHE[model_name]
     _GATE_LOCKS.setdefault(model_name, asyncio.Lock())
     async with _GATE_LOCKS[model_name]:
         if model_name in _GATE_CACHE:
+            _GATE_CACHE.move_to_end(model_name)
             return _GATE_CACHE[model_name]
         try:
             loop = asyncio.get_running_loop()
@@ -126,7 +191,7 @@ async def _ensure_model(model_name: str) -> tuple[Any, Any] | None:
         except Exception:
             logger.error("enrichment_gate.fail_open", extra={"reason": "load_failed"})
             return None
-        _GATE_CACHE[model_name] = pair
+        _store_gate_pair(model_name, pair)
         return pair
 
 
@@ -153,9 +218,59 @@ async def prewarm(model: str = DEFAULT_MODEL) -> None:
     pair = await loop.run_in_executor(
         None, lambda: _load_pair(model, _read_hf_token())
     )
-    _GATE_CACHE[model] = pair
+    _store_gate_pair(model, pair)
     tokenizer, clf = pair
-    await loop.run_in_executor(None, lambda: _infer(tokenizer, clf, "ready"))
+    await loop.run_in_executor(_infer_pool(), lambda: _infer(tokenizer, clf, "ready"))
+
+
+async def _score_inner(text: str, model: str = DEFAULT_MODEL) -> tuple[float, bool]:
+    """Score text, returning ``(score, failed)``; never raises.
+
+    Single path behind :func:`score` and :func:`should_skip`: blank-check →
+    score-cache lookup → ensure → infer → sigmoid.  Scores are cached by
+    ``(model, sha256(text))`` — they are threshold-independent, so the
+    caller applies the threshold after lookup.  Failures are never cached.
+
+    Args:
+        text: Episode text to score.
+        model: Hub repo id or local directory.
+
+    Returns:
+        ``(score, failed)`` — ``failed`` is True on load/infer failure
+        (fail-open signal for the caller); blank text is ``(0.0, False)``
+        and flows into the caller's threshold comparison.
+    """
+    if not text or not text.strip():
+        return 0.0, False
+    key = (model, hashlib.sha256(text.encode("utf-8")).hexdigest())
+    now = time.monotonic()
+    hit = _SCORE_CACHE.get(key)
+    if hit is not None:
+        cached_score, expires = hit
+        if expires > now:
+            _SCORE_CACHE.move_to_end(key)
+            return cached_score, False
+        del _SCORE_CACHE[key]
+    pair = await _ensure_model(model)
+    if pair is None:
+        return 0.0, True
+    tokenizer, clf = pair
+    try:
+        loop = asyncio.get_running_loop()
+        logit = await loop.run_in_executor(
+            _infer_pool(), lambda: _infer(tokenizer, clf, text)
+        )
+    except Exception:
+        logger.error("enrichment_gate.fail_open", extra={"reason": "infer_failed"})
+        return 0.0, True
+    final = _sigmoid(logit)
+    now = time.monotonic()
+    for stale in [k for k, (_, exp) in _SCORE_CACHE.items() if exp <= now]:
+        del _SCORE_CACHE[stale]
+    _SCORE_CACHE[key] = (final, now + _SCORE_TTL_S)
+    while len(_SCORE_CACHE) > _MAX_SCORE_ENTRIES:
+        _SCORE_CACHE.popitem(last=False)
+    return final, False
 
 
 async def score(text: str, model: str = DEFAULT_MODEL) -> float:
@@ -174,19 +289,10 @@ async def score(text: str, model: str = DEFAULT_MODEL) -> float:
         text (nothing to extract; the caller skips at any threshold
         above zero). Never raises.
     """
-    if not text or not text.strip():
+    final, failed = await _score_inner(text, model)
+    if failed:
         return 0.0
-    pair = await _ensure_model(model)
-    if pair is None:
-        return 0.0
-    tokenizer, clf = pair
-    try:
-        loop = asyncio.get_running_loop()
-        logit = await loop.run_in_executor(None, lambda: _infer(tokenizer, clf, text))
-    except Exception:
-        logger.error("enrichment_gate.fail_open", extra={"reason": "infer_failed"})
-        return 0.0
-    return _sigmoid(logit)
+    return final
 
 
 async def should_skip(
@@ -212,23 +318,11 @@ async def should_skip(
         Blank text scores ``0.0`` and flows into the comparison (skips
         at any threshold above zero — nothing to extract). Never raises.
     """
-    if not text or not text.strip():
-        gate_score = 0.0
-    else:
+    _warn_threshold_saturated(threshold)
+    gate_score, failed = await _score_inner(text, model=model)
+    if failed:
         # Fail-open must enrich: load/infer failures return explicitly
         # here and never reach the ``gate_score < threshold`` comparison
         # below, where a failure ``0.0`` would wrongly skip.
-        pair = await _ensure_model(model)
-        if pair is None:
-            return False, 0.0
-        tokenizer, clf = pair
-        try:
-            loop = asyncio.get_running_loop()
-            logit = await loop.run_in_executor(
-                None, lambda: _infer(tokenizer, clf, text)
-            )
-        except Exception:
-            logger.error("enrichment_gate.fail_open", extra={"reason": "infer_failed"})
-            return False, 0.0
-        gate_score = _sigmoid(logit)
+        return False, 0.0
     return gate_score < threshold, gate_score

@@ -271,7 +271,9 @@ async def enrich_episode(
             await rls.set_tenant_context(db, user_id)
 
             episode_repo = EpisodeRepository(db)
-            episode = await episode_repo.get_by_id_for_update(uuid.UUID(episode_id))
+            # Lock-free read: the gate infer below is CPU-bound, so the
+            # row lock is only taken later on the gate-skip stamp path.
+            episode = await episode_repo.get_by_id(uuid.UUID(episode_id))
             if episode is None:
                 raise EpisodeNotFoundError(
                     message=f"Episode {episode_id} not found for enrichment.",
@@ -383,26 +385,41 @@ async def enrich_episode(
                     skipped=gate_skip,
                 )
                 if gate_skip:
-                    for _key, _bit in (
-                        ("entities", ENRICHMENT_ENTITIES),
-                        ("facts", ENRICHMENT_FACTS),
-                        ("classification", ENRICHMENT_CLASSIFICATION),
-                        ("structured", ENRICHMENT_STRUCTURED_EXTRACTION),
-                        ("llm_invalidation", LLM_INVALIDATION_BIT),
-                    ):
-                        if not (episode.enrichment_status & _bit):
-                            await episode_repo.apply_enrichment_bits(
-                                uuid.UUID(episode_id), _bit
-                            )
-                            episode.enrichment_status |= _bit
-                            log.info(
-                                "enrich_episode.enrichment_skipped",
-                                section=_key,
-                                episode_id=episode_id,
-                                reason="gate",
-                            )
+                    # Lock only now that infer is done, then re-verify: a
+                    # concurrent worker may have stamped bits (or finished
+                    # the episode) while infer was running — stamp only
+                    # bits that are still unset.
+                    locked = await episode_repo.get_by_id_for_update(
+                        uuid.UUID(episode_id)
+                    )
+                    if locked is None:
+                        raise EpisodeNotFoundError(
+                            message=f"Episode {episode_id} not found for enrichment.",
+                            detail={"episode_id": episode_id},
+                        )
+                    if (locked.enrichment_status & llm_bits) != llm_bits:
+                        for _key, _bit in (
+                            ("entities", ENRICHMENT_ENTITIES),
+                            ("facts", ENRICHMENT_FACTS),
+                            ("classification", ENRICHMENT_CLASSIFICATION),
+                            ("structured", ENRICHMENT_STRUCTURED_EXTRACTION),
+                            ("llm_invalidation", LLM_INVALIDATION_BIT),
+                        ):
+                            if not (locked.enrichment_status & _bit):
+                                await episode_repo.apply_enrichment_bits(
+                                    uuid.UUID(episode_id), _bit
+                                )
+                                locked.enrichment_status |= _bit
+                                log.info(
+                                    "enrich_episode.enrichment_skipped",
+                                    section=_key,
+                                    episode_id=episode_id,
+                                    reason="gate",
+                                )
+                        log.info("enrich_episode.gate_skipped")
+                    else:
+                        log.info("enrich_episode.already_done")
                     await db.commit()
-                    log.info("enrich_episode.gate_skipped")
                     return
 
             # ── 2c. Resolve graph backend BEFORE render — the
