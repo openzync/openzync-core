@@ -275,11 +275,11 @@ class IngestMixin:
         self,
         user_id: UUID,
     ) -> dict[str, bool | float | str]:
-        """Resolve the effective enrichment gate (system < org).
+        """Resolve the effective enrichment gate (org-only).
 
-        The gate is ON only when the system block enables it AND the org
-        override is not ``False``.  Threshold/model fall back to the
-        documented gate defaults when unstated.
+        The gate is ON only when the org block enables it.  Threshold
+        falls back to the documented gate default when unstated, and the
+        model is always the platform default.
 
         Args:
             user_id: The organization UUID (config scope).
@@ -293,15 +293,9 @@ class IngestMixin:
         """
         from core.enrichment_config import resolve_enrichment_gate
         from core.org_config import get_org_config
-        from core.system_config import get_system_config
 
-        system_cfg = await get_system_config(redis=self._redis, db=self._db)
         org_cfg = await get_org_config(user_id, redis=self._redis, db=self._db)
-        return dict(
-            resolve_enrichment_gate(
-                system_cfg.enrichment_gate, org_cfg.enrichment_gate
-            )
-        )
+        return dict(resolve_enrichment_gate(org_cfg))
 
     async def _resolve_user(
         self,

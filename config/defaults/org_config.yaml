@@ -50,3 +50,11 @@ reranker_model: ""
 reranker_top_k: 50
 reranker_top_n: 10
 cohere_api_key: ""
+
+# Enrichment gate — org-level only, off by default. Non-secret tunables,
+# safe to serve on the unauthenticated defaults endpoint. The gate model
+# is fixed to the platform default (OpenZync/enrichment-gating-v1) and is
+# never configured here.
+enrichment_gate:
+  enabled: false
+  threshold: 0.5

@@ -16,37 +16,17 @@ Single platform org — registration is governed by
 ``instance_settings.registration_mode`` (``open`` / ``invite_only`` /
 ``approval``), not by config policy keys.
 
-⚠️ BREAKING: ``llm_*`` / ``reranker_*`` / ``graph_*`` / ``context_cache_ttl``
-are removed from platform defaults (org-level only).  Requests carrying
-them 422 (``extra="forbid"``); responses never include them.  Only
-``enrichment_gate`` remains (``enrichment`` is org-level only; the gate
-``model`` is fixed to the platform default and not configurable).
+⚠️ BREAKING: ``llm_*`` / ``reranker_*`` / ``graph_*`` /
+``context_cache_ttl`` were removed from platform defaults (org-level
+only).  ``enrichment_gate`` is removed too — the gate lives at org
+level only now (``organizations`` config), with the model fixed to the
+platform default.  Both models expose no fields: ``GET`` returns ``{}``
+and any stored/carried key 422s (``extra="forbid"``).
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
-
-
-class EnrichmentGateSystemConfig(BaseModel):
-    """System-level enrichment gate block (non-secret tunables only).
-
-    The gate skips the single LLM call for low-signal episodes.  The Hub
-    token itself is never stored here — the worker reads ``HF_TOKEN``
-    from the environment at call time.  The gate model is fixed to the
-    platform default — a request carrying ``model`` 422s
-    (``extra="forbid"``).
-    """
-
-    model_config = {"extra": "forbid"}
-
-    enabled: bool = False
-    threshold: float = Field(
-        default=0.5,
-        ge=0.0,
-        le=1.0,
-        description="Minimum should_enrich score to run the LLM.",
-    )
+from pydantic import BaseModel
 
 
 class SystemConfigUpdate(BaseModel):
@@ -55,37 +35,21 @@ class SystemConfigUpdate(BaseModel):
     Unknown keys are rejected with 422 (``extra="forbid"``) — a secret
     key such as ``openai_api_key`` or ``DATABASE_URL`` can never be
     written here.  Every field is optional; only provided fields update.
+
+    ⚠️ BREAKING: the whitelist is currently empty — every key (including
+    the former ``enrichment_gate``) is org-level only and 422s here.
     """
 
     model_config = {"extra": "forbid"}
-
-    # ── Non-secret system-level defaults ─────────────────────────────────
-    # ⚠️ BREAKING: llm_* / reranker_* / graph_* / context_cache_ttl removed
-    # from platform defaults — org level only.  ``enrichment`` removed too
-    # (org-level only); gate ``model`` is fixed, not configurable.
-    # Only enrichment_gate remains.  (Unknown keys 422 via forbid.)
-    enrichment_gate: EnrichmentGateSystemConfig | None = Field(
-        default=None,
-        description="System-level enrichment gate (enabled, threshold). "
-        "Unset means the gate defaults (disabled).",
-    )
 
 
 class SystemConfigResponse(BaseModel):
     """System config as exposed to the platform UI.
 
-    Mirrors :class:`SystemConfigUpdate` — the same whitelist, no secrets.
-
-    ⚠️ BREAKING: llm_* / reranker_* / graph_* / context_cache_ttl removed —
-    org-level only now.  ``enrichment`` removed too (org-level only).
-    Only enrichment_gate remains.
+    ⚠️ BREAKING: all former keys (``llm_*`` / ``reranker_*`` / ``graph_*``
+    / ``context_cache_ttl`` / ``enrichment_gate``) are org-level only
+    now.  No fields remain — the response is ``{}``.
     """
-
-    enrichment_gate: EnrichmentGateSystemConfig | None = Field(
-        default=None,
-        description="Effective system-level enrichment gate — None "
-        "when nothing is stored (gate defaults apply: disabled).",
-    )
 
 
 # ── Whitelist helpers ─────────────────────────────────────────────────────────

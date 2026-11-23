@@ -582,33 +582,19 @@ async def renew_leader_lock(redis: AsyncRedis, owner: str) -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-async def _prewarm_enrichment_gate(
-    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]],
-) -> None:
-    """Preload the enrichment gate classifier when the system gate is on.
+async def _prewarm_enrichment_gate() -> None:
+    """Preload the enrichment gate classifier (unconditional).
 
-    Leader-only, called right after the embeddings prewarm.  Resolves the
-    system gate from the DB; when disabled, returns silently with no Hub
-    traffic.  When enabled, :func:`core.enrichment_gate.prewarm` proves
-    both the load and infer paths — any failure propagates and aborts
-    boot loudly, the same fail-fast contract as ``prewarm_with_retry``.
-
-    Args:
-        session_factory: The worker's RLS-scoped session factory (the gate
-            read goes through ``get_platform_root``, which bypasses RLS).
+    Resolves nothing — the model is hardcoded to the platform default
+    and prewarmed on every leader boot so the first gated episode never
+    pays a cold load.  Any failure propagates and aborts boot loudly,
+    the same fail-fast contract as ``prewarm_with_retry``.
     """
-    from core.enrichment_config import resolve_enrichment_gate  # noqa: PLC0415
-    from core.system_config import get_system_config  # noqa: PLC0415
-
-    async with session_factory() as session:
-        config = await get_system_config(redis=None, db=session)
-    gate = resolve_enrichment_gate(config)
-    if not gate["enabled"]:
-        return
+    from core.enrichment_config import GATE_DEFAULT_MODEL  # noqa: PLC0415
     from core.enrichment_gate import prewarm as prewarm_gate  # noqa: PLC0415
 
-    await prewarm_gate(gate["model"])
-    logger.info("enrichment_gate.prewarmed", model=gate["model"])
+    await prewarm_gate(GATE_DEFAULT_MODEL)
+    logger.info("enrichment_gate.prewarmed", model=GATE_DEFAULT_MODEL)
 
 
 async def main() -> NoReturn:
@@ -773,7 +759,7 @@ async def main() -> NoReturn:
     if is_leader:
         await prewarm_with_retry()
         logger.info("embeddings.prewarmed")
-        await _prewarm_enrichment_gate(db_session_factory)
+        await _prewarm_enrichment_gate()
     else:
         logger.info("embeddings.prewarm_skipped — follower replica")
 

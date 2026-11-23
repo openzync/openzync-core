@@ -100,16 +100,42 @@ def _validate_enrichment_values(
     return v
 
 
-def _coerce_legacy_enrichment_gate(v: Any) -> Any:
-    """Coerce legacy SYSTEM-block dict shape to its ``enabled`` flag."""
-    if not isinstance(v, dict):
+def _coerce_enrichment_gate(v: Any) -> Any:
+    """Coerce legacy gate shapes to the org gate object shape.
+
+    ``True``/``False`` → ``{"enabled": v, "threshold": 0.5}``; dicts pass
+    through with the legacy ``model`` subkey stripped (the model is
+    fixed to the platform default, never configured).
+    """
+    if v is None or isinstance(v, EnrichmentGateOrgConfig):
         return v
-    logger.warning(
-        "org_config.enrichment_gate_legacy_shape "
-        "coercing legacy dict to enabled flag: %r",
-        v,
+    if isinstance(v, bool):
+        return {"enabled": v, "threshold": 0.5}
+    if isinstance(v, dict):
+        v = dict(v)
+        v.pop("model", None)
+        return v
+    return v
+
+
+class EnrichmentGateOrgConfig(BaseModel):
+    """Per-org enrichment gate (non-secret tunables only).
+
+    The gate skips the single LLM call for low-signal episodes.  The Hub
+    model is fixed to the platform default — a ``model`` subkey is
+    stripped, never honored.  This endpoint serves unauthenticated
+    defaults, so nothing secret belongs here.
+    """
+
+    model_config = {"extra": "ignore"}  # strip legacy ``model`` subkey
+
+    enabled: bool = False
+    threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Minimum should_enrich score to run the LLM.",
     )
-    return bool(v.get("enabled", False))
 
 
 class PromptCachingOrgConfig(BaseModel):
@@ -213,10 +239,11 @@ class OrgConfigBase(BaseModel):
         "Validated on ingest: facts/entity_links require entities, "
         "llm_invalidation requires facts.",
     )
-    enrichment_gate: bool | None = Field(
+    enrichment_gate: EnrichmentGateOrgConfig | None = Field(
         default=None,
-        description="Enrichment gate override: False disables the gate for "
-        "this org, True/None inherit the system gate block.",
+        description="Enrichment gate for this org "
+        "({enabled, threshold 0-1}); None inherits the gate defaults "
+        "(disabled, 0.5).",
     )
     prompt_caching: PromptCachingOrgConfig | None = Field(
         default=None,
@@ -392,8 +419,8 @@ class OrgConfigBase(BaseModel):
     @field_validator("enrichment_gate", mode="before")
     @classmethod
     def _coerce_enrichment_gate(cls, v: Any) -> Any:
-        """Coerce legacy SYSTEM-block dict to its ``enabled`` flag."""
-        return _coerce_legacy_enrichment_gate(v)
+        """Coerce legacy bool/dict gate shapes to the gate object."""
+        return _coerce_enrichment_gate(v)
 
     @field_validator("pii_enabled_types", mode="before")
     @classmethod
@@ -524,11 +551,11 @@ class UpdateOrgConfigRequest(BaseModel):
         "Validated on ingest: facts/entity_links require entities, "
         "llm_invalidation requires facts.",
     )
-    enrichment_gate: bool | None = Field(
+    enrichment_gate: EnrichmentGateOrgConfig | None = Field(
         default=None,
-        description="Enrichment gate override: False disables the gate for "
-        "this org, True/None inherit the system gate block. Null removes "
-        "the stored override (restores inheritance).",
+        description="Enrichment gate for this org "
+        "({enabled, threshold 0-1}). Null removes the stored override "
+        "(restores the gate defaults: disabled, 0.5).",
     )
     prompt_caching: PromptCachingOrgConfig | None = None
     # ⚠️ BREAKING: embedding_* fields removed — see the note on
@@ -612,8 +639,8 @@ class UpdateOrgConfigRequest(BaseModel):
     @field_validator("enrichment_gate", mode="before")
     @classmethod
     def _coerce_enrichment_gate_update(cls, v: Any) -> Any:
-        """Coerce legacy SYSTEM-block dict to its ``enabled`` flag (update)."""
-        return _coerce_legacy_enrichment_gate(v)
+        """Coerce legacy bool/dict gate shapes to the gate object (update)."""
+        return _coerce_enrichment_gate(v)
 
     @field_validator("pii_enabled_types", mode="before")
     @classmethod
