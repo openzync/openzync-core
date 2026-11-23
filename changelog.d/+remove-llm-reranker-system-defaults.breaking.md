@@ -1,0 +1,1 @@
+BREAKING: platform system config (`PATCH /admin/system/config`) no longer accepts or returns the `llm_*` / `reranker_*` keys (unknown keys 422); LLM and reranker defaults live at org level only, which is unchanged.

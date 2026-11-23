@@ -15,16 +15,17 @@ validation (``extra="forbid"``) and a response can never leak them.
 Single platform org — registration is governed by
 ``instance_settings.registration_mode`` (``open`` / ``invite_only`` /
 ``approval``), not by config policy keys.
+
+⚠️ BREAKING: ``llm_*`` / ``reranker_*`` are removed from platform
+defaults (org-level only).  Requests carrying them 422
+(``extra="forbid"``); responses never include them.
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
 
-from schemas.organization_config import (  # noqa: TC001 — runtime import: pydantic resolves field types
-    ENRICHMENT_KEYS,
-    LlmBackend,
-)
+from schemas.organization_config import ENRICHMENT_KEYS  # noqa: TC001 — runtime import: pydantic resolves field types
 
 
 class EnrichmentGateSystemConfig(BaseModel):
@@ -56,20 +57,12 @@ class SystemConfigUpdate(BaseModel):
     model_config = {"extra": "forbid"}
 
     # ── Non-secret system-level defaults (mirror OrgConfigBase keys) ──────
-    llm_backend: LlmBackend | None = None
-    llm_model: str | None = None
-    llm_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
-    llm_max_tokens: int | None = Field(default=None, ge=1)
-    # ⚠️ BREAKING: embedding_backend / embedding_model / embedding_dim were
-    # write-only (nothing ever read them back) and are removed.  Embeddings
-    # are a local ONNX model with no configuration surface.
+    # ⚠️ BREAKING: llm_* / reranker_* removed from platform defaults.
+    # LLM/reranker live at org level only — platform accepts graph,
+    # cache, enrichment, and gate keys.  (Unknown keys 422 via forbid.)
     graph_backend: str | None = None
     graph_search_type: str | None = None
     graph_max_traversal_depth: int | None = Field(default=None, ge=1, le=10)
-    reranker_backend: str | None = None
-    reranker_model: str | None = None
-    reranker_top_k: int | None = Field(default=None, ge=10, le=200)
-    reranker_top_n: int | None = Field(default=None, ge=1, le=100)
     context_cache_ttl: int | None = Field(default=None, ge=1)
     enrichment: dict[str, bool] | None = Field(
         default=None,
@@ -130,19 +123,13 @@ class SystemConfigResponse(BaseModel):
     """System config as exposed to the platform UI.
 
     Mirrors :class:`SystemConfigUpdate` — the same whitelist, no secrets.
+
+    ⚠️ BREAKING: llm_* / reranker_* removed — org-level only now.
     """
 
-    llm_backend: LlmBackend | None = None
-    llm_model: str | None = None
-    llm_temperature: float | None = None
-    llm_max_tokens: int | None = None
     graph_backend: str | None = None
     graph_search_type: str | None = None
     graph_max_traversal_depth: int | None = None
-    reranker_backend: str | None = None
-    reranker_model: str | None = None
-    reranker_top_k: int | None = None
-    reranker_top_n: int | None = None
     context_cache_ttl: int | None = None
     enrichment: dict[str, bool] = Field(
         default_factory=lambda: {

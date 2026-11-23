@@ -164,6 +164,11 @@ async def get_system_config(
         RuntimeError: If *db* is ``None`` on a cache miss.
     """
     # 1. Try cache (unless skip_cache is set)
+    # Stale-cache safety: SystemConfigResponse uses pydantic's default
+    # extra="ignore", so cached JSON carrying removed keys (e.g. llm_* /
+    # reranker_* written before their removal) still validates — unknown
+    # keys are dropped, never raised.  TTL (5 min) self-heals; updates
+    # delete the key outright (see update_system_config step 4).
     if not skip_cache and redis is not None:
         try:
             cached = await redis.get(CACHE_KEY)
