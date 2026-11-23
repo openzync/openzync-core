@@ -15,12 +15,17 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.config import get_settings
 from core.dict_merge import deep_merge
-from core.exceptions import NotFoundError
+from core.exceptions import NotFoundError, ValidationError
 from core.org_config import get_org_config
 from core.system_config import get_system_config
 from repositories.auth_repository import AuthRepository
 from repositories.user_repository import UserRepository
+from schemas.organization_config import (
+    SYSTEM_MANAGED_FALKORDB_FIELDS,
+    SYSTEM_MANAGED_SURREALDB_FIELDS,
+)
 
 
 class UserConfigService:
@@ -58,6 +63,21 @@ class UserConfigService:
         """
         return await self._user_repo.get_config_override(user_id)
 
+    def get_system_managed_fields(self) -> list[str]:
+        """Return field names locked at the system level.
+
+        Returns:
+            Managed field names (e.g. ``["falkordb_url"]`` when
+            system-level FalkorDB URL is set, else ``[]``).
+        """
+        settings = get_settings()
+        fields: list[str] = []
+        if settings.SURREALDB_URL:
+            fields.extend(SYSTEM_MANAGED_SURREALDB_FIELDS)
+        if settings.FALKORDB_URL:
+            fields.extend(SYSTEM_MANAGED_FALKORDB_FIELDS)
+        return fields
+
     async def update_override(
         self, user_id: UUID, patch: dict[str, Any]
     ) -> dict[str, Any]:
@@ -73,7 +93,19 @@ class UserConfigService:
 
         Returns:
             The updated override dict.
+
+        Raises:
+            ValidationError: If *patch* touches system-managed fields.
         """
+        managed = set(self.get_system_managed_fields())
+        if managed:
+            overridden = managed.intersection(patch)
+            if overridden:
+                raise ValidationError(
+                    "These fields are configured at the system level "
+                    "and cannot be modified: "
+                    f"{', '.join(sorted(overridden))}."
+                )
         return await self._user_repo.merge_config_override(user_id, patch)
 
     async def get_effective_config(self, user_id: UUID) -> dict[str, Any]:

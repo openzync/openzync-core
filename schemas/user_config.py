@@ -50,3 +50,8 @@ class UserConfigResponse(BaseModel):
         default_factory=dict,
         description="Merged user ⊕ system config actually applied.",
     )
+    system_managed_fields: list[str] = Field(
+        default_factory=list,
+        description="Field names configured at the system level "
+        "and not overridable via this API.",
+    )
