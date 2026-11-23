@@ -1402,6 +1402,19 @@ def _patch_main_deps() -> dict:
     _patchers.append(prewarm_patch)
     mocks["prewarm_with_retry"] = _prewarm
 
+    # ── _prewarm_enrichment_gate (module-level in worker.py, called in main())
+    # Direct attribute target: ``main()`` calls the module-global
+    # ``_prewarm_enrichment_gate`` (not a lazy import).  Without this the
+    # real gate hits ``get_system_config`` → real DB and all 7 TestMain
+    # tests fail with AttributeError on a coroutine.
+    _prewarm_gate = AsyncMock()
+    prewarm_gate_patch = patch(
+        "services.worker.worker._prewarm_enrichment_gate", new=_prewarm_gate
+    )
+    prewarm_gate_patch.start()
+    _patchers.append(prewarm_gate_patch)
+    mocks["prewarm_enrichment_gate"] = _prewarm_gate
+
     # ── init_arq / close_arq (lazy import from core.arq in main()) ─────
     # Source-module target so the ``from core.arq import close_arq,
     # init_arq`` inside ``main()`` resolves to the mocks. Without this
