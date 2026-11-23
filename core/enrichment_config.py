@@ -6,7 +6,7 @@ Layering (lowest → highest precedence)::
 
 Every layer is an optional ``dict[str, bool]``; any missing key defaults to
 ``True`` (all-ON).  Callers extract the raw dict from their config object
-(``SystemConfigResponse.enrichment``, ``OrgConfigBase.enrichment``) and pass
+(``OrgConfigBase.enrichment``) and pass
 it here — this module never touches the DB, Redis, or Pydantic layers.
 
 Disabled steps skip work but still stamp their
@@ -50,7 +50,7 @@ def _as_dict(layer: EnrichmentMap | Any | None) -> EnrichmentMap | None:
     """Unwrap a layer to a plain dict.
 
     Accepts a raw ``dict`` or any object carrying an ``enrichment`` attribute
-    (``OrgConfigBase``, ``SystemConfigResponse``).  Anything else is a loud
+    (``OrgConfigBase``).  Anything else is a loud
     wiring error — never silently treated as all-ON.
     """
     if layer is None:
@@ -183,8 +183,9 @@ def _as_gate_block(layer: Any | None) -> dict[str, Any] | None:
     """Unwrap the system gate block to a plain dict.
 
     Accepts a raw ``dict``, the nested gate object (``enabled`` /
-    ``threshold`` / ``model`` attributes), or any object carrying an
-    ``enrichment_gate`` attribute (``SystemConfigResponse``).
+    ``threshold`` attributes), or any object carrying an
+    ``enrichment_gate`` attribute (``SystemConfigResponse``).  The gate
+    model is fixed to GATE_DEFAULT_MODEL — never parsed from config.
     """
     if layer is None:
         return None
@@ -199,7 +200,7 @@ def _as_gate_block(layer: Any | None) -> dict[str, Any] | None:
         return nested
     return {
         key: getattr(nested, key)
-        for key in ("enabled", "threshold", "model")
+        for key in ("enabled", "threshold")
         if hasattr(nested, key)
     }
 
@@ -227,28 +228,30 @@ def resolve_enrichment_gate(
     """Resolve the effective enrichment gate (system < org).
 
     The gate is ON only when the system block enables it AND the org
-    override is not ``False`` (``None``/``True`` inherit).  Threshold and
-    model come from the system block alone — the org layer is a
-    boolean kill-switch.  Absent layers fall back to the documented
-    gate defaults (disabled, ``0.5``, default model).
+    override is not ``False`` (``None``/``True`` inherit).  Threshold
+    comes from the system block alone — the org layer is a
+    boolean kill-switch.  The model is always GATE_DEFAULT_MODEL
+    (fixed, not configurable).  Absent layers fall back to the
+    documented gate defaults (disabled, ``0.5``, default model).
 
     Args:
         system: System gate block, ``SystemConfigResponse``, or raw dict.
         org: Org gate override (``bool | None``), ``OrgConfigBase``, or dict.
 
     Returns:
-        The effective ``{"enabled", "threshold", "model"}`` gate config.
+        The effective ``{"enabled", "threshold", "model"}`` gate config
+        (``model`` is always the platform default).
 
     Raises:
-        ValidationError: On non-boolean ``enabled``/override, a
-            non-numeric or out-of-range threshold, or a non-string model.
+        ValidationError: On non-boolean ``enabled``/override or a
+            non-numeric or out-of-range threshold.
     """
     block = _as_gate_block(system) or {}
-    unknown = set(block) - {"enabled", "threshold", "model"}
+    unknown = set(block) - {"enabled", "threshold"}
     if unknown:
         raise ValidationError(
             f"Unknown enrichment_gate keys: {sorted(unknown)}. "
-            f"Expected a subset of: ['enabled', 'threshold', 'model']."
+            f"Expected a subset of: ['enabled', 'threshold']."
         )
     enabled = block.get("enabled", False)
     if not isinstance(enabled, bool):
@@ -267,16 +270,11 @@ def resolve_enrichment_gate(
         raise ValidationError(
             f"Enrichment gate 'threshold' must be in [0, 1], got {threshold}."
         )
-    model = block.get("model", GATE_DEFAULT_MODEL)
-    if not isinstance(model, str) or not model.strip():
-        raise ValidationError(
-            "Enrichment gate 'model' must be a non-empty string."
-        )
     override = _as_gate_override(org)
     return {
         "enabled": enabled and override is not False,
         "threshold": threshold,
-        "model": model,
+        "model": GATE_DEFAULT_MODEL,
     }
 
 

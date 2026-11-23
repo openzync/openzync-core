@@ -248,32 +248,24 @@ async def update_system_config(
             f"{', '.join(sorted(unknown))}."
         )
 
-    # Fail-loud enable path: enabling the gate with an unknown/unreachable
-    # Hub model must 422 BEFORE anything is persisted.  ``enabled=false``
-    # (or a missing/null block) skips the check — disabling stays offline-safe.
+    # Fail-loud enable path: enabling the gate verifies the hardcoded
+    # platform default model is reachable on the Hub BEFORE anything is
+    # persisted.  ``enabled=false`` (or a missing/null block) skips the
+    # check — disabling stays offline-safe.  The model is fixed, never
+    # per-request (a ``model`` subkey 422s at the schema layer).
     gate_block = update_dict.get("enrichment_gate")
     if gate_block is not None:
         if isinstance(gate_block, dict):
             gate_enabled = gate_block.get("enabled")
-            gate_model = gate_block.get("model")
         else:
             gate_enabled = getattr(gate_block, "enabled", None)
-            gate_model = getattr(gate_block, "model", None)
         if gate_enabled is True:
             from core.enrichment_gate import (  # noqa: PLC0415 — lazy, avoids import cycle
                 DEFAULT_MODEL as _GATE_DEFAULT_MODEL,
             )
 
-            if gate_model is None:
-                model_id = _GATE_DEFAULT_MODEL
-            elif not isinstance(gate_model, str) or not gate_model.strip():
-                raise ValidationError(
-                    "Enrichment gate 'model' must be a non-empty string."
-                )
-            else:
-                model_id = gate_model
-            if not _is_local_gate_model(model_id):
-                await _assert_gate_model_reachable(model_id)
+            if not _is_local_gate_model(_GATE_DEFAULT_MODEL):
+                await _assert_gate_model_reachable(_GATE_DEFAULT_MODEL)
 
     if db is None:
         raise RuntimeError("update_system_config requires a DB session")

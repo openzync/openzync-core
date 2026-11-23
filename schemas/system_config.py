@@ -16,16 +16,16 @@ Single platform org — registration is governed by
 ``instance_settings.registration_mode`` (``open`` / ``invite_only`` /
 ``approval``), not by config policy keys.
 
-⚠️ BREAKING: ``llm_*`` / ``reranker_*`` are removed from platform
-defaults (org-level only).  Requests carrying them 422
-(``extra="forbid"``); responses never include them.
+⚠️ BREAKING: ``llm_*`` / ``reranker_*`` / ``graph_*`` / ``context_cache_ttl``
+are removed from platform defaults (org-level only).  Requests carrying
+them 422 (``extra="forbid"``); responses never include them.  Only
+``enrichment_gate`` remains (``enrichment`` is org-level only; the gate
+``model`` is fixed to the platform default and not configurable).
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator
-
-from schemas.organization_config import ENRICHMENT_KEYS  # noqa: TC001 — runtime import: pydantic resolves field types
+from pydantic import BaseModel, Field
 
 
 class EnrichmentGateSystemConfig(BaseModel):
@@ -33,8 +33,12 @@ class EnrichmentGateSystemConfig(BaseModel):
 
     The gate skips the single LLM call for low-signal episodes.  The Hub
     token itself is never stored here — the worker reads ``HF_TOKEN``
-    from the environment at call time.
+    from the environment at call time.  The gate model is fixed to the
+    platform default — a request carrying ``model`` 422s
+    (``extra="forbid"``).
     """
+
+    model_config = {"extra": "forbid"}
 
     enabled: bool = False
     threshold: float = Field(
@@ -43,7 +47,6 @@ class EnrichmentGateSystemConfig(BaseModel):
         le=1.0,
         description="Minimum should_enrich score to run the LLM.",
     )
-    model: str = "OpenZync/enrichment-gating-v1"
 
 
 class SystemConfigUpdate(BaseModel):
@@ -56,67 +59,16 @@ class SystemConfigUpdate(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    # ── Non-secret system-level defaults (mirror OrgConfigBase keys) ──────
-    # ⚠️ BREAKING: llm_* / reranker_* removed from platform defaults.
-    # LLM/reranker live at org level only — platform accepts graph,
-    # cache, enrichment, and gate keys.  (Unknown keys 422 via forbid.)
-    graph_backend: str | None = None
-    graph_search_type: str | None = None
-    graph_max_traversal_depth: int | None = Field(default=None, ge=1, le=10)
-    context_cache_ttl: int | None = Field(default=None, ge=1)
-    enrichment: dict[str, bool] | None = Field(
-        default=None,
-        description="System-level default enrichment toggles (entities, "
-        "embedding, facts, entity_links, classification, structured, "
-        "observations, blob_text, llm_invalidation). Unset keys default "
-        "to True; org config and per-ingest params override.",
-    )
+    # ── Non-secret system-level defaults ─────────────────────────────────
+    # ⚠️ BREAKING: llm_* / reranker_* / graph_* / context_cache_ttl removed
+    # from platform defaults — org level only.  ``enrichment`` removed too
+    # (org-level only); gate ``model`` is fixed, not configurable.
+    # Only enrichment_gate remains.  (Unknown keys 422 via forbid.)
     enrichment_gate: EnrichmentGateSystemConfig | None = Field(
         default=None,
-        description="System-level enrichment gate (enabled, threshold, "
-        "model). Unset means the gate defaults (disabled).",
+        description="System-level enrichment gate (enabled, threshold). "
+        "Unset means the gate defaults (disabled).",
     )
-
-    @field_validator("enrichment", mode="before")
-    @classmethod
-    def _validate_enrichment(
-        cls, v: dict[str, bool] | None
-    ) -> dict[str, bool] | None:
-        """Reject unknown toggle keys and non-boolean values (→ 422).
-
-        Values must be real booleans — truthy coercion would silently
-        enable a toggle the caller tried to disable (``bool("false")``
-        is ``True``).
-        """
-        if v is None:
-            return v
-        unknown = set(v) - ENRICHMENT_KEYS
-        if unknown:
-            raise ValueError(
-                f"Unknown enrichment keys: {sorted(unknown)}. "
-                f"Expected a subset of: {sorted(ENRICHMENT_KEYS)}."
-            )
-        for key, value in v.items():
-            if not isinstance(value, bool):
-                raise ValueError(
-                    f"Enrichment toggle {key!r} must be a boolean, "
-                    f"got {type(value).__name__}."
-                )
-        return v
-
-    @field_validator("graph_backend", mode="before")
-    @classmethod
-    def _reject_postgres(cls, v: str | None) -> str | None:
-        """Hard-reject `postgres` — removed in v1.1.0, returns 410 Gone."""
-        if v == "postgres":
-            # Plain ValueError (never GoneError): pydantic wraps it as a
-            # field error and the RequestValidationError handler in
-            # core/exceptions.py maps this message to a 410 problem JSON.
-            raise ValueError(
-                "PostgreSQL graph backend deprecated — gone, removed in v1.1.0. "
-                "Migrate to `falkordb` (410)."
-            )
-        return v
 
 
 class SystemConfigResponse(BaseModel):
@@ -124,45 +76,16 @@ class SystemConfigResponse(BaseModel):
 
     Mirrors :class:`SystemConfigUpdate` — the same whitelist, no secrets.
 
-    ⚠️ BREAKING: llm_* / reranker_* removed — org-level only now.
+    ⚠️ BREAKING: llm_* / reranker_* / graph_* / context_cache_ttl removed —
+    org-level only now.  ``enrichment`` removed too (org-level only).
+    Only enrichment_gate remains.
     """
 
-    graph_backend: str | None = None
-    graph_search_type: str | None = None
-    graph_max_traversal_depth: int | None = None
-    context_cache_ttl: int | None = None
-    enrichment: dict[str, bool] = Field(
-        default_factory=lambda: {
-            "entities": True,
-            "embedding": True,
-            "facts": True,
-            "entity_links": True,
-            "classification": True,
-            "structured": True,
-            "observations": True,
-            "blob_text": True,
-            "llm_invalidation": True,
-        },
-        description="Effective system-level enrichment toggles — all-True "
-        "when nothing is stored.",
-    )
     enrichment_gate: EnrichmentGateSystemConfig | None = Field(
         default=None,
         description="Effective system-level enrichment gate — None "
         "when nothing is stored (gate defaults apply: disabled).",
     )
-
-    @field_validator("graph_backend", mode="before")
-    @classmethod
-    def _reject_postgres(cls, v: str | None) -> str | None:
-        """Hard-reject `postgres` — removed in v1.1.0, returns 410 Gone."""
-        if v == "postgres":
-            # Plain ValueError (never GoneError): see SystemConfigUpdate.
-            raise ValueError(
-                "PostgreSQL graph backend deprecated — gone, removed in v1.1.0. "
-                "Migrate to `falkordb` (410)."
-            )
-        return v
 
 
 # ── Whitelist helpers ─────────────────────────────────────────────────────────
