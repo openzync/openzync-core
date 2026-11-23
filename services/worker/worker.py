@@ -582,6 +582,35 @@ async def renew_leader_lock(redis: AsyncRedis, owner: str) -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 
 
+async def _prewarm_enrichment_gate(
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]],
+) -> None:
+    """Preload the enrichment gate classifier when the system gate is on.
+
+    Leader-only, called right after the embeddings prewarm.  Resolves the
+    system gate from the DB; when disabled, returns silently with no Hub
+    traffic.  When enabled, :func:`core.enrichment_gate.prewarm` proves
+    both the load and infer paths — any failure propagates and aborts
+    boot loudly, the same fail-fast contract as ``prewarm_with_retry``.
+
+    Args:
+        session_factory: The worker's RLS-scoped session factory (the gate
+            read goes through ``get_platform_root``, which bypasses RLS).
+    """
+    from core.enrichment_config import resolve_enrichment_gate  # noqa: PLC0415
+    from core.system_config import get_system_config  # noqa: PLC0415
+
+    async with session_factory() as session:
+        config = await get_system_config(redis=None, db=session)
+    gate = resolve_enrichment_gate(config)
+    if not gate["enabled"]:
+        return
+    from core.enrichment_gate import prewarm as prewarm_gate  # noqa: PLC0415
+
+    await prewarm_gate(gate["model"])
+    logger.info("enrichment_gate.prewarmed", model=gate["model"])
+
+
 async def main() -> NoReturn:
     """Start the ARQ worker pool, Prometheus server, and health endpoint.
 
@@ -744,6 +773,7 @@ async def main() -> NoReturn:
     if is_leader:
         await prewarm_with_retry()
         logger.info("embeddings.prewarmed")
+        await _prewarm_enrichment_gate(db_session_factory)
     else:
         logger.info("embeddings.prewarm_skipped — follower replica")
 

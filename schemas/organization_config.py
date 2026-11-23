@@ -100,6 +100,18 @@ def _validate_enrichment_values(
     return v
 
 
+def _coerce_legacy_enrichment_gate(v: Any) -> Any:
+    """Coerce legacy SYSTEM-block dict shape to its ``enabled`` flag."""
+    if not isinstance(v, dict):
+        return v
+    logger.warning(
+        "org_config.enrichment_gate_legacy_shape "
+        "coercing legacy dict to enabled flag: %r",
+        v,
+    )
+    return bool(v.get("enabled", False))
+
+
 class PromptCachingOrgConfig(BaseModel):
     """Per-org overrides for provider-side prompt caching.
 
@@ -200,6 +212,11 @@ class OrgConfigBase(BaseModel):
         "blob_text, llm_invalidation). Unset keys default to True. "
         "Validated on ingest: facts/entity_links require entities, "
         "llm_invalidation requires facts.",
+    )
+    enrichment_gate: bool | None = Field(
+        default=None,
+        description="Enrichment gate override: False disables the gate for "
+        "this org, True/None inherit the system gate block.",
     )
     prompt_caching: PromptCachingOrgConfig | None = Field(
         default=None,
@@ -372,6 +389,12 @@ class OrgConfigBase(BaseModel):
         _validate_enrichment_values(v)
         return _validate_enrichment_keys(v)
 
+    @field_validator("enrichment_gate", mode="before")
+    @classmethod
+    def _coerce_enrichment_gate(cls, v: Any) -> Any:
+        """Coerce legacy SYSTEM-block dict to its ``enabled`` flag."""
+        return _coerce_legacy_enrichment_gate(v)
+
     @field_validator("pii_enabled_types", mode="before")
     @classmethod
     def _validate_pii_types(cls, v: list[str] | None) -> list[str] | None:
@@ -501,6 +524,12 @@ class UpdateOrgConfigRequest(BaseModel):
         "Validated on ingest: facts/entity_links require entities, "
         "llm_invalidation requires facts.",
     )
+    enrichment_gate: bool | None = Field(
+        default=None,
+        description="Enrichment gate override: False disables the gate for "
+        "this org, True/None inherit the system gate block. Null removes "
+        "the stored override (restores inheritance).",
+    )
     prompt_caching: PromptCachingOrgConfig | None = None
     # ⚠️ BREAKING: embedding_* fields removed — see the note on
     # ``OrgConfigBase``. Embedding settings now live in no config surface at all.
@@ -579,6 +608,12 @@ class UpdateOrgConfigRequest(BaseModel):
         """
         _validate_enrichment_values(v)
         return _validate_enrichment_keys(v)  # type: ignore[return-value]
+
+    @field_validator("enrichment_gate", mode="before")
+    @classmethod
+    def _coerce_enrichment_gate_update(cls, v: Any) -> Any:
+        """Coerce legacy SYSTEM-block dict to its ``enabled`` flag (update)."""
+        return _coerce_legacy_enrichment_gate(v)
 
     @field_validator("pii_enabled_types", mode="before")
     @classmethod

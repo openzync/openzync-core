@@ -140,6 +140,7 @@ async def enrich_episode(
     metadata: dict | None = None,
     role: str = "user",
     enrichments: dict | None = None,
+    enrichment_gate: dict | None = None,
 ) -> None:
     """Single enrichment pass: classify + extract entities/facts/structured.
 
@@ -179,6 +180,10 @@ async def enrich_episode(
         enrichments: Effective per-episode toggles forwarded from ingest
             (``None`` on old jobs → all-ON). Disabled LLM sections are
             mark-skipped, never run.
+        enrichment_gate: Effective gate config forwarded from ingest
+            (``None`` on old jobs → gate-off). When ON, low-signal
+            episodes stamp the LLM bits via the mark-skipped path and
+            return without the LLM call.
 
     Raises:
         EpisodeNotFoundError: If the episode does not exist.
@@ -331,6 +336,72 @@ async def enrich_episode(
                 await db.commit()
                 log.info("enrich_episode.all_skipped_or_done")
                 return
+
+            # ── 2d. In-process enrichment gate (MiniLM skip signal) ────
+            # When the gate resolves ON (system.enabled AND org is not
+            # False), score the episode text in-process.  A score at or
+            # above threshold means no memorable content — stamp the LLM
+            # bits via the same mark-skipped path as disabled toggles and
+            # return without the LLM call.  Embed + link still run as
+            # their own ARQ tasks.  Old jobs (no gate field) default off.
+            # The payload is parsed defensively — a poisoned value fails
+            # open (gate off), never into an ARQ retry loop.  Scoring
+            # itself never raises (fail-open inside ``core.enrichment_gate``).
+            from core.enrichment_gate import (
+                DEFAULT_MODEL,
+                DEFAULT_THRESHOLD,
+                should_skip,
+            )
+
+            gate_on = False
+            gate_threshold = DEFAULT_THRESHOLD
+            gate_model = DEFAULT_MODEL
+            if isinstance(enrichment_gate, dict):
+                gate_on = enrichment_gate.get("enabled") is True
+                raw_threshold = enrichment_gate.get("threshold", DEFAULT_THRESHOLD)
+                if (
+                    isinstance(raw_threshold, (int, float))
+                    and not isinstance(raw_threshold, bool)
+                    and 0.0 <= raw_threshold <= 1.0
+                ):
+                    gate_threshold = float(raw_threshold)
+                raw_model = enrichment_gate.get("model", DEFAULT_MODEL)
+                if isinstance(raw_model, str) and raw_model.strip():
+                    gate_model = raw_model
+            if gate_on:
+                gate_skip, gate_score = await should_skip(
+                    episode.content,
+                    threshold=gate_threshold,
+                    model=gate_model,
+                )
+                log.info(
+                    "enrich_episode.enrichment_gate",
+                    score=round(gate_score, 6),
+                    threshold=gate_threshold,
+                    skipped=gate_skip,
+                )
+                if gate_skip:
+                    for _key, _bit in (
+                        ("entities", ENRICHMENT_ENTITIES),
+                        ("facts", ENRICHMENT_FACTS),
+                        ("classification", ENRICHMENT_CLASSIFICATION),
+                        ("structured", ENRICHMENT_STRUCTURED_EXTRACTION),
+                        ("llm_invalidation", LLM_INVALIDATION_BIT),
+                    ):
+                        if not (episode.enrichment_status & _bit):
+                            await episode_repo.apply_enrichment_bits(
+                                uuid.UUID(episode_id), _bit
+                            )
+                            episode.enrichment_status |= _bit
+                            log.info(
+                                "enrich_episode.enrichment_skipped",
+                                section=_key,
+                                episode_id=episode_id,
+                                reason="gate",
+                            )
+                    await db.commit()
+                    log.info("enrich_episode.gate_skipped")
+                    return
 
             # ── 2c. Resolve graph backend BEFORE render — the
             # SESSION_ENTITIES provider needs it for known_entities;

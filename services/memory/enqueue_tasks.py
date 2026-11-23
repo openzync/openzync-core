@@ -48,6 +48,7 @@ class EnqueueTasksMixin:
         session_id: str,
         episodes: list[dict[str, Any]],
         enrichments: dict[str, bool] | None = None,
+        enrichment_gate: dict[str, bool | float | str] | None = None,
     ) -> None:
         """Enqueue ARQ background tasks for episode enrichment.
 
@@ -76,6 +77,8 @@ class EnqueueTasksMixin:
             episodes: List of episode dicts with ``id`` and ``role``.
             enrichments: Effective per-episode toggles (forwarded into
                 every ARQ payload; workers mark-skipped disabled bits).
+            enrichment_gate: Effective gate config (forwarded into the
+                ``enrich_episode`` ARQ payload only).
         """
         episode_ids = [ep["id"] for ep in episodes]
         trace_id = structlog.contextvars.get_contextvars().get(
@@ -101,6 +104,7 @@ class EnqueueTasksMixin:
                         str(episode["id"]),
                         episode.get("role", "user"),
                         enrichments,
+                        enrichment_gate,
                     )
                     for episode in episodes
                 )
@@ -177,6 +181,7 @@ class EnqueueTasksMixin:
         idempotency_key: str | None,
         body_hash: str | None,
         enrichments: dict[str, bool] | None = None,
+        enrichment_gate: dict[str, bool | float | str] | None = None,
     ) -> IngestMemoryResponse:
         """Run post-commit fan-out and build the 202 response.
 
@@ -196,6 +201,8 @@ class EnqueueTasksMixin:
             body_hash: Optional canonical body hash.
             enrichments: Effective per-episode toggles (forwarded into
                 every ARQ payload).
+            enrichment_gate: Effective gate config (forwarded into the
+                ``enrich_episode`` ARQ payload only).
 
         Returns:
             The accepted ``IngestMemoryResponse``.
@@ -215,6 +222,7 @@ class EnqueueTasksMixin:
                 session_id=str(session_id),
                 episodes=episode_dicts,
                 enrichments=enrichments,
+                enrichment_gate=enrichment_gate,
             )
         except Exception:
             logger.critical(

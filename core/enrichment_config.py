@@ -16,7 +16,7 @@ and monitoring see a complete bitmask instead of a perpetually stale episode.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypedDict
 
 from core.enrichment_bits import (
     ENRICHMENT_KEY_BITS,
@@ -28,8 +28,11 @@ from core.exceptions import ValidationError
 __all__ = [
     "ENRICHMENT_KEY_BITS",
     "ENRICHMENT_KEYS",
+    "GATE_DEFAULT_MODEL",
+    "GATE_DEFAULT_THRESHOLD",
     "all_enabled",
     "resolve_enrichment",
+    "resolve_enrichment_gate",
     "validate_enrichment_combo",
 ]
 """Re-exported from :mod:`core.enrichment_bits` (canonical home) so
@@ -161,10 +164,124 @@ def validate_enrichment_combo(
         )
 
 
+GATE_DEFAULT_THRESHOLD: float = 0.5
+"""Gate score at or above which the episode skips LLM enrichment."""
+
+GATE_DEFAULT_MODEL: str = "OpenZync/enrichment-gating-v1"
+"""Hub repo id of the fine-tuned gating classifier."""
+
+
+class EnrichmentGateConfig(TypedDict):
+    """Effective enrichment gate (JSON-serializable ARQ payload)."""
+
+    enabled: bool
+    threshold: float
+    model: str
+
+
+def _as_gate_block(layer: Any | None) -> dict[str, Any] | None:
+    """Unwrap the system gate block to a plain dict.
+
+    Accepts a raw ``dict``, the nested gate object (``enabled`` /
+    ``threshold`` / ``model`` attributes), or any object carrying an
+    ``enrichment_gate`` attribute (``SystemConfigResponse``).
+    """
+    if layer is None:
+        return None
+    if isinstance(layer, dict):
+        return layer
+    nested = getattr(layer, "enrichment_gate", None)
+    if nested is None:
+        nested = layer if hasattr(layer, "enabled") else None
+    if nested is None:
+        return None
+    if isinstance(nested, dict):
+        return nested
+    return {
+        key: getattr(nested, key)
+        for key in ("enabled", "threshold", "model")
+        if hasattr(nested, key)
+    }
+
+
+def _as_gate_override(layer: Any | None) -> bool | None:
+    """Unwrap the org gate override to ``bool | None`` (``None`` = inherit)."""
+    if layer is None or isinstance(layer, bool):
+        return layer
+    if isinstance(layer, dict):
+        value = layer.get("enrichment_gate", None)
+    else:
+        value = getattr(layer, "enrichment_gate", None)
+    if value is None or isinstance(value, bool):
+        return value
+    raise ValidationError(
+        f"Enrichment gate override must be a boolean or null, "
+        f"got {type(value).__name__}."
+    )
+
+
+def resolve_enrichment_gate(
+    system: Any | None = None,
+    org: Any | None = None,
+) -> EnrichmentGateConfig:
+    """Resolve the effective enrichment gate (system < org).
+
+    The gate is ON only when the system block enables it AND the org
+    override is not ``False`` (``None``/``True`` inherit).  Threshold and
+    model come from the system block alone — the org layer is a
+    boolean kill-switch.  Absent layers fall back to the documented
+    gate defaults (disabled, ``0.5``, default model).
+
+    Args:
+        system: System gate block, ``SystemConfigResponse``, or raw dict.
+        org: Org gate override (``bool | None``), ``OrgConfigBase``, or dict.
+
+    Returns:
+        The effective ``{"enabled", "threshold", "model"}`` gate config.
+
+    Raises:
+        ValidationError: On non-boolean ``enabled``/override, a
+            non-numeric or out-of-range threshold, or a non-string model.
+    """
+    block = _as_gate_block(system) or {}
+    unknown = set(block) - {"enabled", "threshold", "model"}
+    if unknown:
+        raise ValidationError(
+            f"Unknown enrichment_gate keys: {sorted(unknown)}. "
+            f"Expected a subset of: ['enabled', 'threshold', 'model']."
+        )
+    enabled = block.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValidationError(
+            f"Enrichment gate 'enabled' must be a boolean, "
+            f"got {type(enabled).__name__}."
+        )
+    threshold = block.get("threshold", GATE_DEFAULT_THRESHOLD)
+    if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
+        raise ValidationError(
+            f"Enrichment gate 'threshold' must be a number in [0, 1], "
+            f"got {type(threshold).__name__}."
+        )
+    threshold = float(threshold)
+    if not 0.0 <= threshold <= 1.0:
+        raise ValidationError(
+            f"Enrichment gate 'threshold' must be in [0, 1], got {threshold}."
+        )
+    model = block.get("model", GATE_DEFAULT_MODEL)
+    if not isinstance(model, str) or not model.strip():
+        raise ValidationError(
+            "Enrichment gate 'model' must be a non-empty string."
+        )
+    override = _as_gate_override(org)
+    return {
+        "enabled": enabled and override is not False,
+        "threshold": threshold,
+        "model": model,
+    }
+
+
 def _assert_schema_key_parity() -> None:
     """Fail import when a ``schemas/`` toggle-key copy drifts from canonical.
-
-    ``schemas/`` must never import from ``core/``, so each schema module
     keeps a local ``ENRICHMENT_KEYS`` copy.  This check (run once at
     import time) makes drift loud instead of silent: a renamed/added key
     in one layer would otherwise 422-or-ignore across layers.

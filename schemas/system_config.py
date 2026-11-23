@@ -27,6 +27,19 @@ from schemas.organization_config import (  # noqa: TC001 — runtime import: pyd
 )
 
 
+class EnrichmentGateSystemConfig(BaseModel):
+    """System-level enrichment gate block (non-secret tunables only).
+
+    The gate skips the single LLM call for low-signal episodes.  The Hub
+    token itself is never stored here — the worker reads ``HF_TOKEN``
+    from the environment at call time.
+    """
+
+    enabled: bool = False
+    threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    model: str = "OpenZync/enrichment-gating-v1"
+
+
 class SystemConfigUpdate(BaseModel):
     """Editable whitelist for ``PATCH /admin/system/config``.
 
@@ -59,6 +72,11 @@ class SystemConfigUpdate(BaseModel):
         "embedding, facts, entity_links, classification, structured, "
         "observations, blob_text, llm_invalidation). Unset keys default "
         "to True; org config and per-ingest params override.",
+    )
+    enrichment_gate: EnrichmentGateSystemConfig | None = Field(
+        default=None,
+        description="System-level enrichment gate (enabled, threshold, "
+        "model). Unset means the gate defaults (disabled).",
     )
 
     @field_validator("enrichment", mode="before")
@@ -135,6 +153,11 @@ class SystemConfigResponse(BaseModel):
         },
         description="Effective system-level enrichment toggles — all-True "
         "when nothing is stored.",
+    )
+    enrichment_gate: EnrichmentGateSystemConfig | None = Field(
+        default=None,
+        description="Effective system-level enrichment gate — None "
+        "when nothing is stored (gate defaults apply: disabled).",
     )
 
     @field_validator("graph_backend", mode="before")

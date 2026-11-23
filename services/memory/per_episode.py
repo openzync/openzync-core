@@ -26,6 +26,7 @@ class PerEpisodeEnqueueMixin:
         episode_id: str,
         role: str,
         enrichments: dict[str, bool] | None = None,
+        enrichment_gate: dict[str, bool | float | str] | None = None,
     ) -> None:
         """Enqueue the three enrichment tasks for one episode, idempotently.
 
@@ -58,9 +59,20 @@ class PerEpisodeEnqueueMixin:
                 episode row is re-read by workers).
             enrichments: Effective per-episode toggles (forwarded into
                 every ARQ payload; ``None`` means all-ON for old jobs).
+            enrichment_gate: Effective gate config (forwarded into the
+                ``enrich_episode`` ARQ payload only; ``None`` means
+                gate-off for old jobs).
         """
         tasks = (
-            ("enrich_episode", qname_high, {"session_id": session_id, "role": role}),
+            (
+                "enrich_episode",
+                qname_high,
+                {
+                    "session_id": session_id,
+                    "role": role,
+                    "enrichment_gate": enrichment_gate,
+                },
+            ),
             ("embed_episode", qname_high, {}),
             ("link_entities_to_episode", qname_low, {"role": role}),
         )
