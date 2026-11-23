@@ -109,6 +109,7 @@ class IngestMixin:
         effective_enrichments = await self._resolve_enrichments(
             user_id, enrichments
         )
+        enrichment_gate = await self._resolve_enrichment_gate(user_id)
 
         # ── Steps 1–2: Idempotency check + session resolve ───────────────
         if idempotency_key is not None:
@@ -226,6 +227,7 @@ class IngestMixin:
             idempotency_key=idempotency_key,
             body_hash=body_hash,
             enrichments=effective_enrichments,
+            enrichment_gate=enrichment_gate,
         )
 
     async def _resolve_enrichments(
@@ -271,6 +273,38 @@ class IngestMixin:
             or system_cfg.graph_search_type,
         )
         return effective
+
+    async def _resolve_enrichment_gate(
+        self,
+        user_id: UUID,
+    ) -> dict[str, bool | float | str]:
+        """Resolve the effective enrichment gate (system < org).
+
+        The gate is ON only when the system block enables it AND the org
+        override is not ``False``.  Threshold/model fall back to the
+        documented gate defaults when unstated.
+
+        Args:
+            user_id: The organization UUID (config scope).
+
+        Returns:
+            The effective ``{"enabled", "threshold", "model"}`` gate
+            config, forwarded into the ``enrich_episode`` ARQ payload.
+
+        Raises:
+            ValidationError: On malformed stored gate values.
+        """
+        from core.enrichment_config import resolve_enrichment_gate
+        from core.org_config import get_org_config
+        from core.system_config import get_system_config
+
+        system_cfg = await get_system_config(redis=self._redis, db=self._db)
+        org_cfg = await get_org_config(user_id, redis=self._redis, db=self._db)
+        return dict(
+            resolve_enrichment_gate(
+                system_cfg.enrichment_gate, org_cfg.enrichment_gate
+            )
+        )
 
     async def _resolve_user(
         self,

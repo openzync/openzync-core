@@ -47,7 +47,7 @@ def upgrade() -> None:
     """Drop per-addon tables, then the ``addon_states`` registry."""
     for table in _addon_tables():
         op.drop_table(table)
-    op.drop_table("addon_states", checkfirst=True)
+    op.drop_table("addon_states", if_exists=True)
 
 
 def downgrade() -> None:
