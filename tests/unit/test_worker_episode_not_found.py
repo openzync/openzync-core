@@ -14,7 +14,9 @@ covered by ``TestEnrichEpisode`` below, which tests the single
 
 Each remaining worker uses a slightly different code path for the episode
 lookup:
-- ``enrich_episode`` calls ``EpisodeRepository.get_by_id_for_update()``.
+- ``enrich_episode`` calls ``EpisodeRepository.get_by_id()`` (lock-free
+  initial read; ``get_by_id_for_update()`` is only used later on the
+  gate-skip stamp path).
 - ``link_entities_to_episode`` runs a raw ``select(Episode)``.
 - ``compute_observations`` calls ``EpisodeRepository.get_by_id()``.
 
@@ -210,8 +212,10 @@ class TestEnrichEpisode:
     """enrich_episode raises EpisodeNotFoundError when episode is missing.
 
     Follows the same pattern as ``classify_dialog`` and ``extract_structured``
-    — the episode lookup is through ``EpisodeRepository.get_by_id_for_update``,
-    and the ``@with_retry`` decorator catches the exception to retry.
+    — the initial episode lookup is through ``EpisodeRepository.get_by_id``
+    (lock-free; the row lock via ``get_by_id_for_update`` is only taken
+    later on the gate-skip stamp path), and the ``@with_retry`` decorator
+    catches the exception to retry.
     """
 
     @pytest.mark.asyncio
@@ -220,7 +224,7 @@ class TestEnrichEpisode:
     ) -> None:
         """Repository returns None → EpisodeNotFoundError is raised."""
         mock_repo = AsyncMock()
-        mock_repo.get_by_id_for_update.return_value = None
+        mock_repo.get_by_id.return_value = None
 
         with patch("asyncio.sleep", AsyncMock()), patch(
             "repositories.episode_repository.EpisodeRepository",
