@@ -132,7 +132,6 @@ SYSTEM_SETTING_CATEGORIES: dict[str, str] = {
     "OZ_PROMPT_CACHING_ENABLED": "Platform",
     "OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS": "Platform",
     "OZ_PROMPT_CACHING_ANTHROPIC_TTL": "Platform",
-    "OZ_ALLOWED_ADDON_SRC": "Platform",
 }
 """Functional category for every key listable by ``core.system_settings``."""
 

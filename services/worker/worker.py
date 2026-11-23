@@ -122,7 +122,6 @@ from workers.tasks.reconcile_enrichment import reconcile_enrichment
 from workers.tasks.reconcile_graph_edges import reconcile_graph_edges
 from workers.tasks.reconcile_temporal import reconcile_temporal
 from workers.tasks.summarise_community import summarise_community
-from workers.addon_dispatch import addon_dispatch, reconcile_addon_versions
 
 HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     enrich_episode,  # combined LLM enrichment — classify/entities/facts/structured
@@ -145,7 +144,6 @@ LOW_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     reconcile_temporal,  # warn-only temporal consistency scan — daily cron
     cleanup_orphan_blobs,  # orphaned S3 blobs for soft-deleted episodes — daily cron
     extract_blob_text,  # blob text extraction — OCR/PDF, low priority
-    addon_dispatch,  # fan-out to enabled addons (fail-closed, 24h dedup)
 ]
 """Tasks assigned to the low-priority queue (scheduled batch)."""
 
@@ -809,16 +807,6 @@ async def main() -> NoReturn:
             minute=0,
             unique=True,
             job_id="temporal_consistency_scan",
-        ),
-        # ── Addon version reconciliation (hourly) ──────────────────────
-        # Refreshes latest_seen/update_available (banner flag); manual
-        # upgrade only — the cron never mutates installed code.
-        cron(
-            reconcile_addon_versions,
-            hour=set(range(0, 24)),
-            minute=0,
-            unique=True,
-            job_id="addon_version_reconciliation",
         ),
     ]
 

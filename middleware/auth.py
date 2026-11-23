@@ -26,7 +26,6 @@ RFC 7807 error bodies are returned for all 401/403 responses.
 from __future__ import annotations
 
 import logging
-import re
 from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID
@@ -76,17 +75,6 @@ AUTH_MISS_RATE_WINDOW: int = 60
 
 SCHEMA_AUTH_HEADER: str = "Bearer"
 """Expected Authorization header scheme."""
-
-_UI_PATH_RE: re.Pattern[str] = re.compile(r"^/v1/ext/[^/]+/ui(/.*)?$")
-"""Addon static-panel paths served by the gated UI route.
-
-``GET`` requests here pass through this middleware WITHOUT auth state —
-the UI route enforces ``require_addon_enabled`` (disabled → 403) plus a
-Redis-backed ``?ticket=`` panel ticket (missing/invalid → 401). Query
-values are never accepted as credentials here: this middleware is
-header-only (``Authorization: Bearer``), keeping the 401 shape.
-# ⚠️ never extend past ui/ GETs — only the ticket-checked UI route lives here.
-"""
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -550,19 +538,6 @@ def _verify_jwt_and_set_state(
     return None
 
 
-def _is_public_ui_path(path: str, method: str) -> bool:
-    """Whether a request is served by the ticket-checked addon UI route.
-
-    Args:
-        path: The request URL path.
-        method: The HTTP method.
-
-    Returns:
-        ``True`` for ``GET`` under ``/v1/ext/<addon>/ui/...`` only.
-    """
-    return method == "GET" and _UI_PATH_RE.match(path) is not None
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Auth middleware
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -652,13 +627,6 @@ class AuthMiddleware:
 
         # ── Public endpoints pass through ────────────────────────────────
         if _is_public_path(path):
-            await self.app(scope, receive, send)
-            return
-
-        # ── Addon UI panels pass through to the ticket-checked route ────
-        # The gated UI route enforces enablement + ``?ticket=`` itself;
-        # this middleware stays header-only and never reads query values.
-        if _is_public_ui_path(path, method):
             await self.app(scope, receive, send)
             return
 

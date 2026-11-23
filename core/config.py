@@ -439,16 +439,6 @@ class Settings(BaseSettings):
         validation_alias="OZ_MAX_BLOBS_PER_REQUEST",
     )
 
-    # ── Addons ───────────────────────────────────────────────────────────
-    ALLOWED_ADDON_SRC: str = Field(
-        default="addons",
-        description=(
-            "Directory local addon sources must live under. "
-            "Local installs outside it are rejected (422), as are symlinks."
-        ),
-        validation_alias="OZ_ALLOWED_ADDON_SRC",
-    )
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Singleton accessors

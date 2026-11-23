@@ -35,18 +35,12 @@ from core.logging import setup_logging
 from core.redis import close_redis, init_redis
 from middleware.audit import AuditMiddleware
 from middleware.auth import AuthMiddleware
-from middleware.ext_null_origin_cors import (
-    EXT_CORS_ALLOW_HEADERS,
-    EXT_CORS_ALLOW_METHODS,
-    ExtNullOriginCorsMiddleware,
-)
 from middleware.logging import LoggingMiddleware
 from middleware.metrics import MetricsMiddleware
 from middleware.rate_limit import RateLimitMiddleware
 from middleware.request_id import RequestIDMiddleware
 from middleware.tracing import TracingMiddleware
 from routers import (
-    admin_addons,
     admin_invites,
     admin_llm_usage,
     admin_metrics,
@@ -196,82 +190,6 @@ def create_app() -> FastAPI:
         else:
             logger.info("embeddings.prewarmed")
 
-        # ── Addon runtime: hot-load enabled addons ─────────────────────
-        # Bypass protection is structural now: addon contexts hold ONLY
-        # AddonSession (core/addons/sessions.py), which core.rls refuses
-        # to bypass — no monkey-patching, no frame-walking.
-        app.state.addons = {}
-        try:
-            from core.addons.installer import ADDON_ROOT
-            from core.addons.loader import load_addon
-            from core.addons.manifest import parse_manifest
-            from core.addons.mount import mount_addon
-            from core.addons.registry import (
-                AddonRecord,
-                next_generation,
-                publish_registry,
-            )
-            from models.addon_state import AddonState
-            from sqlalchemy import select
-
-            async with app.state.db_session_factory() as _s:
-                rows = (await _s.execute(select(AddonState))).scalars().all()
-            records: dict = {}
-            paths: dict = {}
-            for _row in rows:
-                if not _row.enabled:
-                    continue
-                _slug = (
-                    _row.source_ref.replace("/", "__")
-                    if _row.source_type == "github"
-                    else _row.id
-                )
-                _src = ADDON_ROOT / _slug
-                try:
-                    _manifest = parse_manifest(_src)
-                    _module = load_addon(_manifest, _src, _row.version)
-                    from core.addons.hooks import (
-                        resolve_addon_router as _resolve_router,
-                    )
-                    from core.addons.hooks import (
-                        resolve_worker_ops as _resolve_ops,
-                    )
-
-                    _router = _resolve_router(_module)
-                    if _router is not None and getattr(_module, "router", None) is None:
-                        _module.router = _router
-                    records[_row.id] = AddonRecord(
-                        manifest=_manifest,
-                        module=_module,
-                        version=_row.version,
-                        enabled=True,
-                        generation=next_generation(),
-                        service_overrides=dict(
-                            getattr(_module, "SERVICE_OVERRIDES", {})
-                        ),
-                        router=_router,
-                        worker_ops=_resolve_ops(_module),
-                    )
-                    paths[_row.id] = _src
-                except Exception as exc:
-                    logger.error(
-                        "addon.boot_load_failed",
-                        extra={"addon": _row.id, "error": str(exc)},
-                    )
-            publish_registry(app, records)
-            for _aid, _rec in records.items():
-                try:
-                    mount_addon(app, _rec, paths[_aid])
-                except Exception as exc:
-                    logger.error(
-                        "addon.boot_mount_failed",
-                        extra={"addon": _aid, "error": str(exc)},
-                    )
-        except Exception as exc:
-            # Boot must not fail on addon errors — degrade loudly, serve core.
-            app.state.degraded["addons"] = str(exc)
-            logger.error("addons.boot_failed — degraded", exc_info=True)
-
         yield
 
         # ── Shutdown (reverse order of initialisation) ────────────────────
@@ -307,7 +225,6 @@ def create_app() -> FastAPI:
     # (outermost → innermost).  Registration order is the reverse.
     #
     # Runtime order (outermost → innermost):
-    #   0. ExtNullOriginCorsMiddleware (null-origin shim, /v1/ext/* only)
     #   1. CORSMiddleware
     #   1. LoggingMiddleware
     #   2. TracingMiddleware
@@ -377,31 +294,28 @@ def create_app() -> FastAPI:
     # Runtime 1 — Structured logging
     app.add_middleware(LoggingMiddleware)
 
-    # Runtime 1/0 (outermost pair) — CORS: CORSMiddleware intercepts OPTIONS
+    # Runtime 1 (outermost) — CORS: CORSMiddleware intercepts OPTIONS
     # preflight BEFORE AuthMiddleware rejects them. Methods/headers are an
     # explicit allowlist (frontend sends Authorization + Content-Type;
     # X-Request-ID is accepted for tracing) — never "*" with
-    # allow_credentials=True. The method/header lists live in
-    # middleware.ext_null_origin_cors so the null-origin shim mirrors them.
+    # allow_credentials=True.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
         allow_credentials=True,
-        allow_methods=EXT_CORS_ALLOW_METHODS,
-        allow_headers=EXT_CORS_ALLOW_HEADERS,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "X-Request-ID",
+            "Idempotency-Key",
+        ],
     )
-
-    # Runtime 0 (outermost) — null-origin shim for opaque-origin addon
-    # panels (sandbox="allow-scripts" iframes send `Origin: null`) on
-    # /v1/ext/* only; bearer-only auth, no cookies, so no credentials flag.
-    # Never extend beyond /v1/ext/*.
-    app.add_middleware(ExtNullOriginCorsMiddleware)
 
     # ── Routers ──────────────────────────────────────────────────────────
     # Health must live at ROOT (not /v1) — Helm/NGINX probes target /health
     # and /ready; the /v1 prefix made them 404 on deployed instances.
     app.include_router(health.router, tags=["Health"])
-    app.include_router(admin_addons.router)
     app.include_router(admin_llm_usage.router)
     app.include_router(admin_metrics.router)
     app.include_router(admin_schemas.router)
