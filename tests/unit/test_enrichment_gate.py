@@ -15,9 +15,7 @@ fails the test loudly instead of hanging on a connection timeout.
 
 from __future__ import annotations
 
-import logging
 import math
-import urllib.error
 import urllib.request
 from typing import Any
 from unittest.mock import AsyncMock
@@ -32,6 +30,7 @@ from core.enrichment_config import (
 )
 from core.exceptions import ValidationError
 from schemas.organization_config import (
+    EnrichmentGateOrgConfig,
     OrgConfigBase,
     UpdateOrgConfigRequest,
 )
@@ -266,66 +265,75 @@ class TestThresholdEdges:
 
 
 class TestResolveEnrichmentGate:
-    """System AND org-inherit; fallbacks; malformed types raise."""
+    """Org-only gate; fallbacks; malformed types raise."""
 
     def test_absent_layers_default_to_disabled(self) -> None:
-        """``(None, None)`` → gate off with documented defaults."""
-        resolved = resolve_enrichment_gate(None, None)
-        assert resolved == {
-            "enabled": False,
-            "threshold": GATE_DEFAULT_THRESHOLD,
-            "model": GATE_DEFAULT_MODEL,
-        }
-        assert resolved["threshold"] == 0.5
-
-    def test_system_enabled_and_org_inherits_turns_on(self) -> None:
-        """System on + org ``None``/``True`` → on; explicit values kept."""
-        for org in (None, True):
-            resolved = resolve_enrichment_gate(
-                {"enabled": True, "threshold": 0.8, "model": "org/model"},
-                org,
-            )
+        """``None`` (or no arg) → gate off with documented defaults."""
+        for resolved in (resolve_enrichment_gate(None), resolve_enrichment_gate()):
             assert resolved == {
-                "enabled": True,
-                "threshold": 0.8,
-                "model": "org/model",
+                "enabled": False,
+                "threshold": GATE_DEFAULT_THRESHOLD,
+                "model": GATE_DEFAULT_MODEL,
             }
+        assert resolve_enrichment_gate()["threshold"] == 0.5
 
-    def test_org_false_is_kill_switch(self) -> None:
-        """System on + org ``False`` → off (threshold/model still resolved)."""
-        resolved = resolve_enrichment_gate({"enabled": True}, False)
-        assert resolved["enabled"] is False
-        assert resolved["threshold"] == GATE_DEFAULT_THRESHOLD
-
-    def test_system_off_stays_off(self) -> None:
-        """System off + org ``True`` → off: the org cannot force-enable."""
+    def test_org_enabled_turns_on(self) -> None:
+        """Org ``True`` / ``{"enabled": True}`` → on; explicit values kept."""
+        for org in (True, {"enabled": True}):
+            resolved = resolve_enrichment_gate(org)
+            assert resolved["enabled"] is True
+            assert resolved["threshold"] == GATE_DEFAULT_THRESHOLD
+            assert resolved["model"] == GATE_DEFAULT_MODEL
         assert (
-            resolve_enrichment_gate({"enabled": False}, True)["enabled"] is False
+            resolve_enrichment_gate({"enabled": True, "threshold": 0.8})[
+                "threshold"
+            ]
+            == 0.8
         )
 
-    def test_threshold_and_model_fall_back_to_gate_defaults(self) -> None:
-        """A bare ``{"enabled": True}`` block inherits threshold + model."""
-        resolved = resolve_enrichment_gate({"enabled": True}, None)
-        assert resolved["threshold"] == GATE_DEFAULT_THRESHOLD == 0.5
+    def test_org_false_is_kill_switch(self) -> None:
+        """Org ``False`` → off (threshold/model still resolved)."""
+        resolved = resolve_enrichment_gate(False)
+        assert resolved["enabled"] is False
+        assert resolved["threshold"] == GATE_DEFAULT_THRESHOLD
         assert resolved["model"] == GATE_DEFAULT_MODEL
 
-    def test_org_dict_override_forms(self) -> None:
-        """Org dicts carrying ``enrichment_gate`` unwrap like the raw bool."""
+    def test_org_off_stays_off(self) -> None:
+        """Org ``{"enabled": False}`` → off: nothing force-enables the gate."""
+        assert resolve_enrichment_gate({"enabled": False})["enabled"] is False
+
+    def test_threshold_and_model_fall_back_to_gate_defaults(self) -> None:
+        """A bare ``{"enabled": True}`` block inherits threshold + model; a
+        ``model`` subkey is stripped (fixed default, never configured)."""
+        resolved = resolve_enrichment_gate({"enabled": True})
+        assert resolved["threshold"] == GATE_DEFAULT_THRESHOLD == 0.5
+        assert resolved["model"] == GATE_DEFAULT_MODEL
         assert (
-            resolve_enrichment_gate(
-                {"enabled": True}, {"enrichment_gate": False}
-            )["enabled"]
+            resolve_enrichment_gate({"enabled": True, "model": "other/model"})[
+                "model"
+            ]
+            == GATE_DEFAULT_MODEL
+        )
+
+    def test_org_dict_override_forms(self) -> None:
+        """Org dicts carrying ``enrichment_gate`` unwrap one level."""
+        assert (
+            resolve_enrichment_gate({"enrichment_gate": False})["enabled"]
             is False
         )
         assert (
             resolve_enrichment_gate(
-                {"enabled": True}, {"enrichment_gate": None}
-            )["enabled"]
-            is True
+                {"enrichment_gate": {"enabled": True, "threshold": 0.8}}
+            )["threshold"]
+            == 0.8
+        )
+        assert (
+            resolve_enrichment_gate({"enrichment_gate": None})["enabled"]
+            is False
         )
 
     @pytest.mark.parametrize(
-        "system",
+        "org",
         [
             {"enabled": "yes"},
             {"enabled": 1},
@@ -334,34 +342,16 @@ class TestResolveEnrichmentGate:
             {"enabled": True, "threshold": 1.5},
             {"enabled": True, "threshold": -0.1},
             {"enabled": True, "threshold": float("nan")},
-            {"enabled": True, "model": ""},
-            {"enabled": True, "model": "   "},
-            {"enabled": True, "model": 123},
             {"enabled": True, "bogus": 1},
+            {"enrichment_gate": {"enabled": "nope"}},
+            {"enrichment_gate": {"enabled": 1}},
         ],
     )
-    def test_malformed_system_block_raises(self, system: Any) -> None:
-        """Non-boolean enabled, non-numeric/out-of-range threshold, non-string
-        model, and unknown keys all raise ``ValidationError``."""
+    def test_malformed_org_block_raises(self, org: Any) -> None:
+        """Non-boolean enabled, non-numeric/out-of-range threshold, and
+        unknown keys all raise ``ValidationError``."""
         with pytest.raises(ValidationError):
-            resolve_enrichment_gate(system, None)
-
-    @pytest.mark.parametrize(
-        "org",
-        [
-            {"enrichment_gate": "nope"},
-            {"enrichment_gate": 1},
-            {"enrichment_gate": [True]},
-            # note: scalar non-bool org layers (e.g. "nope", 1) silently
-            # inherit via the getattr fallback — only dict-wrapped
-            # non-bools raise. The schema layer guarantees bool|None
-            # upstream, so this documents the defensive core behavior.
-        ],
-    )
-    def test_malformed_org_override_raises(self, org: Any) -> None:
-        """Non-boolean org overrides raise ``ValidationError``."""
-        with pytest.raises(ValidationError):
-            resolve_enrichment_gate({"enabled": True}, org)
+            resolve_enrichment_gate(org)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -370,30 +360,36 @@ class TestResolveEnrichmentGate:
 
 
 class TestLegacyCoercion:
-    """Legacy SYSTEM-block dicts coerce to their ``enabled`` flag (+ warning)."""
+    """Legacy bool/dict gate shapes coerce to the gate object."""
 
     @pytest.mark.parametrize("cls", [OrgConfigBase, UpdateOrgConfigRequest])
     @pytest.mark.parametrize(
-        ("raw", "expected"),
+        ("raw", "enabled"),
         [({"enabled": True}, True), ({"enabled": False}, False), ({}, False)],
     )
-    def test_dict_shapes_coerce_with_warning(
+    def test_dict_shapes_coerce_to_object(
         self,
         cls: Any,
         raw: dict,
-        expected: bool,
-        caplog: pytest.LogCaptureFixture,
+        enabled: bool,
     ) -> None:
-        """``{"enabled": …}`` → bool, ``{}`` → ``False``, each with a warning."""
-        with caplog.at_level(logging.WARNING, logger="schemas.organization_config"):
-            assert cls(enrichment_gate=raw).enrichment_gate is expected
-        assert any("legacy" in record.message for record in caplog.records)
+        """``{"enabled": …}`` → gate object, ``{}`` → disabled object."""
+        assert cls(enrichment_gate=raw).enrichment_gate == (
+            EnrichmentGateOrgConfig(enabled=enabled, threshold=0.5)
+        )
 
     @pytest.mark.parametrize("value", [True, False, None])
     def test_bool_and_none_passthrough(self, value: bool | None) -> None:
-        """Real booleans and ``None`` pass through untouched (both schemas)."""
-        assert OrgConfigBase(enrichment_gate=value).enrichment_gate is value
-        assert UpdateOrgConfigRequest(enrichment_gate=value).enrichment_gate is value
+        """Booleans coerce to the gate object; ``None`` passes through
+        untouched (both schemas)."""
+        for cls in (OrgConfigBase, UpdateOrgConfigRequest):
+            gate = cls(enrichment_gate=value).enrichment_gate
+            if value is None:
+                assert gate is None
+            else:
+                assert gate == EnrichmentGateOrgConfig(
+                    enabled=value, threshold=0.5
+                )
 
     def test_list_shape_still_raises(self) -> None:
         """``[True]`` is not a legacy block and not a bool → 422."""
@@ -402,17 +398,12 @@ class TestLegacyCoercion:
         with pytest.raises(PydanticValidationError):
             OrgConfigBase(enrichment_gate=[True])
 
-    def test_yes_string_coerces_to_true(self) -> None:
-        """⚠️ SPEC DRIFT (dictated ``"yes"`` raises; observed otherwise).
+    def test_yes_string_raises(self) -> None:
+        """``"yes"`` is not coerced — non-bool/non-dict shapes 422."""
+        from pydantic import ValidationError as PydanticValidationError
 
-        Pydantic v2 lax bool parsing accepts ``"yes"`` as ``True``, so the
-        ``mode="before"`` coercion validator passes it through untouched and
-        validation succeeds. Only genuinely non-bool shapes (``[True]``,
-        covered above) raise. Flagging for the user — do not "fix" by
-        tightening here without a product decision (the same lax parsing
-        applies to every other bool field in these schemas).
-        """
-        assert OrgConfigBase(enrichment_gate="yes").enrichment_gate is True
+        with pytest.raises(PydanticValidationError):
+            OrgConfigBase(enrichment_gate="yes")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -463,156 +454,52 @@ def _patch_gate_repo(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 class TestHubEnablePath:
-    """Enable-path Hub check: local bypass, disabled skip, bogus → 422."""
+    """System-level gate enable is gone — any gate key is rejected; the
+    worker prewarms the hardcoded default model instead."""
 
-    async def test_local_dir_model_bypasses_without_network(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Any,
-        _clean_store: Any,
-    ) -> None:
-        """A local-dir model never touches the Hub (check would 404/raise)."""
-        from unittest.mock import MagicMock
-
-        _no_network(monkeypatch)
-        _patch_gate_repo(monkeypatch)
-        hub_probe = MagicMock(side_effect=AssertionError("Hub must not be probed"))
-        monkeypatch.setattr("core.system_config._hub_model_status", hub_probe)
-        from core.system_config import update_system_config
-
-        result = await update_system_config(
-            {"enrichment_gate": {"enabled": True, "model": str(tmp_path)}},
-            redis=None,
-            db=AsyncMock(),
-        )
-        assert result.enrichment_gate is not None
-        assert result.enrichment_gate.enabled is True
-        assert result.enrichment_gate.model == str(tmp_path)
-        assert _STORE["enrichment_gate"]["model"] == str(tmp_path)
-        hub_probe.assert_not_called()
-
-    async def test_relative_local_path_bypasses_without_network(
+    async def test_gate_dict_update_rejected_and_persists_nothing(
         self, monkeypatch: pytest.MonkeyPatch, _clean_store: Any
     ) -> None:
-        """``./…``-prefixed models bypass with no filesystem or network I/O."""
-        from unittest.mock import MagicMock
-
-        _no_network(monkeypatch)
+        """A gate-bearing system update → ``ValidationError``; the stored
+        config is byte-identical to before."""
         _patch_gate_repo(monkeypatch)
-        hub_probe = MagicMock(side_effect=AssertionError("Hub must not be probed"))
-        monkeypatch.setattr("core.system_config._hub_model_status", hub_probe)
-        from core.system_config import update_system_config
-
-        result = await update_system_config(
-            {"enrichment_gate": {"enabled": True, "model": "./models/gate"}},
-            redis=None,
-            db=AsyncMock(),
-        )
-        assert result.enrichment_gate is not None
-        assert result.enrichment_gate.enabled is True
-        hub_probe.assert_not_called()
-
-    async def test_disabled_skips_check(
-        self, monkeypatch: pytest.MonkeyPatch, _clean_store: Any
-    ) -> None:
-        """``enabled=false`` with a bogus model persists without any check."""
-        from unittest.mock import MagicMock
-
-        _no_network(monkeypatch)
-        _patch_gate_repo(monkeypatch)
-        hub_probe = MagicMock(side_effect=AssertionError("Hub must not be probed"))
-        monkeypatch.setattr("core.system_config._hub_model_status", hub_probe)
-        from core.system_config import update_system_config
-
-        result = await update_system_config(
-            {"enrichment_gate": {"enabled": False, "model": "bogus/no-such-model"}},
-            redis=None,
-            db=AsyncMock(),
-        )
-        assert result.enrichment_gate is not None
-        assert result.enrichment_gate.enabled is False
-        hub_probe.assert_not_called()
-
-    async def test_absent_block_skips_check(
-        self, monkeypatch: pytest.MonkeyPatch, _clean_store: Any
-    ) -> None:
-        """An update without a gate block performs no Hub check."""
-        from unittest.mock import MagicMock
-
-        _no_network(monkeypatch)
-        _patch_gate_repo(monkeypatch)
-        hub_probe = MagicMock(side_effect=AssertionError("Hub must not be probed"))
-        monkeypatch.setattr("core.system_config._hub_model_status", hub_probe)
-        from core.system_config import update_system_config
-
-        result = await update_system_config(
-            {"llm_backend": "openai"}, redis=None, db=AsyncMock()
-        )
-        assert result.llm_backend == "openai"
-        hub_probe.assert_not_called()
-
-    async def test_bogus_model_404_raises_and_persists_nothing(
-        self, monkeypatch: pytest.MonkeyPatch, _clean_store: Any
-    ) -> None:
-        """Enabling with an unknown Hub model → ``ValidationError`` (→ 422),
-        and the stored config is byte-identical to before."""
-        _no_network(monkeypatch)
-        _patch_gate_repo(monkeypatch)
-        monkeypatch.setattr(
-            "core.system_config._hub_model_status", lambda model_id: 404
-        )
         _STORE.update({"llm_backend": "openai"})
         before = dict(_STORE)
         from core.system_config import update_system_config
 
-        with pytest.raises(ValidationError, match="does not exist"):
+        with pytest.raises(ValidationError, match="not editable"):
             await update_system_config(
-                {"enrichment_gate": {"enabled": True, "model": "bogus/no-such-model"}},
+                {"enrichment_gate": {"enabled": True}},
                 redis=None,
                 db=AsyncMock(),
             )
         assert _STORE == before
 
-    async def test_unreachable_hub_raises_and_persists_nothing(
-        self, monkeypatch: pytest.MonkeyPatch, _clean_store: Any
+    async def test_gate_schema_update_rejected_422(self) -> None:
+        """``SystemConfigUpdate`` carrying a gate key → pydantic error (→ 422)."""
+        from pydantic import ValidationError as PydanticValidationError
+
+        from schemas.system_config import SystemConfigUpdate
+
+        with pytest.raises(PydanticValidationError, match="extra_forbidden"):
+            SystemConfigUpdate(enrichment_gate={"enabled": True})  # type: ignore[call-arg]
+
+    async def test_prewarm_uses_hardcoded_default(
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A Hub network failure on enable → ``ValidationError``, nothing stored."""
-        _no_network(monkeypatch)
-        _patch_gate_repo(monkeypatch)
+        """``prewarm()`` loads the hardcoded default model (no config lookup)."""
+        from unittest.mock import MagicMock
 
-        def _down(model_id: str) -> int:
-            raise urllib.error.URLError("hub unreachable in test")
+        from core.enrichment_gate import DEFAULT_MODEL, prewarm
 
-        monkeypatch.setattr("core.system_config._hub_model_status", _down)
-        from core.system_config import update_system_config
+        load = MagicMock(return_value=(object(), object()))
+        monkeypatch.setattr("core.enrichment_gate._load_pair", load)
+        monkeypatch.setattr("core.enrichment_gate._infer", lambda *args: 0.0)
 
-        with pytest.raises(ValidationError, match="unreachable"):
-            await update_system_config(
-                {"enrichment_gate": {"enabled": True, "model": "bogus/no-such-model"}},
-                redis=None,
-                db=AsyncMock(),
-            )
-        assert _STORE == {}
+        await prewarm()
 
-    async def test_known_model_200_persists(
-        self, monkeypatch: pytest.MonkeyPatch, _clean_store: Any
-    ) -> None:
-        """A 200 Hub probe lets the enable persist."""
-        _no_network(monkeypatch)
-        _patch_gate_repo(monkeypatch)
-        monkeypatch.setattr(
-            "core.system_config._hub_model_status", lambda model_id: 200
-        )
-        from core.system_config import update_system_config
-
-        result = await update_system_config(
-            {"enrichment_gate": {"enabled": True, "model": "OpenZync/real-gate"}},
-            redis=None,
-            db=AsyncMock(),
-        )
-        assert result.enrichment_gate is not None
-        assert result.enrichment_gate.enabled is True
-        assert _STORE["enrichment_gate"]["model"] == "OpenZync/real-gate"
+        load.assert_called_once()
+        assert load.call_args.args[0] == DEFAULT_MODEL
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
