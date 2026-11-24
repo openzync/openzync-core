@@ -3,8 +3,8 @@
 Covers:
 - whitelist: a secret key in the update body is rejected (422 at schema
   level, ValidationError at the core level for plain dicts).
-- defaults: no platform root row → all None (registration mode lives in
-  ``instance_settings`` now).
+- defaults: no platform root row → ``{}`` (the whitelist is empty;
+  registration mode lives in ``instance_settings`` now).
 - cache: read populates the cache; update invalidates it and re-reads
   fresh from the DB (``users.config_override`` on the platform root row).
 - secrets are never part of the response.
@@ -87,7 +87,7 @@ class TestSystemConfigSchema:
     def test_secret_key_in_update_body_rejected_422(self) -> None:
         """A secret key (openai_api_key) fails schema validation (→ 422)."""
         with pytest.raises(ValidationError):
-            SystemConfigUpdate(llm_model="x", openai_api_key="sk-123")  # type: ignore[call-arg]
+            SystemConfigUpdate(openai_api_key="sk-123")  # type: ignore[call-arg]
 
     def test_secret_key_variants_rejected(self) -> None:
         """Every secret-shaped key is rejected by construction."""
@@ -102,11 +102,9 @@ class TestSystemConfigSchema:
                 SystemConfigUpdate(**{secret: "x"})  # type: ignore[arg-type]
 
     def test_defaults(self) -> None:
-        """SystemConfigResponse defaults to all None."""
+        """SystemConfigResponse is fieldless — ``GET`` returns ``{}``."""
         cfg = SystemConfigResponse()
-        assert cfg.llm_backend is None
-        assert cfg.llm_model is None
-        assert cfg.graph_backend is None
+        assert cfg.model_dump() == {}
 
 
 class TestGetSystemConfig:
@@ -116,20 +114,18 @@ class TestGetSystemConfig:
     async def test_defaults_when_no_root_row(
         self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """No platform root row → all-None defaults."""
+        """No platform root row → empty config."""
         _patch_repo(monkeypatch, has_root=False)
 
         cfg = await get_system_config(redis=None, db=mock_db)
 
-        assert cfg.llm_backend is None
-        assert cfg.llm_model is None
-        assert cfg.graph_backend is None
+        assert cfg.model_dump() == {}
 
     @pytest.mark.asyncio
     async def test_whitelisted_keys_returned_secrets_never(
         self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Only whitelisted keys are read out of the raw root override."""
+        """Stored keys outside the empty whitelist never surface in GET."""
         _STORE.update(
             {
                 "llm_backend": "openai",
@@ -143,8 +139,7 @@ class TestGetSystemConfig:
 
         cfg = await get_system_config(redis=None, db=mock_db)
 
-        assert cfg.llm_backend == "openai"
-        assert cfg.llm_model == "gpt-4o-mini"
+        assert cfg.model_dump() == {}
         # Secrets never surface in the response model — by construction.
         assert "openai_api_key" not in SystemConfigResponse.model_fields
         assert "OZ_DATABASE_URL" not in cfg.model_dump()
@@ -162,20 +157,17 @@ class TestGetSystemConfig:
     async def test_cache_hit_skips_db(self) -> None:
         """A warm cache short-circuits the DB read."""
         redis = AsyncMock()
-        redis.get.return_value = SystemConfigResponse(
-            llm_backend="openai",
-            graph_backend="falkordb",
-        ).model_dump_json()
+        redis.get.return_value = SystemConfigResponse().model_dump_json()
 
         cfg = await get_system_config(redis, None)
 
-        assert cfg.llm_backend == "openai"
+        assert cfg.model_dump() == {}
 
     @pytest.mark.asyncio
     async def test_miss_populates_cache(
         self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A cache miss populates the cache with the whitelisted config."""
+        """A cache miss populates the cache with the (empty) config."""
         redis = AsyncMock()
         redis.get.return_value = None
         _STORE.update(
@@ -189,8 +181,9 @@ class TestGetSystemConfig:
         cache_key, ttl, payload = redis.setex.call_args.args
         assert cache_key == "system_config"
         assert ttl == 300
-        assert "gpt-4o-mini" in payload
+        assert payload == "{}"
         # The raw override never lands in the cache verbatim.
+        assert "gpt-4o-mini" not in payload
         assert "sk-secret" not in payload
 
 
@@ -201,7 +194,7 @@ class TestUpdateSystemConfig:
     async def test_update_merges_invalidates_and_returns_fresh(
         self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Update writes the merged config, invalidates cache, re-reads."""
+        """An empty update is a no-op merge, invalidates cache, re-reads."""
         redis = AsyncMock()
         _STORE.update(
             {
@@ -212,20 +205,16 @@ class TestUpdateSystemConfig:
         _patch_repo(monkeypatch)
 
         result = await update_system_config(
-            SystemConfigUpdate(
-                llm_backend="openai",
-                llm_model="gpt-4o-mini",
-            ),
+            SystemConfigUpdate(),
             redis=redis,
             db=mock_db,
         )
 
-        assert result.llm_backend == "openai"
-        assert result.llm_model == "gpt-4o-mini"
-        # Merge preserved the unrelated stored key (whitelist only
-        # governs the *update*, not the pre-existing payload).
+        assert result.model_dump() == {}
+        # Merge preserved the unrelated stored keys (the whitelist is
+        # empty, so the update touches nothing pre-existing).
         assert _STORE["openai_api_key"] == "sk-keep"  # noqa: S105 — test fixture secret
-        assert _STORE["llm_model"] == "gpt-4o-mini"
+        assert _STORE["llm_model"] == "old-model"
         redis.delete.assert_awaited_once_with("system_config")
 
     @pytest.mark.asyncio
@@ -248,19 +237,17 @@ class TestUpdateSystemConfig:
     async def test_none_values_remove_keys(
         self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A None value removes the key from the stored config."""
-        redis = AsyncMock()
-        _STORE.update({"llm_model": "gpt-4o-mini"})
+        """A None value for a non-whitelisted key is rejected, not removed."""
         _patch_repo(monkeypatch)
 
-        result = await update_system_config(
-            SystemConfigUpdate(llm_model=None),
-            redis=redis,
-            db=mock_db,
-        )
+        with pytest.raises(AppValidationError):
+            await update_system_config(
+                {"llm_model": None},
+                redis=None,
+                db=mock_db,
+            )
 
-        assert result.llm_model is None
-        assert "llm_model" not in _STORE
+        assert _STORE == {}
 
     @pytest.mark.asyncio
     async def test_missing_root_row_raises(
@@ -271,7 +258,7 @@ class TestUpdateSystemConfig:
 
         with pytest.raises(AppValidationError, match="setup first"):
             await update_system_config(
-                SystemConfigUpdate(llm_model="gpt-4o-mini"),
+                SystemConfigUpdate(),
                 redis=None,
                 db=mock_db,
             )
