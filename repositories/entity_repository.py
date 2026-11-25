@@ -1,7 +1,7 @@
 """Entity repository — interface to the graph backend for entity CRUD.
 
 This repository delegates to a ``GraphBackend`` instance (typically
-``PostgresGraphBackend``) for all entity and relationship operations.
+``FalkorGraphBackend``) for all entity and relationship operations.
 Raises ``GraphBackendUnavailableError`` when no backend is available.
 """
 

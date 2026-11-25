@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 
 from core.exceptions import GraphBackendUnavailableError, NotFoundError
 from core.sorting import SortSpec
-from packages.graph_backend.postgres import PostgresGraphBackend
 from schemas.facts import FactTriple
 from services.fact_invalidation_service import (
     FactInvalidationService as RealInvalidationService,
@@ -587,10 +586,9 @@ class TestFactServiceGraphSync:
     OLD_FACT_ID = UUID("00000000-0000-0000-0000-000000000100")
     NEW_FACT_ID = UUID("00000000-0000-0000-0000-000000000101")
 
-    def _make_backend(self) -> PostgresGraphBackend:
-        backend = PostgresGraphBackend(db=AsyncMock(spec=AsyncSession))
-        backend.expire_relationships_matching = AsyncMock(return_value=1)
-        return backend
+    def _make_backend(self) -> AsyncMock:
+        """A stub graph backend — never called directly (enqueue-only routing)."""
+        return AsyncMock()
 
     def _base_service(
         self,
@@ -727,87 +725,6 @@ class TestFactServiceGraphSync:
         # Supersession queued the effect; literal facts → D1 expires nothing.
         await self._commit(captured[0], mock_db)
         backend.expire_relationships_matching.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_wired_graph_sync_expires_edge_on_retraction(self) -> None:
-        """The graph_sync built by ingest_facts actually expires edges.
-
-        A retraction through the wired invalidation service (the same
-        instance ``ingest_facts`` constructed) fires the D1 case-1 expiry
-        against the resolved Postgres backend.
-        """
-        backend = self._make_backend()
-        resolver = AsyncMock(return_value=backend)
-
-        mock_db = AsyncMock(spec=AsyncSession)
-        mock_db.sync_session = Session()
-        mock_redis = AsyncMock()
-        mock_redis.get.return_value = None
-        mock_redis.scan.return_value = (0, [])
-        mock_redis.delete.return_value = 0
-
-        # No conflicts on the initial ingest — nothing queued yet.
-        mock_fact_repo = AsyncMock()
-        mock_fact_repo.find_conflicting_active_for_update.return_value = []
-        mock_fact_repo.batch_create.return_value = [
-            self._fact(id=self.NEW_FACT_ID, content="Alice loves hiking")
-        ]
-
-        service = self._base_service(mock_db, mock_redis, mock_fact_repo, resolver)
-        captured: list[RealInvalidationService] = []
-
-        class _Recording(RealInvalidationService):
-            def __init__(self, *args, **kwargs) -> None:
-                super().__init__(*args, **kwargs)
-                captured.append(self)
-
-        with (
-            patch(
-                "services.fact_invalidation_service.FactInvalidationService",
-                _Recording,
-            ),
-            patch("services.fact_service.get_arq", return_value=AsyncMock()),
-        ):
-            await service.ingest_facts(
-                user_id=self.ORG_ID,
-                project_id=self.PROJECT_ID,
-                created_by=self.USER_ID,
-                facts=[
-                    FactTriple(
-                        subject="Alice",
-                        predicate="works_at",
-                        object="Acme",
-                        content="Alice works_at Acme",
-                    )
-                ],
-                session_external_id="session-abc",
-            )
-
-        invalidation = captured[0]
-        old_fact = self._fact(
-            id=self.OLD_FACT_ID,
-            subject_entity_id=self.SRC_ENTITY,
-            object_entity_id=self.TGT_ENTITY,
-        )
-        from datetime import UTC, datetime
-
-        at_time = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
-        invalidation.notify_retraction(
-            user_id=self.ORG_ID,
-            project_id=self.PROJECT_ID,
-            old_fact=old_fact,
-            at_time=at_time,
-        )
-        await self._commit(invalidation, mock_db)
-
-        backend.expire_relationships_matching.assert_awaited_once_with(
-            user_id=self.ORG_ID,
-            project_id=self.PROJECT_ID,
-            source_id=self.SRC_ENTITY,
-            target_id=self.TGT_ENTITY,
-            relationship_type="likes",
-            at_time=at_time,
-        )
 
     @pytest.mark.asyncio
     async def test_backend_resolution_failure_still_ingests(self) -> None:

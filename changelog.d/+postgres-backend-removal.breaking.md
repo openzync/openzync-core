@@ -1,0 +1,1 @@
+BREAKING: removed the Postgres graph backend (`packages/graph_backend/postgres.py` deleted, ~2.6k lines): any org config with `graph_backend=postgres` is now rejected with 410 Gone directing migration to FalkorDB, and graph-edge expiry is external-only (ARQ `expire_graph_edges`) with `reconcile_graph_edges` as the self-healing fallback — only `surrealdb` and `falkordb` remain.

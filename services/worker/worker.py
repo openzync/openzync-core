@@ -763,6 +763,12 @@ async def main() -> NoReturn:
     else:
         logger.info("embeddings.prewarm_skipped — follower replica")
 
+    # Optional extras (pii/ocr) are absent from prod images by design —
+    # log + metric the gap here instead of on the first job needing it.
+    from core.optional_deps import log_optional_deps
+
+    log_optional_deps()
+
     # ── Start Prometheus HTTP server ────────────────────────────────────
     try:
         start_prometheus_server(settings.PROMETHEUS_PORT)

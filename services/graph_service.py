@@ -1,7 +1,7 @@
 """Graph service — business logic for knowledge-graph query operations.
 
 This service wraps a ``GraphBackend`` implementation (typically
-``PostgresGraphBackend``) to provide a clean service-layer interface
+``FalkorGraphBackend``) to provide a clean service-layer interface
 for the graph query endpoints.
 
 Every method enforces user_id isolation. All methods raise
@@ -34,7 +34,7 @@ class GraphService:
 
     Args:
         graph_backend: An initialised ``GraphBackend`` implementation
-            (e.g. ``PostgresGraphBackend``).  May be ``None`` if the
+            (e.g. ``FalkorGraphBackend``).  May be ``None`` if the
             graph backend is not available — all methods raise
             ``GraphBackendUnavailableError``.
         user_repo: Optional ``UserRepository`` for user existence checks.

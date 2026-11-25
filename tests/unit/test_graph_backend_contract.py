@@ -150,10 +150,7 @@ def _make_mock_obs_row(**overrides: Any) -> MockRow:
 
 @pytest.fixture
 def mock_db() -> AsyncMock:
-    """Mocked AsyncSession for PostgresGraphBackend.
-
-    Uses ``AsyncMock`` so ``await session.execute()`` works.
-    """
+    """Unused session mock — kept so helper signatures stay uniform."""
     db = AsyncMock()
     # ``execute`` must return something with ``.one()``, ``.one_or_none()``,
     # ``.all()``, and ``.rowcount`` — use a child ``MagicMock`` for that.
@@ -200,7 +197,7 @@ def mock_falkordb_client() -> MagicMock:
     return client
 
 
-@pytest.fixture(params=["postgres", "surrealdb", "falkordb"])
+@pytest.fixture(params=["surrealdb", "falkordb"])
 def backend(
     request: Any,
     mock_db: MagicMock,
@@ -212,13 +209,6 @@ def backend(
     Each test method receives a fresh backend instance of the current type.
     The fixture also resets mocks between backends.
     """
-    if request.param == "postgres":
-        from packages.graph_backend.postgres import PostgresGraphBackend
-
-        bk = PostgresGraphBackend(db=mock_db)
-        # Disable internal row conversion so we can mock at the execute level
-        return bk
-
     if request.param == "surrealdb":
         from packages.graph_backend.surrealdb import SurrealGraphBackend
 
@@ -246,7 +236,7 @@ def pytest_generate_tests(metafunc: Any) -> None:
     """Inject the ``backend_name`` fixture for per-backend filtering."""
     if "backend_name" in metafunc.fixturenames:
         # param name is the ID of the ``backend`` fixture
-        metafunc.parametrize("backend_name", ["postgres", "surrealdb", "falkordb"])
+        metafunc.parametrize("backend_name", ["surrealdb", "falkordb"])
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -257,28 +247,11 @@ def pytest_generate_tests(metafunc: Any) -> None:
 def _get_backend_name(backend: Any) -> str:
     """Return the short name of a backend instance."""
     name = type(backend).__name__
-    if "Postgres" in name:
-        return "postgres"
     if "Surreal" in name:
         return "surrealdb"
     if "Falkor" in name:
         return "falkordb"
     return name.lower()
-
-
-def _bfs_execute_calls(mock_db: MagicMock) -> list[tuple[str, dict]]:
-    """Return (sql, params) of every BFS-CTE execution on the mock session.
-
-    ``traverse`` also executes ``SET LOCAL statement_timeout`` first, so
-    only calls whose text contains the recursive CTE are captured.
-    """
-    calls: list[tuple[str, dict]] = []
-    for call in mock_db.execute.call_args_list:
-        args = call.args
-        if args and "WITH RECURSIVE bfs" in str(args[0]):
-            params = args[1] if len(args) > 1 else {}
-            calls.append((str(args[0]), params))
-    return calls
 
 
 def _mockrow_to_dict(row: Any) -> dict:
@@ -323,19 +296,7 @@ def _configure_entity_result(
 ) -> None:
     """Set up mock returns so ``get_entity`` returns *result*."""
     bk_name = _get_backend_name(backend)
-    if bk_name == "postgres":
-        # Postgres: mock _db.execute to return a result with .one()/.one_or_none()/.all()
-        execute_result = MagicMock()
-        if result is None:
-            execute_result.one_or_none.return_value = None
-            execute_result.one.side_effect = Exception("no rows")
-        else:
-            execute_result.one_or_none.return_value = result
-            execute_result.one.return_value = result
-            execute_result.all.return_value = [result]
-        execute_result.rowcount = 1 if result is not None else 0
-        mock_db.execute.return_value = execute_result
-    elif bk_name == "surrealdb":
+    if bk_name == "surrealdb":
         if result is None:
             mock_surreal.query.return_value = []
         else:
@@ -357,12 +318,7 @@ def _configure_entity_create_result(
 ) -> None:
     """Set up mock returns for create_entity."""
     bk_name = _get_backend_name(backend)
-    if bk_name == "postgres":
-        execute_result = MagicMock()
-        execute_result.one.return_value = row
-        execute_result.rowcount = 1
-        mock_db.execute.return_value = execute_result
-    elif bk_name == "surrealdb":
+    if bk_name == "surrealdb":
         mock_surreal.query_raw.return_value = {
             "result": [
                 {"status": "OK", "result": []},
@@ -406,12 +362,7 @@ def _configure_relationship_create_result(
 ) -> None:
     """Set up mock returns for create_relationship."""
     bk_name = _get_backend_name(backend)
-    if bk_name == "postgres":
-        execute_result = MagicMock()
-        execute_result.one.return_value = row
-        execute_result.rowcount = 1
-        mock_db.execute.return_value = execute_result
-    elif bk_name == "surrealdb":
+    if bk_name == "surrealdb":
         mock_surreal.query_raw.return_value = {
             "result": [
                 {"status": "OK", "result": []},
@@ -432,9 +383,7 @@ def _configure_db_error(
 ) -> None:
     """Set up mocks so the underlying store raises RuntimeError."""
     bk_name = _get_backend_name(backend)
-    if bk_name == "postgres":
-        mock_db.execute.side_effect = RuntimeError("db connection lost")
-    elif bk_name == "surrealdb":
+    if bk_name == "surrealdb":
         mock_surreal.query.side_effect = RuntimeError("surreal not reachable")
         mock_surreal.query_raw.side_effect = RuntimeError("surreal not reachable")
     elif bk_name == "falkordb":
@@ -447,10 +396,7 @@ def _configure_no_client(
 ) -> None:
     """Set backend to a disconnected state (no client / None)."""
     bk_name = _get_backend_name(backend)
-    if bk_name == "postgres":
-        # Postgres always has a db; we use _configure_db_error instead
-        pass
-    elif bk_name == "surrealdb":
+    if bk_name == "surrealdb":
         backend._surreal = None
     elif bk_name == "falkordb":
         backend._client = None
@@ -576,11 +522,7 @@ class TestDeleteEntity:
     ) -> None:
         """Entity existed → returns True."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            execute_result = MagicMock()
-            execute_result.rowcount = 1
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query.return_value = [{"id": str(ENTITY_ID)}]
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
@@ -598,11 +540,7 @@ class TestDeleteEntity:
     ) -> None:
         """Entity did not exist → returns False."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            execute_result = MagicMock()
-            execute_result.rowcount = 0
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query.return_value = []
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
@@ -643,12 +581,7 @@ class TestUpdateEntity:
         """Update returns entity dict with id, name, entity_type, summary, updated_at."""
         bk_name = _get_backend_name(backend)
         row = _make_mock_entity_row(name="updated")
-        if bk_name == "postgres":
-            execute_result = MagicMock()
-            execute_result.one_or_none.return_value = row
-            execute_result.one.return_value = row
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query.return_value = [row] if isinstance(row, dict) else [{
                 "id": str(ENTITY_ID),
                 "name": "updated",
@@ -681,11 +614,7 @@ class TestUpdateEntity:
     ) -> None:
         """Entity does not exist → NotFoundError."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            execute_result = MagicMock()
-            execute_result.one_or_none.return_value = None
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query.return_value = []
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
@@ -735,10 +664,7 @@ class TestCreateRelationship:
     ) -> None:
         """Valid relationship → returns relationship dict with expected keys."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            row = _make_mock_rel_row()
-            _configure_relationship_create_result(backend, mock_db, mock_surreal, mock_falkordb_client, row)
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             from surrealdb import RecordID
             edge_record = {
                 "id": RecordID("knows", str(uuid4())),
@@ -816,14 +742,7 @@ class TestTraverse:
         """Traversal returns list (may be empty)."""
         bk_name = _get_backend_name(backend)
         # Configure to return just the start node (empty neighbourhood)
-        if bk_name == "postgres":
-            row = _make_mock_entity_row()
-            row.depth = 0  # BFS CTE returns rows with depth
-            execute_result = MagicMock()
-            execute_result.all.return_value = [row]
-            execute_result.one_or_none.return_value = row
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query.return_value = []
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
@@ -869,12 +788,7 @@ class TestSearchEntities:
     ) -> None:
         """Search returns list of entity dicts with score."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            row = _make_mock_entity_row()
-            execute_result = MagicMock()
-            execute_result.all.return_value = [row]
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query.return_value = [{
                 "id": str(ENTITY_ID),
                 "name": "found",
@@ -926,12 +840,7 @@ class TestListEntities:
     ) -> None:
         """Returns dict with items, next_cursor, has_more."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            row = _make_mock_entity_row()
-            execute_result = MagicMock()
-            execute_result.all.return_value = [row]
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query.return_value = [{
                 "id": str(ENTITY_ID),
                 "name": "found",
@@ -986,12 +895,7 @@ class TestListEntityEdges:
     ) -> None:
         """Returns dict with items, next_cursor, has_more."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            row = _make_mock_rel_row()
-            execute_result = MagicMock()
-            execute_result.all.return_value = [row]
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             from surrealdb import RecordID
             src_rid = RecordID("entity", str(ENTITY_ID))
             tgt_rid = RecordID("entity", str(TARGET_ID))
@@ -1051,17 +955,7 @@ class TestGetEntityWithEdges:
     ) -> None:
         """Entity exists → returns dict with node and edges."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            entity_row = _make_mock_entity_row()
-            rel_row = _make_mock_rel_row()
-            # get_entity → one_or_none, get_relationships → all
-            execute_results: list[MagicMock] = []
-            r1 = MagicMock()
-            r1.one_or_none.return_value = entity_row
-            r2 = MagicMock()
-            r2.all.return_value = [rel_row]
-            mock_db.execute.side_effect = [r1, r2]
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             from surrealdb import RecordID
             src_rid = RecordID("entity", str(ENTITY_ID))
             tgt_rid = RecordID("entity", str(TARGET_ID))
@@ -1148,13 +1042,7 @@ class TestRetrieveGraph:
     ) -> None:
         """Returns list (may be empty)."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            row = _make_mock_entity_row()
-            row.depth = 0  # BFS CTE returns rows with depth
-            execute_result = MagicMock()
-            execute_result.all.return_value = [row]
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query.return_value = []
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
@@ -1224,11 +1112,7 @@ class TestLinkEntityToEpisode:
     ) -> None:
         """Duplicate link does not raise — idempotent via ON CONFLICT DO NOTHING."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            execute_result = MagicMock()
-            execute_result.rowcount = 1
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query_raw.return_value = {
                 "result": [
                     {"status": "OK", "result": []},
@@ -1264,11 +1148,7 @@ class TestLinkEntityToEpisode:
     ) -> None:
         """Successful link returns None."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            execute_result = MagicMock()
-            execute_result.rowcount = 1
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query_raw.return_value = {
                 "result": [
                     {"status": "OK", "result": []},
@@ -1331,12 +1211,7 @@ class TestGetEntitiesForSession:
     ) -> None:
         """Returns a list of entity dicts."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            row = _make_mock_entity_row()
-            execute_result = MagicMock()
-            execute_result.all.return_value = [row]
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query.return_value = []
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
@@ -1376,11 +1251,7 @@ class TestGetCoOccurringEntityPairs:
     ) -> None:
         """Returns a list of dicts with entity_a_id, entity_b_id, co_count."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            execute_result = MagicMock()
-            execute_result.all.return_value = []
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query.return_value = []
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
@@ -1420,12 +1291,7 @@ class TestGetAllEntities:
     ) -> None:
         """Returns a list of entity dicts."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            row = _make_mock_entity_row()
-            execute_result = MagicMock()
-            execute_result.all.return_value = [row]
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query.return_value = []
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
@@ -1465,12 +1331,7 @@ class TestGetAllRelationships:
     ) -> None:
         """Returns a list of relationship dicts."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            row = _make_mock_rel_row()
-            execute_result = MagicMock()
-            execute_result.all.return_value = [row]
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query.return_value = []
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
@@ -1510,12 +1371,7 @@ class TestBulkSearchEntities:
     ) -> None:
         """Returns list of entity dicts with score."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            row = _make_mock_entity_row()
-            execute_result = MagicMock()
-            execute_result.all.return_value = [row]
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query.return_value = []
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
@@ -1555,16 +1411,7 @@ class TestMergeEntities:
     ) -> None:
         """Empty merged_ids returns zero counts (no-op)."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            row = _make_mock_entity_row()
-            row.depth = 0  # BFS CTE returns rows with depth
-            # Create a single smart mock result that handles all call patterns
-            exec_result = MagicMock()
-            exec_result.all.return_value = [row]
-            exec_result.rowcount = 1
-            exec_result.one_or_none.return_value = row
-            mock_db.execute.return_value = exec_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             try:
                 result = await backend.merge_entities(ORG_ID, PROJ_ID, ENTITY_ID, [])
             except NotImplementedError:
@@ -1599,13 +1446,7 @@ class TestMergeEntities:
     ) -> None:
         """Returns dict with rewired_count, deleted_count, merged_count."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            # Get canonical entity first
-            entity_row = _make_mock_entity_row()
-            execute_result = MagicMock()
-            execute_result.one_or_none.return_value = entity_row
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             # merge_entities likely not implemented for surreal
             try:
                 await backend.merge_entities(ORG_ID, PROJ_ID, ENTITY_ID, [uuid4()])
@@ -1647,12 +1488,7 @@ class TestCreateRelationshipBulk:
     ) -> None:
         """Returns list of relationship dicts."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            row = _make_mock_rel_row()
-            execute_result = MagicMock()
-            execute_result.one.return_value = row
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             from surrealdb import RecordID
             mock_surreal.query_raw.return_value = {
                 "result": [
@@ -1727,12 +1563,7 @@ class TestUpsertObservation:
     ) -> None:
         """Returns observation dict with expected keys."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            row = _make_mock_obs_row()
-            execute_result = MagicMock()
-            execute_result.one.return_value = row
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query_raw.return_value = {
                 "result": [
                     {"status": "OK", "result": []},
@@ -1819,12 +1650,7 @@ class TestGetObservations:
     ) -> None:
         """Returns dict with items, next_cursor, has_more."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            row = _make_mock_obs_row()
-            execute_result = MagicMock()
-            execute_result.all.return_value = [row]
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query.return_value = []
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
@@ -1868,11 +1694,7 @@ class TestGetEntityAppearanceTimestamps:
     ) -> None:
         """Returns list of datetime objects."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            execute_result = MagicMock()
-            execute_result.all.return_value = [MockRow(episode_created_at=NOW)]
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query.return_value = []
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
@@ -1914,13 +1736,7 @@ class TestGetRelationshipIdsBetween:
     ) -> None:
         """Returns list of UUIDs (may be empty)."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            execute_result = MagicMock()
-            execute_result.all.return_value = [
-                MockRow(id=REL_ID),
-            ]
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query.return_value = []
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
@@ -1962,11 +1778,7 @@ class TestExpireRelationship:
     ) -> None:
         """Returns True when expired, False when not found."""
         bk_name = _get_backend_name(backend)
-        if bk_name == "postgres":
-            execute_result = MagicMock()
-            execute_result.rowcount = 1
-            mock_db.execute.return_value = execute_result
-        elif bk_name == "surrealdb":
+        if bk_name == "surrealdb":
             mock_surreal.query.return_value = [{"id": str(REL_ID)}]
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
@@ -1990,8 +1802,7 @@ class TestExpireRelationship:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Phase 3 — expire_relationships_matching (Surreal + Falkor; Postgres is owned
-# by Stream A and is skipped here).
+# Phase 3 — expire_relationships_matching (Surreal + Falkor).
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -2010,9 +1821,6 @@ class TestExpireRelationshipsMatching:
         mock_falkordb_client: MagicMock,
     ) -> None:
         """The edge UPDATE binds ``at_time`` verbatim — never a fresh clock read."""
-        if _get_backend_name(backend) == "postgres":
-            pytest.skip("Postgres implementation is owned by Stream A")
-
         if _get_backend_name(backend) == "surrealdb":
             mock_surreal.query.return_value = [
                 {"id": RecordID("knows", "edge1")},
@@ -2059,9 +1867,6 @@ class TestExpireRelationshipsMatching:
     ) -> None:
         """First call expires N edges; a replay (invalid_at no longer NULL)
         matches zero and returns 0."""
-        if _get_backend_name(backend) == "postgres":
-            pytest.skip("Postgres implementation is owned by Stream A")
-
         if _get_backend_name(backend) == "surrealdb":
             mock_surreal.query.side_effect = [
                 [{"id": RecordID("knows", "edge1")}, {"id": RecordID("knows", "edge2")}],
@@ -2103,9 +1908,6 @@ class TestExpireRelationshipsMatching:
     ) -> None:
         """Unsafe relationship_type raises ValueError — same guard as the
         create path, so canonicalization is symmetric."""
-        if _get_backend_name(backend) == "postgres":
-            pytest.skip("Postgres implementation is owned by Stream A")
-
         with pytest.raises(ValueError):
             await backend.expire_relationships_matching(
                 ORG_ID,
@@ -2150,9 +1952,6 @@ class TestExpireRelationshipsMatching:
         mock_falkordb_client: MagicMock,
     ) -> None:
         """Store failure → ExternalServiceError (never a silent 0)."""
-        if _get_backend_name(backend) == "postgres":
-            pytest.skip("Postgres implementation is owned by Stream A")
-
         if _get_backend_name(backend) == "surrealdb":
             mock_surreal.query.side_effect = RuntimeError("surreal down")
         else:
@@ -2199,23 +1998,13 @@ class TestRetrieveGraphAsOf:
             ORG_ID, PROJ_ID, "find", match_limit=5, max_depth=2, max_results=50, as_of=T2
         )
 
-        if _get_backend_name(backend) == "postgres":
-            # Postgres threads the instant through its ``at_time`` kwarg.
-            backend.traverse.assert_called_once_with(
-                user_id=ORG_ID,
-                project_id=PROJ_ID,
-                start_node_id=ENTITY_ID,
-                max_depth=2,
-                at_time=T2,
-            )
-        else:
-            backend.traverse.assert_called_once_with(
-                user_id=ORG_ID,
-                project_id=PROJ_ID,
-                start_node_id=ENTITY_ID,
-                max_depth=2,
-                as_of=T2,
-            )
+        backend.traverse.assert_called_once_with(
+            user_id=ORG_ID,
+            project_id=PROJ_ID,
+            start_node_id=ENTITY_ID,
+            max_depth=2,
+            as_of=T2,
+        )
 
     async def test_default_as_of_is_backward_compatible(
         self,
@@ -2233,19 +2022,12 @@ class TestRetrieveGraphAsOf:
 
         await backend.retrieve_graph(ORG_ID, PROJ_ID, "find")
 
-        if _get_backend_name(backend) == "postgres":
-            # Postgres resolves None → now internally and always passes at_time.
-            kwargs = backend.traverse.call_args.kwargs
-            assert kwargs["max_depth"] == 2
-            assert isinstance(kwargs["at_time"], datetime)
-            assert "as_of" not in kwargs
-        else:
-            backend.traverse.assert_called_once_with(
-                user_id=ORG_ID,
-                project_id=PROJ_ID,
-                start_node_id=ENTITY_ID,
-                max_depth=2,
-            )
+        backend.traverse.assert_called_once_with(
+            user_id=ORG_ID,
+            project_id=PROJ_ID,
+            start_node_id=ENTITY_ID,
+            max_depth=2,
+        )
 
     async def test_traverse_filter_bounds_edge_validity_at_as_of(
         self,
@@ -2259,28 +2041,7 @@ class TestRetrieveGraphAsOf:
         [valid_from, valid_to].  Bound params carry the exact as_of."""
         start_entity = {"id": str(ENTITY_ID), "name": "Start", "type": "Person", "summary": ""}
 
-        if _get_backend_name(backend) == "postgres":
-            # Temporal: the BFS CTE relaxes invalid_at to the effective-at
-            # predicate — an edge invalidated at T1 stays traversable at
-            # as_of=T0 and is excluded at as_of=T2.
-            await backend.traverse(ORG_ID, PROJ_ID, ENTITY_ID, max_depth=1, at_time=T0)
-            temporal_sql, temporal_params = _bfs_execute_calls(mock_db)[-1]
-            assert "(r.invalid_at IS NULL OR r.invalid_at > :as_of)" in temporal_sql
-            assert "(r.valid_from IS NULL OR r.valid_from <= :as_of)" in temporal_sql
-            assert "(r.valid_to IS NULL OR r.valid_to >= :as_of)" in temporal_sql
-            assert temporal_params["as_of"] == T0
-
-            await backend.traverse(ORG_ID, PROJ_ID, ENTITY_ID, max_depth=1, at_time=T2)
-            _sql2, params2 = _bfs_execute_calls(mock_db)[-1]
-            assert params2["as_of"] == T2
-
-            # Non-temporal: historical hard-exclusion, no as_of bound.
-            await backend.traverse(ORG_ID, PROJ_ID, ENTITY_ID, max_depth=1)
-            plain_sql, _params3 = _bfs_execute_calls(mock_db)[-1]
-            assert "AND r.invalid_at IS NULL\n" in plain_sql
-            assert "r.invalid_at > :as_of" not in plain_sql
-            assert "valid_from" not in plain_sql
-        elif _get_backend_name(backend) == "surrealdb":
+        if _get_backend_name(backend) == "surrealdb":
             backend.get_entity = AsyncMock(return_value=start_entity)
             mock_surreal.query.return_value = [RecordID("entity", str(NEIGHBOR_ID))]
 

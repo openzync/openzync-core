@@ -1,22 +1,10 @@
-"""Integration tests for temporal conflict resolution in graph relationships.
+"""Integration tests for temporal conflict resolution in facts.
 
-Tests the ``valid_to`` CASE expression in
-``PostgresGraphBackend.create_relationship()`` upsert path.  Each test
-exercises one combination of existing vs new ``valid_to`` values to
-verify the semantics documented in the ``temporal.md`` plan:
+Verifies the ``uq_facts_temporal_excl`` exclusion constraint and
+temporal query semantics (``at_time`` / ``in_range``) against
+testcontainers PostgreSQL.
 
-==============  ===============  ==================================
-Existing        New              Expected valid_to
-==============  ===============  ==================================
-NULL            NULL             NULL
-NULL            2024-12-01       NULL (stay open)
-2024-06-01      NULL             NULL (reopen)
-2024-12-01      2024-06-01       2024-12-01 (GREATEST keeps max)
-2024-06-01      2024-12-01       2024-12-01 (expand)
-2024-06-01      2024-06-01       2024-06-01 (same value, stable)
-==============  ===============  ==================================
-
-Requires testcontainers PostgreSQL with graph_relationships table.
+Requires testcontainers PostgreSQL with the facts table.
 """
 
 from __future__ import annotations
@@ -29,7 +17,6 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.graph_backend.postgres import PostgresGraphBackend
 from repositories.fact_repository import FactRepository
 
 pytestmark = pytest.mark.integration
@@ -37,134 +24,6 @@ pytestmark = pytest.mark.integration
 # Well-known IDs seeded by conftest.py engine fixture
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 PROJECT_ID = UUID("00000000-0000-0000-0000-000000000002")
-
-_DATE_2024_06 = datetime(2024, 6, 1, tzinfo=UTC)
-_DATE_2024_12 = datetime(2024, 12, 1, tzinfo=UTC)
-_REL_TYPE = "temporal_valid_to_test"
-
-
-@pytest.mark.asyncio
-class TestRelationshipValidToUpsert:
-    """Verify every branch of the ``valid_to`` CASE expression.
-
-    Each test:
-      1. Creates a relationship (insert, valid_to = X).
-      2. Upserts the same (source, target, type) with valid_to = Y.
-      3. Asserts the final valid_to matches the expected value.
-
-    Every test creates its own ``AsyncSession`` and never commits, so
-    cross-test data pollution is impossible — each session's transaction
-    is rolled back when the session closes.
-    """
-
-    async def _seed_two_entities(
-        self, backend: PostgresGraphBackend
-    ) -> tuple[UUID, UUID]:
-        """Create/upsert two test entities and return (id_a, id_b)."""
-        a = await backend.create_entity(
-            user_id=ORG_ID,
-            project_id=PROJECT_ID,
-            name="temporal_test_a",
-            entity_type="test",
-        )
-        b = await backend.create_entity(
-            user_id=ORG_ID,
-            project_id=PROJECT_ID,
-            name="temporal_test_b",
-            entity_type="test",
-        )
-        return UUID(a["id"]), UUID(b["id"])
-
-    async def _ensure_rel(
-        self,
-        backend: PostgresGraphBackend,
-        src: UUID,
-        tgt: UUID,
-        valid_to: datetime | None,
-    ) -> dict:
-        """Create or upsert the canonical test relationship."""
-        return await backend.create_relationship(
-            user_id=ORG_ID,
-            project_id=PROJECT_ID,
-            source_id=src,
-            target_id=tgt,
-            relationship_type=_REL_TYPE,
-            valid_to=valid_to,
-        )
-
-    async def _run_case(
-        self,
-        engine,
-        first_valid_to: datetime | None,
-        second_valid_to: datetime | None,
-        expected_valid_to: str | None,
-    ) -> None:
-        """Shared arrange → act → assert for every combination."""
-        async with AsyncSession(engine) as db:
-            backend = PostgresGraphBackend(db=db)
-            src, tgt = await self._seed_two_entities(backend)
-
-            # First insert
-            rel = await self._ensure_rel(backend, src, tgt, first_valid_to)
-            assert rel["valid_to"] == (
-                expected_valid_to if first_valid_to == second_valid_to
-                else (first_valid_to.isoformat() if first_valid_to else None)
-            ), "First insert returned unexpected valid_to"
-
-            # Second upsert
-            rel = await self._ensure_rel(backend, src, tgt, second_valid_to)
-            assert rel["valid_to"] == expected_valid_to, (
-                f"Expected valid_to={expected_valid_to!r}, "
-                f"got {rel['valid_to']!r} "
-                f"(first={first_valid_to!r}, second={second_valid_to!r})"
-            )
-
-    # ── Case 1: Both NULL ─────────────────────────────────────────────
-
-    async def test_valid_to_both_null(self, engine) -> None:
-        """NULL → NULL stays NULL (open-ended range remains open-ended)."""
-        await self._run_case(engine, None, None, None)
-
-    # ── Case 2: Existing non-NULL, new NULL ───────────────────────────
-
-    async def test_valid_to_null_reopens_closed_range(self, engine) -> None:
-        """Existing closed (2024-06), new NULL → NULL (reopen to infinity)."""
-        await self._run_case(engine, _DATE_2024_06, None, None)
-
-    # ── Case 3: Existing NULL, new non-NULL ───────────────────────────
-
-    async def test_valid_to_stays_null_when_existing_open(self, engine) -> None:
-        """Existing open-ended (NULL), new 2024-12 → stays NULL.
-
-        This is the mirror of ``test_valid_to_null_reopens_closed_range``
-        and prevents a closed incoming fact from truncating an already-open
-        relationship.
-        """
-        await self._run_case(engine, None, _DATE_2024_12, None)
-
-    # ── Case 4: Both non-NULL, new > existing ─────────────────────────
-
-    async def test_valid_to_expands_closed_range(self, engine) -> None:
-        """Both closed: GREATEST picks the later date (2024-12)."""
-        await self._run_case(
-            engine, _DATE_2024_06, _DATE_2024_12, "2024-12-01T00:00:00+00:00",
-        )
-
-    # ── Case 5: Both non-NULL, new < existing ─────────────────────────
-
-    async def test_valid_to_does_not_shrink_closed_range(self, engine) -> None:
-        """Both closed but new < existing: GREATEST keeps existing max (2024-12)."""
-        await self._run_case(
-            engine, _DATE_2024_12, _DATE_2024_06, "2024-12-01T00:00:00+00:00",
-        )
-
-    # ── Case 6: Both non-NULL, same value ─────────────────────────────
-
-    async def test_valid_to_same_value_stable(self, engine) -> None:
-        """GREATEST(x, x) = x — idempotent re-upsert is a no-op."""
-        await self._run_case(
-            engine, _DATE_2024_06, _DATE_2024_06, "2024-06-01T00:00:00+00:00",
-        )
 
 
 @pytest.mark.asyncio

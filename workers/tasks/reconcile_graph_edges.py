@@ -31,7 +31,7 @@ from sqlalchemy import text
 
 from core import rls
 from services.worker.worker_settings import settings
-from workers.tasks.base import with_task_metrics
+from workers.tasks.base import enqueue_reconcile_job, with_task_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -149,11 +149,18 @@ async def reconcile_graph_edges(ctx: dict[str, Any]) -> str:
     )
 
     # ── Enqueue an expiry per stale edge ────────────────────────────────
+    # Idempotent claims (memory:enqueued:expire_graph_edges:{edge_id}):
+    # overlapping 5-min ticks never double-enqueue; a lost job retries
+    # once the 1h claim TTL expires.
     enqueued = 0
     for edge in stale_edges:
         try:
-            await arq_redis.enqueue_job(
-                "expire_graph_edges",
+            if await enqueue_reconcile_job(
+                arq_redis,
+                task="expire_graph_edges",
+                queue=queue_name,
+                dedup_id=edge["edge_id"],
+                token=f"reconcile_{edge['edge_id'][:8]}",
                 user_id=edge["user_id"],
                 project_id=edge["project_id"],
                 source_id=edge["source_id"],
@@ -163,9 +170,8 @@ async def reconcile_graph_edges(ctx: dict[str, Any]) -> str:
                 # Reconcile-sourced expiries have no superseding fact —
                 # carry the edge id as provenance for log correlation.
                 fact_id=edge["edge_id"],
-                _queue_name=queue_name,
-            )
-            enqueued += 1
+            ):
+                enqueued += 1
         except Exception as exc:
             logger.warning(
                 "reconcile_graph_edges.enqueue_failed",

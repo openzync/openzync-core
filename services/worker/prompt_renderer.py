@@ -196,43 +196,12 @@ async def _fetch_session_entities(
 
     Returns ``{"known_entities": [...]}`` or an empty list if no session_id
     or missing parameters.
-
-    Note:
-        PostgresGraphBackend stores a reference to its DB session.  If that
-        session is closed and later reused, SQLAlchemy silently acquires a
-        new connection that is never returned to the pool (connection leak).
-        To avoid this, we create a **fresh**, short-lived session specifically
-        for the Postgres backend call and close it immediately after.
     """
     if session_id is None or project_id is None or graph_backend is None:
         return {"known_entities": []}
 
-    # Fresh session to avoid connection leak from PostgresGraphBackend's
-    # stale session reference (see docstring note).
-    db_session_factory = extra.get("db_session_factory")
-    if db_session_factory is not None:
-        from packages.graph_backend.postgres import (
-            PostgresGraphBackend,  # noqa: PLC0415
-        )
-
-        if isinstance(graph_backend, PostgresGraphBackend):
-            async with db_session_factory() as fresh_db:
-                try:
-                    # The graph tables are tenant-scoped — bind the session
-                    # before the backend reads them.
-                    await rls.set_tenant_context(fresh_db, user_id)
-                    fresh_backend = PostgresGraphBackend(db=fresh_db)
-                    entities = await fresh_backend.get_entities_for_session(
-                        user_id=user_id,
-                        project_id=project_id,
-                        session_id=session_id,
-                    )
-                finally:
-                    await rls.release_tenant_context(fresh_db)
-            return {"known_entities": entities}
-
-    # SurrealDB and FalkorDB manage their own connections — safe to use
-    # the backend's internal session directly.
+    # External backends (SurrealDB/FalkorDB) manage their own connections —
+    # safe to use the backend directly.
     entities = await graph_backend.get_entities_for_session(
         user_id=user_id,
         project_id=project_id,
@@ -662,32 +631,12 @@ async def _fetch_user_entities(
     if not by_project:
         return {"entities": []}
 
-    # Fresh session for the Postgres backend's stale-session leak
-    # (same rationale as _fetch_session_entities).
-    db_session_factory = extra.get("db_session_factory")
-    backend = graph_backend
-    if db_session_factory is not None:
-        from packages.graph_backend.postgres import (  # noqa: PLC0415
-            PostgresGraphBackend,
-        )
-
-        if isinstance(graph_backend, PostgresGraphBackend):
-            async with db_session_factory() as fresh_db:
-                try:
-                    await rls.set_tenant_context(fresh_db, user_id)
-                    backend = PostgresGraphBackend(db=fresh_db)
-                    return {
-                        "entities": await _collect_user_entities(
-                            backend, user_id, by_project
-                        )
-                    }
-                finally:
-                    await rls.release_tenant_context(fresh_db)
-
-    # SurrealDB and FalkorDB manage their own connections — safe to use
-    # the backend's internal session directly.
+    # External backends manage their own connections — safe to use
+    # the backend directly.
     return {
-        "entities": await _collect_user_entities(backend, user_id, by_project)
+        "entities": await _collect_user_entities(
+            graph_backend, user_id, by_project
+        )
     }
 
 

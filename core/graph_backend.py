@@ -65,12 +65,11 @@ class GraphBackendDispatcher:
     Example::
 
         dispatcher = GraphBackendDispatcher()
-        dispatcher.register("postgres", PostgresGraphBackend)
         dispatcher.register("surrealdb", SurrealGraphBackend)
         dispatcher.register("falkordb", FalkorGraphBackend)
 
-        # Per-request (Postgres):
-        backend = dispatcher.resolve_and_create(org_config, db)
+        # Per-request (SurrealDB):
+        backend = dispatcher.resolve_and_create(org_config, db, surreal=surreal)
 
         # Per-request (SurrealDB):
         backend = dispatcher.resolve_and_create(org_config, db, surreal=surreal)
@@ -85,7 +84,7 @@ class GraphBackendDispatcher:
     # ── Registration ────────────────────────────────────────────────────────────
 
     def register(self, name: str, backend_cls: type[GraphBackend]) -> None:
-        """Register a backend class under a short name (e.g. ``"postgres"``).
+        """Register a backend class under a short name (e.g. ``"falkordb"``).
 
         If the name is already registered, the new class overwrites the
         previous one.  This is intentional — it allows test suites to
@@ -152,16 +151,9 @@ class GraphBackendDispatcher:
             logger.debug("graph_backend.disabled")
             return None
 
-        cls = self._registry.get(backend_name)
-        if cls is None:
-            raise ValueError(
-                f"Unknown graph backend: '{backend_name}'. "
-                f"Available backends: {list(self._registry.keys())}. "
-                f"Set graph_backend in the per-org configuration "
-                f"via PATCH /admin/org/config."
-            )
-
-        # Hard reject: postgres removed in v1.1.0 → 410 Gone.
+        # Hard reject: postgres removed in v1.1.0 → 410 Gone.  Checked
+        # before the registry lookup so stale org configs get the
+        # migration message instead of "Unknown graph backend".
         if backend_name == "postgres":
             logger.error(
                 "graph_backend.deprecated_postgres_blocked",
@@ -172,6 +164,15 @@ class GraphBackendDispatcher:
             raise GoneError(
                 "PostgreSQL graph backend deprecated — gone, removed in v1.1.0, "
                 "migrate to falkordb (410)"
+            )
+
+        cls = self._registry.get(backend_name)
+        if cls is None:
+            raise ValueError(
+                f"Unknown graph backend: '{backend_name}'. "
+                f"Available backends: {list(self._registry.keys())}. "
+                f"Set graph_backend in the per-org configuration "
+                f"via PATCH /admin/org/config."
             )
 
         # Backend-specific kwargs — each backend receives only the
@@ -213,8 +214,8 @@ class GraphBackendDispatcher:
         This is the multi-backend equivalent of ``resolve_and_create``.
         Instead of picking one backend from the org config, it creates
         **all** registered backends.  Each backend receives backend-
-        specific kwargs (``db`` for Postgres, ``surreal`` for SurrealDB,
-        ``client`` for FalkorDB) and any shared kwargs from ``org_config``.
+        specific kwargs (``surreal`` for SurrealDB, ``client`` for
+        FalkorDB) and any shared kwargs from ``org_config``.
 
         Callers (e.g. ``HybridRetriever``) run these backends in parallel
         and merge results. Raises ``GraphBackendUnavailableError`` when no
@@ -236,8 +237,6 @@ class GraphBackendDispatcher:
         """
         instances: list[GraphBackend] = []
         for backend_name, cls in self._registry.items():
-            if backend_name == "postgres":
-                continue
             kwargs: dict[str, Any] = {}
             if backend_name == "surrealdb":
                 if surreal is None:
@@ -278,7 +277,7 @@ class GraphBackendDispatcher:
             org_config: The resolved per-org configuration.
 
         Returns:
-            The backend name string (e.g. ``"postgres"``), or ``None`` if
+            The backend name string (e.g. ``"falkordb"``), or ``None`` if
             graph features are disabled.
         """
         return self._resolve_backend_name(org_config)
@@ -313,14 +312,10 @@ def init_dispatcher() -> GraphBackendDispatcher:
     To add a new backend, import its class and register it here.
     """
     from packages.graph_backend.falkordb import FalkorGraphBackend
-    from packages.graph_backend.postgres import PostgresGraphBackend
     from packages.graph_backend.surrealdb import SurrealGraphBackend
 
     dispatcher = GraphBackendDispatcher()
     dispatcher.register("surrealdb", SurrealGraphBackend)
-    # note: "postgres" is registered but INACTIVE / non-production, kept
-    # for reference only — FalkorDB is live. Do not route orgs to it.
-    dispatcher.register("postgres", PostgresGraphBackend)
     dispatcher.register("falkordb", FalkorGraphBackend)
     return dispatcher
 

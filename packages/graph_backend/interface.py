@@ -1,9 +1,8 @@
 """Abstract interface for graph-database operations.
 
 The ``GraphBackend`` ABC defines the contract every graph backend must
-satisfy.  The shipped implementation is:
-
-- :class:`PostgresGraphBackend` — PostgreSQL-native
+satisfy.  The shipped implementations are ``SurrealGraphBackend`` and
+``FalkorGraphBackend`` (external-only ARQ expiry path).
 
 Every method requires ``user_id`` and ``project_id`` — OpenZync enforces
 strict organisational and project-level isolation.  No cross-project

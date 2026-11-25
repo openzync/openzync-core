@@ -21,7 +21,6 @@ from middleware.metrics import (
 )
 
 if TYPE_CHECKING:
-    from packages.graph_backend.interface import GraphBackend
     from services.cache_service import CacheService
     from services.graph_edge_sync_service import SupersessionEvent
 
@@ -196,13 +195,10 @@ class PostCommitEffectsMixin:
 
         The effect runs once the caller's transaction has committed —
         the after_commit queue already guarantees a rolled-back
-        transaction emits nothing.  Postgres backends bound to the
-        request session are rebuilt against a fresh session (by the time
-        this effect fires the request session is mid-teardown — the same
-        pattern as the webhook effect) and the expiry is committed in
-        that fresh session.  Failures propagate to
-        ``_run_pending_effects`` which logs them loudly; the fact commit
-        is already durable and unaffected.
+        transaction emits nothing.  Expiry is external-only (ARQ
+        ``expire_graph_edges`` on the low queue); failures degrade to a
+        loud log while ``reconcile_graph_edges`` self-heals, never
+        500ing committed work.
 
         Args:
             user_id: Tenant scope.
@@ -210,68 +206,33 @@ class PostCommitEffectsMixin:
             events: Supersession transitions recorded during ingest.
             at_time: The supersession instant (deterministic).
         """
-        from core import rls
-        from packages.graph_backend.postgres import PostgresGraphBackend
         from services.graph_edge_sync_service import GraphEdgeSyncService
 
         async def _effect() -> None:
             sync = self._graph_sync
             if sync is None:
                 return
-            fresh_sessions: list[AsyncSession] = []
             try:
-                rebuilt: list[GraphBackend] = []
-                for backend in sync.backends:
-                    if (
-                        isinstance(backend, PostgresGraphBackend)
-                        and getattr(backend, "_db", None) is self._db
-                    ):
-                        fresh = AsyncSession(
-                            bind=self._db.bind, expire_on_commit=False
-                        )
-                        fresh_sessions.append(fresh)
-                        # The fresh session checks out its own pooled
-                        # connection, which may carry a tenant (or a stale
-                        # bypass) from an earlier request.  Initialise the
-                        # context before the backend reads the graph
-                        # tables — they are RLS-protected, so an
-                        # uninitialised session would silently match no
-                        # rows and the expiry would be a no-op.
-                        await rls.init_context(fresh, str(user_id))
-                        rebuilt.append(
-                            PostgresGraphBackend(
-                                db=fresh,
-                                max_traversal_depth=backend._max_depth,
-                            )
-                        )
-                    else:
-                        rebuilt.append(backend)
-                try:
-                    await GraphEdgeSyncService(
-                        backends=rebuilt, arq_pool=sync.arq_pool
-                    ).sync_supersessions(
-                        user_id=user_id,
-                        project_id=project_id,
-                        events=events,
-                        at_time=at_time,
-                    )
-                except Exception:
-                    # Any post-commit failure degrades — facts are already
-                    # committed and reconcile_graph_edges self-heals.
-                    # Never 500 committed work.
-                    logger.exception(
-                        "fact_invalidation.graph_sync_degraded",
-                        extra={
-                            "user_id": str(user_id),
-                            "project_id": str(project_id),
-                            "event_count": len(events),
-                        },
-                    )
-                for fresh in fresh_sessions:
-                    await fresh.commit()
-            finally:
-                for fresh in fresh_sessions:
-                    await fresh.close()
+                await GraphEdgeSyncService(
+                    backends=list(sync.backends), arq_pool=sync.arq_pool
+                ).sync_supersessions(
+                    user_id=user_id,
+                    project_id=project_id,
+                    events=events,
+                    at_time=at_time,
+                )
+            except Exception:
+                # Any post-commit failure degrades — facts are already
+                # committed and reconcile_graph_edges self-heals.
+                # Never 500 committed work.
+                logger.exception(
+                    "fact_invalidation.graph_sync_degraded",
+                    extra={
+                        "user_id": str(user_id),
+                        "project_id": str(project_id),
+                        "event_count": len(events),
+                    },
+                )
 
         return _effect
     def _attach_post_commit_events(self) -> None:

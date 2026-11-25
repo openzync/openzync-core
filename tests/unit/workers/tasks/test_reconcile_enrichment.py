@@ -295,10 +295,10 @@ class TestReconcileEnrichment:
         assert "Re-enqueued" in result
         # Some tasks should still have been enqueued despite the failure.
         # With enrichment_status=0: enrich_episode (LLM) + embed_episode +
-        # link_entities = 3, plus the fact-repair pass (the mock DB returns
-        # the same row for both queries) = 4.  The first enqueue fails, the
-        # rest succeed, but all 4 calls are made.
-        assert arq_redis.enqueue_job.call_count == 4
+        # link_entities = 3, plus the fact-repair pass and the blob-repair
+        # pass (the mock DB returns the same row for all queries) = 5.
+        # The first enqueue fails, the rest succeed, but all 5 calls are made.
+        assert arq_redis.enqueue_job.call_count == 5
 
     @pytest.mark.asyncio
     async def test_db_error_propagates(self) -> None:
@@ -390,12 +390,14 @@ class TestReconcileEnrichmentRls:
 
         assert summary == "No stale episodes found"
         stmts = [str(call.args[0]) for call in db.execute.await_args_list]
-        # Fact-embedding pass then episode pass, each opening with the bypass.
-        assert len(stmts) == 4
+        # Fact, blob, then episode pass, each opening with the bypass.
+        assert len(stmts) == 6
         assert "app.bypass_rls" in stmts[0]
         assert "facts" in stmts[1]
         assert "app.bypass_rls" in stmts[2]
-        assert "episodes" in stmts[3]
+        assert "blob" in stmts[3].lower()
+        assert "app.bypass_rls" in stmts[4]
+        assert "episodes" in stmts[5]
         # The bypass removes any need for the per-org GUC on these scans:
         # every context binding enables the bypass and binds NO tenant —
         # a stale tenant would narrow the platform-wide scan.

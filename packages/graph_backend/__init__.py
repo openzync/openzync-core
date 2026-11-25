@@ -1,9 +1,7 @@
-"""Graph backend abstraction — interface, PostgreSQL, SurrealDB, and FalkorDB implementations.
+"""Graph backend abstraction — interface, SurrealDB, and FalkorDB implementations.
 
 This package provides:
 - ``GraphBackend`` — Abstract interface for graph-database operations
-- ``PostgresGraphBackend`` — PostgreSQL-native implementation using
-  recursive CTEs, ``pg_trgm``, and ``pgvector``.
 - ``SurrealGraphBackend`` — SurrealDB implementation using native graph
   relations (``RELATE`` / arrow syntax), BM25 full-text search, and
   iterative BFS traversal.
@@ -28,7 +26,6 @@ Usage::
 from __future__ import annotations
 
 from packages.graph_backend.interface import GraphBackend
-from packages.graph_backend.postgres import PostgresGraphBackend
 
 # FalkorDB and SurrealDB are optional backends — import them lazily
 # from packages.graph_backend.falkordb import FalkorGraphBackend   # requires falkordb
@@ -36,5 +33,4 @@ from packages.graph_backend.postgres import PostgresGraphBackend
 
 __all__ = [
     "GraphBackend",
-    "PostgresGraphBackend",
 ]

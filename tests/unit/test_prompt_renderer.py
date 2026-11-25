@@ -865,16 +865,15 @@ class TestProviderFetchSessionEntities:
         assert result == {"known_entities": []}
 
     @pytest.mark.asyncio
-    async def test_with_postgres_graph_backend(
+    async def test_with_falkor_graph_backend(
         self,
         user_id: UUID,
         session_id: UUID,
         project_id: UUID,
-        monkeypatch: MonkeyPatch,
     ) -> None:
-        """With PostgresGraphBackend and db_session_factory, creates fresh session."""
+        """With an external backend, uses get_entities_for_session directly."""
 
-        class FakePostgresBackend:
+        class FakeFalkorBackend:
             def __init__(self, db: Any = None) -> None:
                 self.db = db
 
@@ -884,20 +883,12 @@ class TestProviderFetchSessionEntities:
             ) -> list[dict[str, str]]:
                 return [{"name": "Entity1", "entity_type": "Person"}]
 
-        import packages.graph_backend.postgres  # noqa: F811 — ensure module loaded
-
-        monkeypatch.setattr(
-            packages.graph_backend.postgres,
-            "PostgresGraphBackend",
-            FakePostgresBackend,
-        )
-
-        pg_backend = FakePostgresBackend()
+        backend = FakeFalkorBackend()
         result = await _fetch_session_entities(
             db=FakeAsyncSession(),
             user_id=user_id,
             session_id=session_id,
-            graph_backend=pg_backend,
+            graph_backend=backend,
             project_id=project_id,
             db_session_factory=make_fake_session_factory(),
         )

@@ -891,9 +891,9 @@ class TestGraphEdgeSync:
     """D1-rule edge expiry — the post-commit effect invokes the sync.
 
     The graph_sync collaborator receives the supersession events with
-    edge keys; the post-commit effect computes the expire set and calls
-    ``expire_relationships_matching`` on Postgres backends (case 2) or
-    skips entirely (case 3 — successor re-asserts the same key).
+    edge keys; the post-commit effect computes the expire set and
+    enqueues ``expire_graph_edges`` ARQ tasks (case 2) or skips
+    entirely (case 3 — successor re-asserts the same key).
     """
 
     SRC_ENTITY = UUID("00000000-0000-0000-0000-00000000aaaa")
@@ -901,15 +901,10 @@ class TestGraphEdgeSync:
     OTHER_ENTITY = UUID("00000000-0000-0000-0000-00000000cccc")
 
     def _make_backend(self) -> Any:
+        """A stub graph backend — never called directly (enqueue-only routing)."""
         from unittest.mock import AsyncMock as _AsyncMock
 
-        from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
-
-        from packages.graph_backend.postgres import PostgresGraphBackend
-
-        backend = PostgresGraphBackend(db=_AsyncMock(spec=_AsyncSession))
-        backend.expire_relationships_matching = _AsyncMock(return_value=1)
-        return backend
+        return _AsyncMock()
 
     def _service_with_sync(
         self, mock_db: AsyncMock, mock_repo: AsyncMock, backend: Any
@@ -1032,35 +1027,6 @@ class TestGraphEdgeSync:
         assert result.superseded_count == 0
         await _commit(service, mock_db)
         backend.expire_relationships_matching.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_retraction_effect_expires_edge(
-        self, mock_db: AsyncMock, mock_repo: AsyncMock
-    ) -> None:
-        """notify_retraction routes the D1 case-1 expiry through the same effect."""
-        backend = self._make_backend()
-        service = self._service_with_sync(mock_db, mock_repo, backend)
-
-        old_fact = _fact(
-            subject_entity_id=self.SRC_ENTITY,
-            object_entity_id=self.TGT_ENTITY,
-            predicate="works_at",
-        )
-        service.notify_retraction(
-            user_id=USER_ID, project_id=PROJECT_ID, old_fact=old_fact, at_time=NOW
-        )
-        backend.expire_relationships_matching.assert_not_awaited()
-
-        await _commit(service, mock_db)
-
-        backend.expire_relationships_matching.assert_awaited_once_with(
-            user_id=USER_ID,
-            project_id=PROJECT_ID,
-            source_id=self.SRC_ENTITY,
-            target_id=self.TGT_ENTITY,
-            relationship_type="works_at",
-            at_time=NOW,
-        )
 
     @pytest.mark.asyncio
     async def test_sync_effect_dropped_on_rollback(
