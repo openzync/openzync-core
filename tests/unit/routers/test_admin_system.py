@@ -77,7 +77,7 @@ def _make_user(user_id: UUID, *, email: str | None, name: str | None) -> MagicMo
 
 @pytest.mark.asyncio
 async def test_get_platform_config_200_flat() -> None:
-    """GET /admin/system/config → 200 flat SystemConfigResponse."""
+    """GET /admin/system/config → 200 empty ``SystemConfigResponse``."""
     from schemas.system_config import SystemConfigResponse
 
     app = _make_app()
@@ -87,10 +87,7 @@ async def test_get_platform_config_200_flat() -> None:
         patch(
             "routers.admin_system.get_system_config",
             new=AsyncMock(
-                return_value=SystemConfigResponse(
-                    llm_backend="openai",
-                    graph_backend="falkordb",
-                ),
+                return_value=SystemConfigResponse(),
             ),
         ),
         patch(
@@ -104,10 +101,9 @@ async def test_get_platform_config_200_flat() -> None:
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    # Flat — no {stored: ...} wrapper, no secrets; the full schema is
-    # serialized (null defaults included).
-    assert body["llm_backend"] == "openai"
-    assert body["graph_backend"] == "falkordb"
+    # Flat — no {stored: ...} wrapper, no secrets; the fieldless schema
+    # serializes to {}.
+    assert body == {}
     assert "stored" not in body
     assert "openai_api_key" not in body
 
@@ -123,10 +119,7 @@ async def test_update_platform_config_200_flat_persists() -> None:
         patch(
             "routers.admin_system.update_system_config",
             new=AsyncMock(
-                return_value=SystemConfigResponse(
-                    llm_backend="openai",
-                    graph_backend="falkordb",
-                ),
+                return_value=SystemConfigResponse(),
             ),
         ) as mock_update,
         patch(
@@ -138,23 +131,19 @@ async def test_update_platform_config_200_flat_persists() -> None:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.patch(
                 "/admin/system/config",
-                json={"llm_backend": "openai", "graph_backend": "falkordb"},
+                json={},
             )
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["llm_backend"] == "openai"
-    assert body["graph_backend"] == "falkordb"
+    assert body == {}
     assert "stored" not in body
     # The update function received the parsed body + the app-state deps
     # (redis second, DB session third — positional, per the router call).
     from unittest.mock import ANY
 
     mock_update.assert_awaited_once_with(
-        SystemConfigUpdate(
-            llm_backend="openai",
-            graph_backend="falkordb",
-        ),
+        SystemConfigUpdate(),
         app.state.redis,
         ANY,
     )

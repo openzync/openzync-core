@@ -1,0 +1,1 @@
+Add `system_managed_fields` to `GET`/`PATCH /v1/me/config` responses (lists `falkordb_url`/`surrealdb_url` when the corresponding `OZ_*` env var is set) and reject managed-field overrides on `PATCH` with 422.

@@ -53,7 +53,7 @@ class IngestMixin:
         Flow:
         1. Reject archived/missing projects (404, before any state).
         2. Resolve + validate the effective enrichment toggles
-           (system < org < per-ingest param, all-ON by default) — 422
+           (org < per-ingest param, all-ON by default) — 422
            on unknown keys or violated dependencies, before any state.
         3. Idempotency check (Redis) — replay or 409 on key reuse.
         4. Resolve the session (never auto-created).
@@ -237,7 +237,7 @@ class IngestMixin:
     ) -> dict[str, bool]:
         """Resolve the effective per-episode enrichment toggles.
 
-        Precedence: system root default < org stored override <
+        Precedence: org stored override <
         per-ingest request param; unset keys default to ``True``.
         Dependencies are hard-validated (facts/entity_links require
         entities, llm_invalidation requires facts, embedding=False is
@@ -258,19 +258,16 @@ class IngestMixin:
             validate_enrichment_combo,
         )
         from core.org_config import get_org_config
-        from core.system_config import get_system_config
 
-        system_cfg = await get_system_config(redis=self._redis, db=self._db)
         org_cfg = await get_org_config(user_id, redis=self._redis, db=self._db)
         effective = resolve_enrichment(
-            system_cfg.enrichment,
+            None,
             org_cfg.enrichment,
             request_param,
         )
         validate_enrichment_combo(
             effective,
-            graph_search_type=org_cfg.graph_search_type
-            or system_cfg.graph_search_type,
+            graph_search_type=org_cfg.graph_search_type,
         )
         return effective
 
@@ -278,11 +275,11 @@ class IngestMixin:
         self,
         user_id: UUID,
     ) -> dict[str, bool | float | str]:
-        """Resolve the effective enrichment gate (system < org).
+        """Resolve the effective enrichment gate (org-only).
 
-        The gate is ON only when the system block enables it AND the org
-        override is not ``False``.  Threshold/model fall back to the
-        documented gate defaults when unstated.
+        The gate is ON only when the org block enables it.  Threshold
+        falls back to the documented gate default when unstated, and the
+        model is always the platform default.
 
         Args:
             user_id: The organization UUID (config scope).
@@ -296,15 +293,9 @@ class IngestMixin:
         """
         from core.enrichment_config import resolve_enrichment_gate
         from core.org_config import get_org_config
-        from core.system_config import get_system_config
 
-        system_cfg = await get_system_config(redis=self._redis, db=self._db)
         org_cfg = await get_org_config(user_id, redis=self._redis, db=self._db)
-        return dict(
-            resolve_enrichment_gate(
-                system_cfg.enrichment_gate, org_cfg.enrichment_gate
-            )
-        )
+        return dict(resolve_enrichment_gate(org_cfg))
 
     async def _resolve_user(
         self,

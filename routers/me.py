@@ -48,7 +48,11 @@ async def get_my_config(
     """
     override = await service.get_override(UUID(user_id))
     effective = await service.get_effective_config(UUID(user_id))
-    return UserConfigResponse(override=override, effective=effective)
+    return UserConfigResponse(
+        override=override,
+        effective=effective,
+        system_managed_fields=service.get_system_managed_fields(),
+    )
 
 
 @router.patch(
@@ -78,4 +82,8 @@ async def update_my_config(
     """
     override = await service.update_override(UUID(user_id), payload.config)
     effective = await service.get_effective_config(UUID(user_id))
-    return UserConfigResponse(override=override, effective=effective)
+    return UserConfigResponse(
+        override=override,
+        effective=effective,
+        system_managed_fields=service.get_system_managed_fields(),
+    )

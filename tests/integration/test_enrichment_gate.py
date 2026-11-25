@@ -449,55 +449,47 @@ class TestSystemConfigGateEnablePath:
         _superadmin_client: AsyncClient,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Enable with an unknown Hub model → 422; stored config unchanged."""
+        """Gate keys are org-level only — PATCH rejects them with 422 and the
+        stored config is unchanged (always ``{}``)."""
         _no_network(monkeypatch)
-        with patch(
-            "core.system_config._hub_model_status", return_value=404
-        ):
-            before = await _superadmin_client.get("/admin/system/config")
-            assert before.status_code == 200, before.text
+        before = await _superadmin_client.get("/admin/system/config")
+        assert before.status_code == 200, before.text
+        assert before.json() == {}
 
-            resp = await _superadmin_client.patch(
-                "/admin/system/config",
-                json={
-                    "enrichment_gate": {
-                        "enabled": True,
-                        "model": "bogus/gate-does-not-exist-xyz",
-                    }
-                },
-            )
-            assert resp.status_code == 422, resp.text
+        resp = await _superadmin_client.patch(
+            "/admin/system/config",
+            json={
+                "enrichment_gate": {
+                    "enabled": True,
+                    "model": "bogus/gate-does-not-exist-xyz",
+                }
+            },
+        )
+        assert resp.status_code == 422, resp.text
 
-            after = await _superadmin_client.get("/admin/system/config")
-            assert after.status_code == 200, after.text
-            assert after.json() == before.json()
+        after = await _superadmin_client.get("/admin/system/config")
+        assert after.status_code == 200, after.text
+        assert after.json() == before.json() == {}
 
-    async def test_enable_local_dir_model_200_without_network(
+    async def test_enable_local_dir_model_422_without_network(
         self,
         _superadmin_client: AsyncClient,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Any,
     ) -> None:
-        """Enable with a local-dir model → 200 with zero Hub traffic."""
+        """Even a local-dir gate model 422s — no system-level gate exists."""
         _no_network(monkeypatch)
-        with patch(
-            "core.system_config._hub_model_status",
-            side_effect=AssertionError("Hub must not be probed for local models"),
-        ):
-            resp = await _superadmin_client.patch(
-                "/admin/system/config",
-                json={
-                    "enrichment_gate": {"enabled": True, "model": str(tmp_path)}
-                },
-            )
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert body["enrichment_gate"]["enabled"] is True
-            assert body["enrichment_gate"]["model"] == str(tmp_path)
+        resp = await _superadmin_client.patch(
+            "/admin/system/config",
+            json={
+                "enrichment_gate": {"enabled": True, "model": str(tmp_path)}
+            },
+        )
+        assert resp.status_code == 422, resp.text
 
-            stored = await _superadmin_client.get("/admin/system/config")
-            assert stored.status_code == 200, stored.text
-            assert stored.json()["enrichment_gate"]["model"] == str(tmp_path)
+        stored = await _superadmin_client.get("/admin/system/config")
+        assert stored.status_code == 200, stored.text
+        assert stored.json() == {}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -532,11 +524,14 @@ class TestLegacyOrgConfigRegression:
         raw: dict,
         expected: bool,
     ) -> None:
-        """A poisoned-row legacy dict reads back 200 with a coerced bool —
-        the GET never 500s/422s on the old shape."""
+        """A poisoned-row legacy dict reads back 200 with a coerced gate
+        object — the GET never 500s/422s on the old shape."""
         await _plant_legacy_gate(engine, isolated_org_and_key["user_id"], raw)
 
         resp = await isolated_admin_client.get("/admin/org/config")
         assert resp.status_code == 200, resp.text
         stored = resp.json()["stored"]
-        assert stored["enrichment_gate"] is expected
+        assert stored["enrichment_gate"] == {
+            "enabled": expected,
+            "threshold": 0.5,
+        }

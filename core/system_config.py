@@ -13,17 +13,14 @@ read or written — the ``OZ_*`` secret env vars are never exposed.
 
 ⚠️ BREAKING: org-creation policy keys are gone (single platform org).
 Registration is governed by ``instance_settings.registration_mode``.
+⚠️ BREAKING: ``enrichment_gate`` is gone too (org-level only now) —
+the whitelist is empty, ``GET`` returns ``{}`` and any carried key 422s.
 Defaults: all fields ``None`` when the root row has no record.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
-import urllib.error
-import urllib.parse
-import urllib.request
 from typing import Any
 from uuid import UUID
 
@@ -46,74 +43,6 @@ SYSTEM_CONFIG_CACHE_TTL: int = 300
 
 CACHE_KEY: str = "system_config"
 """Redis key for the cached system config."""
-
-_HUB_API_TIMEOUT_S: float = 10.0
-"""Anonymous Hub existence-check budget — fail loud, never hang the request."""
-
-
-def _is_local_gate_model(model: str) -> bool:
-    """Return True when *model* is a local path, not a Hub id.
-
-    ``from_pretrained`` accepts both, so local-dir paths skip the Hub
-    existence check entirely — they never touch the network.
-    """
-    return model.startswith(("/", "./", "../", "~")) or os.path.exists(model)
-
-
-def _hub_model_status(model_id: str) -> int:
-    """Synchronously GET the anonymous Hub metadata endpoint (executor-bound).
-
-    Args:
-        model_id: Public Hub repo id (already ruled out as a local path).
-
-    Returns:
-        The HTTP status (200 when the repo exists and is publicly visible).
-
-    Raises:
-        Exception: Whatever ``urllib`` raises on unreachable Hub (URLError,
-            TimeoutError, ...) — the caller maps it to ``ValidationError``.
-    """
-    url = f"https://huggingface.co/api/models/{urllib.parse.quote(model_id, safe='/')}"
-    req = urllib.request.Request(
-        url, method="GET", headers={"Accept": "application/json"}
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=_HUB_API_TIMEOUT_S) as resp:
-            return int(resp.status)
-    except urllib.error.HTTPError as exc:
-        return int(exc.code)
-
-
-async def _assert_gate_model_reachable(model_id: str) -> None:
-    """Fail loud when a Hub gate model is unknown or the Hub is unreachable.
-
-    Anonymous, no token involved (the repo is public) — nothing secret is
-    ever sent or logged.
-
-    Args:
-        model_id: Hub repo id to verify.
-
-    Raises:
-        ValidationError: On any non-200 status or Hub/network failure (→ 422,
-            the enable is not persisted).
-    """
-    from core.exceptions import ValidationError  # noqa: PLC0415 — lazy, mirrors below
-
-    loop = asyncio.get_running_loop()
-    try:
-        status = await loop.run_in_executor(None, lambda: _hub_model_status(model_id))
-    except Exception as exc:
-        raise ValidationError(
-            f"Enrichment gate model {model_id!r} could not be verified — "
-            f"Hugging Face Hub is unreachable ({exc})."
-        ) from exc
-    if status != 200:
-        raise ValidationError(
-            f"Enrichment gate model {model_id!r} does not exist or is not "
-            f"publicly visible on Hugging Face Hub (status {status})."
-        )
-
-
 def _request_id() -> str:
     """Return the current request correlation ID (``""`` outside requests)."""
     return structlog.contextvars.get_contextvars().get("request_id", "")
@@ -164,6 +93,11 @@ async def get_system_config(
         RuntimeError: If *db* is ``None`` on a cache miss.
     """
     # 1. Try cache (unless skip_cache is set)
+    # Stale-cache safety: SystemConfigResponse uses pydantic's default
+    # extra="ignore", so cached JSON carrying removed keys (e.g. llm_* /
+    # reranker_* written before their removal) still validates — unknown
+    # keys are dropped, never raised.  TTL (5 min) self-heals; updates
+    # delete the key outright (see update_system_config step 4).
     if not skip_cache and redis is not None:
         try:
             cached = await redis.get(CACHE_KEY)
@@ -242,33 +176,6 @@ async def update_system_config(
             "These keys are not editable system config: "
             f"{', '.join(sorted(unknown))}."
         )
-
-    # Fail-loud enable path: enabling the gate with an unknown/unreachable
-    # Hub model must 422 BEFORE anything is persisted.  ``enabled=false``
-    # (or a missing/null block) skips the check — disabling stays offline-safe.
-    gate_block = update_dict.get("enrichment_gate")
-    if gate_block is not None:
-        if isinstance(gate_block, dict):
-            gate_enabled = gate_block.get("enabled")
-            gate_model = gate_block.get("model")
-        else:
-            gate_enabled = getattr(gate_block, "enabled", None)
-            gate_model = getattr(gate_block, "model", None)
-        if gate_enabled is True:
-            from core.enrichment_gate import (  # noqa: PLC0415 — lazy, avoids import cycle
-                DEFAULT_MODEL as _GATE_DEFAULT_MODEL,
-            )
-
-            if gate_model is None:
-                model_id = _GATE_DEFAULT_MODEL
-            elif not isinstance(gate_model, str) or not gate_model.strip():
-                raise ValidationError(
-                    "Enrichment gate 'model' must be a non-empty string."
-                )
-            else:
-                model_id = gate_model
-            if not _is_local_gate_model(model_id):
-                await _assert_gate_model_reachable(model_id)
 
     if db is None:
         raise RuntimeError("update_system_config requires a DB session")
