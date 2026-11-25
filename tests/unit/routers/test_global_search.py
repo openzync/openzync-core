@@ -34,21 +34,6 @@ def _stub_permission_gate() -> None:
         yield
 
 
-@pytest.fixture(autouse=True)
-def _init_settings() -> None:
-    """Initialise the Settings singleton with dummy values."""
-    from core.config import Settings, set_settings
-
-    settings = Settings(
-        DATABASE_URL="postgresql+asyncpg://u:p@localhost:5432/test",
-        REDIS_URL="redis://localhost:6379/1",
-        SECRET_KEY="a" * 32,
-        WEBHOOK_SIGNING_SECRET="b" * 32,
-        ENVIRONMENT="test",
-    )
-    set_settings(settings)
-
-
 class TestGlobalSearchRouter:
     """Full HTTP-adapter tests for the global search router."""
 

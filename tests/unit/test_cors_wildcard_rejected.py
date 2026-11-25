@@ -22,4 +22,7 @@ class TestCorsWildcardRejected:
                 SECRET_KEY="a" * 32,
                 WEBHOOK_SIGNING_SECRET="b" * 32,
                 CORS_ORIGINS="*",
+                S3_ENDPOINT_URL="http://minio:9000",
+                S3_ACCESS_KEY_ID="test-key",
+                S3_SECRET_ACCESS_KEY="test-secret",
             )
