@@ -28,7 +28,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request
 
 from core.audit import audit_action
+from core.config import get_settings
 from core.exceptions import AuthorizationError, ConflictError
+from core.net import is_trusted_proxy
 from dependencies.auth import get_dashboard_user
 from dependencies.services import (
     get_auth_service,
@@ -79,13 +81,19 @@ router = APIRouter(
 def _client_ip(request: Request) -> str:
     """Extract the client IP address from the request.
 
-    Uses the direct peer address only — ``X-Forwarded-For`` is
-    client-controlled and must not be trusted (no TRUSTED_PROXY setting
-    exists in core/config.py). Falls back to ``"unknown"``.
+    The leftmost ``X-Forwarded-For`` entry is trusted only when the
+    direct peer is in ``TRUSTED_PROXY_IPS`` — otherwise any client
+    could forge its own throttle bucket. Falls back to ``"unknown"``.
+    ``get_settings()`` returns the process-wide singleton (no I/O after
+    first call), so this stays cheap per request.
     """
-    if request.client:
-        return request.client.host
-    return "unknown"
+    peer = request.client.host if request.client else "unknown"
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded and is_trusted_proxy(peer, get_settings().TRUSTED_PROXY_IPS):
+        first = forwarded.split(",")[0].strip()
+        if first:
+            return first
+    return peer
 
 
 def _token_fingerprint(raw: str) -> str:

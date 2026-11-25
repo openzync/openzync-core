@@ -93,7 +93,9 @@ def _reset_mock() -> None:
     """Reset the shared mock before each test."""
     MOCK_MEMORY_SERVICE.reset_mock()
     MOCK_MEMORY_SERVICE.ingest = AsyncMock()
-    MOCK_MEMORY_SERVICE.delete_project_memory = AsyncMock()
+    MOCK_MEMORY_SERVICE.delete_project_memory = AsyncMock(
+        return_value=(0, 0, 0, False)
+    )
 
 
 @pytest.mark.asyncio

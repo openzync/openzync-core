@@ -100,7 +100,9 @@ class IdempotencyResult:
 
     Attributes:
         status:        One of ``NEW``, ``REPLAY``, ``CONFLICT``.
-        response_data: Cached response body when ``status == REPLAY``.
+        response_data: Cached response body when ``status == REPLAY`` —
+            also populated on ``CONFLICT`` so callers can surface the
+            prior ``job_id`` in the 409 body for reconciliation.
         message:       Human-readable description of the result.
     """
 
@@ -122,6 +124,31 @@ class IdempotencyResult:
             f"has_response={self.response_data is not None}, "
             f"message={self.message!r})"
         )
+
+
+def _coerce_response_data(value: Any) -> dict[str, Any] | None:
+    """Normalize a cached ``response_body`` to a dict.
+
+    Older cache entries (or foreign writers) may hold a JSON string
+    instead of a dict — a raw ``str`` would fail the
+    ``isinstance(..., dict)`` gate downstream and silently drop the
+    ``job_id`` from 409 bodies. Non-dict, non-JSON values yield ``None``.
+
+    Args:
+        value: The raw cached ``response_body`` value.
+
+    Returns:
+        The value as a dict, or ``None`` when it cannot be coerced.
+    """
+    if value is None or isinstance(value, dict):
+        return value
+    if isinstance(value, (str, bytes)):
+        try:
+            parsed: Any = orjson.loads(value)
+        except (orjson.JSONDecodeError, TypeError, ValueError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
 
 
 class ContentHashClaim:
@@ -268,7 +295,7 @@ class IdempotencyService:
 
         stored_hash: str | None = entry.get("request_body_hash")
         if stored_hash is not None and stored_hash != body_hash:
-            # Same key, different payload — this is a conflict.
+            # Same key, different body — this is a conflict.
             logger.warning(
                 "idempotency.payload_mismatch",
                 extra={
@@ -279,14 +306,22 @@ class IdempotencyService:
             )
             return IdempotencyResult(
                 status=IdempotencyStatus.CONFLICT,
+                # Carry the prior response so callers can surface its
+                # job_id in the 409 body for client reconciliation.
+                # Coerced: older entries may hold a JSON string.
+                response_data=_coerce_response_data(
+                    entry.get("response_body")
+                ),
                 message=(
                     "Idempotency-Key already used with a different request body. "
                     "Each Idempotency-Key must uniquely identify a single request."
                 ),
             )
 
-        # Same key, same body — safe replay.
-        response_data: dict[str, Any] | None = entry.get("response_body")
+        # Same key, same body — safe replay. Coerced for the same reason.
+        response_data: dict[str, Any] | None = _coerce_response_data(
+            entry.get("response_body")
+        )
         return IdempotencyResult(
             status=IdempotencyStatus.REPLAY,
             response_data=response_data,

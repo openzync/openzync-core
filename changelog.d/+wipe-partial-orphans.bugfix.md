@@ -1,0 +1,1 @@
+Wipe always returns 204 (SDK-compatible): a partial post-commit S3 sweep is signaled via the `X-Wipe-Failed: true` response header plus a loud `memory.wipe_partial` log and the destructive-action audit entry — never a 200 body. Leftover objects stay GC-visible via their soft-deleted blob rows.

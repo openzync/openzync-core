@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import Counter
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -61,7 +60,12 @@ class BlobIngestMixin:
         except Exception:
             logger.error(
                 "memory.blob_compensation_failed",
-                extra={"user_id": str(user_id), "key_count": len(storage_keys)},
+                extra={
+                    "user_id": str(user_id),
+                    "key_count": len(storage_keys),
+                    # Cap the key list — a large ingest would flood the log.
+                    "storage_keys": list(storage_keys[:20]),
+                },
                 exc_info=True,
             )
 
@@ -106,57 +110,43 @@ class BlobIngestMixin:
             episode_id = episodes[msg_idx].id
             ep_blob_metas.append((episode_id, list(msg.blobs)))
 
+        # Fail fast on out-of-range refs before any bytes move — the
+        # router checks this too, but the service never trusts the caller.
+        for msg in messages:
+            for meta in msg.blobs:
+                if meta.blob_id >= len(uploaded_blobs):
+                    raise ValidationError(
+                        f"blob_id {meta.blob_id} out of range: "
+                        f"only {len(uploaded_blobs)} files uploaded"
+                    )
+
         if not ep_blob_metas:
             return 0, []
 
         # Global backend built once per ingest — not one client per episode.
         from core.blob_storage import BlobStorage, BlobStorageConfig
         from core.config import get_settings
-        from services.blob_storage_service import (
-            BlobStorageService,
-            read_upload_bounded,
-        )
+        from services.blob_storage_service import BlobStorageService
 
         storage = BlobStorage(BlobStorageConfig.from_settings(get_settings()))
-        max_bytes = storage.max_blob_bytes
-        # Stream per episode — read only the files each episode references
-        # so peak RSS is one episode's blobs plus still-unconsumed shared
-        # files, not the whole request. UploadFile.read() is a one-shot
-        # stream, so files referenced by multiple episodes stay cached until
-        # their last referencing episode uploads, then are released.
-        # Every cached blob is capped at max_blob_bytes by
-        # read_upload_bounded — shared files cannot blow the cap silently.
-        use_counts = Counter(
-            meta.blob_id for _, metas in ep_blob_metas for meta in metas
-        )
-        shared_ids = {bid for bid, n in use_counts.items() if n > 1}
-        shared_bytes: dict[int, bytes] = {}
-        remaining = dict(use_counts)
-
         blob_svc = BlobStorageService(self._db, self._blob_repo)
         blob_records: list[Any] = []
 
         for episode_id, metas in ep_blob_metas:
             needed_ids = {meta.blob_id for meta in metas}
-            slots: list[UploadFile | bytes] = [b""] * len(uploaded_blobs)
+            # Compact positional slots — only this episode's files, sized
+            # to its max index. upload_blobs indexes by blob_id, so slots
+            # stay positional; unreferenced entries are never touched.
+            slots: list[UploadFile | bytes] = [b""] * (max(needed_ids) + 1)
             for bid in needed_ids:
-                if bid >= len(uploaded_blobs):
-                    raise ValidationError(
-                        f"blob_id {bid} out of range: "
-                        f"only {len(uploaded_blobs)} files uploaded"
-                    )
-                cached = shared_bytes.get(bid)
-                if cached is not None:
-                    slots[bid] = cached
-                    continue
-                data = await read_upload_bounded(
-                    uploaded_blobs[bid],
-                    max_bytes,
-                    uploaded_blobs[bid].filename or "unnamed",
-                )
-                slots[bid] = data
-                if bid in shared_ids:
-                    shared_bytes[bid] = data
+                upload = uploaded_blobs[bid]
+                # Rewind the one-shot stream — files shared by several
+                # episodes are re-streamed per episode instead of held in
+                # memory, so peak RSS is one upload part, never the whole
+                # request. upload_blobs streams UploadFiles (capped at
+                # max_blob_bytes mid-stream, no partial object on abort).
+                await upload.seek(0)
+                slots[bid] = upload
             records = await blob_svc.upload_blobs(
                 user_id=user_id,
                 project_id=project_id,
@@ -168,14 +158,6 @@ class BlobIngestMixin:
                 storage=storage,
             )
             blob_records.extend(records)
-            # Release shared files whose last referencing episode just
-            # uploaded — without this the cache holds every shared file
-            # until return (peak = whole request for fully-shared blobs).
-            for bid in needed_ids:
-                if bid in shared_ids:
-                    remaining[bid] -= 1
-                    if remaining[bid] <= 0:
-                        del shared_bytes[bid]
 
         # blob_count reflects persisted blob records (one per referenced
         # file that actually uploaded) — not metadata entries. A blobs
@@ -198,7 +180,7 @@ class BlobIngestMixin:
         user_id: UUID,
         project_id: UUID,
         enrichments: dict[str, bool] | None = None,
-    ) -> None:
+    ) -> bool:
         """Enqueue ARQ ``extract_blob_text`` tasks for each uploaded blob.
 
         Runs AFTER the DB commit so workers can query the blob records.
@@ -213,6 +195,10 @@ class BlobIngestMixin:
             project_id: Project UUID.
             enrichments: Effective per-episode toggles (forwarded into
                 every ARQ payload; workers mark-skipped disabled bits).
+
+        Returns:
+            ``True`` when every task was enqueued, ``False`` on failure
+            (already logged loudly — the caller marks the 202 degraded).
         """
         from core.config import get_settings
         from core.queue_names import get_queue_name
@@ -250,6 +236,7 @@ class BlobIngestMixin:
                     "project_id": str(project_id),
                 },
             )
+            return True
         except Exception:
             logger.critical(
                 "memory.blob_extraction_enqueue_failed",
@@ -262,4 +249,6 @@ class BlobIngestMixin:
                         "Blobs are safe in S3 and DB; reconciliation needed."
                     ),
                 },
+                exc_info=True,
             )
+            return False

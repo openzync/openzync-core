@@ -246,14 +246,27 @@ class PostCommitEffectsMixin:
                         )
                     else:
                         rebuilt.append(backend)
-                await GraphEdgeSyncService(
-                    backends=rebuilt, arq_pool=sync.arq_pool
-                ).sync_supersessions(
-                    user_id=user_id,
-                    project_id=project_id,
-                    events=events,
-                    at_time=at_time,
-                )
+                try:
+                    await GraphEdgeSyncService(
+                        backends=rebuilt, arq_pool=sync.arq_pool
+                    ).sync_supersessions(
+                        user_id=user_id,
+                        project_id=project_id,
+                        events=events,
+                        at_time=at_time,
+                    )
+                except Exception:
+                    # Any post-commit failure degrades — facts are already
+                    # committed and reconcile_graph_edges self-heals.
+                    # Never 500 committed work.
+                    logger.exception(
+                        "fact_invalidation.graph_sync_degraded",
+                        extra={
+                            "user_id": str(user_id),
+                            "project_id": str(project_id),
+                            "event_count": len(events),
+                        },
+                    )
                 for fresh in fresh_sessions:
                     await fresh.commit()
             finally:

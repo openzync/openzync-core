@@ -232,6 +232,19 @@ class IngestMemoryResponse(BaseModel):
         default="Messages accepted for processing",
         description="Human-readable status message.",
     )
+    degraded: bool = Field(
+        default=False,
+        description="True when a post-commit fan-out step (ARQ enrichment "
+        "or blob-extraction enqueue) failed. The ingest is committed and "
+        "the reconciler replays the missing work — never a 500.",
+        # note: SDK follow-up needed — mirror these fields in
+        # openzync-python-sdk response models (separate repo, not edited
+        # here) so SDK clients can observe degraded ingests.
+    )
+    degrade_reason: str | None = Field(
+        default=None,
+        description="Machine-readable reason when degraded is True.",
+    )
 
 
 # TODO(blob-get-endpoint): Add a GET /v1/projects/{id}/memory/blobs/{blob_id}
@@ -282,10 +295,17 @@ class DeleteMemoryConfirm(BaseModel):
 class DeleteMemoryResponse(BaseModel):
     """Response body for ``DELETE /v1/projects/{project_id}/memory``.
 
+    Returned with 200 only when the post-commit S3 sweep failed partway
+    (``failed=True`` with partial ``blobs_deleted``) — the success path
+    stays 204 with no body.
+
     Attributes:
         status: Outcome of the deletion operation.
         episodes_deleted: Number of episodes soft-deleted.
         facts_deleted: Number of facts soft-deleted.
+        blobs_deleted: Number of S3 objects deleted before the failure.
+        failed: True when the S3 sweep stopped early — leftovers stay
+            GC-visible via their soft-deleted blob rows.
     """
 
     status: str = Field(
@@ -301,4 +321,13 @@ class DeleteMemoryResponse(BaseModel):
         default=0,
         ge=0,
         description="Number of facts soft-deleted.",
+    )
+    blobs_deleted: int = Field(
+        default=0,
+        ge=0,
+        description="Number of S3 objects deleted before the sweep stopped.",
+    )
+    failed: bool = Field(
+        default=False,
+        description="True when the S3 sweep failed partway (partial wipe).",
     )

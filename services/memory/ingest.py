@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
     from models.session import Session
     from models.user import User
+    from schemas.organization_config import OrgConfigBase
 
 logger = logging.getLogger(__name__)
 
@@ -106,10 +107,14 @@ class IngestMixin:
 
         # ── Step 0b: Resolve + validate enrichment toggles ──────────────
         # Before any state — a 422 here never claims, inserts, or enqueues.
+        # One org-config read per ingest, shared by both resolvers.
+        from core.org_config import get_org_config
+
+        org_cfg = await get_org_config(user_id, redis=self._redis, db=self._db)
         effective_enrichments = await self._resolve_enrichments(
-            user_id, enrichments
+            org_cfg, enrichments
         )
-        enrichment_gate = await self._resolve_enrichment_gate(user_id)
+        enrichment_gate = await self._resolve_enrichment_gate(org_cfg)
 
         # ── Steps 1–2: Idempotency check + session resolve ───────────────
         if idempotency_key is not None:
@@ -232,7 +237,7 @@ class IngestMixin:
 
     async def _resolve_enrichments(
         self,
-        user_id: UUID,
+        org_cfg: OrgConfigBase,
         request_param: dict[str, bool] | None,
     ) -> dict[str, bool]:
         """Resolve the effective per-episode enrichment toggles.
@@ -244,7 +249,7 @@ class IngestMixin:
         incompatible with vector/hybrid search).
 
         Args:
-            user_id: The organization UUID (config scope).
+            org_cfg: The org config, read once by the caller.
             request_param: Per-ingest toggles from the request body.
 
         Returns:
@@ -257,9 +262,7 @@ class IngestMixin:
             resolve_enrichment,
             validate_enrichment_combo,
         )
-        from core.org_config import get_org_config
 
-        org_cfg = await get_org_config(user_id, redis=self._redis, db=self._db)
         effective = resolve_enrichment(
             None,
             org_cfg.enrichment,
@@ -273,7 +276,7 @@ class IngestMixin:
 
     async def _resolve_enrichment_gate(
         self,
-        user_id: UUID,
+        org_cfg: OrgConfigBase,
     ) -> dict[str, bool | float | str]:
         """Resolve the effective enrichment gate (org-only).
 
@@ -282,7 +285,7 @@ class IngestMixin:
         model is always the platform default.
 
         Args:
-            user_id: The organization UUID (config scope).
+            org_cfg: The org config, read once by the caller.
 
         Returns:
             The effective ``{"enabled", "threshold", "model"}`` gate
@@ -292,9 +295,7 @@ class IngestMixin:
             ValidationError: On malformed stored gate values.
         """
         from core.enrichment_config import resolve_enrichment_gate
-        from core.org_config import get_org_config
 
-        org_cfg = await get_org_config(user_id, redis=self._redis, db=self._db)
         return dict(resolve_enrichment_gate(org_cfg))
 
     async def _resolve_user(

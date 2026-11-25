@@ -214,6 +214,8 @@ class EnqueueTasksMixin:
         # without un-ingesting anything.
         # ID-only payloads — workers load content/metadata from the row.
         episode_dicts = [{"id": ep.id, "role": ep.role} for ep in episodes]
+        degraded = False
+        degrade_reason: str | None = None
         try:
             await self._enqueue_arq_tasks(
                 job_id=str(job_id),
@@ -236,14 +238,18 @@ class EnqueueTasksMixin:
                 },
                 exc_info=True,
             )
+            degraded = True
+            degrade_reason = "enrichment_enqueue_failed"
 
         if blob_records:
-            await self._enqueue_blob_extraction_tasks(
+            if not await self._enqueue_blob_extraction_tasks(
                 blob_records=blob_records,
                 user_id=user_id,
                 project_id=project_id,
                 enrichments=enrichments,
-            )
+            ):
+                degraded = True
+                degrade_reason = "blob_extraction_enqueue_failed"
 
         # ── Store idempotency key (best-effort) ──────────────────────────
         response = IngestMemoryResponse(
@@ -252,6 +258,8 @@ class EnqueueTasksMixin:
             blob_count=blob_count,
             status="accepted",
             message="Messages accepted for processing",
+            degraded=degraded,
+            degrade_reason=degrade_reason,
         )
         if idempotency_key is not None:
             try:

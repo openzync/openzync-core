@@ -339,6 +339,7 @@ class GraphEdgeSyncService:
                     "command_count": len(commands),
                     "error": str(exc),
                 },
+                exc_info=True,
             )
             raise ExternalServiceError(
                 message=(

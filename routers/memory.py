@@ -18,6 +18,7 @@ No business logic. No database queries.
 from __future__ import annotations
 
 import asyncio
+import logging
 from uuid import UUID
 
 import orjson
@@ -55,6 +56,8 @@ from services.blob_storage_service import (
 )
 from services.idempotency_service import IdempotencyService
 from services.memory_service import MemoryService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/v1/projects/{project_id}/memory",
@@ -276,7 +279,7 @@ async def ingest_messages(
     "the data wipe operation — all sessions are preserved, but all message "
     "history and extracted facts are invalidated.",
     responses={
-        204: {"description": "Memory deleted successfully (no content)."},
+        204: {"description": "Memory deleted (no content)."},
         401: {"description": "Missing or invalid authentication."},
         403: {"description": "Not a member of this project."},
         422: {"description": "Confirm body missing or not matching the project ID."},
@@ -297,16 +300,41 @@ async def delete_project_memory(
     Sessions remain intact. This operation is **not** reversible — deleted
     data is marked as inactive but preserved for a 30-day GDPR grace period
     before hard-purge. The ``confirm`` body must echo the path project ID.
+
+    Always returns 204 (SDK contract): a partial post-commit S3 sweep is
+    signaled via the ``X-Wipe-Failed: true`` response header, a loud
+    ``memory.wipe_partial`` log, and the destructive-action audit entry —
+    never a 200 body.
     """
-    # note: explicit empty Response — implicit None makes FastAPI serialize
-    # a JSON `null` body on the 204, which uvicorn rejects and rolls back
-    # the wipe in get_db teardown after 204 headers flush.
+    # note: explicit empty Response on the 204 — implicit None makes FastAPI
+    # serialize a JSON `null` body on the 204, which uvicorn rejects and
+    # rolls back the wipe in get_db teardown after 204 headers flush.
     user_id = UUID(request.state.user_id)
     project_id = UUID(request.path_params["project_id"])
-    await service.delete_project_memory(
-        user_id=user_id,
-        project_id=project_id,
-        confirm=body.confirm,
-        actor_id=actor,
+    episodes_deleted, facts_deleted, blobs_deleted, failed = (
+        await service.delete_project_memory(
+            user_id=user_id,
+            project_id=project_id,
+            confirm=body.confirm,
+            actor_id=actor,
+        )
     )
+    if failed:
+        # Degraded, not fatal: rows are committed, leftovers stay
+        # GC-visible via their soft-deleted blob rows for the orphan-blob
+        # GC worker to retry.
+        logger.warning(
+            "memory.wipe_partial",
+            extra={
+                "user_id": str(user_id),
+                "project_id": str(project_id),
+                "episodes_deleted": episodes_deleted,
+                "facts_deleted": facts_deleted,
+                "blobs_deleted": blobs_deleted,
+            },
+        )
+        return Response(
+            status_code=status.HTTP_204_NO_CONTENT,
+            headers={"X-Wipe-Failed": "true"},
+        )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

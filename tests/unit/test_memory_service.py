@@ -165,7 +165,7 @@ class TestMemoryService:
         service._resolve_storage_config = AsyncMock(return_value={})
 
         with patch.object(service, "_invalidate_context_cache"):
-            episodes, facts = await service.delete_project_memory(
+            episodes, facts, blobs_deleted, failed = await service.delete_project_memory(
                 user_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 confirm=str(self.PROJECT_ID),
@@ -173,6 +173,8 @@ class TestMemoryService:
             )
         assert episodes == 5
         assert facts == 3
+        assert blobs_deleted == 0
+        assert failed is False
         service._project_repo.get_by_id.assert_awaited_once_with(
             self.ORG_ID, self.PROJECT_ID
         )

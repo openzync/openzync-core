@@ -721,6 +721,18 @@ class AuthMiddleware:
                     scope["state"]["api_key_permissions"] = cached["permissions"]
                     scope["state"]["api_key_project_id"] = cached.get("project_id")
                     scope["state"]["api_key_id"] = cached.get("api_key_id")
+                    # Sampled last_used touch — one DB write per key per
+                    # 5 min window, fire-and-forget (never awaits the DB).
+                    if cached.get("api_key_id") is not None:
+                        from services.api_key_service import (
+                            schedule_sampled_last_used_touch,
+                        )
+
+                        await schedule_sampled_last_used_touch(
+                            redis,
+                            db_factory,
+                            UUID(cached["api_key_id"]),
+                        )
                     await self.app(scope, receive, send)
                     return
             except aioredis.RedisError:
@@ -896,17 +908,15 @@ class AuthMiddleware:
         scope["state"]["api_key_project_id"] = key_data.get("project_id")
         scope["state"]["api_key_id"] = key_data["id"]
 
-        # ═ Update last_used timestamp (best-effort) ═════════════════════
-        # The UPDATE is conditional (only writes when the stored value is
-        # older than 5 minutes), so a busy key does not cause a DB write on
-        # every request.  Best-effort: last_used is observability only.
-        try:
-            async with db_factory() as session:
-                await ApiKeyRepository(session).update_last_used(UUID(key_data["id"]))
-                await session.commit()
-        except SQLAlchemyError:
-            # Best-effort: last_used is observability only — safe to proceed.
-            logger.error("auth.last_used_update_failed", exc_info=True)
+        # ═ Sampled last_used touch (best-effort) ═══════════════════════
+        # Guarded by Redis SET NX EX (one DB write per key per 5 min) and
+        # fire-and-forget — the hot path never awaits the database.
+        # last_used_at is observability only.
+        from services.api_key_service import schedule_sampled_last_used_touch
+
+        await schedule_sampled_last_used_touch(
+            redis, db_factory, UUID(key_data["id"])
+        )
 
         # ── Cache in Redis (fire-and-forget) ─────────────────────────────
         if redis is not None:
