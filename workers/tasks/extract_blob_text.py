@@ -538,9 +538,14 @@ async def extract_blob_text(
                 extracted_length=len(extracted_text),
             )
 
-            # ── Set enrichment status bit via ORM ───────────────────────
-            episode.enrichment_status |= ENRICHMENT_BLOB_TEXT
-            await db.flush()
+            # ── Set enrichment status bit atomically ────────────────────
+            # Atomic OR (no read-modify-write on a stale snapshot) so a
+            # concurrent worker's bits are never wiped; expire forces a
+            # fresh re-read on next access.
+            await episode_repo.apply_enrichment_bits(
+                UUID(episode_id), ENRICHMENT_BLOB_TEXT
+            )
+            db.expire(episode, ["enrichment_status"])
 
             await db.commit()
             log.info("extract_blob_text.complete")
