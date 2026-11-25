@@ -68,6 +68,9 @@ class TestInitDbEngine:
             ENVIRONMENT="test",
             DB_POOL_SIZE=7,
             DB_MAX_OVERFLOW=3,
+            S3_ENDPOINT_URL="http://minio:9000",
+            S3_ACCESS_KEY_ID="test-key",
+            S3_SECRET_ACCESS_KEY="test-secret",
         )
 
         with (

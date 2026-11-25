@@ -15,7 +15,17 @@ async def test_ready_degraded_never_500() -> None:
     try:
         get_settings()
     except RuntimeError:
-        set_settings(Settings(DATABASE_URL="postgresql+asyncpg://localhost/x", REDIS_URL="redis://localhost/0", SECRET_KEY="i" * 32, WEBHOOK_SIGNING_SECRET="j" * 32))
+        set_settings(
+            Settings(
+                DATABASE_URL="postgresql+asyncpg://localhost/x",
+                REDIS_URL="redis://localhost/0",
+                SECRET_KEY="i" * 32,
+                WEBHOOK_SIGNING_SECRET="j" * 32,
+                S3_ENDPOINT_URL="http://minio:9000",
+                S3_ACCESS_KEY_ID="test-key",
+                S3_SECRET_ACCESS_KEY="test-secret",
+            )
+        )
     from services.api.main import app
 
     app.state.db_engine = object()

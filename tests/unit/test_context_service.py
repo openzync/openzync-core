@@ -179,6 +179,12 @@ class TestContextService:
         monkeypatch.setattr(
             "services.context_service.EpisodeBlobRepository", _FakeBlobRepo
         )
+        # URL signing is covered in test_blob_storage_service.py — keep this
+        # test focused on id normalization (global backend would sign a URL).
+        monkeypatch.setattr(
+            "services.context_service.BlobStorageService.generate_download_url",
+            AsyncMock(return_value=None),
+        )
 
         await service.assemble(project_id=uuid4(), query="q", limit=10)
 

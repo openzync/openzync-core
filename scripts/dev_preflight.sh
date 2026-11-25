@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────────────────────
-# OpenZync — Host-Dev preflight (postgres + redis + falkordb + mailpit)
+# OpenZync — Host-Dev preflight (postgres + redis + falkordb + minio + mailpit)
 # ──────────────────────────────────────────────────────────────────────────────
 # The daily dev dependency script. Idempotent — safe to run every morning.
 #
 # Usage:
 #   scripts/dev_preflight.sh [up|down|status]   (default: up)
 #
-#   up      ensure postgres + redis + falkordb + mailpit containers,
+#   up      ensure postgres + redis + falkordb + minio + mailpit containers,
 #           re-sync the full runtime .env, apply pending Alembic migrations.
 #   down    stop the dev containers (data volumes are preserved).
 #   status  one-line health check per dependency.
@@ -36,6 +36,10 @@ REDIS_DATA_VOL="openzync-dev-redis-data"
 FALKORDB_CONTAINER="openzync-dev-falkordb"
 FALKORDB_IMAGE="falkordb/falkordb:v4.20.1-alpine"   # pinned — :latest breaks repro
 FALKORDB_DATA_VOL="openzync-dev-falkordb-data"
+MINIO_CONTAINER="openzync-dev-minio"
+MINIO_IMAGE="pgsty/silo:RELEASE.2026-10-26T00-00-00Z"   # pinned — dockerhub/quay pulls dead; silo ships server + mc
+MINIO_MC_IMAGE="pgsty/silo:RELEASE.2026-10-26T00-00-00Z"   # same image — silo ships /usr/bin/mc (mcli symlink)
+MINIO_DATA_VOL="openzync-dev-minio-data"
 
 log() { echo "[dev_preflight] $(date -Iseconds) $*"; }
 
@@ -92,6 +96,8 @@ EOF
 }
 
 # ── 1. Stable secrets (OZ_SECRET_KEY, SMTP block) ────────────
+# Secrets file is shell-sourced — keep all generated values url-safe-only
+# (secrets.token_urlsafe output: [A-Za-z0-9-_], no $, backticks, or spaces).
 # OZ_DATABASE_URL is appended by ensure_postgres() on first container creation;
 # on a pre-existing postgres container it must already be present in the file.
 gen_secrets() {
@@ -100,6 +106,8 @@ gen_secrets() {
         log "Generating initial secrets -> ${SECRETS_FILE}"
         {
             echo "OZ_SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_urlsafe(48))')"
+            echo "MINIO_ROOT_USER=openzync"
+            echo "MINIO_ROOT_PASSWORD=$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')"
             cat <<'EOF'
 OZ_SMTP_HOST=localhost
 OZ_SMTP_PORT=1025
@@ -125,6 +133,16 @@ OZ_SMTP_FROM_ADDR=no-reply@openzync.local
 OZ_SMTP_USE_TLS=false
 OZ_SMTP_START_TLS=false
 EOF
+        chmod 600 "$SECRETS_FILE"
+    fi
+    if ! grep -q '^MINIO_ROOT_USER=' "$SECRETS_FILE"; then
+        log "Appending MINIO_ROOT_USER to ${SECRETS_FILE}"
+        echo "MINIO_ROOT_USER=openzync" >> "$SECRETS_FILE"
+        chmod 600 "$SECRETS_FILE"
+    fi
+    if ! grep -q '^MINIO_ROOT_PASSWORD=' "$SECRETS_FILE"; then
+        log "Appending MINIO_ROOT_PASSWORD to ${SECRETS_FILE}"
+        echo "MINIO_ROOT_PASSWORD=$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')" >> "$SECRETS_FILE"
         chmod 600 "$SECRETS_FILE"
     fi
     # shellcheck disable=SC1090
@@ -249,7 +267,72 @@ EOF
     fi
 }
 
-# ── 5. Mailpit (SMTP sink + web UI; local dev only) ──────────────────────────
+# ── 5. MinIO S3-compatible blob storage (host :9000/:9001) ───────────────
+ensure_minio() {
+    if container_running "$MINIO_CONTAINER"; then
+        log "MinIO already running — skipping."
+        # Credential drift: container keeps its creation-time password; a
+        # regenerated secrets file would silently mis-auth on bucket setup.
+        _running_pw="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$MINIO_CONTAINER" 2>/dev/null | sed -n 's/^MINIO_ROOT_PASSWORD=//p')"
+        if [ -n "${_running_pw:-}" ] && [ "${_running_pw}" != "${MINIO_ROOT_PASSWORD:-}" ]; then
+            cat >&2 <<EOF
+[dev_preflight] FATAL: MINIO_ROOT_PASSWORD in ${SECRETS_FILE} differs from running container ${MINIO_CONTAINER} env (credential drift — mc auth would fail).
+Fix: docker rm -f ${MINIO_CONTAINER} && scripts/dev_preflight.sh up
+EOF
+            exit 1
+        fi
+        curl -sf http://localhost:9000/minio/health/live >/dev/null 2>&1 \
+            || log "WARN: minio running but /minio/health/live failed."
+        host_port_listening 9000 || portless_fatal "$MINIO_CONTAINER" 9000
+    elif container_exists "$MINIO_CONTAINER"; then
+        log "Starting MinIO container ${MINIO_CONTAINER} ..."
+        docker start "$MINIO_CONTAINER"
+        wait_minio
+        host_port_listening 9000 || portless_fatal "$MINIO_CONTAINER" 9000
+    else
+        if ss -tlnp 2>/dev/null | grep -q ':9000' \
+            && ! container_running "$MINIO_CONTAINER"; then
+            cat >&2 <<'EOF'
+[dev_preflight] FATAL: port 127.0.0.1:9000 is already in use.
+Likely cause: another minio container or process is holding it.
+Fix: docker stop <container>
+EOF
+            exit 1
+        fi
+        ensure_volume "$MINIO_DATA_VOL"
+        log "Creating MinIO container ${MINIO_CONTAINER} ..."
+        docker run -d --name "$MINIO_CONTAINER" --restart unless-stopped \
+            -p 127.0.0.1:9000:9000 \
+            -p 127.0.0.1:9001:9001 \
+            -e MINIO_ROOT_USER="$MINIO_ROOT_USER" \
+            -e MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
+            -v "$MINIO_DATA_VOL:/data" \
+            "$MINIO_IMAGE" server /data --console-address :9001 >/dev/null
+        wait_minio
+        host_port_listening 9000 || portless_fatal "$MINIO_CONTAINER" 9000
+    fi
+    ensure_minio_bucket
+}
+
+wait_minio() {
+    for _ in $(seq 1 30); do
+        curl -sf http://localhost:9000/minio/health/live >/dev/null 2>&1 && return 0
+        sleep 1
+    done
+    log "FATAL: minio did not become ready within 30s."
+    exit 1
+}
+
+ensure_minio_bucket() {
+    log "Ensuring MinIO bucket openzync-blobs ..."
+    docker run --rm --network host \
+        -e MINIO_ROOT_USER="$MINIO_ROOT_USER" \
+        -e MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
+        "$MINIO_MC_IMAGE" sh -c \
+        'mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc mb --ignore-existing local/openzync-blobs'
+}
+
+# ── 6. Mailpit (SMTP sink + web UI; local dev only) ──────────────────────────
 ensure_mailpit() {
     if container_running mailpit; then
         log "Mailpit already running — skipping."
@@ -265,7 +348,7 @@ ensure_mailpit() {
     fi
 }
 
-# ── 6. Re-sync the full runtime .env ────────────────────────────────────────
+# ── 7. Re-sync the full runtime .env ────────────────────────────────────────
 # .env is the single source `make dev` / `make worker` source into the
 # environment: stable secrets from the secrets file plus host-local URLs
 # for the containers ensured above.
@@ -287,6 +370,11 @@ for required in ("OZ_SECRET_KEY", "OZ_DATABASE_URL"):
             f"FATAL: {required} missing in {secrets_path} — delete the file "
             "and re-run to regenerate, or add the key manually."
         )
+if not vals.get("MINIO_ROOT_USER") or not vals.get("MINIO_ROOT_PASSWORD"):
+    sys.exit(
+        f"FATAL: MINIO_ROOT_USER/MINIO_ROOT_PASSWORD missing in {secrets_path} "
+        "— delete the file and re-run to regenerate, or add the keys manually."
+    )
 
 runtime = {
     # Stable secrets — generated once, reused so JWTs survive restarts.
@@ -300,6 +388,18 @@ runtime = {
     "OZ_CORS_ORIGINS": vals.get("OZ_CORS_ORIGINS", "http://localhost:3000"),
     "OZ_HOSTS_ALLOWED": vals.get("OZ_HOSTS_ALLOWED", "localhost:8000"),
     "DATABASE_URL": vals["OZ_DATABASE_URL"],
+    # MinIO root creds — compose requires ${MINIO_ROOT_USER:?}/${MINIO_ROOT_PASSWORD:?}.
+    "MINIO_ROOT_USER": vals["MINIO_ROOT_USER"],
+    "MINIO_ROOT_PASSWORD": vals["MINIO_ROOT_PASSWORD"],
+    # Blob storage (S3-compatible MinIO, host-local endpoint).
+    "OZ_S3_ENDPOINT_URL": vals.get("OZ_S3_ENDPOINT_URL", "http://localhost:9000"),
+    "OZ_S3_REGION": vals.get("OZ_S3_REGION", "auto"),
+    "OZ_S3_ACCESS_KEY_ID": vals.get("OZ_S3_ACCESS_KEY_ID", vals["MINIO_ROOT_USER"]),
+    "OZ_S3_SECRET_ACCESS_KEY": vals.get("OZ_S3_SECRET_ACCESS_KEY", vals["MINIO_ROOT_PASSWORD"]),
+    "OZ_S3_BUCKET_NAME": vals.get("OZ_S3_BUCKET_NAME", "openzync-blobs"),
+    "OZ_S3_BACKEND": vals.get("OZ_S3_BACKEND", "s3"),
+    "OZ_BLOB_MAX_SIZE_MB": vals.get("OZ_BLOB_MAX_SIZE_MB", "50"),
+    "OZ_BLOB_IMAGE_EXTRACTION": vals.get("OZ_BLOB_IMAGE_EXTRACTION", "none"),
 }
 for k in (
     "OZ_SMTP_HOST", "OZ_SMTP_PORT", "OZ_SMTP_USERNAME", "OZ_SMTP_PASSWORD",
@@ -317,7 +417,7 @@ PY
     chmod 600 "$ENV_FILE"
 }
 
-# ── 7. Host-dev Ollama embed URL seed (native Ollama on host) ───────────────
+# ── 8. Host-dev Ollama embed URL seed (native Ollama on host) ────────────
 # Host-run uvicorn cannot resolve the compose-DNS name `ollama`, so the
 # default OLLAMA_EMBED_URL (http://ollama:11434) fail-fasts the lifespan
 # prewarm with DNS [Errno -2]. When a NATIVE Ollama answers on
@@ -373,7 +473,7 @@ PY
     fi
 }
 
-# ── 8. Embeddings preflight probe (fail-fast before uvicorn) ───────────────
+# ── 9. Embeddings preflight probe (fail-fast before uvicorn) ───────────────
 # The API lifespan prewarms embeddings and aborts boot when Ollama is
 # unreachable — catch that here with an actionable message instead of a
 # traceback after `make dev`.
@@ -393,7 +493,7 @@ EOF
     exit 1
 }
 
-# ── 9. Alembic migrations (schema must exist before uvicorn boots) ───────────
+# ── 10. Alembic migrations (schema must exist before uvicorn boots) ──────────
 # migrate.sh reads OZ_DATABASE_URL from the environment and execs alembic —
 # .env (just synced above) provides it. Failure aborts the whole preflight
 # (set -e): a schema-less database is not "deps up", and the API would only
@@ -419,6 +519,7 @@ up() {
     ensure_postgres
     ensure_redis
     ensure_falkordb
+    ensure_minio
     ensure_mailpit
     # Unconditional every run: .env is regenerated from stable secrets +
     # current host-local service URLs.
@@ -430,7 +531,7 @@ up() {
 }
 
 down() {
-    for c in "$POSTGRES_CONTAINER" "$REDIS_CONTAINER" "$FALKORDB_CONTAINER" mailpit; do
+    for c in "$POSTGRES_CONTAINER" "$REDIS_CONTAINER" "$FALKORDB_CONTAINER" "$MINIO_CONTAINER" mailpit; do
         container_exists "$c" && { log "Stopping ${c} ..."; docker stop "$c" >/dev/null || true; }
     done
 }
@@ -456,6 +557,13 @@ status() {
         echo "FalkorDB: DEGRADED (port-less container — host :6380 dead; fix: docker rm -f $FALKORDB_CONTAINER)"
     else
         echo "FalkorDB: DOWN"
+    fi
+    if container_running "$MINIO_CONTAINER" && curl -sf http://localhost:9000/minio/health/live >/dev/null 2>&1; then
+        echo "MinIO: UP (http://127.0.0.1:9000, console http://127.0.0.1:9001)"
+    elif container_running "$MINIO_CONTAINER"; then
+        echo "MinIO: DEGRADED (container running — host :9000 dead; fix: docker rm -f $MINIO_CONTAINER)"
+    else
+        echo "MinIO: DOWN"
     fi
     if container_exists mailpit && docker ps --format '{{.Names}}' | grep -qx mailpit; then
         echo "Mailpit: UP (SMTP 127.0.0.1:1025, UI http://127.0.0.1:8025)"

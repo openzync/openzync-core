@@ -21,18 +21,6 @@ def _make_service() -> BlobStorageService:
     return BlobStorageService(db=AsyncMock(), blob_repo=AsyncMock())
 
 
-def _make_config() -> dict:
-    return {
-        "backend": "s3",
-        "endpoint_url": "http://minio:9000",
-        "region": "auto",
-        "access_key_id": "minioadmin",
-        "secret_access_key": "minioadmin",
-        "bucket_name": "test-blobs",
-        "max_blob_size_mb": 50,
-    }
-
-
 def test_delete_semaphore_bound_is_ten() -> None:
     """The delete fan-out is bounded by ``Semaphore(10)`` in source."""
     src = (
@@ -61,7 +49,7 @@ async def test_delete_blobs_bounds_concurrency_to_ten() -> None:
 
     with patch("services.blob_storage_service.BlobStorage") as mock_cls:
         mock_cls.return_value.delete = AsyncMock(side_effect=_tracked_delete)
-        await service.delete_blobs(blobs, _make_config())
+        await service.delete_blobs(blobs, storage=mock_cls.return_value)
 
     assert mock_cls.return_value.delete.await_count == 25
     assert max_in_flight <= 10
@@ -78,4 +66,4 @@ async def test_delete_blobs_s3_error_propagates() -> None:
             side_effect=S3StorageError("S3 delete failed")
         )
         with pytest.raises(S3StorageError, match="S3 delete failed"):
-            await service.delete_blobs(blobs, _make_config())
+            await service.delete_blobs(blobs, storage=mock_cls.return_value)

@@ -325,7 +325,9 @@ async def enrich_episode(
                     await episode_repo.apply_enrichment_bits(
                         uuid.UUID(episode_id), _bit
                     )
-                    episode.enrichment_status |= _bit
+                    # Explicit async refresh — plain access of an expired
+                    # attr raises MissingGreenlet on AsyncSession.
+                    await db.refresh(episode, ["enrichment_status"])
                     log.info(
                         "enrich_episode.enrichment_skipped",
                         section=_key,
@@ -409,7 +411,9 @@ async def enrich_episode(
                                 await episode_repo.apply_enrichment_bits(
                                     uuid.UUID(episode_id), _bit
                                 )
-                                locked.enrichment_status |= _bit
+                                # Explicit async refresh — the next loop
+                                # iteration re-reads locked.enrichment_status.
+                                await db.refresh(locked, ["enrichment_status"])
                                 log.info(
                                     "enrich_episode.enrichment_skipped",
                                     section=_key,

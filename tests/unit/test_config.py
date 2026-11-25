@@ -9,8 +9,10 @@ expected.
 
     ``Settings`` is a :class:`pydantic_settings.BaseSettings`: every field
     binds to its ``OZ_*`` env var via ``validation_alias``.  Required
-    fields (``DATABASE_URL``, ``REDIS_URL``, ``SECRET_KEY``) have no
-    defaults — the process fails fast at startup when they are missing.
+    fields (``DATABASE_URL``, ``REDIS_URL``, ``SECRET_KEY``,
+    ``S3_ENDPOINT_URL``, ``S3_ACCESS_KEY_ID``, ``S3_SECRET_ACCESS_KEY``)
+    have no defaults — the process fails fast at startup when they are
+    missing.
 
     LLM / Embedding / Graph / Behaviour settings were removed from this
     class in favour of per-user DB config.  See
@@ -29,6 +31,11 @@ _DEFAULT_REQUIRED: dict[str, str] = {
     "DATABASE_URL": "postgresql+asyncpg://u:p@localhost:5432/openzync_test",
     "REDIS_URL": "redis://localhost:6379/1",
     "SECRET_KEY": "a" * 32,
+    # ⚠️ BREAKING (blob org→env migration): global S3 backend is required —
+    # per-org blob storage was removed, Settings fails fast without these.
+    "S3_ENDPOINT_URL": "http://minio:9000",
+    "S3_ACCESS_KEY_ID": "test-key",
+    "S3_SECRET_ACCESS_KEY": "test-secret",
 }
 
 
@@ -147,6 +154,9 @@ class TestSettingsSingleton:
         )
         monkeypatch.setenv("OZ_REDIS_URL", "redis://localhost:6379/1")
         monkeypatch.setenv("OZ_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("OZ_S3_ENDPOINT_URL", "http://minio:9000")
+        monkeypatch.setenv("OZ_S3_ACCESS_KEY_ID", "test-key")
+        monkeypatch.setenv("OZ_S3_SECRET_ACCESS_KEY", "test-secret")
         s = get_settings()
         assert isinstance(s, Settings)
         assert get_settings() is s

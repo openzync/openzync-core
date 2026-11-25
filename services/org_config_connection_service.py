@@ -14,7 +14,9 @@ Probe transport notes:
 - Graph goes through :meth:`GraphBackendDispatcher.resolve_and_create`
   followed by ``health_check()``, with a candidate-scoped client built
   from the effective (candidate → system) URL.
-- Blob runs S3 ``head_bucket`` against the candidate endpoint.
+- ⚠️ BREAKING: there is no blob probe. Blob storage is a single global
+  backend (``OZ_S3_*`` Settings) with nothing per-org to configure or
+  connect to — ``domain="blob"`` is rejected with 422.
 """
 
 from __future__ import annotations
@@ -43,8 +45,6 @@ from schemas.organization_config import (
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from uuid import UUID
-
-    from core.blob_storage import BlobStorageConfig
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ class OrgConfigConnectionService:
 
         Args:
             user_id: The organization UUID.
-            domain: One of ``llm``, ``graph``, ``blob``.
+            domain: One of ``llm``, ``graph``.
             candidate: Partial candidate config; only ``exclude_unset``
                 fields overlay the stored config.
 
@@ -158,11 +158,10 @@ class OrgConfigConnectionService:
                 return self._probe_llm
             case "graph":
                 return self._probe_graph
-            case "blob":
-                return self._probe_blob
         raise ValidationError(
-            f"Unknown config test domain: {domain!r}. "
-            "Expected one of: llm, graph, blob."
+            f"Unknown config test domain: {domain!r}. Expected one of: llm, graph."
+            # ⚠️ BREAKING: the blob probe was removed with per-org blob
+            # storage — blob storage is global (OZ_S3_*) now.
         )
 
     @staticmethod
@@ -355,53 +354,6 @@ class OrgConfigConnectionService:
                 start, "graph probe failed: SurrealDB health check false"
             )
         return self._success(start, "graph ok (surrealdb)")
-
-    async def _probe_blob(self, merged: OrgConfigBase) -> ProbeResult:
-        """Run S3 ``head_bucket`` against the candidate endpoint."""
-        start = time.perf_counter()
-        try:
-            from core.blob_storage import BlobStorageConfig
-
-            storage_config = BlobStorageConfig.from_org_config(
-                merged.to_blob_storage_config()
-            )
-            if (storage_config.backend or "s3") == "none":
-                return self._success(start, "blob storage disabled (backend 'none')")
-            if not storage_config.bucket_name:
-                return self._failure(
-                    start, "blob probe failed: s3_bucket_name not configured"
-                )
-            await self._head_bucket(storage_config)
-            return self._success(
-                start, f"blob ok (bucket '{storage_config.bucket_name}')"
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            return self._failure(start, f"blob probe failed: {exc}")
-
-    @staticmethod
-    async def _head_bucket(config: BlobStorageConfig) -> None:
-        """Run S3 ``HeadBucket``; raises on any failure.
-
-        Args:
-            config: Candidate blob storage config (never logged).
-        """
-        import aioboto3  # lazy: optional dependency, only imported when used
-        from botocore.config import Config as BotoConfig
-
-        session = aioboto3.Session(
-            aws_access_key_id=config.access_key_id,
-            aws_secret_access_key=config.secret_access_key,
-            region_name=config.region,
-        )
-        boto_config = BotoConfig(
-            connect_timeout=5, read_timeout=5, retries={"max_attempts": 1}
-        )
-        async with session.client(
-            "s3", endpoint_url=config.endpoint_url, config=boto_config
-        ) as s3:
-            await s3.head_bucket(Bucket=config.bucket_name)
 
     @staticmethod
     def _success(start: float, detail: str) -> ProbeResult:

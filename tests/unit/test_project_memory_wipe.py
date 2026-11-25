@@ -1,20 +1,21 @@
-"""Project memory wipe: a storage-config failure raises loudly.
+"""Project memory wipe: S3 sweep failures are loud but best-effort.
 
-The blob sweep must never be silently skipped when the storage config is
-unreadable. The wipe raises (→ 502) after the already-committed soft-deletes,
-leaving the rows GC-visible instead of pretending the sweep happened.
+The blob sweep uses the global backend (fail-fast Settings) — there is
+no per-org storage config to fail. A page delete failure is logged and
+stops the sweep; the already-committed soft-deletes are still returned,
+leftovers stay GC-visible for the orphan-blob worker. The sweep is never
+silently skipped.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.exceptions import ExternalServiceError
 from services.idempotency_service import ContentHashClaim
 from services.memory_service import MemoryService
 
@@ -60,36 +61,39 @@ def _memory_service() -> MemoryService:
     )
 
 
-class TestWipeStorageFailureLoud:
-    """The blob sweep must never be silently skipped on config failure."""
+class TestWipeSweepBestEffort:
+    """A failed S3 page stops the sweep but still returns the counts."""
 
     @pytest.mark.asyncio
-    async def test_storage_config_failure_raises_after_soft_delete(self) -> None:
+    async def test_blob_delete_failure_stops_sweep_returns_counts(self) -> None:
         service = _memory_service()
         service._project_repo = AsyncMock()
         service._project_repo.get_by_id.return_value = MagicMock()
         service._episode_repo.soft_delete_by_project.return_value = 5
         service._fact_repo.soft_delete_by_project.return_value = 3
+        blob = MagicMock()
+        blob.id = uuid4()
         service._blob_repo = AsyncMock()
-        service._resolve_storage_config = AsyncMock(
-            side_effect=ExternalServiceError("Blob storage config unreadable")
-        )
+        service._blob_repo.get_by_project_after.side_effect = [[blob], []]
 
         with (
             patch.object(service, "_invalidate_context_cache"),
-            pytest.raises(ExternalServiceError, match="unreadable"),
+            patch(
+                "services.blob_storage_service.BlobStorageService.delete_blobs",
+                AsyncMock(side_effect=Exception("S3 down")),
+            ),
         ):
-            await service.delete_project_memory(
+            result = await service.delete_project_memory(
                 user_id=ORG_ID,
                 project_id=PROJECT_ID,
                 confirm=str(PROJECT_ID),
                 actor_id=USER_ID,
             )
 
-        assert ExternalServiceError.status_code == 502
+        assert result == (5, 3)
         # Rows were already committed before the sweep — preserved, GC-visible.
         service._episode_repo.soft_delete_by_project.assert_awaited_once()
         service._fact_repo.soft_delete_by_project.assert_awaited_once()
         service._db.commit.assert_awaited()
-        # The sweep never started — no page walk on an unknown config.
-        service._blob_repo.get_by_project_after.assert_not_awaited()
+        # The sweep stopped after the failed page — no second page walk.
+        assert service._blob_repo.get_by_project_after.await_count == 1

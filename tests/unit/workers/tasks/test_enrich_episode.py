@@ -1060,6 +1060,19 @@ def _mock_successful_db(enrichment_status: int = 0) -> AsyncMock:
     mock_nested.__aenter__.return_value = mock_nested
     mock_nested.__aexit__.return_value = None
 
+    # Emulate AsyncSession.refresh: the race fix stamps bits via atomic
+    # UPDATE + refresh (no in-memory ``|=``), so re-read the status as
+    # the OR of all bits stamped so far — otherwise downstream
+    # in-memory bit checks see a stale 0 and the flow misbehaves.
+    async def _refresh(obj: object, attrs: list[str]) -> None:
+        if "enrichment_status" in attrs:
+            bits = 0
+            for bit in _stamped_bits(mock_db):
+                bits |= bit
+            obj.enrichment_status = obj.enrichment_status | bits
+
+    mock_db.refresh = AsyncMock(side_effect=_refresh)
+
     return mock_db
 
 

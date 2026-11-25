@@ -24,21 +24,6 @@ PROJECT_ID = UUID("00000000-0000-0000-0000-000000000003")
 SESSION_ID = UUID("00000000-0000-0000-0000-000000000004")
 
 
-@pytest.fixture(autouse=True)
-def _init_settings() -> None:
-    """Initialise the Settings singleton with dummy values."""
-    from core.config import Settings, set_settings
-
-    settings = Settings(
-        DATABASE_URL="postgresql+asyncpg://u:p@localhost:5432/test",
-        REDIS_URL="redis://localhost:6379/1",
-        SECRET_KEY="a" * 32,
-        WEBHOOK_SIGNING_SECRET="b" * 32,
-        ENVIRONMENT="test",
-    )
-    set_settings(settings)
-
-
 def _make_session_response(overrides: dict | None = None) -> dict:
     """Build a realistic SessionResponse dict."""
     base = {
@@ -110,7 +95,6 @@ def _make_fact_response(overrides: dict | None = None) -> dict:
     }
     base.update(overrides or {})
     return base
-
 
 
 @pytest.fixture(autouse=True)

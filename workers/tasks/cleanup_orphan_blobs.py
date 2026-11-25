@@ -53,9 +53,8 @@ async def cleanup_orphan_blobs(
     Pipeline:
         1. Open DB session with RLS context.
         2. Fetch orphaned blob records (episode.is_deleted = true).
-        3. Resolve org storage config from the DB.
-        4. Delete blobs from S3.
-        5. Delete blob DB records.
+        3. Delete blobs from the global S3 backend.
+        4. Delete blob DB records.
 
     Args:
         ctx: ARQ worker context.
@@ -141,39 +140,18 @@ async def cleanup_orphan_blobs(
 
             org_log.info("cleanup_orphan_blobs.found", count=len(blobs))
 
-            # Resolve org storage config
-            storage_config: dict = {
-                "backend": "s3",
-                "endpoint_url": "http://minio:9000",
-                "region": "auto",
-                "access_key_id": "",
-                "secret_access_key": "",
-                "bucket_name": "openzync-blobs",
-                "max_blob_size_mb": 50,
-            }
-            try:
-                from core.org_config import get_org_config
-
-                org_cfg = await get_org_config(
-                    org_uuid, redis=None, db=db,
-                )
-                org_storage = org_cfg.to_blob_storage_config()
-                if org_storage:
-                    storage_config.update(org_storage)
-            except Exception:
-                org_log.warning(
-                    "cleanup_orphan_blobs.config_fetch_failed",
-                    exc_info=True,
-                )
-
+            # Global backend — fail-fast Settings, never per-org.
+            from core.blob_storage import BlobStorage, BlobStorageConfig
+            from core.config import get_settings
             from services.blob_storage_service import BlobStorageService
 
             svc = BlobStorageService(db, blob_repo)
+            storage = BlobStorage(BlobStorageConfig.from_settings(get_settings()))
 
             # S3 delete raises on failure — DB rows are deleted only after
             # S3 confirms, so a failed job retries with state intact instead
             # of dropping DB rows for bytes that still exist.
-            await svc.delete_blobs(blobs, storage_config)
+            await svc.delete_blobs(blobs, storage=storage)
 
             # Delete from DB
             blob_ids = [b.id for b in blobs]

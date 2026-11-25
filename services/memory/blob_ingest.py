@@ -27,61 +27,6 @@ class BlobIngestMixin:
     _redis: Any
     _blob_repo: Any
 
-    async def _resolve_storage_config(self, user_id: UUID) -> dict[str, Any]:
-        """Resolve the user's blob storage config from the DB — fail loud.
-
-        The user's S3 settings are read with the app-level Redis client,
-        so the 300 s org-config cache is used.
-
-        A storage misconfiguration must never degrade to the shared dev
-        bucket: a user that configured their own bucket would silently have
-        documents written to ``openzync-blobs`` instead.  Any failure
-        to read the user's config therefore raises
-        :class:`ExternalServiceError` (→ 502) rather than falling back to
-        the defaults.
-
-        Args:
-            user_id: The user UUID.
-
-        Returns:
-            Flattened storage config dict for ``BlobStorageConfig``.
-
-        Raises:
-            ExternalServiceError: If the user's storage config cannot be read.
-        """
-        from core.exceptions import ExternalServiceError
-        from core.org_config import get_org_config
-
-        try:
-            org_cfg = await get_org_config(
-                user_id,
-                redis=self._redis,
-                db=self._db,
-            )
-        except Exception as exc:
-            logger.error(
-                "memory.org_storage_config_fetch_failed",
-                extra={"user_id": str(user_id)},
-                exc_info=True,
-            )
-            raise ExternalServiceError(
-                f"Blob storage config for user {user_id} could not be read from the DB."
-            ) from exc
-
-        # Platform defaults (the shared MinIO bucket of the compose stack)
-        # are overridden by whatever the org has configured explicitly.
-        storage_config: dict[str, Any] = {
-            "backend": "s3",
-            "endpoint_url": "http://minio:9000",
-            "region": "auto",
-            "access_key_id": "",
-            "secret_access_key": "",
-            "bucket_name": "openzync-blobs",
-            "max_blob_size_mb": 50,
-        }
-        storage_config.update(org_cfg.to_blob_storage_config())
-        return storage_config
-
     async def _compensate_blob_uploads(
         self, user_id: UUID, storage_keys: list[str]
     ) -> None:
@@ -100,11 +45,10 @@ class BlobIngestMixin:
             return
         try:
             from core.blob_storage import BlobStorage, BlobStorageConfig
+            from core.config import get_settings
 
-            storage_config = await self._resolve_storage_config(user_id)
-            storage = BlobStorage(
-                BlobStorageConfig.from_org_config(storage_config)
-            )
+            # Global backend — fail-fast Settings, never per-org.
+            storage = BlobStorage(BlobStorageConfig.from_settings(get_settings()))
             for key in storage_keys:
                 try:
                     await storage.delete(key)
@@ -165,19 +109,16 @@ class BlobIngestMixin:
         if not ep_blob_metas:
             return 0, []
 
-        # Resolved once per ingest — not per blob.
-        storage_config = await self._resolve_storage_config(user_id)
-
+        # Global backend built once per ingest — not one client per episode.
         from core.blob_storage import BlobStorage, BlobStorageConfig
+        from core.config import get_settings
         from services.blob_storage_service import (
             BlobStorageService,
             read_upload_bounded,
         )
 
-        config = BlobStorageConfig.from_org_config(storage_config)
-        max_bytes = config.max_blob_bytes
-        # One S3 client for the whole ingest — not one per episode.
-        storage = BlobStorage(config)
+        storage = BlobStorage(BlobStorageConfig.from_settings(get_settings()))
+        max_bytes = storage.max_blob_bytes
         # Stream per episode — read only the files each episode references
         # so peak RSS is one episode's blobs plus still-unconsumed shared
         # files, not the whole request. UploadFile.read() is a one-shot
@@ -224,7 +165,6 @@ class BlobIngestMixin:
                 created_by=created_by,
                 uploaded_files=slots,
                 blob_metadatas=metas,
-                storage_config=storage_config,
                 storage=storage,
             )
             blob_records.extend(records)

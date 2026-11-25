@@ -17,7 +17,17 @@ async def test_fact_ingest_broker_down_nothing_committed(engine, redis_client) -
     try:
         get_settings()
     except RuntimeError:
-        set_settings(Settings(DATABASE_URL="postgresql+asyncpg://localhost/x", REDIS_URL="redis://localhost/0", SECRET_KEY="i" * 32, WEBHOOK_SIGNING_SECRET="j" * 32))
+        set_settings(
+            Settings(
+                DATABASE_URL="postgresql+asyncpg://localhost/x",
+                REDIS_URL="redis://localhost/0",
+                SECRET_KEY="i" * 32,
+                WEBHOOK_SIGNING_SECRET="j" * 32,
+                S3_ENDPOINT_URL="http://minio:9000",
+                S3_ACCESS_KEY_ID="test-key",
+                S3_SECRET_ACCESS_KEY="test-secret",
+            )
+        )
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from services.fact_service import FactService

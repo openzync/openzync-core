@@ -250,11 +250,6 @@ class ContextService:
         episodes = results.get("episodes", [])
         if episodes:
             blob_repo = EpisodeBlobRepository(self._db)
-            storage_config = (
-                self._org_config.to_blob_storage_config()
-                if self._org_config is not None
-                else None
-            )
 
             # One batched query; normalize str ids to UUID up front so the
             # repo receives its typed list[UUID]. Malformed ids are skipped,
@@ -279,19 +274,14 @@ class ContextService:
                 blbs = blobs_by_eid.get(key) if key else None
                 if not blbs:
                     continue
-                urls: list[str | None] = (
-                    await asyncio.gather(
-                        *[
-                            BlobStorageService.generate_download_url(
-                                storage_key=bl.storage_key,
-                                storage_config=storage_config,
-                                expires_in=300,
-                            )
-                            for bl in blbs
-                        ]
-                    )
-                    if storage_config
-                    else [None] * len(blbs)
+                urls: list[str | None] = await asyncio.gather(
+                    *[
+                        BlobStorageService.generate_download_url(
+                            storage_key=bl.storage_key,
+                            expires_in=300,
+                        )
+                        for bl in blbs
+                    ]
                 )
                 ep["blobs"] = [
                     {

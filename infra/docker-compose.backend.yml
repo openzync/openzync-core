@@ -200,6 +200,16 @@ services:
       # the .env file values above.
       OZ_SURREALDB_URL: "${OZ_SURREALDB_URL:-}"
       OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-}"
+      # Blob storage (MinIO). Endpoint overridden to compose DNS — the host
+      # .env default (http://localhost:9000) is for host-run uvicorn only.
+      OZ_S3_ENDPOINT_URL: "http://minio:9000"  # in-compose DNS; host .env stays http://localhost:9000 for host-run uvicorn
+      OZ_S3_REGION: "${OZ_S3_REGION:-auto}"
+      OZ_S3_ACCESS_KEY_ID: "${OZ_S3_ACCESS_KEY_ID:-}"
+      OZ_S3_SECRET_ACCESS_KEY: "${OZ_S3_SECRET_ACCESS_KEY:-}"
+      OZ_S3_BUCKET_NAME: "${OZ_S3_BUCKET_NAME:-openzync-blobs}"
+      OZ_S3_BACKEND: "${OZ_S3_BACKEND:-s3}"
+      OZ_BLOB_MAX_SIZE_MB: "${OZ_BLOB_MAX_SIZE_MB:-50}"
+      OZ_BLOB_IMAGE_EXTRACTION: "${OZ_BLOB_IMAGE_EXTRACTION:-none}"
     depends_on:
       redis:
         condition: service_healthy
@@ -236,6 +246,15 @@ services:
     environment:
       OZ_SURREALDB_URL: "${OZ_SURREALDB_URL:-}"
       OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-}"
+      # Blob storage (MinIO) — compose-DNS endpoint override, same as api.
+      OZ_S3_ENDPOINT_URL: "http://minio:9000"  # in-compose DNS; host .env stays http://localhost:9000 for host-run uvicorn
+      OZ_S3_REGION: "${OZ_S3_REGION:-auto}"
+      OZ_S3_ACCESS_KEY_ID: "${OZ_S3_ACCESS_KEY_ID:-}"
+      OZ_S3_SECRET_ACCESS_KEY: "${OZ_S3_SECRET_ACCESS_KEY:-}"
+      OZ_S3_BUCKET_NAME: "${OZ_S3_BUCKET_NAME:-openzync-blobs}"
+      OZ_S3_BACKEND: "${OZ_S3_BACKEND:-s3}"
+      OZ_BLOB_MAX_SIZE_MB: "${OZ_BLOB_MAX_SIZE_MB:-50}"
+      OZ_BLOB_IMAGE_EXTRACTION: "${OZ_BLOB_IMAGE_EXTRACTION:-none}"
     depends_on:
       redis:
         condition: service_healthy
@@ -288,7 +307,7 @@ services:
   # Uses the local-db profile (same as Postgres) since it's a dev dependency.
   minio:
     profiles: [local-db]
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: pgsty/silo:RELEASE.2026-10-26T00-00-00Z
     container_name: openzync-minio
     command: server /data --console-address ":9001"
     ports:
@@ -311,7 +330,7 @@ services:
   # ── MinIO init (one-shot — create bucket + versioning + lifecycle) ─────────
   minio-init:
     profiles: [local-db]
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    image: pgsty/silo:RELEASE.2026-10-26T00-00-00Z
     container_name: openzync-minio-init
     depends_on:
       minio:

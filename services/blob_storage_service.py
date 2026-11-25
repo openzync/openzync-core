@@ -198,7 +198,6 @@ class BlobStorageService:
             created_by=...,
             uploaded_files=[UploadFile(...), ...],
             blob_metadatas=[BlobMetadata(...), ...],
-            storage_config={...},
         )
     """
 
@@ -221,7 +220,6 @@ class BlobStorageService:
         created_by: UUID,
         uploaded_files: Sequence[UploadFile | bytes],
         blob_metadatas: Sequence[BlobMetadata],
-        storage_config: dict[str, Any],
         storage: BlobStorage | None = None,
     ) -> list[EpisodeBlob]:
         """Upload blobs to S3 and persist metadata in the DB.
@@ -242,11 +240,9 @@ class BlobStorageService:
             blob_metadatas: List of dicts with ``blob_id``, ``file_name``,
                 ``mime_type`` keys from the request's ``BlobMetadata``
                 schemas.  The ``blob_id`` indexes into ``uploaded_files``.
-            storage_config: Flattened org storage config from
-                ``OrgConfigBase.to_blob_storage_config()``.
             storage: Pre-built S3 client (batch callers build one per
-                ingest, not per episode).  Built from *storage_config*
-                when omitted.
+                ingest, not per episode).  Built from the global
+                ``Settings`` when omitted.
 
         Returns:
             List of created ``EpisodeBlob`` ORM instances.
@@ -259,13 +255,11 @@ class BlobStorageService:
             S3StorageError: If the S3 upload fails.
         """
         # Reuse the caller's client when provided (batch callers build one
-        # per ingest, not per episode) — otherwise build from config.
+        # per ingest, not per episode) — otherwise build from the global
+        # Settings (fail-fast at startup, never per-org).
         if storage is None:
-            config = BlobStorageConfig.from_org_config(storage_config)
-            storage = BlobStorage(config)
-            max_bytes = config.max_blob_bytes
-        else:
-            max_bytes = BlobStorageConfig.from_org_config(storage_config).max_blob_bytes
+            storage = BlobStorage(BlobStorageConfig.from_settings(get_settings()))
+        max_bytes = storage.max_blob_bytes
         settings = get_settings()
 
         if len(blob_metadatas) > settings.MAX_BLOBS_PER_REQUEST:
@@ -357,7 +351,6 @@ class BlobStorageService:
     async def delete_blobs(
         self,
         blob_records: Sequence[EpisodeBlob],
-        storage_config: dict[str, Any],
         storage: BlobStorage | None = None,
     ) -> None:
         """Delete blobs from S3 storage.
@@ -368,11 +361,9 @@ class BlobStorageService:
 
         Args:
             blob_records: List of EpisodeBlob ORM instances to delete.
-            storage_config: Org storage config dict from
-                ``OrgConfigBase.to_blob_storage_config()``.
             storage: Pre-built S3 client (batch callers build one per
-                sweep, not per page).  Built from *storage_config* when
-                omitted.
+                sweep, not per page).  Built from the global
+                ``Settings`` when omitted.
 
         Raises:
             S3StorageError: If any S3 delete fails.
@@ -381,8 +372,7 @@ class BlobStorageService:
             return
 
         if storage is None:
-            config = BlobStorageConfig.from_org_config(storage_config)
-            storage = BlobStorage(config)
+            storage = BlobStorage(BlobStorageConfig.from_settings(get_settings()))
 
         # Bound concurrency: one S3 delete per blob, max 10 in flight —
         # an episode with hundreds of blobs must not fan out unbounded
@@ -434,7 +424,6 @@ class BlobStorageService:
     @staticmethod
     async def generate_download_url(
         storage_key: str,
-        storage_config: dict[str, Any],
         expires_in: int = 300,
     ) -> str:
         """Generate a presigned download URL for a blob (cached).
@@ -448,7 +437,6 @@ class BlobStorageService:
 
         Args:
             storage_key: S3 object key.
-            storage_config: Org storage config dict.
             expires_in: URL TTL in seconds (default 5 minutes).
 
         Returns:
@@ -459,9 +447,10 @@ class BlobStorageService:
                 caller so the failure is loud and alertable (no silent
                 ``None`` that callers could mistake for success).
         """
+        settings = get_settings()
         cache_key = (
-            str(storage_config.get("endpoint_url") or ""),
-            str(storage_config.get("bucket_name") or ""),
+            settings.S3_ENDPOINT_URL,
+            settings.S3_BUCKET_NAME,
             storage_key,
             expires_in,
         )
@@ -477,8 +466,7 @@ class BlobStorageService:
             for k, (_, ts) in list(_presigned_url_cache.items()):
                 if now - ts >= min(k[3], _PRESIGNED_URL_TTL_SEC):
                     del _presigned_url_cache[k]
-        config = BlobStorageConfig.from_org_config(storage_config)
-        storage = BlobStorage(config)
+        storage = BlobStorage(BlobStorageConfig.from_settings(settings))
         url = await storage.get_presigned_url(storage_key, expires_in=expires_in)
         _presigned_url_cache[cache_key] = (url, now)
         return url

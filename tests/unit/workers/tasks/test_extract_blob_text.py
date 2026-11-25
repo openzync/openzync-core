@@ -6,7 +6,6 @@ Tests cover:
 - ``_extract_text_plain`` helper (UTF-8 decode, replacement chars, empty)
 - ``_extract_image_ocr`` helper (pytesseract OCR, missing deps, errors, empty result)
 - ``_dispatch_extraction`` MIME routing (text/*, PDF, DOCX, image/*, magic fallback, unknown)
-- ``_get_org_storage_config`` (DB-backed path, fetch failure → fail-closed)
 - ``extract_blob_text`` main decorated task (happy path, idempotency, blob/episode not
   found, download failures, no text extracted, ctx resource resolution, engine lifecycle)
 """
@@ -534,55 +533,6 @@ class TestDispatchExtraction:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# _get_org_storage_config
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-@pytest.mark.unit
-class TestGetOrgStorageConfig:
-    """``_get_org_storage_config`` — org blob storage config resolution."""
-
-    @pytest.mark.asyncio
-    async def test_reads_config_from_db(self) -> None:
-        """DB-backed config fetch → returns the storage config dict."""
-        from workers.tasks.extract_blob_text import _get_org_storage_config
-
-        mock_db = AsyncMock()
-        mock_org_cfg = MagicMock()
-        mock_org_cfg.to_blob_storage_config.return_value = {
-            "backend": "s3",
-            "bucket_name": "custom-bucket",
-        }
-
-        with (
-            patch(
-                "core.org_config.get_org_config",
-                AsyncMock(return_value=mock_org_cfg),
-            ) as mock_get,
-        ):
-            result = await _get_org_storage_config(_ORG_ID, mock_db)
-
-        mock_get.assert_awaited_once()
-        assert result == {"backend": "s3", "bucket_name": "custom-bucket"}
-
-    @pytest.mark.asyncio
-    async def test_fetch_failure_raises_external_service_error(self) -> None:
-        """DB fetch failure raises ExternalServiceError (fail-closed, retryable)."""
-        from core.exceptions import ExternalServiceError
-        from workers.tasks.extract_blob_text import _get_org_storage_config
-
-        mock_db = AsyncMock()
-
-        with (
-            patch(
-                "core.org_config.get_org_config",
-                AsyncMock(side_effect=RuntimeError("DB down")),
-            ),
-            pytest.raises(ExternalServiceError, match="could not be read"),
-        ):
-            await _get_org_storage_config(_ORG_ID, mock_db)
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # extract_blob_text — main task
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -783,11 +733,7 @@ class TestExtractBlobText:
             patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
             patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
             patch("core.blob_storage.BlobStorage") as mock_storage_cls,
-            patch("core.blob_storage.BlobStorageConfig") as mock_cfg_cls,
-            patch(
-                "workers.tasks.extract_blob_text._get_org_storage_config",
-                AsyncMock(return_value={"backend": "s3", "bucket_name": "b"}),
-            ),
+            patch("core.blob_storage.BlobStorageConfig"),
             patch(
                 "workers.tasks.extract_blob_text._dispatch_extraction",
                 AsyncMock(return_value="extracted text content"),
@@ -810,12 +756,10 @@ class TestExtractBlobText:
             mock_ep_repo.get_by_id.return_value = mock_episode
             mock_ep_repo_cls.return_value = mock_ep_repo
 
-            # Storage
+            # Storage (global backend from Settings — per-org config removed)
             mock_storage = AsyncMock()
             mock_storage.download = AsyncMock(return_value=b"pdf file bytes")
             mock_storage_cls.return_value = mock_storage
-
-            mock_cfg_cls.from_org_config.return_value = MagicMock()
 
             await extract_blob_text(
                 ctx=ctx,
@@ -837,8 +781,11 @@ class TestExtractBlobText:
             mock_blob_repo.update_extracted_text.assert_awaited_once_with(
                 UUID(_BLOB_ID), "extracted text content"
             )
-            assert mock_episode.enrichment_status & ENRICHMENT_BLOB_TEXT
-            db.flush.assert_awaited_once()
+            # Atomic bit write (no read-modify-write) + expire + commit.
+            mock_ep_repo.apply_enrichment_bits.assert_awaited_once_with(
+                UUID(_EPISODE_ID), ENRICHMENT_BLOB_TEXT
+            )
+            db.expire.assert_called_once_with(mock_episode, ["enrichment_status"])
             db.commit.assert_awaited_once()
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -859,10 +806,6 @@ class TestExtractBlobText:
             patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
             patch("core.blob_storage.BlobStorage") as mock_storage_cls,
             patch("core.blob_storage.BlobStorageConfig"),
-            patch(
-                "workers.tasks.extract_blob_text._get_org_storage_config",
-                AsyncMock(return_value={"backend": "s3"}),
-            ),
             patch(
                 "workers.tasks.extract_blob_text._dispatch_extraction",
                 AsyncMock(return_value=None),  # no text extracted
@@ -915,10 +858,6 @@ class TestExtractBlobText:
             patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
             patch("core.blob_storage.BlobStorage") as mock_storage_cls,
             patch("core.blob_storage.BlobStorageConfig"),
-            patch(
-                "workers.tasks.extract_blob_text._get_org_storage_config",
-                AsyncMock(return_value={"backend": "s3"}),
-            ),
         ):
             mock_blob_repo = AsyncMock()
             mock_blob_repo.get_by_id.return_value = MagicMock(id=UUID(_BLOB_ID))
@@ -1084,61 +1023,6 @@ class TestExtractBlobText:
             )
 
             mock_get_session.assert_called_once()
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # Storage config failure
-    # ═══════════════════════════════════════════════════════════════════════
-
-    @pytest.mark.asyncio
-    async def test_storage_config_failure_skips_download(self) -> None:
-        """Storage config fetch failure → ExternalServiceError, no download."""
-        from core.exceptions import ExternalServiceError
-        from workers.tasks.extract_blob_text import extract_blob_text
-
-        db = self._make_db()
-        ctx = self._make_ctx(db)
-
-        with (
-            patch("workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f),
-            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
-            patch("core.blob_storage.BlobStorage") as mock_storage_cls,
-            patch("core.blob_storage.BlobStorageConfig"),
-            patch(
-                "workers.tasks.extract_blob_text._dispatch_extraction",
-                AsyncMock(return_value=None),
-            ),
-            patch(
-                "workers.tasks.extract_blob_text._get_org_storage_config",
-                AsyncMock(side_effect=ExternalServiceError("no storage config")),
-            ),
-        ):
-            mock_blob_repo = AsyncMock()
-            mock_blob_repo.get_by_id.return_value = MagicMock(id=UUID(_BLOB_ID))
-            mock_repo_cls.return_value = mock_blob_repo
-
-            mock_ep_repo = AsyncMock()
-            mock_episode = MagicMock()
-            mock_episode.enrichment_status = 0
-            mock_ep_repo.get_by_id.return_value = mock_episode
-            mock_ep_repo_cls.return_value = mock_ep_repo
-
-            mock_storage = AsyncMock()
-            mock_storage.download = AsyncMock(return_value=b"data")
-            mock_storage_cls.return_value = mock_storage
-
-            with pytest.raises(ExternalServiceError, match="no storage config"):
-                await extract_blob_text(
-                    ctx=ctx,
-                    blob_id=_BLOB_ID,
-                    user_id=_ORG_ID,
-                    project_id=_PROJECT_ID,
-                    episode_id=_EPISODE_ID,
-                    storage_key=_STORAGE_KEY,
-                    mime_type=_MIME_TYPE,
-                )
-
-            mock_storage.download.assert_not_awaited()
 
     # ═══════════════════════════════════════════════════════════════════════
     # General exception handling
