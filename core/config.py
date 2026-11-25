@@ -439,6 +439,51 @@ class Settings(BaseSettings):
         validation_alias="OZ_MAX_BLOBS_PER_REQUEST",
     )
 
+    # ── Blob Storage (S3-compatible, global — OpenBao-owned) ─────────────
+    # ⚠️ BREAKING: per-org blob storage was removed — one global backend
+    # for all orgs, configured here. Missing required fields fail fast
+    # at startup (no silent fallback to shared defaults).
+    S3_ENDPOINT_URL: str = Field(
+        description="S3-compatible endpoint URL for blob storage (e.g. http://minio:9000).",
+        validation_alias="OZ_S3_ENDPOINT_URL",
+    )
+    S3_REGION: str = Field(
+        default="auto",
+        description="S3 region (use 'auto' for MinIO).",
+        validation_alias="OZ_S3_REGION",
+    )
+    S3_ACCESS_KEY_ID: str = Field(
+        description="S3 access key ID for blob storage.",
+        validation_alias="OZ_S3_ACCESS_KEY_ID",
+    )
+    S3_SECRET_ACCESS_KEY: str = Field(
+        description="S3 secret access key for blob storage.",
+        validation_alias="OZ_S3_SECRET_ACCESS_KEY",
+    )
+    S3_BUCKET_NAME: str = Field(
+        default="openzync-blobs",
+        description="S3 bucket for blob storage.",
+        validation_alias="OZ_S3_BUCKET_NAME",
+    )
+    S3_BACKEND: str = Field(
+        default="s3",
+        description="Blob storage backend (s3, none).",
+        validation_alias="OZ_S3_BACKEND",
+    )
+    BLOB_MAX_SIZE_MB: int = Field(
+        default=50,
+        ge=1,
+        le=500,
+        description="Max upload size per blob in MB.",
+        validation_alias="OZ_BLOB_MAX_SIZE_MB",
+    )
+    BLOB_IMAGE_EXTRACTION: str = Field(
+        default="none",
+        description="Image text extraction method: 'ocr' (Tesseract), "
+        "'vision' (LLM vision API), 'none' (store only, no extraction).",
+        validation_alias="OZ_BLOB_IMAGE_EXTRACTION",
+    )
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Singleton accessors

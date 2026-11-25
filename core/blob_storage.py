@@ -1,7 +1,7 @@
 """Async S3-compatible blob storage for episode attachments.
 
-Uses aioboto3 for async S3 operations.  Instantiated per-org from
-org config (``OrgConfigBase.to_blob_storage_config()``).
+Uses aioboto3 for async S3 operations.  Instantiated once from the
+global :class:`Settings` (``OZ_S3_*`` / ``OZ_BLOB_*``) — never per-org.
 """
 
 from __future__ import annotations
@@ -17,6 +17,8 @@ from core.exceptions import ExternalServiceError, PayloadTooLargeError
 
 if TYPE_CHECKING:
     import aioboto3
+
+    from core.config import Settings
 
 logger = structlog.get_logger(__name__)
 
@@ -45,23 +47,27 @@ class BlobStorageConfig:
         return self.max_blob_size_mb * 1024 * 1024
 
     @classmethod
-    def from_org_config(cls, config: dict[str, Any]) -> BlobStorageConfig:
-        """Create config from an org config dict.
+    def from_settings(cls, settings: Settings) -> BlobStorageConfig:
+        """Create config from the global :class:`Settings` singleton.
+
+        ⚠️ BREAKING: replaces ``from_org_config`` — per-org blob
+        storage was removed. All orgs share the ``OZ_S3_*`` /
+        ``OZ_BLOB_*`` settings (OpenBao-owned, fail-fast at startup).
 
         Args:
-            config: Dict from ``OrgConfigBase.to_blob_storage_config()``.
+            settings: The global settings (``get_settings()``).
 
         Returns:
             A populated :class:`BlobStorageConfig`.
         """
         return cls(
-            backend=config.get("backend", "s3"),
-            endpoint_url=config.get("endpoint_url", "http://minio:9000"),
-            region=config.get("region", "auto"),
-            access_key_id=config.get("access_key_id", ""),
-            secret_access_key=config.get("secret_access_key", ""),
-            bucket_name=config.get("bucket_name", "openzync-blobs"),
-            max_blob_size_mb=config.get("max_blob_size_mb", 50),
+            backend=settings.S3_BACKEND,
+            endpoint_url=settings.S3_ENDPOINT_URL,
+            region=settings.S3_REGION,
+            access_key_id=settings.S3_ACCESS_KEY_ID,
+            secret_access_key=settings.S3_SECRET_ACCESS_KEY,
+            bucket_name=settings.S3_BUCKET_NAME,
+            max_blob_size_mb=settings.BLOB_MAX_SIZE_MB,
         )
 
 
@@ -87,8 +93,7 @@ class BlobStorage:
 
     Usage::
 
-        config = BlobStorageConfig.from_org_config(org_config.to_blob_storage_config())
-        storage = BlobStorage(config)
+        storage = BlobStorage(BlobStorageConfig.from_settings(get_settings()))
         key = await storage.upload("path/to/file", b"...", "image/png")
         data = await storage.download(key)
     """
@@ -97,11 +102,16 @@ class BlobStorage:
         self._config = config
         self._session: aioboto3.Session | None = None
 
+    @property
+    def max_blob_bytes(self) -> int:
+        """Return the maximum blob size in bytes for this client."""
+        return self._config.max_blob_bytes
+
     async def _get_session(self) -> aioboto3.Session:
         """Lazy-init an aioboto3 session.
 
         Returns:
-            An :class:`aioboto3.Session` configured with the org's credentials.
+            An :class:`aioboto3.Session` configured with the global credentials.
         """
         if self._session is None:
             import aioboto3  # lazy: optional dependency, only imported when used

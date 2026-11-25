@@ -245,49 +245,6 @@ async def _dispatch_extraction(mime_type: str, data: bytes) -> str | None:
     return None
 
 
-# ── Helper: resolve blob storage config ──────────────────────────────────────
-
-
-async def _get_org_storage_config(
-    user_id: str,
-    db: object,
-) -> dict:
-    """Fetch the user's blob storage config from the DB — fail loud.
-
-    Args:
-        user_id: The user UUID string.
-        db: Open async DB session (RLS context already set).
-
-    Returns:
-        A dict suitable for ``BlobStorageConfig.from_org_config()``.
-
-    Raises:
-        ExternalServiceError: If the user config cannot be fetched
-            (→ 502, task retries). Never returns shared-bucket defaults.
-    """
-    from core.exceptions import ExternalServiceError
-    from core.org_config import get_org_config
-
-    try:
-        org_cfg = await get_org_config(
-            UUID(user_id),
-            redis=None,
-            db=db,  # type: ignore[arg-type]
-        )
-    except ExternalServiceError:
-        raise
-    except Exception as exc:
-        logger.error(
-            "extract_blob_text.storage_config_fetch_failed",
-            user_id=user_id,
-            exc_info=True,
-        )
-        raise ExternalServiceError(
-            f"Blob storage config for user {user_id} could not be read from the DB."
-        ) from exc
-    return org_cfg.to_blob_storage_config()
-
-
 # ── Helper: resolve org PII config (fail-closed) ───────────────────────────
 
 
@@ -419,7 +376,7 @@ async def extract_blob_text(
     Pipeline:
         1. Open DB session with RLS context.
         2. Load the blob record; skip if ``ENRICHMENT_BLOB_TEXT`` already set.
-        3. Fetch user blob storage config from the DB.
+        3. Build the global blob client from Settings.
         4. Download blob bytes from S3 via ``BlobStorage``.
         5. Route to the appropriate text extractor by MIME type.
         6. Store extracted text on the ``episode_blobs`` record.
@@ -461,7 +418,7 @@ async def extract_blob_text(
     # Lazy imports — ARQ workers run in a separate process.
     from core import rls
     from core.blob_storage import BlobStorage, BlobStorageConfig
-    from core.config import settings
+    from core.config import get_settings, settings
     from core.db import get_async_session
     from repositories.episode_blob_repository import EpisodeBlobRepository
     from repositories.episode_repository import EpisodeRepository
@@ -531,9 +488,10 @@ async def extract_blob_text(
                 log.info("extract_blob_text.enrichment_skipped")
                 return
 
-            # ── Fetch user storage config ───────────────────────────────
-            storage_config = await _get_org_storage_config(user_id, db)
-            blob_config = BlobStorageConfig.from_org_config(storage_config)
+            # ── Build the global blob client ────────────────────────────
+            # ⚠️ BREAKING: per-org blob storage was removed — one global
+            # backend from Settings (fail-fast at startup, never per-org).
+            blob_config = BlobStorageConfig.from_settings(get_settings())
             storage = BlobStorage(blob_config)
 
             # ── Download blob from S3 ───────────────────────────────────
