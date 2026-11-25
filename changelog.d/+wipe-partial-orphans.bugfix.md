@@ -1,1 +1,1 @@
-Logged the full orphaned S3 key list on blob-compensation failure and returned partial `blobs_deleted` with `failed:true` (HTTP 200) when the project-wipe S3 sweep stopped early.
+Wipe always returns 204 (SDK-compatible): a partial post-commit S3 sweep is signaled via the `X-Wipe-Failed: true` response header plus a loud `memory.wipe_partial` log and the destructive-action audit entry — never a 200 body. Leftover objects stay GC-visible via their soft-deleted blob rows.

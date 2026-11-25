@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
     from models.session import Session
     from models.user import User
+    from schemas.organization_config import OrgConfigBase
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +237,7 @@ class IngestMixin:
 
     async def _resolve_enrichments(
         self,
-        org_cfg: Any,
+        org_cfg: OrgConfigBase,
         request_param: dict[str, bool] | None,
     ) -> dict[str, bool]:
         """Resolve the effective per-episode enrichment toggles.
@@ -275,7 +276,7 @@ class IngestMixin:
 
     async def _resolve_enrichment_gate(
         self,
-        org_cfg: Any,
+        org_cfg: OrgConfigBase,
     ) -> dict[str, bool | float | str]:
         """Resolve the effective enrichment gate (org-only).
 

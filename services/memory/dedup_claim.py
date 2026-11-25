@@ -82,7 +82,7 @@ class DedupClaimMixin:
         )
         if (
             result.status == IdempotencyStatus.REPLAY
-            and result.response_data is not None
+            and isinstance(result.response_data, dict)
         ):
             logger.info(
                 "memory.idempotency_replay",
@@ -96,9 +96,19 @@ class DedupClaimMixin:
         if result.status == IdempotencyStatus.CONFLICT:
             # Surface the prior job_id so the client can reconcile —
             # retry with the original body, or issue a fresh key.
+            # Coerced: cached bodies may be JSON strings (see
+            # idempotency_service._coerce_response_data).
             prior_job_id: str | None = None
-            if isinstance(result.response_data, dict):
-                raw_job_id = result.response_data.get("job_id")
+            raw_data: Any = result.response_data
+            if isinstance(raw_data, str):
+                try:
+                    import orjson
+
+                    raw_data = orjson.loads(raw_data)
+                except (orjson.JSONDecodeError, TypeError, ValueError):
+                    raw_data = None
+            if isinstance(raw_data, dict):
+                raw_job_id = raw_data.get("job_id")
                 prior_job_id = str(raw_job_id) if raw_job_id else None
             raise ConflictError(
                 "Idempotency-Key already used with a different request body",

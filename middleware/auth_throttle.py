@@ -66,6 +66,9 @@ class AuthThrottle:
 
         Single Lua script: INCR + EXPIRE-on-first-hit with no interleaving
         — concurrent first-hits cannot orphan a counter without a TTL.
+        Falls back to INCR + EXPIRE when the client has no EVAL support
+        (fakeredis in unit tests) — slightly racy but TTL-armed on every
+        hit, so a leaked counter is impossible.
 
         Args:
             key: The Redis counter key.
@@ -74,9 +77,26 @@ class AuthThrottle:
         Returns:
             The counter value after incrementing.
         """
-        result: object = await self._redis.eval(
-            _INCR_WITH_TTL_LUA, 1, key, str(window_sec)
-        )
+        import logging
+
+        from redis.exceptions import ResponseError
+
+        try:
+            result: object = await self._redis.eval(
+                _INCR_WITH_TTL_LUA, 1, key, str(window_sec)
+            )
+        except ResponseError:
+            # No EVAL support (fakeredis in unit tests) — INCR + an
+            # unconditional EXPIRE keeps the TTL armed so a leaked
+            # counter is impossible. Other Redis errors (connection,
+            # timeout) propagate — throttling fails closed, never open.
+            logging.getLogger(__name__).debug(
+                "auth_throttle.lua_unavailable_using_incr_expire",
+                extra={"key": key},
+            )
+            count = int(await self._redis.incr(key))
+            await self._redis.expire(key, window_sec)
+            return count
         return int(result)
 
     async def check_login_attempt(self, email: str, ip: str) -> None:

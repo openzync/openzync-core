@@ -30,6 +30,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from core.config import get_settings
 from core.exceptions import RateLimitUnavailableError
+from core.net import is_trusted_proxy as _core_is_trusted_proxy
 
 logger = logging.getLogger(__name__)
 
@@ -59,37 +60,8 @@ RFC_7807_TYPE_UNAVAILABLE = "https://errors.openzync.tech/rate_limit_unavailable
 
 
 def _is_trusted_proxy(peer_ip: str, trusted: str) -> bool:
-    """Return whether a peer IP is in the trusted-proxy list.
-
-    Supports exact addresses and CIDR ranges (``"127.0.0.1, 10.0.0.0/8"``).
-    Unparseable entries fail closed (treated as untrusted).
-
-    Args:
-        peer_ip: The direct ASGI peer address.
-        trusted: Comma-separated trusted addresses/CIDRs from settings.
-
-    Returns:
-        ``True`` when the peer is trusted to set ``X-Forwarded-For``.
-    """
-    import ipaddress
-
-    try:
-        peer = ipaddress.ip_address(peer_ip)
-    except ValueError:
-        return False
-    for entry in trusted.split(","):
-        entry = entry.strip()
-        if not entry:
-            continue
-        try:
-            if "/" in entry:
-                if peer in ipaddress.ip_network(entry, strict=False):
-                    return True
-            elif peer == ipaddress.ip_address(entry):
-                return True
-        except ValueError:
-            continue
-    return False
+    """Backward-compatible alias of :func:`core.net.is_trusted_proxy`."""
+    return _core_is_trusted_proxy(peer_ip, trusted)
 
 
 def _get_client_ip(scope: Scope) -> str:

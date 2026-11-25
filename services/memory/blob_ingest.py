@@ -63,7 +63,8 @@ class BlobIngestMixin:
                 extra={
                     "user_id": str(user_id),
                     "key_count": len(storage_keys),
-                    "storage_keys": list(storage_keys),
+                    # Cap the key list — a large ingest would flood the log.
+                    "storage_keys": list(storage_keys[:20]),
                 },
                 exc_info=True,
             )

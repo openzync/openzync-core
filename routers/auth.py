@@ -30,6 +30,7 @@ from fastapi import APIRouter, Depends, Request
 from core.audit import audit_action
 from core.config import get_settings
 from core.exceptions import AuthorizationError, ConflictError
+from core.net import is_trusted_proxy
 from dependencies.auth import get_dashboard_user
 from dependencies.services import (
     get_auth_service,
@@ -38,7 +39,6 @@ from dependencies.services import (
     get_setup_service,
 )
 from middleware.auth_throttle import AuthThrottle
-from middleware.rate_limit import _is_trusted_proxy
 from schemas.auth import (
     AcceptInviteRequest,
     ChangePasswordRequest,
@@ -84,10 +84,12 @@ def _client_ip(request: Request) -> str:
     The leftmost ``X-Forwarded-For`` entry is trusted only when the
     direct peer is in ``TRUSTED_PROXY_IPS`` — otherwise any client
     could forge its own throttle bucket. Falls back to ``"unknown"``.
+    ``get_settings()`` returns the process-wide singleton (no I/O after
+    first call), so this stays cheap per request.
     """
     peer = request.client.host if request.client else "unknown"
     forwarded = request.headers.get("x-forwarded-for")
-    if forwarded and _is_trusted_proxy(peer, get_settings().TRUSTED_PROXY_IPS):
+    if forwarded and is_trusted_proxy(peer, get_settings().TRUSTED_PROXY_IPS):
         first = forwarded.split(",")[0].strip()
         if first:
             return first

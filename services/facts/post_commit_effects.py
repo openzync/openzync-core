@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from core.events import EventType
-from core.exceptions import ExternalServiceError
 from middleware.metrics import (
     facts_invalidated_total,
     facts_retracted_total,
@@ -256,11 +255,10 @@ class PostCommitEffectsMixin:
                         events=events,
                         at_time=at_time,
                     )
-                except ExternalServiceError:
-                    # External-backend ARQ enqueue failed — facts are
-                    # already committed and the reconcile_graph_edges cron
-                    # self-heals. Degraded, not fatal: log distinctly and
-                    # let the Postgres expiries commit below.
+                except Exception:
+                    # Any post-commit failure degrades — facts are already
+                    # committed and reconcile_graph_edges self-heals.
+                    # Never 500 committed work.
                     logger.exception(
                         "fact_invalidation.graph_sync_degraded",
                         extra={

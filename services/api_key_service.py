@@ -37,6 +37,12 @@ The middleware guards the touch with ``SET auth:seen:{id} NX EX 300`` —
 at most one DB write per key per window, no matter the request rate.
 """
 
+_LAST_USED_TASKS_MAX: int = 128
+"""Cap on tracked ``last_used`` background tasks (unbounded sets leak)."""
+
+_LAST_USED_TASKS: set[asyncio.Task[None]] = set()
+"""Live ``last_used`` touch-tasks — retained only for exception retrieval."""
+
 
 async def _touch_last_used(db_factory: Any, key_id: UUID) -> None:
     """Fire-and-forget ``last_used_at`` write (never raises)."""
@@ -84,7 +90,15 @@ async def schedule_sampled_last_used_touch(
         return
     if not seen:
         return
-    asyncio.get_running_loop().create_task(_touch_last_used(db_factory, key_id))
+    task = asyncio.get_running_loop().create_task(
+        _touch_last_used(db_factory, key_id)
+    )
+    # Keep a bounded set of live touch-tasks so unretrieved exceptions
+    # surface in logs instead of "exception was never retrieved" noise.
+    _LAST_USED_TASKS.add(task)
+    if len(_LAST_USED_TASKS) > _LAST_USED_TASKS_MAX:
+        _LAST_USED_TASKS.pop()
+    task.add_done_callback(_LAST_USED_TASKS.discard)
 
 
 class ApiKeyService:

@@ -237,6 +237,9 @@ class IngestMemoryResponse(BaseModel):
         description="True when a post-commit fan-out step (ARQ enrichment "
         "or blob-extraction enqueue) failed. The ingest is committed and "
         "the reconciler replays the missing work — never a 500.",
+        # note: SDK follow-up needed — mirror these fields in
+        # openzync-python-sdk response models (separate repo, not edited
+        # here) so SDK clients can observe degraded ingests.
     )
     degrade_reason: str | None = Field(
         default=None,
