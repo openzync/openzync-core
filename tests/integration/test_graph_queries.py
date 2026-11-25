@@ -181,9 +181,9 @@ class TestGraphNodes:
 
         FalkorDB uses offset cursors (``{"o": N}``) which carry no sort
         binding, so a sort change re-applies cleanly at the same offset.
-        The STRICT PG backend (``PostgresGraphBackend.list_entities``)
-        rejects this shape with 422 — covered by
-        ``test_sorting_parity.py::TestGraphNodesPGParity``.
+        The strict ``{"node_id"}`` cursor shape and sort-mismatched cursors
+        are rejected with 422 — covered by the strict-decoder parity tests
+        in ``test_sorting_parity.py``.
         """
         await self._seed_falkor_entities(
             isolated_org_and_key, isolated_project_id, falkordb_url

@@ -1,10 +1,10 @@
-"""Unit tests for GraphEdgeSyncService — D1 rule + backend routing.
+"""Unit tests for GraphEdgeSyncService — D1 rule + ARQ enqueue routing.
 
 Covers the D1 supersession rule (cases 1/2/3) via the pure
-``compute_expiry_commands`` function and the execution routing
-(Postgres in-transaction direct call vs. ARQ enqueue for external
-backends) via mocked backends.  No I/O — the ARQ pool and backend
-sessions are mocked at the service boundary.
+``compute_expiry_commands`` function and the enqueue routing
+(all backends are external — SurrealDB/FalkorDB — so expiry is
+enqueued as ARQ tasks) via mocked backends.  No I/O — the ARQ pool
+and backends are mocked at the service boundary.
 """
 
 from __future__ import annotations
@@ -15,9 +15,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.graph_backend.postgres import PostgresGraphBackend
 from services.graph_edge_sync_service import (
     EdgeKey,
     GraphEdgeSyncService,
@@ -173,47 +171,10 @@ class TestComputeExpiryCommands:
 
 
 class TestSyncRouting:
-    """Execution routing — Postgres in-txn vs ARQ enqueue for external."""
+    """Enqueue routing — external backends enqueue ARQ expiry tasks."""
 
     def _case1_events(self) -> list[SupersessionEvent]:
         return [make_supersession_event(_fact(), None, {})]
-
-    async def test_postgres_backend_expires_in_transaction(self) -> None:
-        """Postgres backends expire directly on their own session."""
-        backend = PostgresGraphBackend(db=AsyncMock(spec=AsyncSession))
-        backend.expire_relationships_matching = AsyncMock(return_value=1)
-
-        service = GraphEdgeSyncService(backends=[backend])
-        await service.sync_supersessions(
-            user_id=ORG_ID, project_id=PROJECT_ID,
-            events=self._case1_events(), at_time=AT_TIME,
-        )
-
-        backend.expire_relationships_matching.assert_awaited_once_with(
-            user_id=ORG_ID,
-            project_id=PROJECT_ID,
-            source_id=SRC_ENTITY,
-            target_id=TGT_ENTITY,
-            relationship_type="reports_to",
-            at_time=AT_TIME,
-        )
-
-    async def test_case3_postgres_backend_not_called(self) -> None:
-        """Same-key successor → no expiry call at all."""
-        backend = PostgresGraphBackend(db=AsyncMock(spec=AsyncSession))
-        backend.expire_relationships_matching = AsyncMock(return_value=0)
-
-        events = [
-            make_supersession_event(
-                _fact(), _fact(fact_id=NEW_FACT), {"predicate": "reports_to"}
-            )
-        ]
-        service = GraphEdgeSyncService(backends=[backend])
-        await service.sync_supersessions(
-            user_id=ORG_ID, project_id=PROJECT_ID,
-            events=events, at_time=AT_TIME,
-        )
-        backend.expire_relationships_matching.assert_not_awaited()
 
     async def test_external_backend_enqueues_arq_task(self) -> None:
         """Surreal/Falkor backends enqueue expire_graph_edges on the low queue."""
@@ -239,39 +200,19 @@ class TestSyncRouting:
             fact_id=str(OLD_FACT),
         )
 
-    async def test_postgres_and_external_backends_both_routed(self) -> None:
-        """Mixed backend list: direct expiry + enqueue, each on its own path."""
-        postgres = PostgresGraphBackend(db=AsyncMock(spec=AsyncSession))
-        postgres.expire_relationships_matching = AsyncMock(return_value=1)
-        external = AsyncMock()
-        arq = AsyncMock()
-
-        service = GraphEdgeSyncService(
-            backends=[postgres, external], arq_pool=arq
-        )
-        await service.sync_supersessions(
-            user_id=ORG_ID, project_id=PROJECT_ID,
-            events=self._case1_events(), at_time=AT_TIME,
-        )
-
-        postgres.expire_relationships_matching.assert_awaited_once()
-        arq.enqueue.assert_awaited_once()
-
     async def test_no_events_is_noop(self) -> None:
         """Empty event list → no backend calls, no enqueues."""
-        postgres = PostgresGraphBackend(db=AsyncMock(spec=AsyncSession))
-        postgres.expire_relationships_matching = AsyncMock(return_value=1)
         external = AsyncMock()
         arq = AsyncMock()
 
         service = GraphEdgeSyncService(
-            backends=[postgres, external], arq_pool=arq
+            backends=[external], arq_pool=arq
         )
         await service.sync_supersessions(
             user_id=ORG_ID, project_id=PROJECT_ID,
             events=[], at_time=AT_TIME,
         )
-        postgres.expire_relationships_matching.assert_not_awaited()
+        external.expire_relationships_matching.assert_not_awaited()
         arq.enqueue.assert_not_awaited()
 
     async def test_no_backends_is_noop(self) -> None:
@@ -282,19 +223,3 @@ class TestSyncRouting:
             events=self._case1_events(), at_time=AT_TIME,
         )
         # No assertion needed beyond not raising — covered by early return.
-
-    async def test_postgres_failure_propagates_loudly(self) -> None:
-        """A Postgres expiry failure must raise — never swallowed."""
-        backend = PostgresGraphBackend(db=AsyncMock(spec=AsyncSession))
-
-        async def _boom(**kwargs) -> int:
-            raise RuntimeError("pg boom")
-
-        backend.expire_relationships_matching = _boom
-        service = GraphEdgeSyncService(backends=[backend])
-
-        with pytest.raises(RuntimeError, match="pg boom"):
-            await service.sync_supersessions(
-                user_id=ORG_ID, project_id=PROJECT_ID,
-                events=self._case1_events(), at_time=AT_TIME,
-            )

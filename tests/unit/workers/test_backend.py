@@ -45,7 +45,7 @@ class TestResolveGraphBackend:
     def mock_org_config(self) -> MagicMock:
         """A per-org config stub with ``graph_backend`` set."""
         cfg = MagicMock()
-        cfg.graph_backend = "postgres"
+        cfg.graph_backend = "falkordb"
         return cfg
 
     @pytest.fixture
@@ -125,17 +125,21 @@ class TestResolveGraphBackend:
         mock_dispatcher: MagicMock,
     ) -> None:
         """Dispatcher resolves a backend → returns it directly."""
+        falkordb_client = MagicMock()
         with patch("workers.backend._resolve_user_config", AsyncMock(return_value=mock_org_config)):
             from workers.backend import resolve_graph_backend
 
-            ctx = {"graph_backend_dispatcher": mock_dispatcher}
+            ctx = {
+                "graph_backend_dispatcher": mock_dispatcher,
+                "falkordb_client": falkordb_client,
+            }
             result = await resolve_graph_backend(ctx, self.USER_ID, mock_db)
 
         mock_dispatcher.resolve_and_create.assert_called_once_with(
             org_config=mock_org_config,
             db=mock_db,
             surreal=None,
-            falkordb_client=None,
+            falkordb_client=falkordb_client,
         )
         assert result is mock_dispatcher.resolve_and_create.return_value
 
@@ -273,10 +277,13 @@ class TestResolveGraphBackend:
         with patch("workers.backend._resolve_user_config", AsyncMock(return_value=mock_org_config)):
             from workers.backend import resolve_graph_backend
 
-            ctx = {"graph_backend_dispatcher": mock_dispatcher}
+            ctx = {
+                "graph_backend_dispatcher": mock_dispatcher,
+                "falkordb_client": MagicMock(),
+            }
             with pytest.raises(
                 GraphBackendUnavailableError,
-                match=r"Unknown graph backend 'postgres'.*kaboom",
+                match=r"Unknown graph backend 'falkordb'.*kaboom",
             ):
                 await resolve_graph_backend(ctx, self.USER_ID, mock_db)
 
@@ -294,7 +301,10 @@ class TestResolveGraphBackend:
         with patch("workers.backend._resolve_user_config", AsyncMock(return_value=mock_org_config)):
             from workers.backend import resolve_graph_backend
 
-            ctx = {"graph_backend_dispatcher": mock_dispatcher}
+            ctx = {
+                "graph_backend_dispatcher": mock_dispatcher,
+                "falkordb_client": MagicMock(),
+            }
             with pytest.raises(
                 GraphBackendUnavailableError,
                 match="resolved to None",
