@@ -28,11 +28,12 @@ ARG APP_VERSION=""
 # versions that broke production when a rebuild floated past them
 # (constraints.txt pins only SQLAlchemy/asyncpg/pgvector; `-c` lets
 # everything else resolve as before, so the installed set is unchanged).
+# PII/OCR are extras-gated (openzync[pii]/openzync[ocr]) and intentionally
+# absent here — the runtime logs + metrics their absence at startup.
 # NOTE: README.md must be copied too — hatchling validates it exists at build time.
 COPY constraints.txt pyproject.toml README.md .
 RUN if [ -n "$APP_VERSION" ]; then export SETUPTOOLS_SCM_PRETEND_VERSION="$APP_VERSION"; fi \
-    && pip install --no-cache-dir --user -c constraints.txt -e ".[llm]" \
-    && pip install --no-cache-dir --user https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+    && pip install --no-cache-dir --user -c constraints.txt -e ".[llm]"
 
 # Embeddings are served by the external Ollama service
 # (nomic-embed-text:v1.5 via /api/embed) — no weights are baked into this

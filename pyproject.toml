@@ -45,14 +45,11 @@ dependencies = [
     "networkx>=3.2.0",
     "orjson>=3.11.0",
     "pgvector>=0.2.0",
-    "Pillow>=10.0.0",
     "prometheus-client>=0.19.0,<1",
     "pybreaker>=1.0.1",
-    "pytesseract>=0.3.13",
     "pydantic>=2.7.0",
     "pydantic-settings>=2.2.0",
     "pyjwt>=2.8.0",
-    "PyMuPDF>=1.24.0",
     "PyYAML>=6.0",
     "python-docx>=1.1.0",
     "python-magic>=0.4.27",
@@ -64,7 +61,6 @@ dependencies = [
     "starlette>=0.37.0",
     "structlog>=24.1.0",
     "uvicorn[standard]>=0.27.0",
-    "spacy>=3.8.0",
 ]
 
 [project.optional-dependencies]
@@ -94,6 +90,14 @@ reranker = [
 cohere = [
     "cohere>=5.0.0",
 ]
+pii = [
+    "spacy>=3.8.0",
+]
+ocr = [
+    "PyMuPDF>=1.24.0",
+    "pytesseract>=0.3.13",
+    "Pillow>=10.0.0",
+]
 doc = [
     "sphinx>=7.0.0",
     "furo>=2024.0.0",
@@ -101,7 +105,7 @@ doc = [
     "sphinx-autobuild>=2024.0.0",
 ]
 all = [
-    "openzync[dev,llm,doc,reranker,cohere]",
+    "openzync[dev,llm,doc,reranker,cohere,pii,ocr]",
 ]
 
 [tool.hatch.version]

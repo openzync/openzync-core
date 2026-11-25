@@ -178,6 +178,7 @@ def create_app() -> FastAPI:
         # An unreachable Ollama degrades loudly (embedding calls 503
         # until it recovers) instead of aborting boot — /ready reports it.
         from core.embeddings import prewarm_with_retry
+        from core.optional_deps import log_optional_deps
 
         try:
             await prewarm_with_retry()
@@ -189,6 +190,10 @@ def create_app() -> FastAPI:
             )
         else:
             logger.info("embeddings.prewarmed")
+
+        # Optional extras (pii/ocr) are absent from prod images by design —
+        # log + metric the gap here instead of on the first job needing it.
+        log_optional_deps()
 
         yield
 

@@ -1,0 +1,1 @@
+Moved spaCy/PII and OCR libraries (PyMuPDF, pytesseract, Pillow) out of the base install into `openzync[pii]` / `openzync[ocr]` extras, dropped the baked-in `en_core_web_sm` model download from both Dockerfiles, and added a startup probe (`core.optional_deps`) that logs and metrics missing optional deps instead of failing silently on first use.
