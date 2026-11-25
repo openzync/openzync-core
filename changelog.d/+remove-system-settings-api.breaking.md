@@ -1,0 +1,1 @@
+BREAKING: `GET /admin/system/settings` and `POST /admin/system/settings/{key}/reveal` are removed — the env-backed system-settings surface (and its `core.system_settings` / `schemas.admin_system` settings types) is gone; platform config remains available via `GET/PATCH /admin/system/config`.

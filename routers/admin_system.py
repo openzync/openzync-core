@@ -15,8 +15,6 @@ variants meaningless).
 Endpoints:
     GET    /admin/system/config                        — platform system config
     PATCH  /admin/system/config                        — update platform system config
-    GET    /admin/system/settings                      — list settings (masked)
-    POST   /admin/system/settings/{key}/reveal         — reveal one setting (audited)
     GET    /admin/system/registration                  — instance registration mode
     PATCH  /admin/system/registration                  — update registration mode
     PATCH  /admin/system/users/{user_id}/role          — promote/demote
@@ -34,15 +32,12 @@ from sqlalchemy.ext.asyncio import (
 from core.audit import audit_action
 from core.exceptions import NotFoundError
 from core.system_config import get_system_config, update_system_config
-from core.system_settings import list_system_settings, reveal_system_setting
 from dependencies.auth import require_superadmin
 from dependencies.db import get_db, get_db_superadmin
 from repositories.instance_settings_repository import InstanceSettingsRepository
 from repositories.user_repository import UserRepository
 from schemas.admin_system import (
     MemberRoleResponse,
-    SystemSettingRevealResponse,
-    SystemSettingsResponse,
     UpdateMemberRoleRequest,
 )
 from schemas.instance_settings import (
@@ -145,83 +140,6 @@ async def update_platform_config(
         The freshly stored config.
     """
     return await update_system_config(body, _get_redis(request), db)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Platform system settings (read-only, masked)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-@router.get(
-    "/settings",
-    response_model=SystemSettingsResponse,
-    summary="List platform system settings (masked)",
-    description=(
-        "Returns every known ``OZ_*`` system setting with a masked value — "
-        "secrets render as bullets and database/Redis URLs have userinfo "
-        "stripped.  Raw values are exposed only by the audited reveal "
-        "endpoint.  Requires the platform super-admin role."
-    ),
-)
-async def list_platform_system_settings(
-    request: Request,
-    _user_id: str = Depends(require_superadmin),  # noqa: B008
-) -> SystemSettingsResponse:
-    """List all known system settings, masked.
-
-    Args:
-        request: Incoming HTTP request (unused — kept for signature parity).
-        _user_id: Superadmin user UUID (superadmin-gated).
-
-    Returns:
-        A :class:`SystemSettingsResponse` with masked values.
-    """
-    return await list_system_settings()
-
-
-# ⚠️ BREAKING: reveal moved from GET /settings/{key} to POST
-# /settings/{key}/reveal — GET requests are skipped by the audit
-# middleware (middleware/audit.py:231), so a GET reveal could never be
-# audited. POST is required to guarantee the audit trail.
-@router.post(
-    "/settings/{key}/reveal",
-    response_model=SystemSettingRevealResponse,
-    summary="Reveal a system setting",
-    description=(
-        "Returns the raw stored value of one ``OZ_*`` system setting.  "
-        "Audited.  Requires the platform super-admin role."
-    ),
-)
-@audit_action(
-    "system.settings.revealed",
-    "system",
-    "System setting revealed by superadmin",
-)
-async def reveal_platform_system_setting(
-    key: str,
-    request: Request,
-    _user_id: str = Depends(require_superadmin),  # noqa: B008
-) -> SystemSettingRevealResponse:
-    """Reveal one system setting's raw value.
-
-    Args:
-        key: An ``OZ_*`` setting key.
-        request: Incoming HTTP request (unused — kept for signature parity).
-        _user_id: Superadmin user UUID (superadmin-gated).
-
-    Returns:
-        A :class:`SystemSettingRevealResponse` with the raw value.
-
-    Raises:
-        HTTPException: 404 if the key is unknown or not set.
-    """
-    try:
-        return await reveal_system_setting(key)
-    except NotFoundError:
-        raise HTTPException(
-            status_code=404,
-            detail=f"System setting '{key}' not found.",
-        ) from None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
