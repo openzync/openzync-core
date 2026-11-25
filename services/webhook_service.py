@@ -322,7 +322,11 @@ class WebhookService:
             try:
                 arq_pool = get_arq()
             except RuntimeError as exc:
-                logger.error("Webhook emit failed — ARQ not available: %s", exc)
+                logger.error(
+                    "Webhook emit failed — ARQ not available: %s",
+                    exc,
+                    exc_info=True,
+                )
                 raise  # re-raise into the outer handler: log + count + return False
 
             queue_name = get_queue_name(get_settings().ENVIRONMENT, ARQ_WEBHOOK_QUEUE)

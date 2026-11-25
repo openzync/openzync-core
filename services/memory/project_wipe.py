@@ -28,7 +28,7 @@ class ProjectWipeMixin:
         *,
         confirm: str,
         actor_id: UUID,
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int, int, bool]:
         """Soft-delete all memory (episodes + facts) for a project.
 
         This is the GDPR / memory-wipe operation for a project. It does
@@ -44,7 +44,10 @@ class ProjectWipeMixin:
             actor_id: The authenticated user's UUID (audit attribution).
 
         Returns:
-            Tuple of ``(episodes_deleted, facts_deleted)`` counts.
+            Tuple of ``(episodes_deleted, facts_deleted, blobs_deleted,
+            failed)`` — ``failed`` is ``True`` when the post-commit S3
+            sweep stopped early (partial wipe; leftovers stay GC-visible
+            via their soft-deleted blob rows).
 
         Raises:
             ValidationError: If ``confirm`` does not match ``project_id``
@@ -98,6 +101,7 @@ class ProjectWipeMixin:
         from services.blob_storage_service import BlobStorageService
 
         blobs_deleted = 0
+        failed = False
         last_id: UUID | None = None
         # One S3 client for the whole sweep — not one per page.
         storage = BlobStorage(BlobStorageConfig.from_settings(get_settings()))
@@ -118,8 +122,10 @@ class ProjectWipeMixin:
                         "user_id": str(user_id),
                         "project_id": str(project_id),
                         "page_size": len(page),
+                        "blobs_deleted": blobs_deleted,
                     },
                 )
+                failed = True
                 break
             blobs_deleted += len(page)
 
@@ -131,6 +137,7 @@ class ProjectWipeMixin:
                 "episodes_deleted": episodes_deleted,
                 "facts_deleted": facts_deleted,
                 "blobs_deleted": blobs_deleted,
+                "failed": failed,
             },
         )
 
@@ -149,7 +156,9 @@ class ProjectWipeMixin:
                 "timestamp": datetime.now(UTC).isoformat(),
                 "episodes_deleted": episodes_deleted,
                 "facts_deleted": facts_deleted,
+                "blobs_deleted": blobs_deleted,
+                "failed": failed,
             },
         )
 
-        return episodes_deleted, facts_deleted
+        return episodes_deleted, facts_deleted, blobs_deleted, failed

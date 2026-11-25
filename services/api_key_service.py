@@ -10,6 +10,8 @@ no org-wide API keys.
 
 from __future__ import annotations
 
+import asyncio
+from typing import Any
 from uuid import UUID
 
 import redis.asyncio as aioredis
@@ -27,6 +29,62 @@ logger = structlog.get_logger(__name__)
 # Cache key prefixes — must match middleware/auth.py.
 _AUTH_CACHE_PREFIX = "auth:key:"
 _AUTH_NEG_CACHE_PREFIX = "auth:neg:"
+
+LAST_USED_SEEN_TTL_SEC: int = 300
+"""Sampling window for ``last_used_at`` writes.
+
+The middleware guards the touch with ``SET auth:seen:{id} NX EX 300`` —
+at most one DB write per key per window, no matter the request rate.
+"""
+
+
+async def _touch_last_used(db_factory: Any, key_id: UUID) -> None:
+    """Fire-and-forget ``last_used_at`` write (never raises)."""
+    try:
+        async with db_factory() as session:
+            await ApiKeyRepository(session).update_last_used(key_id)
+            await session.commit()
+    except Exception:
+        logger.warning(
+            "api_key.last_used_update_failed",
+            key_id=str(key_id),
+            exc_info=True,
+        )
+
+
+async def schedule_sampled_last_used_touch(
+    redis: aioredis.Redis | None,
+    db_factory: Any,
+    key_id: UUID,
+) -> None:
+    """Sample the ``last_used_at`` write to one DB hit per window per key.
+
+    Claims ``auth:seen:{key_id}`` (``SET NX EX``); only the claim winner
+    schedules the write as a background task — the hot path awaits just
+    the Redis guard, never the DB.  All failures are logged and swallowed:
+    ``last_used_at`` is observability, never request fate.
+
+    Args:
+        redis: Async Redis client, or ``None`` (no-op).
+        db_factory: Session factory for the background write.
+        key_id: The API key UUID to touch.
+    """
+    if redis is None or db_factory is None:
+        return
+    try:
+        seen = await redis.set(
+            f"auth:seen:{key_id}", "1", nx=True, ex=LAST_USED_SEEN_TTL_SEC
+        )
+    except Exception:
+        logger.warning(
+            "api_key.last_used_seen_guard_failed",
+            key_id=str(key_id),
+            exc_info=True,
+        )
+        return
+    if not seen:
+        return
+    asyncio.get_running_loop().create_task(_touch_last_used(db_factory, key_id))
 
 
 class ApiKeyService:

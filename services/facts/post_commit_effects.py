@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from core.events import EventType
+from core.exceptions import ExternalServiceError
 from middleware.metrics import (
     facts_invalidated_total,
     facts_retracted_total,
@@ -246,14 +247,28 @@ class PostCommitEffectsMixin:
                         )
                     else:
                         rebuilt.append(backend)
-                await GraphEdgeSyncService(
-                    backends=rebuilt, arq_pool=sync.arq_pool
-                ).sync_supersessions(
-                    user_id=user_id,
-                    project_id=project_id,
-                    events=events,
-                    at_time=at_time,
-                )
+                try:
+                    await GraphEdgeSyncService(
+                        backends=rebuilt, arq_pool=sync.arq_pool
+                    ).sync_supersessions(
+                        user_id=user_id,
+                        project_id=project_id,
+                        events=events,
+                        at_time=at_time,
+                    )
+                except ExternalServiceError:
+                    # External-backend ARQ enqueue failed — facts are
+                    # already committed and the reconcile_graph_edges cron
+                    # self-heals. Degraded, not fatal: log distinctly and
+                    # let the Postgres expiries commit below.
+                    logger.exception(
+                        "fact_invalidation.graph_sync_degraded",
+                        extra={
+                            "user_id": str(user_id),
+                            "project_id": str(project_id),
+                            "event_count": len(events),
+                        },
+                    )
                 for fresh in fresh_sessions:
                     await fresh.commit()
             finally:

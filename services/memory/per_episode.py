@@ -123,5 +123,14 @@ class PerEpisodeEnqueueMixin:
                             "episode_id": episode_id,
                         },
                     )
+                logger.error(
+                    "memory.arq_task_enqueue_failed",
+                    extra={
+                        "job_id": job_id,
+                        "task": task_name,
+                        "episode_id": episode_id,
+                    },
+                    exc_info=True,
+                )
                 raise
 

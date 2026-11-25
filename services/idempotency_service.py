@@ -100,7 +100,9 @@ class IdempotencyResult:
 
     Attributes:
         status:        One of ``NEW``, ``REPLAY``, ``CONFLICT``.
-        response_data: Cached response body when ``status == REPLAY``.
+        response_data: Cached response body when ``status == REPLAY`` —
+            also populated on ``CONFLICT`` so callers can surface the
+            prior ``job_id`` in the 409 body for reconciliation.
         message:       Human-readable description of the result.
     """
 
@@ -279,6 +281,9 @@ class IdempotencyService:
             )
             return IdempotencyResult(
                 status=IdempotencyStatus.CONFLICT,
+                # Carry the prior response so callers can surface its
+                # job_id in the 409 body for client reconciliation.
+                response_data=entry.get("response_body"),
                 message=(
                     "Idempotency-Key already used with a different request body. "
                     "Each Idempotency-Key must uniquely identify a single request."

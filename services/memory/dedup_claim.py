@@ -94,8 +94,15 @@ class DedupClaimMixin:
             )
             return IngestMemoryResponse(**result.response_data)
         if result.status == IdempotencyStatus.CONFLICT:
+            # Surface the prior job_id so the client can reconcile —
+            # retry with the original body, or issue a fresh key.
+            prior_job_id: str | None = None
+            if isinstance(result.response_data, dict):
+                raw_job_id = result.response_data.get("job_id")
+                prior_job_id = str(raw_job_id) if raw_job_id else None
             raise ConflictError(
-                "Idempotency-Key already used with a different request body"
+                "Idempotency-Key already used with a different request body",
+                detail={"job_id": prior_job_id} if prior_job_id else None,
             )
         return None
 

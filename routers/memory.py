@@ -46,6 +46,7 @@ from dependencies.project_auth import require_project_membership
 from dependencies.services import get_memory_service
 from schemas.memory import (
     DeleteMemoryConfirm,
+    DeleteMemoryResponse,
     IngestMemoryRequest,
     IngestMemoryResponse,
 )
@@ -276,6 +277,7 @@ async def ingest_messages(
     "the data wipe operation — all sessions are preserved, but all message "
     "history and extracted facts are invalidated.",
     responses={
+        200: {"description": "Partial wipe — S3 sweep failed partway, counts returned."},
         204: {"description": "Memory deleted successfully (no content)."},
         401: {"description": "Missing or invalid authentication."},
         403: {"description": "Not a member of this project."},
@@ -290,23 +292,37 @@ async def delete_project_memory(
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:write")),
     actor: UUID = Depends(get_current_user_id),
-) -> Response:
+) -> Response | DeleteMemoryResponse:
     """Delete all memory for a project.
 
     Soft-deletes all episodes (messages) and facts for the given project.
     Sessions remain intact. This operation is **not** reversible — deleted
     data is marked as inactive but preserved for a 30-day GDPR grace period
     before hard-purge. The ``confirm`` body must echo the path project ID.
+
+    Returns 204 on a full wipe, or 200 with partial counts and
+    ``failed=True`` when the post-commit S3 sweep stopped early —
+    leftover objects stay GC-visible via their soft-deleted blob rows.
     """
-    # note: explicit empty Response — implicit None makes FastAPI serialize
-    # a JSON `null` body on the 204, which uvicorn rejects and rolls back
-    # the wipe in get_db teardown after 204 headers flush.
+    # note: explicit empty Response on the 204 — implicit None makes FastAPI
+    # serialize a JSON `null` body on the 204, which uvicorn rejects and
+    # rolls back the wipe in get_db teardown after 204 headers flush.
     user_id = UUID(request.state.user_id)
     project_id = UUID(request.path_params["project_id"])
-    await service.delete_project_memory(
-        user_id=user_id,
-        project_id=project_id,
-        confirm=body.confirm,
-        actor_id=actor,
+    episodes_deleted, facts_deleted, blobs_deleted, failed = (
+        await service.delete_project_memory(
+            user_id=user_id,
+            project_id=project_id,
+            confirm=body.confirm,
+            actor_id=actor,
+        )
     )
+    if failed:
+        return DeleteMemoryResponse(
+            status="partial",
+            episodes_deleted=episodes_deleted,
+            facts_deleted=facts_deleted,
+            blobs_deleted=blobs_deleted,
+            failed=True,
+        )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
