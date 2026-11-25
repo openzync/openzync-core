@@ -90,7 +90,7 @@ class TestWipeSweepBestEffort:
                 actor_id=USER_ID,
             )
 
-        assert result == (5, 3)
+        assert result == (5, 3, 0, True)
         # Rows were already committed before the sweep — preserved, GC-visible.
         service._episode_repo.soft_delete_by_project.assert_awaited_once()
         service._fact_repo.soft_delete_by_project.assert_awaited_once()

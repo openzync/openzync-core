@@ -380,7 +380,13 @@ class TestAuthThrottle:
     @pytest.fixture
     def mock_redis(self) -> AsyncMock:
         """Create a fresh mock Redis for throttle tests."""
-        return AsyncMock()
+        from redis.exceptions import ResponseError
+
+        redis = AsyncMock()
+        # AuthThrottle._incr tries EVAL first; force the INCR+EXPIRE
+        # fallback path used when EVAL is unavailable (fakeredis/unit).
+        redis.eval = AsyncMock(side_effect=ResponseError("unknown command `EVAL`"))
+        return redis
 
     async def test_check_verify_attempt_allows(
         self,
