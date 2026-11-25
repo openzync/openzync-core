@@ -11,6 +11,10 @@ no ``embedded_at`` timestamp (never attempted, not retracted) are re-enqueued
 for ``embed_fact``.  Facts whose embedding permanently failed are retired by
 ``embed_fact`` (``embedded_at`` set) and are excluded.
 
+Also runs a blob-text repair pass: ``episode_blobs`` rows with
+``extracted_text IS NULL`` older than 10 minutes (in-flight uploads
+excluded) are re-enqueued for ``extract_blob_text``.
+
 This is the safety net for worker crashes, job timeouts, or any scenario where
 enrichment tasks are dropped without completion.  Without this, a worker crash
 leaves episodes un-enriched until an operator manually intervenes.
@@ -33,6 +37,7 @@ from workers.tasks.base import (
     ENRICHMENT_FACTS,
     ENRICHMENT_STRUCTURED_EXTRACTION,
     LLM_INVALIDATION_BIT,
+    enqueue_reconcile_job,
     with_task_metrics,
 )
 
@@ -62,6 +67,13 @@ BACKLOG_SKIP_THRESHOLD: int = 1_000
 """If the high-priority queue already has more pending jobs than this
 threshold, skip reconciliation entirely.  Prevents adding jobs faster
 than workers can drain them when there's already a large backlog."""
+
+BLOB_STALE_AFTER_MINUTES: int = 10
+"""Blobs extracted within this window are in-flight — the extractor may
+still be downloading or running OCR."""
+
+BLOB_RECONCILE_BATCH_SIZE: int = 200
+"""Maximum blobs to re-enqueue per tick, oldest first."""
 
 # ── Task configuration ─────────────────────────────────────────────────────────
 
@@ -205,6 +217,109 @@ async def _repair_missing_fact_embeddings(
     return enqueued
 
 
+async def _repair_missing_blob_texts(
+    session_factory: Any,
+    arq_redis: Any,
+    low_queue_name: str,
+) -> int:
+    """Enqueue ``extract_blob_text`` for blobs never extracted.
+
+    Blobs are eligible when ``extracted_text IS NULL`` and older than
+    ``BLOB_STALE_AFTER_MINUTES`` (in-flight uploads excluded), oldest
+    first, in archived projects excluded.  Enqueueing reuses the
+    idempotent ``memory:enqueued:extract_blob_text:{blob_id}`` claims —
+    overlapping ticks never double-enqueue; a lost job retries once
+    the 1h claim TTL expires.
+
+    Args:
+        session_factory: ARQ ctx async session factory.
+        arq_redis: ARQ Redis client used to enqueue jobs.
+        low_queue_name: Name of the low-priority queue.
+
+    Returns:
+        Number of ``extract_blob_text`` jobs enqueued.
+    """
+    from sqlalchemy import select
+
+    from models.episode_blob import EpisodeBlob
+    from models.project import Project
+
+    cutoff = datetime.now(UTC) - timedelta(minutes=BLOB_STALE_AFTER_MINUTES)
+
+    rows: list[dict[str, Any]] = []
+    async with session_factory() as db:
+        await rls.set_bypass_rls(db, True)
+        result = await db.execute(
+            select(
+                EpisodeBlob.id,
+                EpisodeBlob.user_id,
+                EpisodeBlob.project_id,
+                EpisodeBlob.episode_id,
+                EpisodeBlob.storage_key,
+                EpisodeBlob.mime_type,
+                EpisodeBlob.file_name,
+            )
+            .where(
+                EpisodeBlob.extracted_text.is_(None),
+                EpisodeBlob.created_at < cutoff,
+                EpisodeBlob.project_id.not_in(
+                    select(Project.id).where(Project.is_archived.is_(True))
+                ),
+            )
+            .order_by(EpisodeBlob.created_at.asc())
+            .limit(BLOB_RECONCILE_BATCH_SIZE)
+        )
+        for row in result.all():
+            rows.append(
+                {
+                    "blob_id": str(row.id),
+                    "user_id": str(row.user_id),
+                    "project_id": str(row.project_id),
+                    "episode_id": str(row.episode_id),
+                    "storage_key": row.storage_key,
+                    "mime_type": row.mime_type,
+                    "file_name": row.file_name,
+                }
+            )
+
+    if not rows:
+        return 0
+
+    logger.info(
+        "reconcile_enrichment.found_unextracted_blobs",
+        count=len(rows),
+    )
+
+    enqueued: int = 0
+    for blob_row in rows:
+        blob_id = blob_row["blob_id"]
+        try:
+            if await enqueue_reconcile_job(
+                arq_redis,
+                task="extract_blob_text",
+                queue=low_queue_name,
+                dedup_id=blob_id,
+                token=f"reconcile_{blob_id[:8]}",
+                blob_id=blob_id,
+                user_id=blob_row["user_id"],
+                project_id=blob_row["project_id"],
+                episode_id=blob_row["episode_id"],
+                storage_key=blob_row["storage_key"],
+                mime_type=blob_row["mime_type"],
+                file_name=blob_row["file_name"],
+                trace_id=f"reconcile_{blob_id[:8]}",
+            ):
+                enqueued += 1
+        except Exception as exc:
+            logger.warning(
+                "reconcile_enrichment.enqueue_failed",
+                task="extract_blob_text",
+                blob_id=blob_id,
+                error=str(exc),
+            )
+    return enqueued
+
+
 @with_task_metrics
 async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
     """Detect stale episodes and re-enqueue missing enrichment tasks.
@@ -274,6 +389,15 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
         high_queue_name,
     )
 
+    # ── Blob-text repair pass ──────────────────────────────────────────
+    # Blobs whose extraction never ran (extracted_text IS NULL past the
+    # in-flight window) — the ingest-time enqueue was lost.
+    blob_enqueued = await _repair_missing_blob_texts(
+        session_factory,
+        arq_redis,
+        low_queue_name,
+    )
+
     # ── Query stale episodes ─────────────────────────────────────────────
     from sqlalchemy import or_, select
 
@@ -331,8 +455,13 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
 
     if not stale_episodes:
         logger.debug("reconcile_enrichment.nothing_stale")
+        parts = []
         if fact_embedding_enqueued:
-            return f"Re-enqueued {fact_embedding_enqueued} fact embedding tasks"
+            parts.append(f"{fact_embedding_enqueued} fact embedding tasks")
+        if blob_enqueued:
+            parts.append(f"{blob_enqueued} blob extraction tasks")
+        if parts:
+            return "Re-enqueued " + ", plus ".join(parts)
         return "No stale episodes found"
 
     logger.info(
@@ -416,5 +545,7 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
     )
     if fact_embedding_enqueued:
         summary += f", plus {fact_embedding_enqueued} fact embedding tasks"
+    if blob_enqueued:
+        summary += f", plus {blob_enqueued} blob extraction tasks"
     logger.info("reconcile_enrichment.completed", summary=summary)
     return summary

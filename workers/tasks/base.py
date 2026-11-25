@@ -29,6 +29,7 @@ from core.enrichment_bits import (  # noqa: F401 — re-export, canonical home
     ENRICHMENT_STRUCTURED_EXTRACTION,
     LLM_INVALIDATION_BIT,
 )
+from prometheus_client import Counter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -209,6 +210,78 @@ def with_task_metrics(func: Callable[F, T]) -> Callable[F, T]:
     return wrapper  # type: ignore[return-value]
 
 
+# ── Reconcile idempotent enqueue ─────────────────────────────────────────────
+
+RECONCILE_DEDUP_TTL_SEC: int = 3600
+"""TTL for reconcile dedupe keys — short on purpose.  A lost job is retried
+on a later tick once the key expires; the ingest path's 7-day TTL would
+pin a failed repair for a week."""
+
+reconcile_enqueued_total = Counter(
+    "reconcile_enqueued_total",
+    "Jobs re-enqueued by reconcile crons, by task name",
+    labelnames=["task"],
+)
+
+_LUA_RELEASE_OWN_CLAIM = (
+    "if redis.call('GET', KEYS[1]) == ARGV[1] then "
+    "return redis.call('DEL', KEYS[1]) else return 0 end"
+)
+
+
+async def enqueue_reconcile_job(
+    arq_redis: Any,
+    *,
+    task: str,
+    queue: str,
+    dedup_id: str,
+    token: str,
+    **kwargs: Any,
+) -> bool:
+    """Enqueue one reconcile repair job, idempotently.
+
+    Claims ``memory:enqueued:{task}:{dedup_id}`` (``SET key token NX EX``)
+    before enqueueing so overlapping cron ticks never double-enqueue.
+    On enqueue failure the key is released only if it still holds our
+    token (Lua compare-and-delete).  ID-only payloads — workers load
+    content/metadata from the row.
+
+    Args:
+        arq_redis: ARQ Redis client used to enqueue jobs.
+        task: ARQ task name (also the ``reconcile_enqueued_total`` label).
+        queue: Fully qualified queue name.
+        dedup_id: Entity ID qualifying the dedupe key (episode/blob/edge).
+        token: Claim owner token, released on failure only if still ours.
+        kwargs: Task payload.
+
+    Returns:
+        ``True`` when the job was enqueued, ``False`` when a live claim
+        already covers it.
+
+    Raises:
+        Exception: If the enqueue itself fails (claim released first).
+    """
+    dedup_key = f"memory:enqueued:{task}:{dedup_id}"
+    claimed: bool = await arq_redis.set(
+        dedup_key, token, ex=RECONCILE_DEDUP_TTL_SEC, nx=True
+    )
+    if not claimed:
+        return False
+    try:
+        await arq_redis.enqueue_job(task, **kwargs, _queue_name=queue)
+    except Exception:
+        try:
+            await arq_redis.eval(_LUA_RELEASE_OWN_CLAIM, 1, dedup_key, token)
+        except Exception:
+            logger.warning(
+                "reconcile.dedup_cleanup_failed",
+                extra={"task": task, "dedup_id": dedup_id},
+            )
+        raise
+    reconcile_enqueued_total.labels(task=task).inc()
+    return True
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 __all__ = [
@@ -222,6 +295,9 @@ __all__ = [
     "ENRICHMENT_OBSERVATIONS",
     "ENRICHMENT_STRUCTURED_EXTRACTION",
     "LLM_INVALIDATION_BIT",
+    "RECONCILE_DEDUP_TTL_SEC",
+    "enqueue_reconcile_job",
+    "reconcile_enqueued_total",
     "with_retry",
     "with_task_metrics",
 ]
