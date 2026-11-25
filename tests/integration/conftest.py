@@ -242,6 +242,9 @@ async def app(engine, redis_client) -> Any:
         DATABASE_URL=driver_url,
         REDIS_URL=redis_url,
         SECRET_KEY="i" * 32,
+        S3_ENDPOINT_URL="http://minio:9000",
+        S3_ACCESS_KEY_ID="test-key",
+        S3_SECRET_ACCESS_KEY="test-secret",
     )
     set_settings(settings)
 
@@ -522,6 +525,9 @@ async def isolated_app(engine, redis_client, db_session) -> Any:
         DATABASE_URL=driver_url,
         REDIS_URL=redis_url,
         SECRET_KEY="i" * 32,
+        S3_ENDPOINT_URL="http://minio:9000",
+        S3_ACCESS_KEY_ID="test-key",
+        S3_SECRET_ACCESS_KEY="test-secret",
     )
     set_settings(settings)
 

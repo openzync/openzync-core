@@ -41,6 +41,9 @@ def _init_settings() -> None:
         REDIS_URL="redis://localhost:6379/1",
         SECRET_KEY="a" * 32,
         ENVIRONMENT="test",
+        S3_ENDPOINT_URL="http://minio:9000",
+        S3_ACCESS_KEY_ID="test-key",
+        S3_SECRET_ACCESS_KEY="test-secret",
     )
     set_settings(settings)
 

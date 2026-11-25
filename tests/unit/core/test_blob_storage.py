@@ -43,20 +43,22 @@ class TestBlobStorageConfig:
         config = BlobStorageConfig(max_blob_size_mb=10)
         assert config.max_blob_bytes == 10 * 1024 * 1024
 
-    def test_from_org_config_populates_all_fields(self) -> None:
-        """from_org_config reads all fields from a dict."""
+    def test_from_settings_populates_all_fields(self) -> None:
+        """from_settings reads all fields from the global Settings."""
+        from types import SimpleNamespace
+
         from core.blob_storage import BlobStorageConfig
 
-        org_cfg = {
-            "backend": "minio",
-            "endpoint_url": "http://minio:9001",
-            "region": "us-east-1",
-            "access_key_id": "minioadmin",
-            "secret_access_key": "minioadmin",
-            "bucket_name": "my-bucket",
-            "max_blob_size_mb": 100,
-        }
-        config = BlobStorageConfig.from_org_config(org_cfg)
+        settings = SimpleNamespace(
+            S3_BACKEND="minio",
+            S3_ENDPOINT_URL="http://minio:9001",
+            S3_REGION="us-east-1",
+            S3_ACCESS_KEY_ID="minioadmin",
+            S3_SECRET_ACCESS_KEY="minioadmin",
+            S3_BUCKET_NAME="my-bucket",
+            BLOB_MAX_SIZE_MB=100,
+        )
+        config = BlobStorageConfig.from_settings(settings)
         assert config.backend == "minio"
         assert config.endpoint_url == "http://minio:9001"
         assert config.region == "us-east-1"
@@ -65,11 +67,22 @@ class TestBlobStorageConfig:
         assert config.bucket_name == "my-bucket"
         assert config.max_blob_size_mb == 100
 
-    def test_from_org_config_uses_defaults_for_missing(self) -> None:
-        """from_org_config fills defaults for missing keys."""
+    def test_from_settings_uses_defaults_for_missing(self) -> None:
+        """from_settings falls back to field defaults for unset optionals."""
+        from types import SimpleNamespace
+
         from core.blob_storage import BlobStorageConfig
 
-        config = BlobStorageConfig.from_org_config({})
+        settings = SimpleNamespace(
+            S3_BACKEND="s3",
+            S3_ENDPOINT_URL="http://minio:9000",
+            S3_REGION="auto",
+            S3_ACCESS_KEY_ID="",
+            S3_SECRET_ACCESS_KEY="",
+            S3_BUCKET_NAME="openzync-blobs",
+            BLOB_MAX_SIZE_MB=50,
+        )
+        config = BlobStorageConfig.from_settings(settings)
         assert config.backend == "s3"
         assert config.bucket_name == "openzync-blobs"
         assert config.max_blob_size_mb == 50

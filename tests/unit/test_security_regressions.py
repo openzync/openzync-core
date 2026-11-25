@@ -42,6 +42,9 @@ def _prod_settings() -> cfg.Settings:
         ENVIRONMENT="production",
         RATE_LIMIT_IP_MAX=1,
         RATE_LIMIT_WINDOW_SEC=60,
+        S3_ENDPOINT_URL="http://minio:9000",
+        S3_ACCESS_KEY_ID="test-key",
+        S3_SECRET_ACCESS_KEY="test-secret",
     )
 
 

@@ -257,11 +257,11 @@ class TestCleanupOrphanBlobs:
             assert result == len(blobs)
 
     @pytest.mark.asyncio
-    async def test_config_resolved_from_db(self) -> None:
-        """Org config resolves DB-backed — no bootstrap client involved.
+    async def test_config_resolved_from_settings(self) -> None:
+        """Blob backend resolves from global Settings — never per-org.
 
-        Covers the DB-backed config fetch: ``get_org_config`` is called
-        with the per-org session and returns storage overrides.
+        Covers the global-backend path: no org-config fetch, the
+        ``BlobStorageService`` still cleans the orphaned blobs.
         """
         blobs = [self._make_blob()]
 
@@ -274,7 +274,6 @@ class TestCleanupOrphanBlobs:
                 "repositories.episode_blob_repository.EpisodeBlobRepository"
             ) as mock_repo_cls,
             patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
-            patch("core.org_config.get_org_config") as mock_cfg,
             patch("asyncio.sleep", AsyncMock()),
         ):
             mock_repo = AsyncMock()
@@ -284,12 +283,6 @@ class TestCleanupOrphanBlobs:
 
             mock_svc = AsyncMock()
             mock_svc_cls.return_value = mock_svc
-
-            org_cfg = MagicMock()
-            org_cfg.to_blob_storage_config.return_value = {
-                "bucket_name": "custom-bucket"
-            }
-            mock_cfg.return_value = org_cfg
 
             db = AsyncMock()
             db.__aenter__.return_value = db
@@ -308,7 +301,6 @@ class TestCleanupOrphanBlobs:
             )
 
             assert result == len(blobs)
-            mock_cfg.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_no_db_engine_in_ctx(self) -> None:
@@ -359,8 +351,8 @@ class TestCleanupOrphanBlobs:
             mock_engine.dispose.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_org_config_fetched_from_db(self) -> None:
-        """Org config comes from the DB-backed resolver with the org session."""
+    async def test_global_config_used_for_cleanup(self) -> None:
+        """Cleanup uses the global backend; no per-org config lookup."""
         blobs = [self._make_blob()]
 
         with (
@@ -372,7 +364,6 @@ class TestCleanupOrphanBlobs:
                 "repositories.episode_blob_repository.EpisodeBlobRepository"
             ) as mock_repo_cls,
             patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
-            patch("core.org_config.get_org_config") as mock_cfg,
             patch("asyncio.sleep", AsyncMock()),
         ):
             mock_repo = AsyncMock()
@@ -383,67 +374,10 @@ class TestCleanupOrphanBlobs:
             mock_svc = AsyncMock()
             mock_svc_cls.return_value = mock_svc
 
-            org_cfg = MagicMock()
-            org_cfg.to_blob_storage_config.return_value = {
-                "bucket_name": "custom-bucket"
-            }
-            mock_cfg.return_value = org_cfg
-
             db = AsyncMock()
             db.__aenter__.return_value = db
             db.__aexit__.return_value = None
 
-            ctx = {
-                "db_engine": MagicMock(),
-                "db_session_factory": self._make_session_factory(db),
-            }
-
-            from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
-
-            result = await cleanup_orphan_blobs(
-                ctx=ctx,
-                user_id=_ORG_ID,
-            )
-
-            assert result == len(blobs)
-            mock_cfg.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_config_fetch_failure_continues(self) -> None:
-        """Config fetch failure is logged but does not block cleanup.
-
-        The DB-backed ``get_org_config`` raising is swallowed by the
-        config-fetch try/except — cleanup proceeds with default S3 config.
-        """
-        blobs = [self._make_blob()]
-
-        with (
-            patch(
-                "workers.tasks.cleanup_orphan_blobs.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "repositories.episode_blob_repository.EpisodeBlobRepository"
-            ) as mock_repo_cls,
-            patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
-            patch(
-                "core.org_config.get_org_config",
-                side_effect=Exception("DB unreachable"),
-            ),
-            patch("asyncio.sleep", AsyncMock()),
-        ):
-            mock_repo = AsyncMock()
-            mock_repo.get_orphaned_blobs.return_value = blobs
-            mock_repo.delete_by_ids.return_value = blobs
-            mock_repo_cls.return_value = mock_repo
-
-            mock_svc = AsyncMock()
-            mock_svc_cls.return_value = mock_svc
-
-            # Ensure init_db_engine is mocked so it doesn't try real DB
-            db = AsyncMock()
-            db.__aenter__.return_value = db
-            db.__aexit__.return_value = None
             ctx = {
                 "db_engine": MagicMock(),
                 "db_session_factory": self._make_session_factory(db),
