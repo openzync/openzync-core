@@ -380,7 +380,7 @@ async def get_graph_service(
     dispatcher: GraphBackendDispatcher = request.app.state.graph_backend_dispatcher
 
     # Resolve SurrealDB connection only when the user explicitly configures SurrealDB.
-    # For postgres or none backends, skip the pool entirely — avoids unnecessary
+    # For falkordb or none backends, skip the pool entirely — avoids unnecessary
     # network round-trips and prevents failures when SurrealDB is down.
     surreal = None
     user_id = UUID(request.state.user_id)

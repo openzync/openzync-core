@@ -21,16 +21,10 @@ create edges — nothing to expire.
 
 Execution routing:
 
-* Postgres backend — ``expire_relationships_matching`` is called
-  directly on the backend's session.  The caller owns the commit point:
-  when invoked from the post-commit effect (``FactInvalidationService``)
-  the effect wraps the call in a fresh committed session so the expiry
-  is durable; when invoked inside an open transaction the expiry joins
-  it atomically.  Failures propagate loudly — never swallowed.
-* SurrealDB / FalkorDB backends — an ARQ task ``expire_graph_edges`` is
-  enqueued on the low-priority queue; the task resolves the org's
-  backend inside the worker and expires there.  Idempotent via
-  ``WHERE invalid_at IS NULL`` (replay → count 0).
+* All backends are external (SurrealDB/FalkorDB) — an ARQ task
+  ``expire_graph_edges`` is enqueued on the low-priority queue; the task
+  resolves the org's backend inside the worker and expires there.
+  Idempotent via ``WHERE invalid_at IS NULL`` (replay → count 0).
 """
 
 from __future__ import annotations
@@ -44,7 +38,6 @@ from uuid import UUID
 from core.config import get_settings
 from core.exceptions import ExternalServiceError
 from core.queue_names import get_queue_name
-from packages.graph_backend.postgres import PostgresGraphBackend
 
 if TYPE_CHECKING:
     from core.arq import ARQPool
@@ -52,7 +45,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ARQ task name for external (non-Postgres) backend expiry — registered on
+# ARQ task name for external-backend expiry — registered on
 # the low-priority worker (``services/worker/worker.py`` LOW_QUEUE_TASKS).
 EXPIRE_GRAPH_EDGES_TASK: str = "expire_graph_edges"
 ARQ_QUEUE: str = "low"
@@ -221,11 +214,10 @@ class GraphEdgeSyncService:
     """Synchronises superseded-fact transitions into graph backends.
 
     Args:
-        backends: The resolved per-org graph backends.  Postgres backends
-            are expired in-transaction on their own session; external
-            backends (SurrealDB/FalkorDB) receive an ARQ task.  May be
-            empty (graph disabled) — the service is a no-op.
-        arq_pool: ARQ pool for external-backend task enqueueing.  When
+        backends: The resolved per-org graph backends (external only —
+            SurrealDB/FalkorDB).  May be empty (graph disabled) — the
+            service is a no-op.
+        arq_pool: ARQ pool for expiry-task enqueueing.  When
             ``None`` the module singleton from ``core.arq.get_arq()`` is
             used (the established FastAPI/worker pattern).
     """
@@ -256,17 +248,11 @@ class GraphEdgeSyncService:
         events: list[SupersessionEvent],
         at_time: datetime,
     ) -> None:
-        """Compute the D1 expire set and execute it against all backends.
+        """Compute the D1 expire set and enqueue it for every backend.
 
-        Postgres backends are expired directly on their session — the
-        caller owns the commit point (in-transaction when invoked before
-        commit, explicit transaction when invoked from the post-commit
-        effect).  A raise here is deliberate: the caller must see it.
-
-        External backends receive one ``expire_graph_edges`` ARQ job per
-        command on the low-priority queue; enqueue failures raise (the
-        post-commit effect logs them loudly, the fact commit is already
-        durable and unaffected).
+        One ``expire_graph_edges`` ARQ job per command on the low-priority
+        queue; enqueue failures raise (the post-commit effect logs them
+        loudly, the fact commit is already durable and unaffected).
 
         Args:
             user_id: Tenant scope.
@@ -275,8 +261,8 @@ class GraphEdgeSyncService:
             at_time: The supersession instant (deterministic).
 
         Raises:
-            ExternalServiceError: If a Postgres expiry fails or an ARQ
-                enqueue fails.  Never swallowed.
+            ExternalServiceError: If an ARQ enqueue fails.  Never
+                swallowed.
         """
         if not events or not self._backends:
             return
@@ -286,19 +272,7 @@ class GraphEdgeSyncService:
         if not commands:
             return
 
-        for backend in self._backends:
-            if isinstance(backend, PostgresGraphBackend):
-                for command in commands:
-                    await backend.expire_relationships_matching(
-                        user_id=command.user_id,
-                        project_id=command.project_id,
-                        source_id=command.source_id,
-                        target_id=command.target_id,
-                        relationship_type=command.relationship_type,
-                        at_time=command.at_time,
-                    )
-            else:
-                await self._enqueue_expiry(commands)
+        await self._enqueue_expiry(commands)
 
     async def _enqueue_expiry(self, commands: list[EdgeExpiryCommand]) -> None:
         """Enqueue one ``expire_graph_edges`` ARQ job per command (low queue).
