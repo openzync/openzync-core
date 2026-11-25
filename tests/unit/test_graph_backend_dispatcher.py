@@ -152,14 +152,11 @@ class TestGraphBackendDispatcher:
     ) -> None:
         """Postgres creation is hard-blocked — raises ValueError (deprecated v1.1.0)."""
         disp = GraphBackendDispatcher()
-        mock_cls = MagicMock()
-        disp.register("postgres", mock_cls)
 
         cfg = MagicMock(graph_backend="postgres")
         cfg.graph_max_traversal_depth = None
         with pytest.raises(ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"):
             disp.resolve_and_create(cfg, mock_db)
-        mock_cls.assert_not_called()
 
     # ── Postgres-specific kwargs ────────────────────────────────────────────────
 
@@ -168,28 +165,22 @@ class TestGraphBackendDispatcher:
     ) -> None:
         """Postgres hard-blocked — deprecated, raises regardless of depth."""
         disp = GraphBackendDispatcher()
-        mock_cls = MagicMock()
-        disp.register("postgres", mock_cls)
 
         cfg = MagicMock(graph_backend="postgres")
         cfg.graph_max_traversal_depth = 5
         with pytest.raises(ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"):
             disp.resolve_and_create(cfg, mock_db)
-        mock_cls.assert_not_called()
 
     def test_postgres_without_max_traversal_depth(
         self, mock_db: MagicMock
     ) -> None:
         """Postgres hard-blocked — None depth also raises (deprecated)."""
         disp = GraphBackendDispatcher()
-        mock_cls = MagicMock()
-        disp.register("postgres", mock_cls)
 
         cfg = MagicMock(graph_backend="postgres")
         cfg.graph_max_traversal_depth = None
         with pytest.raises(ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"):
             disp.resolve_and_create(cfg, mock_db)
-        mock_cls.assert_not_called()
 
     def test_non_postgres_backend_ignores_extra_kwargs(
         self, mock_db: MagicMock
@@ -226,41 +217,39 @@ class TestGraphBackendDispatcher:
         assert len(backends) == 1
 
     def test_create_all_backends_multiple(self, mock_db: MagicMock) -> None:
-        """Multiple registered backends → postgres skipped (410), others get kwargs."""
+        """Single non-postgres backend → created with no kwargs."""
         disp = GraphBackendDispatcher()
-        cls_a = MagicMock()
         cls_b = MagicMock()
-        disp.register("postgres", cls_a)   # postgres is gone — skipped
         disp.register("other", cls_b)      # non-postgres receives no db
 
         backends = disp.create_all_backends(mock_db)
 
         assert len(backends) == 1
-        cls_a.assert_not_called()
         cls_b.assert_called_once_with()  # no db — only surreal backends get surreal
 
-    def test_create_all_backends_passes_depth_to_postgres(
+    def test_create_all_backends_passes_depth_to_surrealdb(
         self, mock_db: MagicMock
     ) -> None:
-        """Postgres backend is gone — skipped even with max_traversal_depth."""
+        """SurrealDB backend receives max_traversal_depth via create_all_backends."""
         disp = GraphBackendDispatcher()
         mock_cls = MagicMock()
-        disp.register("postgres", mock_cls)
+        disp.register("surrealdb", mock_cls)
 
-        cfg = MagicMock(graph_backend="postgres")
+        cfg = MagicMock()
         cfg.graph_max_traversal_depth = 4
-        backends = disp.create_all_backends(mock_db, cfg)
+        mock_surreal = AsyncMock()
+        backends = disp.create_all_backends(mock_db, cfg, surreal=mock_surreal)
 
-        assert len(backends) == 0
-        mock_cls.assert_not_called()
+        assert len(backends) == 1
+        mock_cls.assert_called_once_with(surreal=mock_surreal, max_traversal_depth=4)
 
     def test_create_all_backends_without_org_config(
         self, mock_db: MagicMock
     ) -> None:
-        """No org_config → postgres is gone, so no backends created."""
+        """No surreal client → surreal skipped, no backends created."""
         disp = GraphBackendDispatcher()
         mock_cls = MagicMock()
-        disp.register("postgres", mock_cls)
+        disp.register("surrealdb", mock_cls)
 
         backends = disp.create_all_backends(mock_db)
         assert len(backends) == 0
@@ -332,17 +321,14 @@ class TestGraphBackendDispatcher:
         surreal_bk = next(b for b in backends if isinstance(b, SurrealGraphBackend))
         assert surreal_bk._surreal is mock_surreal
 
-    def test_surreal_kwarg_not_passed_to_postgres(
+    def test_surreal_kwarg_passed_to_surrealdb(
         self, mock_db: MagicMock
     ) -> None:
-        """surreal kwarg is only passed to SurrealGraphBackend — postgres is gone (410)."""
+        """surreal kwarg is passed to SurrealGraphBackend."""
         disp = GraphBackendDispatcher()
-        mock_postgres_cls = MagicMock()
-        disp.register("postgres", mock_postgres_cls)
         disp.register("surrealdb", SurrealGraphBackend)
 
         mock_surreal = AsyncMock()
         backends = disp.create_all_backends(mock_db, surreal=mock_surreal)
 
         assert len(backends) == 1
-        mock_postgres_cls.assert_not_called()
