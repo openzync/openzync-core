@@ -54,24 +54,16 @@ class TestBlobStorageService:
         upload_file.read = AsyncMock(side_effect=[content, b""])
         return upload_file
 
-    def _make_storage_config(self, **overrides: Any) -> dict:
-        """Build a minimal blob storage config dict."""
-        config = {
-            "backend": "s3",
-            "endpoint_url": "http://minio:9000",
-            "region": "auto",
-            "access_key_id": "minioadmin",
-            "secret_access_key": "minioadmin",
-            "bucket_name": "test-blobs",
-            "max_blob_size_mb": 50,
-        }
-        config.update(overrides)
-        return config
+    def _make_storage(self, max_blob_bytes: int = 50 * 1024 * 1024) -> AsyncMock:
+        """Build a mock S3 client (global backend — per-org config removed)."""
+        storage = AsyncMock()
+        storage.max_blob_bytes = max_blob_bytes
+        return storage
 
     # ── upload_blobs ────────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_upload_blobs_success(self) -> None:
+    async def test_upload_blobs_successtest_upload_blobs_success(self) -> None:
         """``upload_blobs`` uploads to S3 and batch-creates DB records."""
         service, _mock_db, mock_blob_repo = self._make_service()
 
@@ -87,6 +79,7 @@ class TestBlobStorageService:
         ) as mock_storage_cls:
             mock_storage = AsyncMock()
             mock_storage.upload_stream.return_value = "org/proj/ep/blobs/0/test.pdf"
+            mock_storage.max_blob_bytes = 50 * 1024 * 1024
             mock_storage_cls.return_value = mock_storage
 
             result = await service.upload_blobs(
@@ -99,7 +92,7 @@ class TestBlobStorageService:
                 blob_metadatas=[
                     BlobMetadata(blob_id=0, mime_type="application/pdf", file_name="test.pdf"),
                 ],
-                storage_config=self._make_storage_config(),
+                storage=mock_storage,
             )
 
         assert len(result) == 1
@@ -111,7 +104,7 @@ class TestBlobStorageService:
         mock_blob_repo.batch_create.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_upload_too_many_blobs_raises_validation_error(self) -> None:
+    async def test_upload_too_many_blobs_raises_validation_errortest_upload_too_many_blobs_raises_validation_error(self) -> None:
         """``upload_blobs`` raises ValidationError when exceeding MAX_BLOBS_PER_REQUEST."""
         service, _mock_db, _mock_blob_repo = self._make_service()
 
@@ -130,11 +123,11 @@ class TestBlobStorageService:
                 created_by=self.USER_ID,
                 uploaded_files=[],
                 blob_metadatas=metadatas,
-                storage_config=self._make_storage_config(),
+                storage=self._make_storage(),
             )
 
     @pytest.mark.asyncio
-    async def test_upload_blob_id_out_of_range_raises_validation_error(self) -> None:
+    async def test_upload_blob_id_out_of_range_raises_validation_errortest_upload_blob_id_out_of_range_raises_validation_error(self) -> None:
         """``upload_blobs`` raises ValidationError when blob_id indexes beyond uploaded_files."""
         service, _mock_db, _mock_blob_repo = self._make_service()
 
@@ -151,11 +144,11 @@ class TestBlobStorageService:
                 blob_metadatas=[
                     BlobMetadata(blob_id=3, mime_type="text/plain", file_name="ghost.txt"),
                 ],
-                storage_config=self._make_storage_config(),
+                storage=self._make_storage(),
             )
 
     @pytest.mark.asyncio
-    async def test_upload_payload_too_large_raises_error(self) -> None:
+    async def test_upload_payload_too_large_raises_errortest_upload_payload_too_large_raises_error(self) -> None:
         """``upload_blobs`` raises PayloadTooLargeError when blob exceeds size limit."""
         service, _mock_db, _mock_blob_repo = self._make_service()
 
@@ -173,6 +166,7 @@ class TestBlobStorageService:
         ) as mock_storage_cls:
             mock_storage = AsyncMock()
             mock_storage.upload_stream.side_effect = _drain
+            mock_storage.max_blob_bytes = 50 * 1024 * 1024
             mock_storage_cls.return_value = mock_storage
 
             with pytest.raises(PayloadTooLargeError, match="exceeds limit"):
@@ -186,11 +180,11 @@ class TestBlobStorageService:
                     blob_metadatas=[
                         BlobMetadata(blob_id=0, mime_type="application/pdf", file_name="big.pdf"),
                     ],
-                    storage_config=self._make_storage_config(),
+                    storage=mock_storage,
                 )
 
     @pytest.mark.asyncio
-    async def test_upload_oversized_stops_reading_mid_stream(self) -> None:
+    async def test_upload_oversized_stops_reading_mid_streamtest_upload_oversized_stops_reading_mid_stream(self) -> None:
         """Chunked read aborts as soon as the cap is exceeded — rest unread."""
         service, _mock_db, _mock_blob_repo = self._make_service()
 
@@ -210,6 +204,7 @@ class TestBlobStorageService:
         ) as mock_storage_cls:
             mock_storage = AsyncMock()
             mock_storage.upload_stream.side_effect = _drain
+            mock_storage.max_blob_bytes = 1024 * 1024
             mock_storage_cls.return_value = mock_storage
 
             with pytest.raises(PayloadTooLargeError, match="exceeds limit"):
@@ -223,14 +218,14 @@ class TestBlobStorageService:
                     blob_metadatas=[
                         BlobMetadata(blob_id=0, mime_type="application/pdf", file_name="big.pdf"),
                     ],
-                    storage_config=self._make_storage_config(max_blob_size_mb=1),
+                    storage=mock_storage,
                 )
 
         # Mid-stream abort: only 2 of 3 chunks consumed.
         assert upload_file.read.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_upload_unsupported_mime_rejected_before_read(self) -> None:
+    async def test_upload_unsupported_mime_rejected_before_readtest_upload_unsupported_mime_rejected_before_read(self) -> None:
         """Disallowed MIME → ValidationError naming the type; bytes never read."""
         service, _mock_db, _mock_blob_repo = self._make_service()
 
@@ -254,13 +249,13 @@ class TestBlobStorageService:
                         file_name="payload.exe",
                     ),
                 ],
-                storage_config=self._make_storage_config(),
+                storage=self._make_storage(),
             )
 
         upload_file.read.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_upload_normalizes_param_mime_type(self) -> None:
+    async def test_upload_normalizes_param_mime_typetest_upload_normalizes_param_mime_type(self) -> None:
         """Uppercase/param'd MIME is normalized once — S3 + DB agree on bare type."""
         service, _mock_db, mock_blob_repo = self._make_service()
 
@@ -272,6 +267,7 @@ class TestBlobStorageService:
         ) as mock_storage_cls:
             mock_storage = AsyncMock()
             mock_storage.upload_stream.return_value = "org/proj/ep/blobs/0/test.pdf"
+            mock_storage.max_blob_bytes = 50 * 1024 * 1024
             mock_storage_cls.return_value = mock_storage
 
             await service.upload_blobs(
@@ -288,7 +284,7 @@ class TestBlobStorageService:
                         file_name="test.pdf",
                     ),
                 ],
-                storage_config=self._make_storage_config(),
+                storage=mock_storage,
             )
 
         # S3 ContentType and DB record agree on the bare lowercase type.
@@ -298,7 +294,7 @@ class TestBlobStorageService:
         assert stored["mime_type"] == "application/pdf"
 
     @pytest.mark.asyncio
-    async def test_upload_empty_blobs_returns_empty_list(self) -> None:
+    async def test_upload_empty_blobs_returns_empty_listtest_upload_empty_blobs_returns_empty_list(self) -> None:
         """``upload_blobs`` returns empty list when no blob metadatas are provided."""
         service, _mock_db, mock_blob_repo = self._make_service()
 
@@ -311,14 +307,14 @@ class TestBlobStorageService:
                 created_by=self.USER_ID,
                 uploaded_files=[],
                 blob_metadatas=[],
-                storage_config=self._make_storage_config(),
+                storage=self._make_storage(),
             )
 
         assert result == []
         mock_blob_repo.batch_create.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_upload_fallback_mime_type(self) -> None:
+    async def test_upload_fallback_mime_typetest_upload_fallback_mime_type(self) -> None:
         """``upload_blobs`` falls back to octet-stream when MIME type is missing."""
         service, _mock_db, mock_blob_repo = self._make_service()
 
@@ -329,6 +325,7 @@ class TestBlobStorageService:
             "services.blob_storage_service.BlobStorage",
         ) as mock_storage_cls:
             mock_storage = AsyncMock()
+            mock_storage.max_blob_bytes = 50 * 1024 * 1024
             mock_storage.upload_stream.return_value = "org/proj/ep/blobs/0/file.bin"
             mock_storage_cls.return_value = mock_storage
 
@@ -342,7 +339,7 @@ class TestBlobStorageService:
                 blob_metadatas=[
                     BlobMetadata(blob_id=0, mime_type="application/octet-stream", file_name="file.bin"),
                 ],
-                storage_config=self._make_storage_config(),
+                storage=mock_storage,
             )
 
         assert len(result) == 1
@@ -351,7 +348,7 @@ class TestBlobStorageService:
     # ── delete_blobs ────────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_delete_blobs_deletes_from_storage(self) -> None:
+    async def test_delete_blobs_deletes_from_storagetest_delete_blobs_deletes_from_storage(self) -> None:
         """``delete_blobs`` calls storage.delete for each blob record."""
         service, _mock_db, _mock_blob_repo = self._make_service()
 
@@ -363,30 +360,31 @@ class TestBlobStorageService:
             "services.blob_storage_service.BlobStorage",
         ) as mock_storage_cls:
             mock_storage = AsyncMock()
+            mock_storage.max_blob_bytes = 50 * 1024 * 1024
             mock_storage_cls.return_value = mock_storage
 
             await service.delete_blobs(
                 blob_records=[blob_record],
-                storage_config=self._make_storage_config(),
+                storage=mock_storage,
             )
 
         mock_storage.delete.assert_awaited_once_with(blob_record.storage_key)
 
     @pytest.mark.asyncio
-    async def test_delete_blobs_empty_is_noop(self) -> None:
+    async def test_delete_blobs_empty_is_nooptest_delete_blobs_empty_is_noop(self) -> None:
         """``delete_blobs`` is a no-op when blob_records is empty."""
         service, _mock_db, _mock_blob_repo = self._make_service()
 
         with patch("services.blob_storage_service.BlobStorage") as mock_storage_cls:
             await service.delete_blobs(
                 blob_records=[],
-                storage_config=self._make_storage_config(),
+                storage=self._make_storage(),
             )
 
         mock_storage_cls.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_delete_blobs_s3_error_raises(self) -> None:
+    async def test_delete_blobs_s3_error_raisestest_delete_blobs_s3_error_raises(self) -> None:
         """``delete_blobs`` re-raises S3StorageError so callers can retry."""
         service, _mock_db, _mock_blob_repo = self._make_service()
 
@@ -398,18 +396,19 @@ class TestBlobStorageService:
             "services.blob_storage_service.BlobStorage",
         ) as mock_storage_cls:
             mock_storage = AsyncMock()
+            mock_storage.max_blob_bytes = 50 * 1024 * 1024
             mock_storage.delete.side_effect = S3StorageError("S3 error")
             mock_storage_cls.return_value = mock_storage
 
             with pytest.raises(S3StorageError, match="S3 error"):
                 await service.delete_blobs(
                     blob_records=[blob_record],
-                    storage_config=self._make_storage_config(),
+                    storage=mock_storage,
                 )
 
     # ── validate_blob_metadata_count ────────────────────────────────────────
 
-    def test_validate_blob_metadata_count_under_limit(self) -> None:
+    def test_validate_blob_metadata_count_under_limittest_validate_blob_metadata_count_under_limit(self) -> None:
         """``validate_blob_metadata_count`` passes when count is under limit."""
         metadatas = [
             BlobMetadata(blob_id=i, mime_type="text/plain", file_name=f"f{i}.txt")
@@ -418,7 +417,7 @@ class TestBlobStorageService:
         # Should not raise
         BlobStorageService.validate_blob_metadata_count(metadatas)
 
-    def test_validate_blob_metadata_count_over_limit(self) -> None:
+    def test_validate_blob_metadata_count_over_limittest_validate_blob_metadata_count_over_limit(self) -> None:
         """``validate_blob_metadata_count`` raises ValidationError when over limit."""
         metadatas = [
             BlobMetadata(blob_id=i, mime_type="text/plain", file_name=f"f{i}.txt")
@@ -430,7 +429,7 @@ class TestBlobStorageService:
     # ── generate_download_url ───────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_generate_download_url_returns_url(self) -> None:
+    async def test_generate_download_url_returns_urltest_generate_download_url_returns_url(self) -> None:
         """``generate_download_url`` returns a presigned URL on success."""
         with patch(
             "services.blob_storage_service.BlobStorage",
@@ -441,14 +440,13 @@ class TestBlobStorageService:
 
             url = await BlobStorageService.generate_download_url(
                 storage_key="some/key",
-                storage_config=self._make_storage_config(),
                 expires_in=300,
             )
 
         assert url == "https://minio/test-bucket/key?X-Amz=..."
 
     @pytest.mark.asyncio
-    async def test_generate_download_url_raises_on_failure(self) -> None:
+    async def test_generate_download_url_raises_on_failuretest_generate_download_url_raises_on_failure(self) -> None:
         """``generate_download_url`` raises S3StorageError on S3 error."""
         from services import blob_storage_service as bss
 
@@ -463,5 +461,4 @@ class TestBlobStorageService:
             with pytest.raises(S3StorageError, match="S3 unreachable"):
                 await BlobStorageService.generate_download_url(
                     storage_key="some/key",
-                    storage_config=self._make_storage_config(),
                 )
