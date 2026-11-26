@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, Response
 
 from core.audit import audit_action
 from dependencies.auth import require_superadmin
-from dependencies.services import get_invite_service
+from dependencies.services import get_superadmin_invite_service
 from schemas.auth import InviteRequest, InviteResponse
 from services.invite_service import InviteService  # noqa: TC001
 
@@ -44,7 +44,7 @@ router = APIRouter(
 async def invite_user(
     payload: InviteRequest,
     user_id: str = Depends(require_superadmin),  # noqa: B008
-    service: InviteService = Depends(get_invite_service),  # noqa: B008
+    service: InviteService = Depends(get_superadmin_invite_service),  # noqa: B008
 ) -> InviteResponse:
     """Invite a user by email (superadmin-gated).
 
@@ -81,7 +81,7 @@ async def invite_user(
 async def revoke_invite(
     user_id: UUID,
     _admin_id: str = Depends(require_superadmin),  # noqa: B008
-    service: InviteService = Depends(get_invite_service),  # noqa: B008
+    service: InviteService = Depends(get_superadmin_invite_service),  # noqa: B008
 ) -> Response:
     """Revoke a pending invite (superadmin-gated).
 

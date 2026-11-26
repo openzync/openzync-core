@@ -28,6 +28,7 @@ from core.rbac import (
     invalidate_permissions,
     invalidate_role,
 )
+from core.rls import rls_bypass
 from core.sorting import SortSpec
 from models.user import User
 from repositories.user_repository import UserRepository
@@ -142,24 +143,27 @@ class UserService:
             ConflictError: A user with this ``external_id`` already exists
                 in the organization.
         """
-        exists = await self._repo.exists_by_external_id(
-            external_id
-        )
-        if exists:
-            raise ConflictError(
-                f"User with external_id '{external_id}' already exists "
-                f"in organization {user_id}"
+        # Same bypass safety as the invite flow — exists/create must see
+        # past RLS even when the session already carries a superadmin bypass.
+        async with rls_bypass(self._repo.session):
+            exists = await self._repo.exists_by_external_id(
+                external_id
             )
+            if exists:
+                raise ConflictError(
+                    f"User with external_id '{external_id}' already exists "
+                    f"in organization {user_id}"
+                )
 
-        user = await self._repo.create(
+            user = await self._repo.create(
 
-            external_id=external_id,
-            name=name,
-            email=email,
-            metadata=metadata,
-            role=role,
-            permissions=self._permissions_for_role(role),
-        )
+                external_id=external_id,
+                name=name,
+                email=email,
+                metadata=metadata,
+                role=role,
+                permissions=self._permissions_for_role(role),
+            )
 
         if self._webhook_service:
             await self._webhook_service.emit(

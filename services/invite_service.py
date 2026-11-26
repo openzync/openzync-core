@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 from core.config import get_settings
 from core.exceptions import ConflictError, ExternalServiceError, NotFoundError
 from core.rbac import MEMBER_DEFAULT_PERMISSIONS
+from core.rls import rls_bypass
 from repositories.user_repository import UserRepository  # noqa: TC001
 from schemas.auth import (
     InviteInfoResponse,
@@ -195,6 +196,9 @@ class InviteService:
             ExternalServiceError: If the invite email cannot be sent (the
                 row is rolled back with it).
         """
+        # find_user_by_email self-bypasses via AuthRepository — keep it
+        # outside any outer bypass: nesting resets the flag in the inner
+        # finally before get_by_uuid/create run (RLS 500).
         existing = await self._repo.find_user_by_email(payload.email)
         if existing is not None:
             logger.warning(
@@ -205,30 +209,35 @@ class InviteService:
             )
             raise ConflictError("An account with this email already exists.")
 
-        # ⚠️ RACE: the email uniqueness check is application-level only — the
-        # `ix_user_email_unique` index is non-unique, so two concurrent
-        # invites for the same email can both pass and create two pending
-        # rows (same as signup/join — pre-existing gap).  A unique partial
-        # index on (email) would close it; out of scope here.
-        admin = await self._repo.get_by_uuid(admin_user_id)
-        if admin is None:
-            raise NotFoundError(f"Admin user {admin_user_id} not found.")
+        # Superadmin invite runs without a tenant context — the users-table
+        # RLS policies would hide/match-zero every row, so the admin read +
+        # the insert run under a transaction-local bypass (router gate is
+        # the authz). get_by_uuid/create carry no inner bypass.
+        async with rls_bypass(self._repo.session):
+            # ⚠️ RACE: the email uniqueness check is application-level only — the
+            # `ix_user_email_unique` index is non-unique, so two concurrent
+            # invites for the same email can both pass and create two pending
+            # rows (same as signup/join — pre-existing gap).  A unique partial
+            # index on (email) would close it; out of scope here.
+            admin = await self._repo.get_by_uuid(admin_user_id)
+            if admin is None:
+                raise NotFoundError(f"Admin user {admin_user_id} not found.")
 
-        raw_token = secrets.token_urlsafe(32)
-        token_hash = _hash_invite_token(raw_token)
+            raw_token = secrets.token_urlsafe(32)
+            token_hash = _hash_invite_token(raw_token)
 
-        # Create the row FIRST — the token credential and the pending user
-        # are born atomically; the email send happens after.
-        user = await self._repo.create(
+            # Create the row FIRST — the token credential and the pending user
+            # are born atomically; the email send happens after.
+            user = await self._repo.create(
 
-            external_id=payload.email,
-            name=payload.name,
-            email=payload.email,
-            role="member",
-            permissions=list(MEMBER_DEFAULT_PERMISSIONS),
-            password_hash=None,
-            invite_token_hash=token_hash,
-        )
+                external_id=payload.email,
+                name=payload.name,
+                email=payload.email,
+                role="member",
+                permissions=list(MEMBER_DEFAULT_PERMISSIONS),
+                password_hash=None,
+                invite_token_hash=token_hash,
+            )
         logger.info(
             "invite.created",
             extra={
