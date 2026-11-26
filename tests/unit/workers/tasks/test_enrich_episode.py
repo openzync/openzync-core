@@ -493,11 +493,9 @@ class TestEnrichEpisodeMissingCtx:
             # session factory — use configured mock_db so execute/begin_nested work
             mock_get_session.return_value = MagicMock(return_value=mock_db)
 
-            # Ctx without db_engine or db_session_factory — but WITH an
-            # openbao_client (same shape as _make_ctx) so enrich_episode
-            # takes the direct OpenBao path instead of the real
-            # BootstrapSettings/OpenBaoClient fallback (live approle login).
-            ctx: dict = {"redis": AsyncMock(), "openbao_client": AsyncMock()}
+            # Ctx without db_engine or db_session_factory — enrich_episode
+            # takes the lazy-init path (own engine, disposed in finally).
+            ctx: dict = {"redis": AsyncMock()}
 
             result = await enrich_episode(
                 ctx=ctx,
@@ -986,10 +984,6 @@ class TestEnrichEpisodeLLMFailure:
 def _make_ctx(db: AsyncMock | None = None, include_redis: bool = True) -> dict:
     """Create a minimal ARQ worker context dict.
 
-    Includes ``openbao_client`` so that ``enrich_episode`` takes the direct
-    OpenBao path instead of the ``BootstrapSettings`` fallback (which
-    requires real environment variables).
-
     Args:
         db: Optional mock DB session (if None, one is created).
         include_redis: Whether to include a mock redis client.
@@ -1008,7 +1002,6 @@ def _make_ctx(db: AsyncMock | None = None, include_redis: bool = True) -> dict:
     ctx: dict = {
         "db_engine": MagicMock(),
         "db_session_factory": session_factory,
-        "openbao_client": AsyncMock(),
     }
 
     if include_redis:

@@ -17,8 +17,8 @@ class TestOrganizationModel:
 
     @pytest.mark.unit
     def test_defaults_configured(self) -> None:
-        """config, llm_config, quotas, is_active have server_defaults."""
-        for col_name in ["config", "llm_config", "quotas", "is_active"]:
+        """config, quotas, is_active have server_defaults."""
+        for col_name in ["config", "quotas", "is_active"]:
             col = Organization.__table__.columns[col_name]
             assert col.server_default is not None, f"{col_name} missing server_default"
 

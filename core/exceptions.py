@@ -488,8 +488,7 @@ def _is_removed_backend_error(exc: ValueError) -> bool:
     Returns:
         ``True`` when the message is the hardcoded removed-``postgres``
         backend text (contains the ``410`` marker) from the graph-backend
-        validators in ``schemas/system_config.py`` /
-        ``schemas/organization_config.py``.
+        validator in ``schemas/organization_config.py``.
     """
     text = str(exc).lower()
     return "postgres" in text and "410" in text

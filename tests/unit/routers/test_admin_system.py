@@ -24,10 +24,8 @@ from httpx import ASGITransport, AsyncClient
 
 from core.config import PLATFORM_ORG_ID
 from dependencies.db import get_db, get_db_superadmin
-from routers.admin_system import (
-    _get_user_service,
-    router,
-)
+from dependencies.services import get_superadmin_user_service
+from routers.admin_system import router
 
 SUPERADMIN_USER_ID = UUID("00000000-0000-0000-0000-0000000000bb")
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -79,7 +77,6 @@ async def test_get_platform_config_200_flat() -> None:
     from schemas.system_config import SystemConfigResponse
 
     app = _make_app()
-    app.state.openbao_client = AsyncMock()
 
     with (
         patch(
@@ -169,7 +166,7 @@ async def test_update_member_role_200_persists() -> None:
         role="admin",
     )
     service.update_member_role.return_value.id = MEMBER_B
-    app.dependency_overrides[_get_user_service] = lambda: service
+    app.dependency_overrides[get_superadmin_user_service] = lambda: service
 
     with patch(
         "dependencies.auth.get_user_role",
@@ -223,7 +220,7 @@ async def test_update_member_role_missing_user_404() -> None:
     service.update_member_role.side_effect = NotFoundError(
         f"User {MEMBER_B} not found."
     )
-    app.dependency_overrides[_get_user_service] = lambda: service
+    app.dependency_overrides[get_superadmin_user_service] = lambda: service
 
     with patch(
         "dependencies.auth.get_user_role",

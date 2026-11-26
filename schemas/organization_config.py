@@ -347,7 +347,7 @@ class OrgConfigBase(BaseModel):
     )
 
     # ⚠️ BREAKING: per-org blob storage was removed — one global backend
-    # (``OZ_S3_*`` / ``OZ_BLOB_*`` Settings, OpenBao-owned). The deleted
+    # (``OZ_S3_*`` / ``OZ_BLOB_*`` Settings, env-owned). The deleted
     # fields (``blob_storage_backend``, ``s3_endpoint_url``, ``s3_region``,
     # ``s3_access_key_id``, ``s3_secret_access_key``, ``s3_bucket_name``,
     # ``max_blob_size_mb``, ``image_extraction``) are ignored on read

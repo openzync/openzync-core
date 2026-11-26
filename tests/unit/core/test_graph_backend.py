@@ -5,11 +5,11 @@ This file tests the *dispatcher/factory layer* in ``core/graph_backend.py``
 ``tests/unit/test_graph_backend_dispatcher.py`` covers the core registry and
 resolution logic; this file fills gaps for:
 
-- ``init_dispatcher`` registering all 3 backends (postgres, surrealdb, falkordb)
+- ``init_dispatcher`` registering both backends (surrealdb, falkordb)
 - FalkorDB-specific kwargs and resolution
 - ``surreal=None`` / ``falkordb_client=None`` skip behaviour in
   ``create_all_backends``
-- Mixed backend scenarios with all 3 backends
+- Mixed backend scenarios with both backends
 
 Backend **implementations** are tested in
 ``tests/unit/test_graph_backend_contract.py`` — do not duplicate there.
@@ -21,21 +21,28 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.exceptions import GoneError
+
 
 @pytest.mark.unit
 class TestInitDispatcher:
     """init_dispatcher — factory that creates and populates a dispatcher.
 
     The existing test (``test_graph_backend_dispatcher.py::test_init_dispatcher``)
-    only checks that ``"postgres"`` is registered.  We verify all 3 backends.
+    checks that ``"postgres"`` is NOT registered.  We verify both backends.
     """
 
     def test_init_dispatcher_registers_postgres(self) -> None:
-        """Postgres backend is registered."""
+        """Postgres backend is NOT registered — use raises GoneError (410)."""
         from core.graph_backend import init_dispatcher
 
         disp = init_dispatcher()
-        assert disp.resolve_backend_name(MagicMock(graph_backend="postgres")) == "postgres"
+        assert "postgres" not in disp._registry
+        with pytest.raises(GoneError, match=r"410"):
+            disp.resolve_and_create(
+                MagicMock(graph_backend="postgres", graph_max_traversal_depth=None),
+                MagicMock(),
+            )
 
     def test_init_dispatcher_registers_surrealdb(self) -> None:
         """SurrealDB backend is registered."""
@@ -59,13 +66,13 @@ class TestInitDispatcher:
         assert set(disp._registry) == {"surrealdb", "falkordb"}
 
     def test_init_dispatcher_creates_postgres_instance(self) -> None:
-        """resolve_and_create with 'postgres' is hard-blocked — deprecated, removal v1.1.0."""
+        """resolve_and_create with 'postgres' raises GoneError (410, removed v1.1.0)."""
         from core.graph_backend import init_dispatcher
 
         disp = init_dispatcher()
         mock_db = MagicMock()
         cfg = MagicMock(graph_backend="postgres", graph_max_traversal_depth=None)
-        with pytest.raises(ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"):
+        with pytest.raises(GoneError, match=r"410"):
             disp.resolve_and_create(cfg, mock_db)
 
     def test_init_dispatcher_creates_surrealdb_instance(self) -> None:
@@ -177,7 +184,7 @@ class TestCreateAllBackendsSkipping:
         assert len(backends) == 0  # falkor skipped
         fd_cls.assert_not_called()
 
-    def test_creates_postgres_when_surreal_and_falkor_are_none(self) -> None:
+    def test_creates_nothing_when_surreal_and_falkor_are_none(self) -> None:
         """No backend created when both clients are None."""
         from core.graph_backend import GraphBackendDispatcher
 
@@ -192,7 +199,7 @@ class TestCreateAllBackendsSkipping:
 
         assert len(backends) == 0
 
-    def test_creates_all_three_when_clients_provided(self) -> None:
+    def test_creates_both_when_clients_provided(self) -> None:
         """Both backends created when surreal and falkordb_client given."""
         from core.graph_backend import GraphBackendDispatcher
 
@@ -292,13 +299,13 @@ class TestDispatcherErrorHandling:
 class TestBackendSpecificKwargsIsolation:
     """Each backend receives only its own kwargs — no cross-contamination.
 
-    Postgres gets ``db``.
     SurrealDB gets ``surreal``.
     FalkorDB gets ``client``.
+    (``postgres`` was removed in v1.1.0 — any use raises GoneError 410.)
     """
 
     def test_postgres_does_not_get_surreal_or_client(self) -> None:
-        """Postgres creation is hard-blocked — deprecated, raises even if kwargs look valid."""
+        """Postgres use raises GoneError (410) — registered class never called."""
         from core.graph_backend import GraphBackendDispatcher
 
         disp = GraphBackendDispatcher()
@@ -310,7 +317,7 @@ class TestBackendSpecificKwargsIsolation:
         mock_client = MagicMock()
         cfg = MagicMock(graph_backend="postgres", graph_max_traversal_depth=2)
 
-        with pytest.raises(ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"):
+        with pytest.raises(GoneError, match=r"410"):
             disp.resolve_and_create(cfg, mock_db, surreal=mock_surreal, falkordb_client=mock_client)
         pg_cls.assert_not_called()
 

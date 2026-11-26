@@ -110,10 +110,10 @@ async def resolve_graph_backend(
         return None
 
     # Get SurrealDB connection — only when the user explicitly configures
-    # SurrealDB.  For postgres or none backends the pool is never touched,
+    # SurrealDB.  For falkordb or none backends the pool is never touched,
     # avoiding unnecessary network round-trips and preventing failures when
     # SurrealDB is down.  If SurrealDB is configured but unreachable the
-    # error is raised loudly — no silent fallback to Postgres.
+    # error is raised loudly — no silent fallback.
     surreal = None
     if backend_name == "surrealdb":
         surreal_pool = ctx.get("surreal_connection_pool")
@@ -140,7 +140,7 @@ async def resolve_graph_backend(
             f"SurrealDB configured for user {user_id} (graph_backend="
             f"'surrealdb') but no connection is available — the "
             "surreal_connection_pool is missing or unreachable. "
-            "Refusing to fall back to Postgres."
+            "Refusing to continue without a connection."
         )
 
     # Get FalkorDB client (may be None)
@@ -153,7 +153,7 @@ async def resolve_graph_backend(
         raise GraphBackendUnavailableError(
             f"FalkorDB configured for user {user_id} (graph_backend="
             f"'falkordb') but no client is available in the worker "
-            "context. Refusing to fall back to Postgres."
+            "context. Refusing to continue without a connection."
         )
 
     try:
@@ -221,7 +221,7 @@ async def _resolve_user_config(
 
     Uses ``core.org_config.get_org_config`` (the standard resolution path)
     if available, which supports Redis caching.  Falls back to a direct DB
-    query via ``OrganizationRepository.get_config``.
+    query via ``UserRepository.get_config_override``.
 
     Args:
         ctx: ARQ worker context dict (may contain ``"redis"`` for caching).
@@ -229,7 +229,8 @@ async def _resolve_user_config(
         db: An async SQLAlchemy session.
 
     Returns:
-        An ``OrgConfigBase`` instance, or ``None`` if the user has none stored.
+        An ``OrgConfigBase`` instance (never ``None`` — an unset backend
+        defaults to ``"falkordb"``); raises on resolution failure.
     """
     # ── Primary path: standard user-config resolution (cache-first) ───────
     try:
@@ -248,17 +249,17 @@ async def _resolve_user_config(
 
     # ── Fallback: direct DB query ─────────────────────────────────────────
     try:
-        from repositories.organization_repository import OrganizationRepository
+        from repositories.user_repository import UserRepository
         from schemas.organization_config import OrgConfigBase
 
-        repo = OrganizationRepository(db)
-        raw_config = await repo.get_config(user_id)
+        repo = UserRepository(db)
+        raw_config = await repo.get_config_override(user_id)
 
-        # Match core.org_config behavior: empty config → all fields None
-        if not raw_config:
-            return OrgConfigBase(
-                **{name: None for name in OrgConfigBase.model_fields}
-            )
+        # Flat users.config_override shape — mirror
+        # core.org_config._with_graph_default (unset graph_backend → falkordb;
+        # never an all-None wrong default from a dropped nesting level).
+        if not raw_config.get("graph_backend"):
+            raw_config = {**raw_config, "graph_backend": "falkordb"}
         return OrgConfigBase(**raw_config)
     except Exception:
         logger.error(

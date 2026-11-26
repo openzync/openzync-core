@@ -137,7 +137,7 @@ async def get_context(
     dispatcher = request.app.state.graph_backend_dispatcher
 
     # Connect to SurrealDB only when the org explicitly configures it.
-    # For postgres or none backends, skip the pool entirely — avoids
+    # For falkordb or none backends, skip the pool entirely — avoids
     # unnecessary connections and prevents 503 when SurrealDB isn't running.
     surreal = None
     if org_config.graph_backend == "surrealdb":

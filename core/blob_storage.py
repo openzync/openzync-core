@@ -52,7 +52,7 @@ class BlobStorageConfig:
 
         ⚠️ BREAKING: replaces ``from_org_config`` — per-org blob
         storage was removed. All orgs share the ``OZ_S3_*`` /
-        ``OZ_BLOB_*`` settings (OpenBao-owned, fail-fast at startup).
+        ``OZ_BLOB_*`` settings (env-owned, fail-fast at startup).
 
         Args:
             settings: The global settings (``get_settings()``).

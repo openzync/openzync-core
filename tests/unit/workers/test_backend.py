@@ -336,7 +336,7 @@ class TestResolveOrgConfig:
         """A ``OrgConfigBase``-like object returned by the primary path."""
         from schemas.organization_config import OrgConfigBase
 
-        return OrgConfigBase(graph_backend="postgres")
+        return OrgConfigBase(graph_backend="falkordb")
 
     # ── Primary path: DB-backed resolution ──────────────────────────────
 
@@ -358,7 +358,7 @@ class TestResolveOrgConfig:
             self.USER_ID, redis=ctx["redis"], db=mock_db
         )
         assert result is mock_org_config
-        assert result.graph_backend == "postgres"
+        assert result.graph_backend == "falkordb"
 
     async def test_primary_path_without_redis_passes_none(
         self,
@@ -374,7 +374,7 @@ class TestResolveOrgConfig:
             result = await _resolve_user_config(ctx={}, user_id=self.USER_ID, db=mock_db)
 
         assert result is mock_org_config
-        assert result.graph_backend == "postgres"
+        assert result.graph_backend == "falkordb"
 
     async def test_primary_path_passes_redis_to_get_org_config(
         self,
@@ -402,15 +402,15 @@ class TestResolveOrgConfig:
         """Primary path raises ``ImportError`` → falls to DB fallback."""
         from schemas.organization_config import OrgConfigBase
 
-        expected = OrgConfigBase(graph_backend="postgres")
+        expected = OrgConfigBase(graph_backend="falkordb")
 
         with (
             patch("core.org_config.get_org_config", side_effect=ImportError("no module")),
-            patch("repositories.organization_repository.OrganizationRepository") as mock_repo_cls,
+            patch("repositories.user_repository.UserRepository") as mock_repo_cls,
         ):
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo
-            mock_repo.get_config = AsyncMock(return_value={"graph_backend": "postgres"})
+            mock_repo.get_config_override = AsyncMock(return_value={"graph_backend": "falkordb"})
 
             from workers.backend import _resolve_user_config
 
@@ -418,7 +418,7 @@ class TestResolveOrgConfig:
             result = await _resolve_user_config(ctx, self.USER_ID, mock_db)
 
         assert isinstance(result, OrgConfigBase)
-        assert result.graph_backend == "postgres"
+        assert result.graph_backend == "falkordb"
 
     async def test_primary_path_exception_falls_through_to_db(
         self,
@@ -431,11 +431,11 @@ class TestResolveOrgConfig:
 
         with (
             patch("core.org_config.get_org_config", side_effect=RuntimeError("bao down")),
-            patch("repositories.organization_repository.OrganizationRepository") as mock_repo_cls,
+            patch("repositories.user_repository.UserRepository") as mock_repo_cls,
         ):
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo
-            mock_repo.get_config = AsyncMock(return_value={"graph_backend": "surrealdb"})
+            mock_repo.get_config_override = AsyncMock(return_value={"graph_backend": "surrealdb"})
 
             from workers.backend import _resolve_user_config
 
@@ -447,20 +447,20 @@ class TestResolveOrgConfig:
 
     # ── DB fallback path ──────────────────────────────────────────────────
 
-    async def test_db_fallback_empty_config_returns_all_none(
+    async def test_db_fallback_empty_config_defaults_graph_to_falkordb(
         self,
         mock_db: MagicMock,
     ) -> None:
-        """DB returns empty config → ``OrgConfigBase`` with all fields ``None``."""
+        """DB returns empty config → graph_backend defaults to ``"falkordb"``."""
         from schemas.organization_config import OrgConfigBase
 
         with (
             patch("core.org_config.get_org_config", side_effect=ImportError("no module")),
-            patch("repositories.organization_repository.OrganizationRepository") as mock_repo_cls,
+            patch("repositories.user_repository.UserRepository") as mock_repo_cls,
         ):
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo
-            mock_repo.get_config = AsyncMock(return_value={})
+            mock_repo.get_config_override = AsyncMock(return_value={})
 
             from workers.backend import _resolve_user_config
 
@@ -468,8 +468,8 @@ class TestResolveOrgConfig:
             result = await _resolve_user_config(ctx, self.USER_ID, mock_db)
 
         assert isinstance(result, OrgConfigBase)
-        # All fields should be None for an empty config
-        assert all(v is None for v in result.model_dump().values())
+        # Unset graph_backend defaults to falkordb (never an all-None config).
+        assert result.graph_backend == "falkordb"
 
     async def test_db_fallback_succeeds(
         self,
@@ -480,12 +480,12 @@ class TestResolveOrgConfig:
 
         with (
             patch("core.org_config.get_org_config", side_effect=ImportError("no module")),
-            patch("repositories.organization_repository.OrganizationRepository") as mock_repo_cls,
+            patch("repositories.user_repository.UserRepository") as mock_repo_cls,
         ):
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo
-            mock_repo.get_config = AsyncMock(
-                return_value={"graph_backend": "postgres", "graph_max_traversal_depth": 5},
+            mock_repo.get_config_override = AsyncMock(
+                return_value={"graph_backend": "falkordb", "graph_max_traversal_depth": 5},
             )
 
             from workers.backend import _resolve_user_config
@@ -494,7 +494,7 @@ class TestResolveOrgConfig:
             result = await _resolve_user_config(ctx, self.USER_ID, mock_db)
 
         assert isinstance(result, OrgConfigBase)
-        assert result.graph_backend == "postgres"
+        assert result.graph_backend == "falkordb"
         assert result.graph_max_traversal_depth == 5
 
     # ── Both paths fail ───────────────────────────────────────────────────
@@ -506,7 +506,7 @@ class TestResolveOrgConfig:
         """Primary raises, DB fallback also raises → raises ``GraphBackendUnavailableError``."""
         with (
             patch("core.org_config.get_org_config", side_effect=ImportError("no module")),
-            patch("repositories.organization_repository.OrganizationRepository") as mock_repo_cls,
+            patch("repositories.user_repository.UserRepository") as mock_repo_cls,
             pytest.raises(
                 GraphBackendUnavailableError,
                 match="cannot run enrichment under unknown defaults",
@@ -514,7 +514,7 @@ class TestResolveOrgConfig:
         ):
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo
-            mock_repo.get_config = AsyncMock(side_effect=RuntimeError("db unreachable"))
+            mock_repo.get_config_override = AsyncMock(side_effect=RuntimeError("db unreachable"))
 
             from workers.backend import _resolve_user_config
 
@@ -528,7 +528,7 @@ class TestResolveOrgConfig:
         """Generic exception in primary, then DB fallback fails → raises ``GraphBackendUnavailableError``."""
         with (
             patch("core.org_config.get_org_config", side_effect=RuntimeError("bao timeout")),
-            patch("repositories.organization_repository.OrganizationRepository") as mock_repo_cls,
+            patch("repositories.user_repository.UserRepository") as mock_repo_cls,
             pytest.raises(
                 GraphBackendUnavailableError,
                 match="cannot run enrichment under unknown defaults",
@@ -536,7 +536,7 @@ class TestResolveOrgConfig:
         ):
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo
-            mock_repo.get_config = AsyncMock(side_effect=ValueError("bad query"))
+            mock_repo.get_config_override = AsyncMock(side_effect=ValueError("bad query"))
 
             from workers.backend import _resolve_user_config
 

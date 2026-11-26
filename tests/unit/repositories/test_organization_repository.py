@@ -118,63 +118,6 @@ class TestOrganizationRepository:
 
         assert pii == {}
 
-    # ── get_llm_config ─────────────────────────────────────────────────────────
-
-    async def test_get_llm_config_from_new_config(
-        self, repo: OrganizationRepository, mock_db: AsyncMock
-    ) -> None:
-        """get_llm_config reads from config->'llm' first."""
-        row = MagicMock()
-        row.llm = {"model": "gpt-4", "temperature": 0.7}
-        result = MagicMock()
-        result.one_or_none.return_value = row
-        mock_db.execute.return_value = result
-
-        llm = await repo.get_llm_config(user_id=self.ORG_ID)
-
-        assert llm == {"model": "gpt-4", "temperature": 0.7}
-
-    async def test_get_llm_config_falls_back_to_legacy(
-        self, repo: OrganizationRepository, mock_db: AsyncMock
-    ) -> None:
-        """get_llm_config falls back to legacy llm_config column."""
-        new_row = MagicMock()
-        new_row.llm = None
-        new_result = MagicMock()
-        new_result.one_or_none.return_value = new_row
-
-        legacy_row = MagicMock()
-        legacy_row.llm_config = {"model": "gpt-3.5"}
-        legacy_result = MagicMock()
-        legacy_result.one_or_none.return_value = legacy_row
-
-        # First execute binds the RLS tenant context; then the two selects.
-        mock_db.execute.side_effect = [MagicMock(), new_result, legacy_result]
-
-        llm = await repo.get_llm_config(user_id=self.ORG_ID)
-
-        assert llm == {"model": "gpt-3.5"}
-
-    async def test_get_llm_config_not_found(
-        self, repo: OrganizationRepository, mock_db: AsyncMock
-    ) -> None:
-        """get_llm_config returns empty dict when not configured."""
-        new_row = MagicMock()
-        new_row.llm = None
-        new_result = MagicMock()
-        new_result.one_or_none.return_value = new_row
-
-        legacy_row = MagicMock()
-        legacy_row.llm_config = None
-        legacy_result = MagicMock()
-        legacy_result.one_or_none.return_value = legacy_row
-
-        mock_db.execute.side_effect = [MagicMock(), new_result, legacy_result]
-
-        llm = await repo.get_llm_config(user_id=self.ORG_ID)
-
-        assert llm == {}
-
     # ── get_quota ──────────────────────────────────────────────────────────────
 
     async def test_get_quota(

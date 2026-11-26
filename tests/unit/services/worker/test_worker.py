@@ -253,10 +253,10 @@ class TestOnShutdown:
 
     @pytest.mark.asyncio
     async def test_shutdown_ignores_ctx_contents(self) -> None:
-        """Stale ctx keys (ex-OpenBao client) are ignored, not closed."""
+        """Stale ctx keys are ignored, not closed."""
         from services.worker.worker import on_shutdown
 
-        await on_shutdown({"openbao_client": MagicMock(), "anything": 1})
+        await on_shutdown({"anything": 1})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

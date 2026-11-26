@@ -439,7 +439,7 @@ class Settings(BaseSettings):
         validation_alias="OZ_MAX_BLOBS_PER_REQUEST",
     )
 
-    # ── Blob Storage (S3-compatible, global — OpenBao-owned) ─────────────
+    # ── Blob Storage (S3-compatible, global — env-owned) ─────────────
     # ⚠️ BREAKING: per-org blob storage was removed — one global backend
     # for all orgs, configured here. Missing required fields fail fast
     # at startup (no silent fallback to shared defaults).

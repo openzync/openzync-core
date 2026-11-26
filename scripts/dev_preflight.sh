@@ -71,7 +71,7 @@ wait_redis_port() {
 # In-container readiness (pg_isready / redis-cli via docker exec) passes even
 # when the host port was never published. These probe the HOST side; on
 # failure the caller fail-fasts with the exact fix instead of crashing later
-# (e.g. Connection refused at platform_seed).
+# (e.g. Connection refused during platform setup).
 host_port_listening() { ss -tlnp 2>/dev/null | grep -q ":$1"; }
 host_postgres_ping() {
     if command -v pg_isready >/dev/null 2>&1; then
@@ -497,7 +497,7 @@ EOF
 # migrate.sh reads OZ_DATABASE_URL from the environment and execs alembic —
 # .env (just synced above) provides it. Failure aborts the whole preflight
 # (set -e): a schema-less database is not "deps up", and the API would only
-# log platform_seed.failed — degraded.
+# log readiness.platform_seed_check_failed — degraded.
 apply_migrations() {
     if ! command -v alembic >/dev/null 2>&1; then
         log "FATAL: alembic not on PATH — activate the venv first: source .venv/bin/activate"

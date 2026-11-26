@@ -23,7 +23,7 @@ providers, an MCP server and a typed Python SDK. Self-hosted, no vendor lock-in.
 - **Hybrid retrieval** — vector similarity, BM25 full-text and graph traversal, fused into one ranked list. [Memory and context](https://docs.openzync.tech/en/latest/domains/memory_context.html)
 - **Async enrichment** — ARQ workers extract entities, facts, embeddings and classifications off the request path. [Workers](https://docs.openzync.tech/en/latest/domains/workers.html)
 - **Five LLM providers** — Ollama, OpenAI, Azure OpenAI, Anthropic and OpenRouter, with bring-your-own keys. [LLM](https://docs.openzync.tech/en/latest/domains/llm.html)
-- **Three graph backends** — FalkorDB is the default, SurrealDB is supported, and the PostgreSQL-native backend is deprecated (removed in v1.1.0). [Graph backends](https://docs.openzync.tech/en/latest/domains/graph_backends.html)
+- **Three graph backends** — FalkorDB is the default, SurrealDB is supported, and the PostgreSQL-native backend was removed in v1.1.0. [Graph backends](https://docs.openzync.tech/en/latest/domains/graph_backends.html)
 - **Multi-tenant by construction** — org-scoped isolation, JWT and API keys sharing one permission vocabulary. [Auth](https://docs.openzync.tech/en/latest/domains/auth.html)
 - **MCP server** — the same memory exposed as tools to Claude Desktop, Cursor and any MCP client. [MCP server](https://docs.openzync.tech/en/latest/domains/mcp_server.html)
 - **Observable by default** — Prometheus metrics, structlog JSON logs, Grafana dashboards. [Infrastructure](https://docs.openzync.tech/en/latest/domains/infrastructure.html)

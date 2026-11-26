@@ -10,7 +10,7 @@ ok()   { echo -e "${GREEN}[PASS]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 
 # Files allowed to contain placeholder credentials
-ALLOWED_PATTERNS=("^.env.example$" "^infra/docker-compose" "^docs/" "^backend/.venv/")
+ALLOWED_PATTERNS=("^.env.example$" "^infra/docker-compose" "^backend/.venv/")
 
 is_allowed() {
     local f="$1"

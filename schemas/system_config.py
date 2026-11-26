@@ -19,7 +19,7 @@ Single platform org — registration is governed by
 ⚠️ BREAKING: ``llm_*`` / ``reranker_*`` / ``graph_*`` /
 ``context_cache_ttl`` were removed from platform defaults (org-level
 only).  ``enrichment_gate`` is removed too — the gate lives at org
-level only now (``organizations`` config), with the model fixed to the
+level only now (``users.config_override``), with the model fixed to the
 platform default.  Both models expose no fields: ``GET`` returns ``{}``
 and any stored/carried key 422s (``extra="forbid"``).
 """

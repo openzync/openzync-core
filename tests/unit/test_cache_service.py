@@ -270,50 +270,6 @@ class TestCacheService:
         pattern = CacheService.build_project_cache_pattern("user1", "proj1")
         assert pattern == "ctx:user1:proj1:*"
 
-    # ── invalidate_user_context() ────────────────────────────────────────────
-
-    @pytest.mark.asyncio
-    async def test_invalidate_user_context_success(self) -> None:
-        """SCAN returns keys — delete is called and count returned."""
-        mock_redis = AsyncMock()
-        mock_redis.scan.return_value = (
-            0,
-            ["ctx:user1:abc123", "ctx:user1:def456"],
-        )
-        mock_redis.delete.return_value = 2
-        cache = CacheService(redis=mock_redis, default_ttl=60)
-
-        result = await cache.invalidate_user_context("user1")
-
-        assert result == 2
-        mock_redis.scan.assert_awaited_once()
-        mock_redis.delete.assert_awaited_once_with(
-            "ctx:user1:abc123", "ctx:user1:def456"
-        )
-
-    @pytest.mark.asyncio
-    async def test_invalidate_user_context_no_keys(self) -> None:
-        """SCAN returns empty — delete is not called and count is 0."""
-        mock_redis = AsyncMock()
-        mock_redis.scan.return_value = (0, [])
-        cache = CacheService(redis=mock_redis, default_ttl=60)
-
-        result = await cache.invalidate_user_context("user1")
-
-        assert result == 0
-        mock_redis.scan.assert_awaited_once()
-        mock_redis.delete.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_invalidate_user_context_raises_on_error(self) -> None:
-        """Redis raises during SCAN — CacheUnavailableError is raised."""
-        mock_redis = AsyncMock()
-        mock_redis.scan.side_effect = ConnectionError("Redis down")
-        cache = CacheService(redis=mock_redis, default_ttl=60)
-
-        with pytest.raises(CacheUnavailableError, match="Cache invalidation failed"):
-            await cache.invalidate_user_context("user1")
-
     # ── invalidate_project_context() ─────────────────────────────────────────
 
     @pytest.mark.asyncio
@@ -368,7 +324,3 @@ class TestCacheService:
         key2 = CacheService.build_context_cache_key("user1", "proj1", "query two")
         assert key1 != key2
 
-    def test_build_user_cache_pattern(self) -> None:
-        """Pattern ends with * for SCAN matching."""
-        pattern = CacheService.build_user_cache_pattern("user1")
-        assert pattern == "ctx:user1:*"

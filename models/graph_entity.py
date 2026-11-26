@@ -1,7 +1,8 @@
 """GraphEntity model — minimal definition to satisfy FK resolution.
 
 The ``graph_entities`` table is created via raw SQL in migration 0006
-and managed primarily through the Graphiti backend client. This model
+and managed primarily through a ``GraphBackend`` (SurrealDB/FalkorDB).
+This model
 exists only so that SQLAlchemy can resolve the
 ``ForeignKey("graph_entities.id")`` references in ``Fact`` and other
 models. No business logic, no repository.
@@ -24,7 +25,7 @@ class GraphEntity(Base):
 
     .. caution::
        This is a **read-only stub model**.  All writes to ``graph_entities``
-       go through the Graphiti backend client or raw SQL in worker tasks.
+       go through a ``GraphBackend`` instance or raw SQL in worker tasks.
        No ORM-based repository or service layer should mutate this table.
     """
 

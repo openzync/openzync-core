@@ -1,1 +1,0 @@
-Expose `OZ_MAX_BLOBS_PER_MESSAGE` and `OZ_MAX_BLOBS_PER_REQUEST` in `GET /admin/system/settings` under the Infrastructure category (previously invisible despite being live config in `core/config.py`).

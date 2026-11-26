@@ -219,7 +219,7 @@ class TestEmbedFact:
             "expected": 768,
         }
 
-    # ── Coverage gap: engine/session/bao_client edge cases ──────────────────
+    # ── Coverage gap: engine/session edge cases ──────────────────
 
     @pytest.mark.asyncio
     async def test_no_db_engine_in_ctx(self, embedder: AsyncMock) -> None:
@@ -238,8 +238,10 @@ class TestEmbedFact:
             db = self._make_db()
             mock_session_factory.return_value = db
 
-            # ctx WITHOUT db_engine or db_session_factory → triggers lazy init
-            ctx = {"openbao_client": MagicMock()}
+            # Ctx without db_engine or db_session_factory — but WITH a
+            # stale extra key (same shape as _make_ctx) so embed_fact
+            # takes the lazy-init path.
+            ctx: dict = {"redis": AsyncMock()}
 
             from workers.tasks.embed_fact import embed_fact
 

@@ -290,7 +290,6 @@ async def test_get_config_401_unauthenticated() -> None:
     # Set up app state so get_db and _get_config_service resolve successfully.
     # require_user_id will raise 401 naturally because no middleware sets user_id.
     app.state.db_session_factory = AsyncMock()
-    app.state.openbao_client = AsyncMock()
     app.state.redis = AsyncMock()
     app.include_router(router)
 

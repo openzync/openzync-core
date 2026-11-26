@@ -499,7 +499,7 @@ async def _ensure_project(
 
 
 async def _set_org_graph_backend(
-    client: httpx.AsyncClient, token: str, graph_backend: str = "postgres"
+    client: httpx.AsyncClient, token: str, graph_backend: str = "falkordb"
 ) -> dict[str, Any]:
     """Update the org-level graph backend configuration.
 
@@ -508,7 +508,7 @@ async def _set_org_graph_backend(
     Args:
         client: Authenticated HTTP client.
         token: JWT access token.
-        graph_backend: ``"postgres"`` (full) or ``"none"`` (baseline).
+        graph_backend: ``"falkordb"`` (full) or ``"none"`` (baseline).
 
     Returns:
         The updated org config response.
@@ -1118,7 +1118,7 @@ async def run_benchmark(
             )
         finally:
             # Restore graph backend
-            await _set_org_graph_backend(api_client, token, graph_backend="postgres")
+            await _set_org_graph_backend(api_client, token, graph_backend="falkordb")
 
     # ── Compute metrics and output ─────────────────────────────────────────
     metrics_full = compute_accuracy(results_full)

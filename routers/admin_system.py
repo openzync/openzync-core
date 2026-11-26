@@ -72,9 +72,9 @@ def _get_redis(request: Request) -> object:
     response_model=SystemConfigResponse,
     summary="Get platform system config",
     description=(
-        "Returns the platform-level policies (org creation, approval "
-        "scope) and non-secret system defaults.  Secrets are never "
-        "returned.  Requires the platform super-admin role."
+        "Returns the platform system config.  No whitelisted fields "
+        "remain — the response is ``{}``.  Requires the platform "
+        "super-admin role."
     ),
 )
 async def get_platform_config(
@@ -100,9 +100,9 @@ async def get_platform_config(
     response_model=SystemConfigResponse,
     summary="Update platform system config",
     description=(
-        "Updates whitelisted platform policies and non-secret defaults. "
-        "Any key outside the whitelist — including all secrets — is "
-        "rejected with 422.  Requires the platform super-admin role."
+        "Updates the platform system config.  No whitelisted fields "
+        "remain — every key is rejected with 422.  Requires the platform "
+        "super-admin role."
     ),
 )
 @audit_action("system.config.update", "system", "System configuration updated")

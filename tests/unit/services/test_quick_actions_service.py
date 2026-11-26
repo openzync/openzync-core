@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
+import pytest
 from sqlalchemy.exc import InvalidRequestError
 
 from repositories.organization_repository import OrganizationRepository
@@ -23,9 +24,8 @@ class ConcurrencyDetectingFakeSession:
     ``tests/unit/services/test_global_search_service.py``: mirrors the real
     ``AsyncSession`` contract of one in-flight operation. While an
     ``execute`` is suspended at its ``await``, a second entry raises
-    ``InvalidRequestError`` — the failure Postgres raised under ``gather``.
-    Returns a universal result stub: ``scalar()`` → 0 for the count legs,
-    ``one_or_none()`` → row with ``llm={}`` for the LLM-config leg.
+    ``InvalidRequestError``. Returns a universal result stub: ``scalar()``
+    → 0 for the count legs, ``one_or_none()`` → row for the config leg.
     """
 
     def __init__(self) -> None:
@@ -59,8 +59,9 @@ class TestQuickActionsService:
 
     def _make_service(
         self,
+        monkeypatch: pytest.MonkeyPatch,
         project_count: int = 0,
-        llm_provider: str | None = None,
+        llm_backend: str | None = None,
         user_count: int = 0,
     ) -> QuickActionsService:
         """Create service with mocked repositories returning given values."""
@@ -68,12 +69,18 @@ class TestQuickActionsService:
         project_repo.count_active = AsyncMock(return_value=project_count)
 
         org_repo = AsyncMock()
-        org_repo.get_llm_config = AsyncMock(
-            return_value={"provider": llm_provider} if llm_provider else {},
-        )
 
         user_repo = AsyncMock()
         user_repo.count_active = AsyncMock(return_value=user_count)
+
+        # Canonical per-user config (flat users.config_override shape,
+        # cache-first) — service reads OrgConfigBase.llm_backend.
+        mock_cfg = MagicMock()
+        mock_cfg.llm_backend = llm_backend
+        monkeypatch.setattr(
+            "services.quick_actions_service.get_org_config",
+            AsyncMock(return_value=mock_cfg),
+        )
 
         return QuickActionsService(
             project_repo=project_repo,
@@ -81,11 +88,14 @@ class TestQuickActionsService:
             org_repo=org_repo,
         )
 
-    async def test_new_org_shows_onboarding_actions(self) -> None:
+    async def test_new_org_shows_onboarding_actions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Fresh org with no projects, no LLM, 1 user shows all onboarding actions."""
         service = self._make_service(
+            monkeypatch,
             project_count=0,
-            llm_provider=None,
+            llm_backend=None,
             user_count=1,
         )
 
@@ -98,11 +108,14 @@ class TestQuickActionsService:
         assert "View Analytics" in labels
         assert "View Audit Log" in labels
 
-    async def test_established_org_shows_view_actions(self) -> None:
+    async def test_established_org_shows_view_actions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Org with projects, LLM, and team shows 'View' actions without onboarding."""
         service = self._make_service(
+            monkeypatch,
             project_count=5,
-            llm_provider="openai",
+            llm_backend="openai",
             user_count=3,
         )
 
@@ -119,11 +132,14 @@ class TestQuickActionsService:
         view_proj = next(a for a in actions if a["label"] == "View Projects")
         assert "5 active projects" in view_proj["description"]
 
-    async def test_single_project_uses_singular_form(self) -> None:
+    async def test_single_project_uses_singular_form(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Exactly 1 project uses singular 'project' in the description."""
         service = self._make_service(
+            monkeypatch,
             project_count=1,
-            llm_provider="openai",
+            llm_backend="openai",
             user_count=3,
         )
 
@@ -132,11 +148,14 @@ class TestQuickActionsService:
         assert "1 active project" in view_proj["description"]
         assert "projects" not in view_proj["description"]
 
-    async def test_no_llm_config_shows_configure_llm(self) -> None:
-        """Empty LLM config (no provider key) triggers the LLM setup action."""
+    async def test_no_llm_config_shows_configure_llm(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Empty LLM config (no backend) triggers the LLM setup action."""
         service = self._make_service(
+            monkeypatch,
             project_count=10,
-            llm_provider=None,
+            llm_backend=None,
             user_count=5,
         )
 
@@ -144,11 +163,14 @@ class TestQuickActionsService:
         labels = [a["label"] for a in actions]
         assert "Configure LLM Provider" in labels
 
-    async def test_single_user_shows_invite(self) -> None:
+    async def test_single_user_shows_invite(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Only 1 user in the org shows 'Invite Team Members'."""
         service = self._make_service(
+            monkeypatch,
             project_count=10,
-            llm_provider="openai",
+            llm_backend="openai",
             user_count=1,
         )
 
@@ -159,9 +181,9 @@ class TestQuickActionsService:
     async def test_get_actions_runs_sequentially_on_single_session(self) -> None:
         """``get_actions`` never overlaps ``execute`` calls on one session.
 
-        Regression: the three repo legs fanned out via ``asyncio.gather``
-        on a single ``AsyncSession``, raising ``InvalidRequestError`` under
-        real Postgres. The fake raises on overlap, so it fails on
+        Regression: the repo + config legs fanned out via ``asyncio.gather``
+        on a single ``AsyncSession``, raising ``InvalidRequestError``.
+        The fake raises on overlap, so it fails on
         ``gather`` and passes on sequential awaits.
         """
         fake = ConcurrencyDetectingFakeSession()
@@ -176,11 +198,35 @@ class TestQuickActionsService:
         assert len(actions) > 0
         assert fake.max_in_flight == 1
 
-    async def test_always_has_analytics_and_audit(self) -> None:
+    async def test_llm_backend_set_hides_configure_nag(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """llm_backend set → View Projects/Invite/Analytics/Audit, no Configure nag."""
+        service = self._make_service(
+            monkeypatch,
+            project_count=5,
+            llm_backend="openai",
+            user_count=1,
+        )
+
+        actions = await service.get_actions(ORG_ID)
+        labels = [a["label"] for a in actions]
+
+        assert labels == [
+            "View Projects",
+            "Invite Team Members",
+            "View Analytics",
+            "View Audit Log",
+        ]
+
+    async def test_always_has_analytics_and_audit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """View Analytics and View Audit Log are always present."""
         service = self._make_service(
+            monkeypatch,
             project_count=0,
-            llm_provider=None,
+            llm_backend=None,
             user_count=0,
         )
 

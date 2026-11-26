@@ -54,6 +54,8 @@ class TestGetUserService:
     async def test_creates_user_service_with_repo_and_webhook(self) -> None:
         from dependencies.services import get_user_service
 
+        request = MagicMock(spec=Request)
+        request.app.state.redis = MagicMock()
         db = AsyncMock(spec=AsyncSession)
         webhook = MagicMock()
 
@@ -65,11 +67,13 @@ class TestGetUserService:
             mock_repo_cls.return_value = mock_repo
             mock_svc_cls.return_value = "user_service"
 
-            result = await get_user_service(db, webhook)
+            result = await get_user_service(request, db, webhook)
 
             mock_repo_cls.assert_called_once_with(db)
             mock_svc_cls.assert_called_once_with(
-                repo=mock_repo, webhook_service=webhook
+                repo=mock_repo,
+                webhook_service=webhook,
+                redis=request.app.state.redis,
             )
             assert result == "user_service"
 
@@ -310,15 +314,15 @@ class TestGetGraphService:
     @pytest.fixture
     def mock_org_config(self) -> MagicMock:
         cfg = MagicMock()
-        cfg.graph_backend = "postgres"
+        cfg.graph_backend = "falkordb"
         cfg.falkordb_url = None
         return cfg
 
     @pytest.mark.asyncio
-    async def test_creates_graph_service_postgres(
+    async def test_creates_graph_service_falkordb(
         self, mock_dispatcher: MagicMock, mock_org_config: MagicMock
     ) -> None:
-        """Postgres backend → no Surreal/Falkor connections, basic service."""
+        """FalkorDB backend → no Surreal connections, basic service."""
         from dependencies.services import get_graph_service
 
         request = MagicMock(spec=Request)
@@ -433,7 +437,7 @@ class TestGetGraphService:
         from dependencies.services import get_graph_service
 
         mock_org_config = MagicMock()
-        mock_org_config.graph_backend = "postgres"
+        mock_org_config.graph_backend = "falkordb"
         mock_org_config.falkordb_url = "redis://falkordb:6379"
 
         request = MagicMock(spec=Request)
@@ -524,6 +528,8 @@ class TestGetQuickActionsService:
     async def test_creates_quick_actions_service(self) -> None:
         from dependencies.services import get_quick_actions_service
 
+        request = MagicMock(spec=Request)
+        request.app.state.redis = MagicMock()
         db = AsyncMock(spec=AsyncSession)
 
         with (
@@ -536,12 +542,14 @@ class TestGetQuickActionsService:
                 m.return_value = MagicMock()
             mock_svc_cls.return_value = "quick_actions_svc"
 
-            result = await get_quick_actions_service(db)
+            result = await get_quick_actions_service(request, db)
 
             mock_svc_cls.assert_called_once_with(
                 project_repo=m1.return_value,
                 user_repo=m2.return_value,
                 org_repo=m3.return_value,
+                db=db,
+                redis=request.app.state.redis,
             )
             assert result == "quick_actions_svc"
 
@@ -563,10 +571,10 @@ class TestGetGraphBackendForProject:
         request.state.user_id = ORG_ID_STR
         request.app.state.graph_backend_dispatcher = dispatcher
         request.app.state.surreal_connection_pool = None
-        request.app.state.falkordb_client = None
+        request.app.state.falkordb_client = MagicMock()
 
         org_config = MagicMock()
-        org_config.graph_backend = "postgres"
+        org_config.graph_backend = "falkordb"
         org_config.falkordb_url = None
 
         db = AsyncMock(spec=AsyncSession)
