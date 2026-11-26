@@ -14,7 +14,6 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
 from core.audit import audit_action
@@ -24,8 +23,7 @@ from dependencies.auth import (
     require_permission,
     require_permission_or_self,
 )
-from dependencies.db import get_db
-from repositories.user_repository import UserRepository
+from dependencies.services import get_user_service, get_user_summary_service
 from schemas.custom_instructions import (
     CustomInstructionSchema,
     CustomInstructionsResponse,
@@ -44,21 +42,6 @@ from services.user_service import UserService
 from services.user_summary_service import UserSummaryService
 
 router = APIRouter(prefix="/v1/users", tags=["Users"])
-
-
-async def get_user_service(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> UserService:
-    """FastAPI dependency that yields an initialised :class:`UserService`.
-
-    Wires up the repository and service layers with the request-scoped
-    database session and the app-level Redis client (used for role-cache
-    invalidation on role changes / deletions).
-    """
-    repo = UserRepository(db=db)
-    redis = getattr(request.app.state, "redis", None)
-    return UserService(repo=repo, redis=redis)
 
 
 @router.post("", response_model=UserResponse, status_code=201)
@@ -231,18 +214,6 @@ async def delete_user(
 # ═══════════════════════════════════════════════════════════════════════════════
 # User Summary
 # ═══════════════════════════════════════════════════════════════════════════════
-
-
-async def get_user_summary_service(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> UserSummaryService:
-    """Dependency that yields an initialised UserSummaryService."""
-    from core.arq import get_arq
-
-    arq = get_arq()
-    redis = getattr(request.app.state, "redis", None)
-    return UserSummaryService(db=db, arq=arq, redis=redis)
 
 
 @router.get("/{user_id}/summary", response_model=UserSummaryResponse)

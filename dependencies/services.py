@@ -31,7 +31,7 @@ from uuid import UUID
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dependencies.db import get_db
+from dependencies.db import get_db, get_db_superadmin
 from dependencies.org_config import get_org_config
 
 if TYPE_CHECKING:
@@ -67,6 +67,7 @@ from services.session_service import SessionService
 from services.setup_service import SetupService
 from services.user_config_service import UserConfigService
 from services.user_service import UserService
+from services.user_summary_service import UserSummaryService
 from services.webhook_service import WebhookService
 
 logger = logging.getLogger(__name__)
@@ -94,15 +95,72 @@ async def get_webhook_service(
 
 
 async def get_user_service(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     webhook: WebhookService = Depends(get_webhook_service),
 ) -> UserService:
     """Dependency that yields an initialised UserService.
 
-    The service is constructed once per request using a DB session from
-    the application's async engine.
+    Wires the repository, webhook emitter, and app-level Redis client
+    (used for role-cache invalidation on role changes / deletions).
+
+    Args:
+        request: Incoming HTTP request (for ``app.state.redis``).
+        db: Async DB session from dependency injection.
+        webhook: Webhook emitter for user lifecycle events.
+
+    Returns:
+        An initialised ``UserService``.
     """
-    return UserService(repo=UserRepository(db), webhook_service=webhook)
+    redis = getattr(request.app.state, "redis", None)
+    return UserService(
+        repo=UserRepository(db), webhook_service=webhook, redis=redis
+    )
+
+
+async def get_user_summary_service(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> UserSummaryService:
+    """Dependency that yields an initialised UserSummaryService.
+
+    Args:
+        request: Incoming HTTP request (for ``app.state.redis``).
+        db: Async DB session from dependency injection.
+
+    Returns:
+        An initialised ``UserSummaryService``.
+    """
+    from core.arq import get_arq
+
+    arq = get_arq()
+    redis = getattr(request.app.state, "redis", None)
+    return UserSummaryService(db=db, arq=arq, redis=redis)
+
+
+async def get_superadmin_user_service(
+    request: Request,
+    db: AsyncSession = Depends(get_db_superadmin),
+    webhook: WebhookService = Depends(get_webhook_service),
+) -> UserService:
+    """Dependency that yields a superadmin-scoped UserService.
+
+    Runs on the RLS-bypass session because the target row belongs to the
+    member, not the acting superadmin (the tenant policy would otherwise
+    match zero rows).
+
+    Args:
+        request: Incoming HTTP request (for ``app.state.redis``).
+        db: RLS-bypass async DB session from dependency injection.
+        webhook: Webhook emitter for user lifecycle events.
+
+    Returns:
+        An initialised ``UserService`` on the bypass session.
+    """
+    redis = getattr(request.app.state, "redis", None)
+    return UserService(
+        repo=UserRepository(db), webhook_service=webhook, redis=redis
+    )
 
 
 # ── Session ────────────────────────────────────────────────────────────────────

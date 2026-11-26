@@ -34,8 +34,8 @@ from core.exceptions import NotFoundError
 from core.system_config import get_system_config, update_system_config
 from dependencies.auth import require_superadmin
 from dependencies.db import get_db, get_db_superadmin
+from dependencies.services import get_superadmin_user_service
 from repositories.instance_settings_repository import InstanceSettingsRepository
-from repositories.user_repository import UserRepository
 from schemas.admin_system import (
     MemberRoleResponse,
     UpdateMemberRoleRequest,
@@ -60,20 +60,6 @@ router = APIRouter(
 def _get_redis(request: Request) -> object:
     """Return the Redis client from app state (``None`` when unavailable)."""
     return getattr(request.app.state, "redis", None)
-
-
-def _get_user_service(
-    request: Request,
-    db: AsyncSession = Depends(get_db_superadmin),  # noqa: B008
-) -> UserService:
-    """Build a superadmin UserService on the RLS-bypass session.
-
-    Role changes run on the bypass session because the target row belongs
-    to the member, not the acting superadmin (the tenant policy would
-    otherwise match zero rows).
-    """
-    redis = getattr(request.app.state, "redis", None)
-    return UserService(repo=UserRepository(db), redis=redis)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -238,7 +224,7 @@ async def update_member_role(
     user_id: UUID,
     body: UpdateMemberRoleRequest,
     _admin_id: str = Depends(require_superadmin),  # noqa: B008
-    service: UserService = Depends(_get_user_service),  # noqa: B008
+    service: UserService = Depends(get_superadmin_user_service),  # noqa: B008
 ) -> MemberRoleResponse:
     """Set a member's role.
 
