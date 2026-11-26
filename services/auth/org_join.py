@@ -72,7 +72,9 @@ class OrgJoinMixin:
         if mode not in ("open", "approval"):
             raise AuthorizationError("Registration is disabled")
 
-        # No org gate — the single-user model has no platform org.
+        # No tenant context on this public path — authz is the
+        # registration_mode gate above; persistence uses a
+        # transaction-local bypass inside create_dashboard_user.
         # Join mints ``member`` (unlike open signup, which mints the
         # bootstrapping ``admin``) — joined users never self-promote.
         existing = await self._repo.find_user_by_email(payload.email)

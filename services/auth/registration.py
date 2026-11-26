@@ -101,9 +101,11 @@ class RegistrationMixin:
             )
             return self._signup_success_response(payload.email)
 
-        # No org gate — the single-user model has no platform org.
-        # The users INSERT policy is open (signup is public); bind the new
-        # user's own context right after creation for the reads below.
+        # No tenant context on this public path — authz is the
+        # registration_mode gate above; persistence uses a
+        # transaction-local bypass inside create_dashboard_user.  Bind
+        # the new user's own context right after creation for the
+        # reads below.
         # Signup mints the first live user as ``admin`` (self-serve
         # bootstrap); the org-code join path below mints ``member`` —
         # invited/joined users never self-promote.
