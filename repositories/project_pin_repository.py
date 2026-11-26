@@ -48,7 +48,6 @@ class ProjectPinRepository:
         result = await self._db.execute(
             select(ProjectPin.project_id).where(
                 ProjectPin.user_id == user_id,
-                ProjectPin.user_id == user_id,
             )
         )
         return set(result.scalars().all())
@@ -142,7 +141,7 @@ class ProjectPinRepository:
     ) -> ProjectPin | None:
         """Pin a project only if the user is under the pin limit.
 
-        A transaction-scoped advisory lock on ``(user_id, user_id)``
+        A transaction-scoped advisory lock on ``(user_id)``
         serializes concurrent pins for the same user (READ COMMITTED alone
         lets two ``INSERT ... WHERE count < limit`` statements both see the
         same count), followed by a single ``INSERT ... SELECT ... WHERE
@@ -183,9 +182,8 @@ class ProjectPinRepository:
         stmt = (
             insert(ProjectPin)
             .from_select(
-                ["user_id", "user_id", "project_id"],
+                ["user_id", "project_id"],
                 select(
-                    literal(user_id, type_=Uuid),
                     literal(user_id, type_=Uuid),
                     literal(project_id, type_=Uuid),
                 ).where(pin_count < limit),
