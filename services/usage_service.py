@@ -27,7 +27,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.llm import UsageRecord, UsageSink
 from core.sorting import SortSpec
-from repositories.llm_usage_repository import LLMUsageRepository, UsageSummary
+from repositories.llm_usage_repository import (
+    DailyUsageBucket,
+    LLMUsageRepository,
+    UsageSummary,
+)
 
 if TYPE_CHECKING:
     from models.llm_usage import LLMUsage
@@ -171,6 +175,46 @@ async def list_usage(
         limit=limit,
         offset=offset,
         sort=sort,
+    )
+
+
+async def list_usage_daily(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    project_id: UUID | None = None,
+    worker: str | None = None,
+    model: str | None = None,
+    limit: int = 365,
+    offset: int = 0,
+) -> tuple[list[DailyUsageBucket], int]:
+    """Aggregate metering rows into sparse UTC-day buckets, newest first.
+
+    Args:
+        db: Active async session (RLS-scoped to the org).
+        user_id: Owning organization.
+        start: Include rows created at/after this instant.
+        end: Include rows created before this instant (exclusive).
+        project_id: Exact-match filter on project scope.
+        worker: Exact-match filter on worker label.
+        model: Exact-match filter on model identifier.
+        limit: Max day buckets per page.
+        offset: Pagination offset over day buckets.
+
+    Returns:
+        Tuple of (buckets, day_count).
+    """
+    return await LLMUsageRepository(db).list_daily_buckets(
+        user_id,
+        start=start,
+        end=end,
+        project_id=project_id,
+        worker=worker,
+        model=model,
+        limit=limit,
+        offset=offset,
     )
 
 

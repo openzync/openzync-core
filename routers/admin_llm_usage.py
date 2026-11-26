@@ -20,11 +20,13 @@ from core.sorting import SortSpec
 from dependencies.auth import require_permission
 from dependencies.db import get_db
 from schemas.llm_usage import (
+    LlmUsageDailyBucket,
+    LLMUsageDailyListResponse,
     LLMUsageListResponse,
     LLMUsageResponse,
     UsageSummaryResponse,
 )
-from services.usage_service import list_usage, summarize_usage
+from services.usage_service import list_usage, list_usage_daily, summarize_usage
 
 logger = structlog.get_logger(__name__)
 
@@ -78,13 +80,16 @@ def _resolve_window(
 
 @router.get(
     "",
-    response_model=LLMUsageListResponse,
+    response_model=LLMUsageListResponse | LLMUsageDailyListResponse,
     summary="List metered LLM usage",
     description=(
         "Returns paginated metering rows for the authenticated organization "
         "plus aggregates over the same window. Windowed by days/from/to "
         "with optional project_id, worker, and model filters. "
-        "Default window is last 30 days."
+        "Default window is last 30 days. "
+        "Pass ``group_by=day`` for sparse per-day buckets "
+        "(``{date, total_tokens, calls}``, newest first) instead of rows; "
+        "limit/offset then paginate days and ``total`` is the day count."
     ),
 )
 async def list_llm_usage(
@@ -98,9 +103,10 @@ async def list_llm_usage(
     offset: int = Query(default=0, ge=0),
     sort_by: LLMUsageSortBy | None = Query(default=None),
     sort_dir: Literal["asc", "desc"] = Query(default="desc"),
+    group_by: Literal["day"] | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(require_permission("members:read")),
-) -> LLMUsageListResponse:
+) -> LLMUsageListResponse | LLMUsageDailyListResponse:
     """List metering rows with a window summary for the org.
 
     Args:
@@ -110,19 +116,65 @@ async def list_llm_usage(
         project_id: Optional project scope filter.
         worker: Optional worker label filter (e.g. ``enrich_episode``).
         model: Optional model identifier filter.
-        limit: Max rows per page (1-500).
+        limit: Max rows per page (1-500). Paginates day buckets when grouped.
         offset: Pagination offset.
         sort_by: Sort key (``created_at``, ``duration_ms``, ``model``,
-            ``total_tokens``).
+            ``total_tokens``). Ignored when ``group_by=day`` (fixed date DESC).
         sort_dir: Sort direction.
+        group_by: ``None`` for metering rows (default); ``"day"`` for sparse
+            per-day buckets. Any other value is rejected with 422.
         db: Async database session.
         user_id: Authenticated organization ID (from JWT or API key).
 
     Returns:
-        ``LLMUsageListResponse`` with rows, total, and summary.
+        ``LLMUsageListResponse`` with rows, total, and summary — or, when
+        ``group_by=day``, ``LLMUsageDailyListResponse`` with day buckets.
+        # ⚠️ BREAKING (grouped only): total=data day-bucket count, not call count.
     """
     start, end_exclusive = _resolve_window(days, from_date, to_date)
     org_uuid = UUID(user_id)
+
+    if group_by == "day":
+        buckets, day_total = await list_usage_daily(
+            db,
+            user_id=org_uuid,
+            start=start,
+            end=end_exclusive,
+            project_id=project_id,
+            worker=worker,
+            model=model,
+            limit=limit,
+            offset=offset,
+        )
+        summary = await summarize_usage(
+            db,
+            user_id=org_uuid,
+            start=start,
+            end=end_exclusive,
+            project_id=project_id,
+            worker=worker,
+            model=model,
+        )
+        return LLMUsageDailyListResponse(
+            data=[
+                LlmUsageDailyBucket(
+                    date=bucket.day.date().isoformat(),
+                    total_tokens=bucket.total_tokens,
+                    calls=bucket.calls,
+                )
+                for bucket in buckets
+            ],
+            total=day_total,
+            summary=UsageSummaryResponse(
+                calls=summary.calls,
+                prompt_tokens=summary.prompt_tokens,
+                completion_tokens=summary.completion_tokens,
+                reasoning_tokens=summary.reasoning_tokens,
+                total_tokens=summary.total_tokens,
+                avg_duration_ms=summary.avg_duration_ms,
+            ),
+        )
+
     sort = SortSpec(sort_by=sort_by, sort_dir=sort_dir)
 
     rows, total = await list_usage(

@@ -59,3 +59,22 @@ class LLMUsageListResponse(BaseModel):
     summary: UsageSummaryResponse = Field(
         ..., description="Aggregates over the same window and filters."
     )
+
+
+class LlmUsageDailyBucket(BaseModel):
+    """One sparse UTC-day aggregate (no zero-fill; frontend fills gaps)."""
+
+    date: str = Field(..., description="UTC day in YYYY-MM-DD format.")
+    total_tokens: int = Field(..., description="Summed prompt + completion.")
+    calls: int = Field(..., description="Metered call count on this day.")
+
+
+class LLMUsageDailyListResponse(BaseModel):
+    """Sparse per-day buckets plus window summary (``group_by=day``)."""
+
+    data: list[LlmUsageDailyBucket] = Field(..., description="Day buckets.")
+    # ⚠️ BREAKING (grouped only): total=data day-bucket count, not call count.
+    total: int = Field(..., description="Number of day buckets (not calls).")
+    summary: UsageSummaryResponse = Field(
+        ..., description="Aggregates over the same window and filters."
+    )
