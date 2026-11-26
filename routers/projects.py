@@ -18,8 +18,11 @@ from core.exceptions import AuthenticationError
 from dependencies.auth import require_permission, require_user_id
 from dependencies.db import get_db
 from dependencies.project_auth import require_project_membership
+from dependencies.services import get_invite_service
+from repositories.instance_settings_repository import InstanceSettingsRepository
 from repositories.project_pin_repository import ProjectPinRepository
 from repositories.project_repository import ProjectRepository
+from repositories.user_repository import UserRepository
 from schemas.projects import (
     AddMemberRequest,
     CreateProjectRequest,
@@ -28,6 +31,8 @@ from schemas.projects import (
     UpdateProjectRequest,
 )
 from schemas.sorting import ProjectMemberSortBy, ProjectSortBy, SortDir, SortSpec
+from services.invite_service import InviteService
+from services.project_membership_service import ProjectMembershipService
 from services.project_service import ProjectService
 
 router = APIRouter(prefix="/v1/projects", tags=["projects"])
@@ -39,6 +44,24 @@ router = APIRouter(prefix="/v1/projects", tags=["projects"])
 async def _get_project_service(db: AsyncSession = Depends(get_db)) -> ProjectService:
     """Factory for request-scoped ProjectService."""
     return ProjectService(repo=ProjectRepository(db), pin_repo=ProjectPinRepository(db))
+
+
+async def _get_membership_service(
+    db: AsyncSession = Depends(get_db),
+    invite_service: InviteService = Depends(get_invite_service),
+) -> ProjectMembershipService:
+    """Factory for request-scoped ProjectMembershipService.
+
+    Shares the request session across repos (FastAPI caches ``get_db``
+    per request), so the invite-row insert and the membership insert
+    commit atomically via ``get_db``.
+    """
+    return ProjectMembershipService(
+        repo=ProjectRepository(db),
+        user_repo=UserRepository(db),
+        settings_repo=InstanceSettingsRepository(db),
+        invite_service=invite_service,
+    )
 
 
 # ── Create ──────────────────────────────────────────────────────────────────
@@ -306,15 +329,25 @@ async def unpin_project(
 async def add_member(
     payload: AddMemberRequest,
     project_id: UUID = Path(...),
-    service: ProjectService = Depends(_get_project_service),
+    service: ProjectMembershipService = Depends(_get_membership_service),
+    user_id: str = Depends(require_user_id),
 ) -> ProjectMemberResponse:
-    """Add a user to a project.
+    """Add a user to a project by email.
+
+    # ⚠️ BREAKING: the request body is now ``{email, role}`` — ``user_id``
+    was removed. PATCH/DELETE member endpoints remain ``user_id``-keyed.
+
+    Existing active users join immediately. Unknown emails follow the
+    platform registration mode: ``open`` creates a pending invite,
+    ``invite_only`` rejects with 403, ``approval`` rejects with 422.
 
     Requires owner role.
     """
-    return await service.add_member(
+    return await service.add_by_email(
         project_id=project_id,
-        payload=payload,
+        email=payload.email,
+        role=payload.role,
+        invited_by=UUID(user_id),
     )
 
 

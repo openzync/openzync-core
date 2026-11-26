@@ -16,7 +16,6 @@ from core.sorting import SortSpec
 from repositories.project_pin_repository import ProjectPinRepository
 from repositories.project_repository import ProjectRepository
 from schemas.projects import (
-    AddMemberRequest,
     CreateProjectRequest,
     ProjectMemberResponse,
     ProjectResponse,
@@ -459,49 +458,6 @@ class ProjectService:
         )
 
     # ── Members ─────────────────────────────────────────────────────────────
-
-    async def add_member(
-        self,
-        project_id: UUID,
-        payload: AddMemberRequest,
-    ) -> ProjectMemberResponse:
-        """Add a user to a project with the specified role.
-
-        Raises:
-            ValidationError: If the user is already a member.
-        """
-        existing = await self._repo.get_member(
-            project_id=project_id,
-            user_id=payload.user_id,
-        )
-        if existing is not None:
-            raise ValidationError(
-                message=f"User {payload.user_id} is already a member of this project",
-                detail={"user_id": str(payload.user_id)},
-            )
-
-        member = await self._repo.add_member(
-            project_id=project_id,
-            user_id=payload.user_id,
-            role=payload.role,
-        )
-
-        logger.info(
-            "project_service.member_added",
-            extra={
-                "project_id": str(project_id),
-                "user_id": str(payload.user_id),
-                "role": payload.role,
-            },
-        )
-
-        return ProjectMemberResponse(
-            id=member.id,
-            project_id=member.project_id,
-            user_id=member.user_id,
-            role=member.role,
-            created_at=member.created_at,
-        )
 
     async def remove_member(
         self,

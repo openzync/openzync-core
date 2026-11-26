@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from schemas.users import UserResponse
 
@@ -98,20 +98,30 @@ class UpdateProjectRequest(BaseModel):
 class AddMemberRequest(BaseModel):
     """Request body for ``POST /v1/projects/{project_id}/members``.
 
+    # ⚠️ BREAKING: ``user_id`` was removed — members are now added by
+    email only. PATCH/DELETE member endpoints remain ``user_id``-keyed.
+
     Attributes:
-        user_id: The UUID of the user to add to the project.
+        email: Email address of the user to add. Stripped and lowercased
+            by :meth:`normalize_email`.
         role: Project role — ``owner`` or ``member``. Defaults to
             ``"member"`` if omitted.
     """
 
-    user_id: UUID = Field(
+    email: EmailStr = Field(
         ...,
-        description="UUID of the user to add to the project.",
+        description="Email address of the user to add to the project.",
     )
     role: ProjectRole = Field(
         default="member",
         description="Project role. 'owner' or 'member' (default: 'member').",
     )
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        """Strip whitespace and lowercase so lookups are canonical."""
+        return v.strip().lower()
 
 
 # ── Response schemas ───────────────────────────────────────────────────────────
