@@ -584,17 +584,22 @@ async def get_auth_throttle(
 
 
 async def get_quick_actions_service(
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> QuickActionsService:
     """Dependency that yields an initialised QuickActionsService.
 
     Wires in the project, user, and organization repositories for
-    context-aware action generation.
+    context-aware action generation, plus the DB session and Redis client
+    for canonical per-user config resolution (cache-first).
     """
+    redis = getattr(request.app.state, "redis", None)
     return QuickActionsService(
         project_repo=ProjectRepository(db),
         user_repo=UserRepository(db),
         org_repo=OrganizationRepository(db),
+        db=db,
+        redis=redis,
     )
 
 

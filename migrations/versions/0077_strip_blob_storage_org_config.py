@@ -16,7 +16,7 @@ Revision ID: 0077
 Revises: 0076
 
 Rollback note: downgrade is a no-op — removed values are not restored.
-Re-apply via OpenBao ``OZ_S3_*`` / ``OZ_BLOB_*`` if needed.
+Re-apply via the env file (``OZ_S3_*`` / ``OZ_BLOB_*``) if needed.
 """
 
 from __future__ import annotations

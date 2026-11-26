@@ -70,8 +70,6 @@ def _create_app(*, include_stats: bool = False) -> tuple[FastAPI, AsyncMock]:
     app = FastAPI()
     db_mock = AsyncMock(spec=AsyncSession)
     db_mock.execute.return_value = MagicMock()
-    app.state.openbao_client = AsyncMock()
-    app.state.openbao_client.read_org_config = AsyncMock(return_value={})
     app.state.redis = AsyncMock()
     app.state.redis.get = AsyncMock(return_value=None)
 

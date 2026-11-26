@@ -221,7 +221,7 @@ async def _resolve_user_config(
 
     Uses ``core.org_config.get_org_config`` (the standard resolution path)
     if available, which supports Redis caching.  Falls back to a direct DB
-    query via ``OrganizationRepository.get_config``.
+    query via ``UserRepository.get_config_override``.
 
     Args:
         ctx: ARQ worker context dict (may contain ``"redis"`` for caching).
@@ -229,7 +229,8 @@ async def _resolve_user_config(
         db: An async SQLAlchemy session.
 
     Returns:
-        An ``OrgConfigBase`` instance, or ``None`` if the user has none stored.
+        An ``OrgConfigBase`` instance (never ``None`` — an unset backend
+        defaults to ``"falkordb"``); raises on resolution failure.
     """
     # ── Primary path: standard user-config resolution (cache-first) ───────
     try:
@@ -248,17 +249,17 @@ async def _resolve_user_config(
 
     # ── Fallback: direct DB query ─────────────────────────────────────────
     try:
-        from repositories.organization_repository import OrganizationRepository
+        from repositories.user_repository import UserRepository
         from schemas.organization_config import OrgConfigBase
 
-        repo = OrganizationRepository(db)
-        raw_config = await repo.get_config(user_id)
+        repo = UserRepository(db)
+        raw_config = await repo.get_config_override(user_id)
 
-        # Match core.org_config behavior: empty config → all fields None
-        if not raw_config:
-            return OrgConfigBase(
-                **{name: None for name in OrgConfigBase.model_fields}
-            )
+        # Flat users.config_override shape — mirror
+        # core.org_config._with_graph_default (unset graph_backend → falkordb;
+        # never an all-None wrong default from a dropped nesting level).
+        if not raw_config.get("graph_backend"):
+            raw_config = {**raw_config, "graph_backend": "falkordb"}
         return OrgConfigBase(**raw_config)
     except Exception:
         logger.error(

@@ -75,7 +75,6 @@ def _make_app(*, authenticated: bool, auth_user_id: str | None=None, auth_role: 
     app = FastAPI()
     register_exception_handlers(app)
     app.state.redis = AsyncMock()
-    app.state.openbao_client = AsyncMock()
     app.state.db_session_factory = None
     app.dependency_overrides[get_db] = lambda: AsyncMock()
     app.dependency_overrides[get_user_summary_service] = lambda: AsyncMock()

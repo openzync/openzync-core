@@ -71,13 +71,10 @@ def _create_app() -> tuple[FastAPI, AsyncMock]:
     # Ensure execute() returns a sync mock so scalar() yields values, not coroutines
     db_mock.execute.return_value = MagicMock()
     # /metrics/summary and /metrics/batch depend on dependencies.org_config,
-    # which reads app.state.openbao_client + app.state.redis and raises
-    # OpenBaoConnectionError when the client is missing (core/org_config.py:101).
+    # which reads app.state.redis with a DB fallback (users.config_override).
     # Same app.state wiring as test_admin_gate_matrix / test_admin_system;
-    # an empty stored config (read_org_config -> {}) resolves to the
-    # OrgConfigBase defaults (graph_backend="falkordb").
-    app.state.openbao_client = AsyncMock()
-    app.state.openbao_client.read_org_config = AsyncMock(return_value={})
+    # an empty stored config resolves to the OrgConfigBase defaults
+    # (graph_backend="falkordb").
     app.state.redis = AsyncMock()
     app.state.redis.get = AsyncMock(return_value=None)
 
