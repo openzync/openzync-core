@@ -110,10 +110,10 @@ async def resolve_graph_backend(
         return None
 
     # Get SurrealDB connection — only when the user explicitly configures
-    # SurrealDB.  For postgres or none backends the pool is never touched,
+    # SurrealDB.  For falkordb or none backends the pool is never touched,
     # avoiding unnecessary network round-trips and preventing failures when
     # SurrealDB is down.  If SurrealDB is configured but unreachable the
-    # error is raised loudly — no silent fallback to Postgres.
+    # error is raised loudly — no silent fallback.
     surreal = None
     if backend_name == "surrealdb":
         surreal_pool = ctx.get("surreal_connection_pool")
@@ -140,7 +140,7 @@ async def resolve_graph_backend(
             f"SurrealDB configured for user {user_id} (graph_backend="
             f"'surrealdb') but no connection is available — the "
             "surreal_connection_pool is missing or unreachable. "
-            "Refusing to fall back to Postgres."
+            "Refusing to continue without a connection."
         )
 
     # Get FalkorDB client (may be None)
@@ -153,7 +153,7 @@ async def resolve_graph_backend(
         raise GraphBackendUnavailableError(
             f"FalkorDB configured for user {user_id} (graph_backend="
             f"'falkordb') but no client is available in the worker "
-            "context. Refusing to fall back to Postgres."
+            "context. Refusing to continue without a connection."
         )
 
     try:

@@ -189,43 +189,6 @@ class OrganizationRepository:
         pii_config = row[0]
         return pii_config if isinstance(pii_config, dict) else {}
 
-    # ── Legacy llm_config (deprecated — reads config->'llm' with fallback) ───
-
-    async def get_llm_config(self, user_id: UUID) -> dict[str, Any]:
-        """Get the LLM configuration for an organization.
-
-        **DEPRECATED**: Prefer ``get_config()`` which returns the full config
-        JSONB.  This method reads from ``config->'llm'`` with a fallback to
-        the legacy ``llm_config`` column for backward compatibility during
-        the migration window.
-
-        Args:
-            user_id: The organization UUID.
-
-        Returns:
-            The LLM config dict, or ``{}`` if not configured.
-        """
-        await rls.set_user_context(self._db, user_id)
-        # Primary: read from new config JSONB
-        result = await self._db.execute(
-            text(
-                "SELECT config->'llm' AS llm FROM organizations WHERE id = :user_id"
-            ),
-            {"user_id": user_id},
-        )
-        row = result.one_or_none()
-        if row and row.llm is not None and isinstance(row.llm, dict):
-            return dict(row.llm)
-
-        # Fallback: legacy llm_config column (data will be migrated by
-        # Alembic revision 0002, but keep this for safety)
-        result = await self._db.execute(
-            text("SELECT llm_config FROM organizations WHERE id = :user_id"),
-            {"user_id": user_id},
-        )
-        row = result.one_or_none()
-        return dict(row.llm_config) if row and row.llm_config else {}
-
     async def get_quota(self, user_id: UUID, quota_name: str) -> int | None:
         """Get a specific quota value for an organization.
 

@@ -1,7 +1,7 @@
 """OpenZync API — FastAPI application factory.
 
 Creates a configured FastAPI instance with:
-- Lifespan-managed DB engine, Redis, ARQ pool, and Graphiti client
+- Lifespan-managed DB engine, Redis, ARQ pool, SurrealDB pool, and FalkorDB client
 - Structured logging via structlog
 - CORS, GZip, TrustedHost, Auth, RateLimit, Tracing, and RequestID middleware
 - RFC 7807-compliant exception handlers

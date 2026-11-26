@@ -16,7 +16,7 @@
 #   make docker-down      # Stop infrastructure containers
 # ──────────────────────────────────────────────────────────────────────────────
 
-.PHONY: dev deps worker install lint test test-all test-coverage test-coverage-ci test-coverage-report test-coverage-html migrate migrate-new docker-up docker-up-local docker-down docker-down-local docker-logs docker-logs-local docker-reset docker-reset-local docs-install docs-build docs-watch docs-clean docs-apidoc changelog-check changelog-build clean
+.PHONY: dev deps worker install lint test test-all test-coverage test-coverage-ci test-coverage-report test-coverage-html migrate migrate-new docker-up docker-up-local docker-down docker-down-local docker-logs docker-logs-local docker-reset docker-reset-local changelog-check changelog-build clean
 
 # ── Variables ─────────────────────────────────────────────────────────────────
 
@@ -151,26 +151,6 @@ docker-reset:
 docker-reset-local:
 	docker compose --env-file .env -f infra/docker-compose.backend.yml --profile local-db down -v
 	docker compose --env-file .env -f infra/docker-compose.backend.yml --profile local-db up -d --build
-
-# ── Documentation ─────────────────────────────────────────────────────────────
-
-docs-install:
-	$(PIP) install -e ".[doc]"
-
-docs-build:
-	sphinx-build -b html docs/ docs/_build/html
-
-docs-watch:
-	sphinx-autobuild docs/ docs/_build/html --port 8600
-
-docs-clean:
-	rm -rf docs/_build/
-
-docs-apidoc:
-	sphinx-apidoc -o docs/api/ \
-	  core/ routers/ models/ schemas/ services/ repositories/ \
-	  middleware/ dependencies/ workers/ utils/ packages/ \
-	  --force --module-first
 
 # ── Changelog (towncrier) ─────────────────────────────────────────────────────
 

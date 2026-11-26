@@ -35,9 +35,6 @@ class Organization(TimestampMixin, Base):
         config: JSONB blob for all per-org configuration (LLM, embeddings,
             graph, behaviour).  UI-exposed.  ``None`` fields fall back to
             env-var defaults from ``core.config.settings``.
-        llm_config: **Deprecated** — kept for backward compatibility during
-            migration.  Reads/writes alias to ``config->'llm'``.  Prefer
-            ``config`` for new code.
         quotas: JSONB blob for usage quotas (max_sessions, max_episodes, etc.).
         is_active: Soft toggle for deactivation.
         org_code: Join code a new member presents at ``POST /v1/auth/join``
@@ -68,15 +65,6 @@ class Organization(TimestampMixin, Base):
         default=dict,
         server_default="{}",
         comment="Per-org UI-exposed configuration (LLM, embeddings, graph, behaviour).",
-    )
-    # DEPRECATED: llm_config is kept for data migration.  New code should use
-    # the ``config`` column.  The Alembic migration 0002 copies existing
-    # llm_config values into config->'llm'.
-    llm_config: Mapped[dict] = mapped_column(
-        JSONB,
-        nullable=False,
-        default=dict,
-        server_default="{}",
     )
     quotas: Mapped[dict] = mapped_column(
         JSONB,

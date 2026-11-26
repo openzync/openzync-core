@@ -46,7 +46,7 @@ class QuickActionsService:
 
         # One AsyncSession allows only one in-flight query — sequential, not gather.
         project_count = await self._project_repo.count_active(user_id)
-        llm_config = await self._org_repo.get_llm_config(user_id)
+        org_config = await self._org_repo.get_config(user_id)
         user_count = await self._user_repo.count_active(user_id)
 
         # 1. Projects
@@ -66,7 +66,7 @@ class QuickActionsService:
             })
 
         # 2. LLM config
-        if not llm_config.get("provider"):
+        if not org_config.get("llm_backend"):
             actions.append({
                 "label": "Configure LLM Provider",
                 "href": "/settings/org-config/llm",

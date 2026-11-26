@@ -11,9 +11,11 @@ Usage::
     # App startup:
     app.state.graph_backend_dispatcher = init_dispatcher()
 
-    # Per-request (Postgres):
+    # Per-request (FalkorDB):
     dispatcher = request.app.state.graph_backend_dispatcher
-    backend = dispatcher.resolve_and_create(org_config, db)
+    backend = dispatcher.resolve_and_create(
+        org_config, db, falkordb_client=falkordb
+    )
     entity = await backend.create_entity(user_id=..., name="Acme", ...)
 
     # Per-request (SurrealDB):
@@ -57,8 +59,8 @@ class GraphBackendDispatcher:
     """Registry of backend classes + per-org resolution.
 
     This is an app-level singleton.  It does **not** hold backend instances
-    because backends need a request-scoped ``AsyncSession`` (Postgres) or
-    ``AsyncSurreal`` connection (SurrealDB).  Instead, it holds the
+    because backends need a request-scoped ``AsyncSurreal`` connection
+    (SurrealDB) or ``FalkorDB`` client (FalkorDB).  Instead, it holds the
     **classes** and creates a fresh instance on every call to
     :meth:`resolve_and_create`.
 
@@ -67,9 +69,6 @@ class GraphBackendDispatcher:
         dispatcher = GraphBackendDispatcher()
         dispatcher.register("surrealdb", SurrealGraphBackend)
         dispatcher.register("falkordb", FalkorGraphBackend)
-
-        # Per-request (SurrealDB):
-        backend = dispatcher.resolve_and_create(org_config, db, surreal=surreal)
 
         # Per-request (SurrealDB):
         backend = dispatcher.resolve_and_create(org_config, db, surreal=surreal)
@@ -91,7 +90,7 @@ class GraphBackendDispatcher:
         replace backends without reference counting.
 
         Args:
-            name: Short identifier (e.g. ``"postgres"``, ``"neo4j"``).
+            name: Short identifier (e.g. ``"surrealdb"``, ``"falkordb"``).
             backend_cls: A class that implements the ``GraphBackend`` ABC.
         """
         self._registry[name] = backend_cls
@@ -126,8 +125,8 @@ class GraphBackendDispatcher:
         Args:
             org_config: The resolved per-org configuration.  May be ``None``
                 (treated as graph disabled).
-            db: A request-scoped ``AsyncSession``.  Kept for signature
-                compatibility but not used by current backends.
+            db: Unused — kept for signature compatibility.  Backends take
+                ``surreal`` / ``falkordb_client``, never ``db``.
             surreal: An optional ``AsyncSurreal`` instance from the per-org
                 connection pool.  Passed only to the SurrealDB backend.
                 May be ``None``. Raises ``GraphBackendUnavailableError``
@@ -222,8 +221,7 @@ class GraphBackendDispatcher:
         backends are registered.
 
         Args:
-            db: A request-scoped ``AsyncSession`` (unused — kept for
-                signature compatibility).
+            db: Unused (kept for signature compatibility).
             org_config: Optional per-org config for backend-specific kwargs
                 such as ``graph_max_traversal_depth``.
             surreal: An optional ``AsyncSurreal`` instance from the per-org

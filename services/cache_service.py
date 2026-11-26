@@ -334,24 +334,6 @@ class CacheService:
         return ":".join(parts)
 
     @staticmethod
-    def build_user_cache_pattern(user_id: str) -> str:
-        """Build a Redis key pattern for all context cache entries of a user.
-
-        .. deprecated::
-            Use :meth:`build_project_cache_pattern` instead.  Context cache
-            invalidation is now project-scoped.  Kept for backward compatibility
-            of existing tests.
-
-        Args:
-            user_id: The organization UUID string.
-            user_id: The user UUID string.
-
-        Returns:
-            A glob pattern string for ``SCAN`` / ``KEYS``.
-        """
-        return f"ctx:{user_id}:*"
-
-    @staticmethod
     def build_project_cache_pattern(user_id: str, project_id: str) -> str:
         """Build a Redis key pattern for all context cache entries of a project.
 
@@ -367,67 +349,6 @@ class CacheService:
         return f"ctx:{user_id}:{project_id}:*"
 
     # ── Invalidation ───────────────────────────────────────────────────────────
-
-    async def invalidate_user_context(
-        self,
-        user_id: str,
-    ) -> int:
-        """Invalidate all context cache entries for a user.
-
-        .. deprecated::
-            Use :meth:`invalidate_project_context` instead.  Context cache
-            invalidation is now project-scoped.  Kept for backward compatibility
-            of existing tests.
-
-        Uses ``SCAN`` + ``DEL`` to match ``ctx:{user_id}:{user_id}:*``.
-
-        Args:
-            user_id: The organization UUID string.
-            user_id: The user UUID string.
-
-        Returns:
-            Number of cache keys deleted.
-
-        Raises:
-            CacheUnavailableError: If Redis is unreachable or the
-                invalidation fails.
-        """
-        pattern = self.build_user_cache_pattern(user_id)
-        cursor: int = 0
-        deleted = 0
-
-        try:
-            from redis.asyncio import Redis as AsyncRedis
-
-            r: AsyncRedis = self._redis  # type: ignore[assignment]
-            while True:
-                cursor, keys = await r.scan(
-                    cursor=cursor, match=pattern, count=100
-                )
-                if keys:
-                    deleted += await r.delete(*keys)
-                if cursor == 0:
-                    break
-
-            if deleted > 0:
-                logger.info(
-                    "cache.context_cache_invalidated",
-                    extra={
-                        "user_id": user_id,
-                        "keys_deleted": deleted,
-                    },
-                )
-        except Exception as exc:
-            logger.error(
-                "cache.invalidation_failed",
-                extra={"user_id": user_id},
-                exc_info=True,
-            )
-            raise CacheUnavailableError(
-                f"Cache invalidation failed for org '{user_id}', user '{user_id}'."
-            ) from exc
-
-        return deleted
 
     # ── Context cache generation (O(1) invalidation) ──────────────────────────
 
