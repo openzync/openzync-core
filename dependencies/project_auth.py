@@ -118,7 +118,8 @@ async def require_project_membership(
             detail="Project not found",
         )
 
-    member = await repo.get_member(
+    # note: active-only — pending invitees hold no access until they approve.
+    member = await repo.get_active_member(
         project_id=project_id,
         user_id=UUID(user_id),
     )

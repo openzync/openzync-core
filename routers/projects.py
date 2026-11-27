@@ -10,12 +10,26 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Path,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import audit_action
 from core.exceptions import AuthenticationError
-from dependencies.auth import require_permission, require_user_id
+from core.rls import rls_bypass
+from dependencies.auth import (
+    _ensure_superadmin,
+    require_permission,
+    require_user_id,
+)
 from dependencies.db import get_db
 from dependencies.project_auth import require_project_membership
 from dependencies.services import get_invite_service
@@ -26,6 +40,7 @@ from repositories.user_repository import UserRepository
 from schemas.projects import (
     AddMemberRequest,
     CreateProjectRequest,
+    MemberApprovalRequest,
     ProjectMemberResponse,
     ProjectResponse,
     UpdateProjectRequest,
@@ -332,14 +347,16 @@ async def add_member(
     service: ProjectMembershipService = Depends(_get_membership_service),
     user_id: str = Depends(require_user_id),
 ) -> ProjectMemberResponse:
-    """Add a user to a project by email.
+    """Invite a user to a project by email (always ``pending``).
 
     # ⚠️ BREAKING: the request body is now ``{email, role}`` — ``user_id``
     was removed. PATCH/DELETE member endpoints remain ``user_id``-keyed.
 
-    Existing active users join immediately. Unknown emails follow the
-    platform registration mode: ``open`` creates a pending invite,
-    ``invite_only`` rejects with 403, ``approval`` rejects with 422.
+    # ⚠️ BREAKING: invites no longer activate immediately — every path
+    creates a ``pending`` membership (201) the invitee must approve via
+    ``POST .../members/approve``. Unknown emails follow the platform
+    registration mode: ``open`` creates a pending invite, ``invite_only``
+    rejects with 403, ``approval`` rejects with 422.
 
     Requires owner role.
     """
@@ -371,13 +388,109 @@ async def list_members(
     ),
     service: ProjectService = Depends(_get_project_service),
 ) -> list[ProjectMemberResponse]:
-    """List all members of a project.
+    """List all members of a project (``pending`` invites included).
 
     Requires membership.
     """
     return await service.list_members(
         project_id=project_id, sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir)
     )
+
+
+async def _resolve_is_superadmin(
+    request: Request, user_id: str, db: AsyncSession
+) -> bool:
+    """Return whether the caller is a DB-verified platform superadmin.
+
+    Only 403 (non-superadmin) is absorbed; anything else fails closed.
+    """
+    try:
+        await _ensure_superadmin(request, user_id, db)
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_403_FORBIDDEN:
+            raise
+        return False
+    return True
+
+
+@router.post(
+    "/{project_id}/members/approve",
+    response_model=ProjectMemberResponse,
+)
+@audit_action("project.member.approve", "project_member", "Member invite approved")
+async def approve_member(
+    payload: MemberApprovalRequest,
+    project_id: UUID = Path(...),
+    request: Request = None,
+    service: ProjectMembershipService = Depends(_get_membership_service),
+    user_id: str = Depends(require_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> ProjectMemberResponse:
+    """Approve a pending invite, activating the membership.
+
+    Only the invitee (``user_id`` omitted or equal to the caller) or a
+    platform superadmin may approve. No project-membership gate here — a
+    pending invitee is not an active member yet.
+
+    Already-active memberships reject with 422 ``already_member``.
+    """
+    target = payload.user_id if payload.user_id is not None else UUID(user_id)
+    is_superadmin = await _resolve_is_superadmin(request, user_id, db)
+    # note: a superadmin sees rows RLS would hide from them (the invitee's
+    # row carries the invitee's user_id) — same bypass as users.py self-reads.
+    if is_superadmin:
+        async with rls_bypass(db):
+            return await service.approve(
+                project_id=project_id,
+                user_id=target,
+                actor=UUID(user_id),
+                is_superadmin=True,
+            )
+    return await service.approve(
+        project_id=project_id,
+        user_id=target,
+        actor=UUID(user_id),
+        is_superadmin=False,
+    )
+
+
+@router.post(
+    "/{project_id}/members/reject",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+@audit_action("project.member.reject", "project_member", "Member invite rejected")
+async def reject_member(
+    payload: MemberApprovalRequest,
+    project_id: UUID = Path(...),
+    request: Request = None,
+    service: ProjectMembershipService = Depends(_get_membership_service),
+    user_id: str = Depends(require_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Reject a pending invite, deleting the membership row.
+
+    Only the invitee (``user_id`` omitted or equal to the caller) or a
+    platform superadmin may reject. Active memberships reject with 422 —
+    remove them via ``DELETE`` instead.
+    """
+    target = payload.user_id if payload.user_id is not None else UUID(user_id)
+    is_superadmin = await _resolve_is_superadmin(request, user_id, db)
+    if is_superadmin:
+        async with rls_bypass(db):
+            await service.reject(
+                project_id=project_id,
+                user_id=target,
+                actor=UUID(user_id),
+                is_superadmin=True,
+            )
+    else:
+        await service.reject(
+            project_id=project_id,
+            user_id=target,
+            actor=UUID(user_id),
+            is_superadmin=False,
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete(
@@ -394,9 +507,10 @@ async def remove_member(
     user_id: UUID = Path(...),
     service: ProjectService = Depends(_get_project_service),
 ) -> Response:
-    """Remove a user from a project.
+    """Remove a user from a project, or revoke their pending invite.
 
-    Requires owner role.  Cannot remove the last owner.
+    Requires owner role.  Cannot remove the last active owner.
+    Pending invites revoke unconditionally.
     """
     # note: explicit empty Response — implicit None makes FastAPI serialize
     # a JSON `null` body on the 204, which uvicorn rejects and rolls back

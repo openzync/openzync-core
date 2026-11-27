@@ -91,12 +91,14 @@ class ProjectService:
             metadata_=payload.metadata,
         )
 
-        # Add creator as owner (skipped for API-key requests with no user context)
+        # Add creator as active owner (skipped for API-key requests with
+        # no user context) — the creator path bypasses invite approval.
         if user_id is not None:
             await self._repo.add_member(
                 project_id=project.id,
                 user_id=user_id,
                 role="owner",
+                status="active",
             )
 
         logger.info(
@@ -464,16 +466,17 @@ class ProjectService:
         project_id: UUID,
         user_id: UUID,
     ) -> None:
-        """Remove a user from a project.
+        """Remove a user from a project, or revoke their pending invite.
 
-        Prevents removing the last owner from a project.
+        Pending rows revoke unconditionally (a pending owner holds no
+        effective ownership). Prevents removing the last active owner.
 
         Raises:
             ValidationError: If removing the last owner.
             NotFoundError: If the membership does not exist.
         """
         # Check if this is the last owner being removed
-        member = await self._repo.get_member(project_id, user_id)
+        member = await self._repo.get_membership_any(project_id, user_id)
         if member is None:
             raise NotFoundError(
                 message=(
@@ -481,6 +484,22 @@ class ProjectService:
                 ),
                 detail={"user_id": str(user_id), "project_id": str(project_id)},
             )
+
+        if member.status == "pending":
+            removed = await self._repo.remove_member(project_id, user_id)
+            if not removed:
+                raise NotFoundError(
+                    message=f"Membership not found for user {user_id}",
+                    detail={"user_id": str(user_id)},
+                )
+            logger.info(
+                "project_membership.member_revoked",
+                extra={
+                    "project_id": str(project_id),
+                    "user_id": str(user_id),
+                },
+            )
+            return
 
         if member.role == "owner":
             owner_count = await self._count_owners(project_id)
@@ -512,6 +531,9 @@ class ProjectService:
     ) -> list[ProjectMemberResponse]:
         """List all members of a project with nested user details.
 
+        Returns every row regardless of ``status`` (``pending`` invites
+        included); only ``active`` rows grant access.
+
         Default ``created_at/asc``; whitelist ``created_at``, ``role``,
         ``name``, ``email``.
 
@@ -530,6 +552,7 @@ class ProjectService:
                 project_id=m.project_id,
                 user_id=m.user_id,
                 role=m.role,
+                status=m.status,
                 created_at=m.created_at,
                 user=self._to_user_response(m.user) if m.user is not None else None,
             )
@@ -607,12 +630,15 @@ class ProjectService:
             project_id=updated.project_id,
             user_id=updated.user_id,
             role=updated.role,
+            status=updated.status,
             created_at=updated.created_at,
         )
 
     # ── Helpers ─────────────────────────────────────────────────────────────
 
     async def _count_owners(self, project_id: UUID) -> int:
-        """Count how many owners a project has."""
+        """Count how many ACTIVE owners a project has."""
         members = await self._repo.list_members(project_id)
-        return sum(1 for m in members if m.role == "owner")
+        return sum(
+            1 for m in members if m.role == "owner" and m.status == "active"
+        )

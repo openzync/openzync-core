@@ -1,9 +1,11 @@
 """Project membership service — email-based member onboarding.
 
 Resolves an email to a user (existing active, pending invite, or new via
-the registration-mode-gated invite flow) and attaches them to a project.
-Pure orchestration: all SQL lives in the repositories, all HTTP in the
-router, all invite email mechanics in :class:`InviteService`.
+the registration-mode-gated invite flow) and attaches them to a project
+as a ``pending`` membership. Nothing here activates membership — the
+invitee approves their own invite (or a superadmin approves for them) via
+:meth:`approve`. Pure orchestration: all SQL lives in the repositories,
+all HTTP in the router, all invite email mechanics in :class:`InviteService`.
 """
 
 from __future__ import annotations
@@ -14,12 +16,17 @@ from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 
-from core.exceptions import AuthorizationError, ConflictError, ValidationError
+from core.exceptions import (
+    AuthorizationError,
+    ConflictError,
+    NotFoundError,
+    ValidationError,
+)
 from repositories.instance_settings_repository import InstanceSettingsRepository
 from repositories.project_repository import ProjectRepository
 from repositories.user_repository import UserRepository
 from schemas.auth import InviteRequest
-from schemas.projects import ProjectMemberResponse
+from schemas.projects import ProjectApprovalResponse, ProjectMemberResponse
 from utils.pii import mask_email
 
 if TYPE_CHECKING:
@@ -62,7 +69,10 @@ class ProjectMembershipService:
         *,
         invited_by: UUID,
     ) -> ProjectMemberResponse:
-        """Add a project member by email address.
+        """Invite a project member by email address (always ``pending``).
+
+        # ⚠️ BREAKING: invites no longer activate immediately — every path
+        creates a ``pending`` membership the invitee must approve.
 
         Args:
             project_id: The project to add the member to.
@@ -73,13 +83,14 @@ class ProjectMembershipService:
                 pending user is created on the ``open`` path.
 
         Returns:
-            The new membership as ``ProjectMemberResponse``.
+            The new ``pending`` membership as ``ProjectMemberResponse``.
 
         Raises:
-            ValidationError: Empty email, bad role, already a member,
-                deactivated account, or ``approval`` registration mode.
-            ConflictError: Invite already pending for this email, or a
-                concurrent add won the race.
+            ValidationError: Empty email, bad role, already a member
+                (any status), deactivated account, or ``approval``
+                registration mode.
+            ConflictError: Invite already pending for this email or project
+                membership, or a concurrent add won the race.
             AuthorizationError: ``invite_only`` registration mode.
         """
         normalized = email.strip().lower()
@@ -96,10 +107,19 @@ class ProjectMembershipService:
 
         user = await self._user_repo.find_user_by_email(normalized)
         if user is not None:
-            existing = await self._repo.get_member(
+            existing = await self._repo.get_membership_any(
                 project_id=project_id, user_id=user.id
             )
             if existing is not None:
+                if existing.status == "pending":
+                    raise ConflictError(
+                        message=f"An invite is already pending for {normalized}",
+                        detail={
+                            "code": "invite_pending",
+                            "user_id": str(user.id),
+                            "email": mask_email(normalized),
+                        },
+                    )
                 raise ValidationError(
                     message=f"User {user.id} is already a member of this project",
                     detail={"code": "already_member", "user_id": str(user.id)},
@@ -122,7 +142,7 @@ class ProjectMembershipService:
                 )
             member = await self._insert_member(project_id, user.id, role)
             logger.info(
-                "project_membership.member_added",
+                "project_membership.member_requested",
                 extra={
                     "project_id": str(project_id),
                     "user_id": str(user.id),
@@ -204,7 +224,7 @@ class ProjectMembershipService:
         )
         member = await self._insert_member(project_id, invite.id, role)
         logger.info(
-            "project_membership.member_added",
+            "project_membership.member_requested",
             extra={
                 "project_id": str(project_id),
                 "user_id": str(invite.id),
@@ -213,6 +233,139 @@ class ProjectMembershipService:
             },
         )
         return self._to_response(member)
+
+    async def approve(
+        self,
+        project_id: UUID,
+        user_id: UUID,
+        *,
+        actor: UUID,
+        is_superadmin: bool = False,
+    ) -> ProjectMemberResponse:
+        """Approve a pending invite, activating the membership.
+
+        Only the invitee (``actor == user_id``) or a platform superadmin
+        may approve.
+
+        Args:
+            project_id: The project holding the invite.
+            user_id: The invitee whose membership activates.
+            actor: The requesting user.
+            is_superadmin: DB-verified platform superadmin flag (resolved
+                by the router, never trusted from the JWT claim).
+
+        Returns:
+            The activated membership as ``ProjectMemberResponse``.
+
+        Raises:
+            AuthorizationError: Actor is neither the invitee nor superadmin.
+            ValidationError: The membership is already active.
+            NotFoundError: No membership for this user.
+        """
+        if actor != user_id and not is_superadmin:
+            raise AuthorizationError(
+                message="Only the invitee or a superadmin can approve this invite",
+                detail={"code": "not_invitee", "user_id": str(user_id)},
+            )
+        member = await self._repo.get_membership_any(project_id, user_id)
+        if member is None:
+            raise NotFoundError(
+                message=f"Membership not found for user {user_id}",
+                detail={"user_id": str(user_id)},
+            )
+        if member.status == "active":
+            raise ValidationError(
+                message=f"User {user_id} is already an active member",
+                detail={"code": "already_member", "user_id": str(user_id)},
+            )
+        updated = await self._repo.update_member_status(
+            project_id=project_id, user_id=user_id, status="active"
+        )
+        # note: row existed a moment ago; None means a concurrent delete won.
+        if updated is None:
+            raise NotFoundError(
+                message=f"Membership not found for user {user_id}",
+                detail={"user_id": str(user_id)},
+            )
+        logger.info(
+            "project_membership.member_approved",
+            extra={
+                "project_id": str(project_id),
+                "user_id": str(user_id),
+                "actor": str(actor),
+            },
+        )
+        return self._to_response(updated)
+
+    async def reject(
+        self,
+        project_id: UUID,
+        user_id: UUID,
+        *,
+        actor: UUID,
+        is_superadmin: bool = False,
+    ) -> None:
+        """Reject a pending invite, deleting the membership row.
+
+        Only the invitee (``actor == user_id``) or a platform superadmin
+        may reject. Revoking via ``DELETE`` (manager path) lives in
+        :class:`ProjectService.remove_member`.
+
+        Raises:
+            AuthorizationError: Actor is neither the invitee nor superadmin.
+            ValidationError: The membership is already active (remove it
+                via ``DELETE`` instead).
+            NotFoundError: No membership for this user.
+        """
+        if actor != user_id and not is_superadmin:
+            raise AuthorizationError(
+                message="Only the invitee or a superadmin can reject this invite",
+                detail={"code": "not_invitee", "user_id": str(user_id)},
+            )
+        member = await self._repo.get_membership_any(project_id, user_id)
+        if member is None:
+            raise NotFoundError(
+                message=f"Membership not found for user {user_id}",
+                detail={"user_id": str(user_id)},
+            )
+        if member.status == "active":
+            raise ValidationError(
+                message="Membership is active — remove it via DELETE instead",
+                detail={"code": "already_member", "user_id": str(user_id)},
+            )
+        await self._repo.remove_member(project_id, user_id)
+        logger.info(
+            "project_membership.member_rejected",
+            extra={
+                "project_id": str(project_id),
+                "user_id": str(user_id),
+                "actor": str(actor),
+            },
+        )
+
+    async def list_pending_for_user(
+        self, user_id: UUID
+    ) -> list[ProjectApprovalResponse]:
+        """List the user's pending invites with project names.
+
+        Args:
+            user_id: The invitee.
+
+        Returns:
+            Pending memberships, oldest first.
+        """
+        rows = await self._repo.list_pending_for_user(user_id)
+        return [
+            ProjectApprovalResponse(
+                id=m.id,
+                project_id=m.project_id,
+                project_name=name,
+                role=m.role,  # type: ignore[arg-type]
+                status=m.status,  # type: ignore[arg-type]
+                created_at=m.created_at,
+            )
+            for m, name in rows
+        ]
 
     async def _insert_member(
         self, project_id: UUID, user_id: UUID, role: str
@@ -255,5 +408,6 @@ class ProjectMembershipService:
             project_id=member.project_id,
             user_id=member.user_id,
             role=member.role,
+            status=member.status,
             created_at=member.created_at,
         )

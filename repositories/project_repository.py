@@ -424,6 +424,7 @@ class ProjectRepository:
         project_id: UUID,
         user_id: UUID,
         role: str = "member",
+        status: str = "pending",
     ) -> ProjectMember:
         """Add a user to a project with the given role.
 
@@ -431,6 +432,8 @@ class ProjectRepository:
             project_id: The project's UUID.
             user_id: The user's UUID.
             role: One of ``"owner"`` or ``"member"``.
+            status: ``"pending"`` for invites (invitee approves later),
+                ``"active"`` for the project creator path only.
 
         Returns:
             The newly created ProjectMember.
@@ -443,6 +446,7 @@ class ProjectRepository:
             project_id=project_id,
             user_id=user_id,
             role=role,
+            status=status,
         )
         self._db.add(member)
         await self._db.flush()
@@ -473,15 +477,38 @@ class ProjectRepository:
         return True
 
     async def get_member(self, project_id: UUID, user_id: UUID) -> ProjectMember | None:
-        """Check if a user is a member of a project and return their membership.
+        """Return the user's ACTIVE membership, or ``None``.
+
+        Pending invitees are not members yet — gates (auth, pins, role
+        changes) must use this. Use :meth:`get_membership_any` for
+        approve/reject/duplicate checks.
 
         Args:
             project_id: The project's UUID.
             user_id: The user's UUID.
 
         Returns:
-            The ProjectMember if found, ``None`` otherwise.
+            The active ProjectMember if found, ``None`` otherwise.
         """
+        return await self.get_active_member(project_id, user_id)
+
+    async def get_active_member(
+        self, project_id: UUID, user_id: UUID
+    ) -> ProjectMember | None:
+        """Return the user's active membership, or ``None``."""
+        result = await self._db.execute(
+            select(ProjectMember).where(
+                ProjectMember.project_id == project_id,
+                ProjectMember.user_id == user_id,
+                ProjectMember.status == "active",
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_membership_any(
+        self, project_id: UUID, user_id: UUID
+    ) -> ProjectMember | None:
+        """Return the membership row regardless of status, or ``None``."""
         result = await self._db.execute(
             select(ProjectMember).where(
                 ProjectMember.project_id == project_id,
@@ -489,6 +516,55 @@ class ProjectRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def get_pending_member(
+        self, project_id: UUID, user_id: UUID
+    ) -> ProjectMember | None:
+        """Return the user's pending membership, or ``None``."""
+        result = await self._db.execute(
+            select(ProjectMember).where(
+                ProjectMember.project_id == project_id,
+                ProjectMember.user_id == user_id,
+                ProjectMember.status == "pending",
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def update_member_status(
+        self, project_id: UUID, user_id: UUID, status: str
+    ) -> ProjectMember | None:
+        """Set a membership's status (``pending``/``active``).
+
+        Returns:
+            The updated ProjectMember, or ``None`` if not found.
+        """
+        member = await self.get_membership_any(project_id, user_id)
+        if member is None:
+            return None
+        member.status = status
+        await self._db.flush()
+        await self._db.refresh(member)
+        return member
+
+    async def list_pending_for_user(
+        self, user_id: UUID
+    ) -> list[tuple[ProjectMember, str]]:
+        """List the user's pending memberships with project names.
+
+        Returns:
+            ``[(member, project_name), ...]`` ordered by ``created_at``.
+        """
+        result = await self._db.execute(
+            select(ProjectMember, Project.name)
+            .join(Project, ProjectMember.project_id == Project.id)
+            .where(
+                ProjectMember.user_id == user_id,
+                ProjectMember.status == "pending",
+                Project.is_archived.is_(False),
+            )
+            .order_by(ProjectMember.created_at.asc())
+        )
+        return [(row[0], row[1]) for row in result.all()]
 
     async def list_members(
         self,
@@ -564,17 +640,18 @@ class ProjectRepository:
         return member
 
     async def count_members(self, project_id: UUID) -> int:
-        """Count the number of members in a project.
+        """Count the ACTIVE members in a project (pending excluded).
 
         Args:
             project_id: The project's UUID.
 
         Returns:
-            Member count.
+            Active member count.
         """
         result = await self._db.execute(
             select(ProjectMember).where(
                 ProjectMember.project_id == project_id,
+                ProjectMember.status == "active",
             )
         )
         return len(result.scalars().all())
@@ -600,7 +677,10 @@ class ProjectRepository:
                 ProjectMember.project_id,
                 func.count(ProjectMember.id).label("count"),
             )
-            .where(ProjectMember.project_id.in_(project_ids))
+            .where(
+                ProjectMember.project_id.in_(project_ids),
+                ProjectMember.status == "active",
+            )
             .group_by(ProjectMember.project_id)
         )
         return {row[0]: row[1] for row in result.all()}
