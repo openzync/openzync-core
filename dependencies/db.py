@@ -120,19 +120,19 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
             await release_tenant_context(session)
 
 
-async def get_db_superadmin(
+async def get_db_admin(
     request: Request,
 ) -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI dependency providing an RLS-bypass session for superadmins.
+    """FastAPI dependency providing an RLS-bypass session for admins.
 
     Same contract as :func:`get_db` (session from ``app.state.db_session_factory``)
     but with ``app.bypass_rls = 'true'`` and ``app.user_id`` set to the
-    superadmin's own UUID — ownership checks pass for the admin's own rows
+    admin's own UUID — ownership checks pass for the admin's own rows
     while the bypass covers the rest.
 
-    **The bypass is granted only after a DB-verified superadmin check**
-    (:func:`dependencies.auth._ensure_superadmin`).  Fail-closed: if the
-    check raises (non-superadmin, Redis/DB error), no
+    **The bypass is granted only after a DB-verified admin check**
+    (:func:`dependencies.auth._ensure_admin`).  Fail-closed: if the
+    check raises (non-admin, Redis/DB error), no
     session is yielded and the bypass is never set.  Never enable the
     bypass from the JWT alone.
 
@@ -143,7 +143,7 @@ async def get_db_superadmin(
     commit, so the bypass survives a mid-request commit and cannot
     outlive the transaction.
 
-    Use in the superadmin-gated routers (``routers/admin_system.py``,
+    Use in the admin-gated routers (``routers/admin_system.py``,
     ``routers/users.py`` member writes, ``routers/admin_invites.py``).
 
     Yields:
@@ -152,11 +152,11 @@ async def get_db_superadmin(
     Raises:
         RuntimeError: If ``db_session_factory`` has not been set on
             ``app.state``.
-        HTTPException: 401/403 from the superadmin verification.
+        HTTPException: 401/403 from the admin verification.
     """
     # Lazy import — dependencies/auth.py imports get_db from this module at
     # module level; importing back here at module level would be circular.
-    from dependencies.auth import _ensure_superadmin
+    from dependencies.auth import _ensure_admin
 
     factory: async_sessionmaker[AsyncSession] | None = getattr(
         request.app.state, "db_session_factory", None
@@ -171,17 +171,17 @@ async def get_db_superadmin(
     user_id: str | None = getattr(request.state, "user_id", None)
     if user_id is None:
         raise RuntimeError(
-            "get_db_superadmin requires an authenticated JWT session — "
+            "get_db_admin requires an authenticated JWT session — "
             "user_id must be present on request.state."
         )
 
-    # ── 1. Verify superadmin (DB-verified role) on a clean session
+    # ── 1. Verify admin (DB-verified role) on a clean session
     async with factory() as verify_session:
         # Same non-bypass RLS context as get_db: the role lookup must run
         # under the user's own row visibility.
         try:
             await init_context(verify_session, user_id)
-            await _ensure_superadmin(request, user_id, verify_session)
+            await _ensure_admin(request, user_id, verify_session)
         finally:
             await release_tenant_context(verify_session)
 
@@ -208,4 +208,7 @@ async def get_db_superadmin(
 # Re-export for convenience
 # ═══════════════════════════════════════════════════════════════════════════════
 
-__all__: list[str] = ["get_db", "get_db_superadmin"]
+__all__: list[str] = ["get_db", "get_db_admin", "get_db_superadmin"]
+
+get_db_superadmin = get_db_admin
+"""Deprecated alias of :func:`get_db_admin` (remove next release)."""

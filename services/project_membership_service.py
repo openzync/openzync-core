@@ -3,7 +3,7 @@
 Resolves an email to a user (existing active, pending invite, or new via
 the registration-mode-gated invite flow) and attaches them to a project
 as a ``pending`` membership. Nothing here activates membership — the
-invitee approves their own invite (or a superadmin approves for them) via
+invitee approves their own invite (or an admin approves for them) via
 :meth:`approve`. Pure orchestration: all SQL lives in the repositories,
 all HTTP in the router, all invite email mechanics in :class:`InviteService`.
 """
@@ -161,7 +161,7 @@ class ProjectMembershipService:
                 raise AuthorizationError(
                     message=(
                         "Registration is invite-only — "
-                        f"ask a superadmin to invite {normalized}."
+                        f"ask an admin to invite {normalized}."
                     ),
                     detail={
                         "code": "registration_invite_only",
@@ -184,7 +184,7 @@ class ProjectMembershipService:
                 raise AuthorizationError(
                     message=(
                         "Registration is currently closed — "
-                        f"ask a superadmin to invite {normalized}."
+                        f"ask an admin to invite {normalized}."
                     ),
                     detail={
                         "code": "registration_closed",
@@ -240,31 +240,31 @@ class ProjectMembershipService:
         user_id: UUID,
         *,
         actor: UUID,
-        is_superadmin: bool = False,
+        is_admin: bool = False,
     ) -> ProjectMemberResponse:
         """Approve a pending invite, activating the membership.
 
-        Only the invitee (``actor == user_id``) or a platform superadmin
+        Only the invitee (``actor == user_id``) or a platform admin
         may approve.
 
         Args:
             project_id: The project holding the invite.
             user_id: The invitee whose membership activates.
             actor: The requesting user.
-            is_superadmin: DB-verified platform superadmin flag (resolved
+            is_admin: DB-verified platform admin flag (resolved
                 by the router, never trusted from the JWT claim).
 
         Returns:
             The activated membership as ``ProjectMemberResponse``.
 
         Raises:
-            AuthorizationError: Actor is neither the invitee nor superadmin.
+            AuthorizationError: Actor is neither the invitee nor admin.
             ValidationError: The membership is already active.
             NotFoundError: No membership for this user.
         """
-        if actor != user_id and not is_superadmin:
+        if actor != user_id and not is_admin:
             raise AuthorizationError(
-                message="Only the invitee or a superadmin can approve this invite",
+                message="Only the invitee or an admin can approve this invite",
                 detail={"code": "not_invitee", "user_id": str(user_id)},
             )
         member = await self._repo.get_membership_any(project_id, user_id)
@@ -303,23 +303,23 @@ class ProjectMembershipService:
         user_id: UUID,
         *,
         actor: UUID,
-        is_superadmin: bool = False,
+        is_admin: bool = False,
     ) -> None:
         """Reject a pending invite, deleting the membership row.
 
-        Only the invitee (``actor == user_id``) or a platform superadmin
+        Only the invitee (``actor == user_id``) or a platform admin
         may reject. Revoking via ``DELETE`` (manager path) lives in
         :class:`ProjectService.remove_member`.
 
         Raises:
-            AuthorizationError: Actor is neither the invitee nor superadmin.
+            AuthorizationError: Actor is neither the invitee nor admin.
             ValidationError: The membership is already active (remove it
                 via ``DELETE`` instead).
             NotFoundError: No membership for this user.
         """
-        if actor != user_id and not is_superadmin:
+        if actor != user_id and not is_admin:
             raise AuthorizationError(
-                message="Only the invitee or a superadmin can reject this invite",
+                message="Only the invitee or an admin can reject this invite",
                 detail={"code": "not_invitee", "user_id": str(user_id)},
             )
         member = await self._repo.get_membership_any(project_id, user_id)

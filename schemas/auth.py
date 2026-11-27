@@ -156,7 +156,7 @@ class RegistrationStatusResponse(BaseModel):
 class SetupRequest(BaseModel):
     """Request body for ``POST /v1/auth/setup``.
 
-    One-time platform bootstrap: creates the root superadmin with the
+    One-time platform bootstrap: creates the root admin with the
     operator-chosen password and names the singleton platform org.
     Usable only while the platform is unset up — afterwards the endpoint
     returns 403.
@@ -419,8 +419,8 @@ class DashboardUserResponse(BaseModel):
         ...,
         description=(
             "The user's effective permission set. Empty only if the user "
-            "literally has no permissions — admin/superadmin roles receive "
-            "the full vocabulary here, unlike their stored (empty) array."
+            "literally has no permissions — the admin role receives "
+            "the full vocabulary here, unlike its stored (empty) array."
         ),
     )
 

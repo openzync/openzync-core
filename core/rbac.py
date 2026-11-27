@@ -65,18 +65,19 @@ ALL_PERMISSIONS: frozenset[str] = frozenset(
 )
 """The full permission vocabulary shared by users and API keys.
 
-An empty permission array is a wildcard — the role (admin/superadmin)
-grants everything.  Non-admin roles carry an explicit subset.
+An empty permission array is a wildcard — the ``admin`` role grants
+everything.  ``member`` roles carry an explicit subset (seeded to the
+full vocabulary for new users).
 """
 
-MEMBER_DEFAULT_PERMISSIONS: tuple[str, ...] = (
-    "project:read",
-    "project:write",
+MEMBER_DEFAULT_PERMISSIONS: tuple[str, ...] = tuple(
+    sorted(p for p in ALL_PERMISSIONS if not p.startswith("members:"))
 )
 """Default permission set seeded for ``member``-role users.
 
-A tuple (not a set) so the seeding sites' ``list(...)`` yields a
-deterministic, canonical order.
+New users do NOT receive ``members:*`` by default — an admin grants
+``members:read``/``members:write`` explicitly.  A tuple (not a set) so
+the seeding sites' ``list(...)`` yields a deterministic, canonical order.
 """
 
 
@@ -156,7 +157,9 @@ async def get_user_role(
     try:
         cached = await redis.get(cache_key)
         if cached is not None:
-            return cached.decode() if isinstance(cached, bytes) else cached
+            role = cached.decode() if isinstance(cached, bytes) else cached
+            # Collapse legacy cached roles — only admin/member survive.
+            return role if role in ("admin", "member") else "member"
     except Exception:
         logger.error(
             "rbac.role_cache_read_failed",

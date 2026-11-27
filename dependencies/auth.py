@@ -10,7 +10,7 @@ Provides the following auth dependencies:
 3. ``require_permission(permission)`` — Dependency factory.  Requires the
    authenticated principal to hold a specific permission string.  API keys
    are checked against ``request.state.api_key_permissions``; JWT users
-   against their user role (``admin``/``superadmin`` are wildcard) or their
+   against their user role (``admin`` is wildcard) or their
    explicit ``permissions`` column (Redis-cached, fail-closed).  Raises
    403 if missing.
 
@@ -24,15 +24,15 @@ Provides the following auth dependencies:
 6. ``get_current_user_id`` — Returns the authenticated user's UUID.
    Works with both JWT and API-key auth.  Raises 401 if not authenticated.
 
-7. ``require_superadmin`` — Requires a JWT dashboard session AND the
-   platform ``superadmin`` role.
+7. ``require_admin`` — Requires a JWT dashboard session AND the
+   platform ``admin`` role.
 
-8. ``require_superadmin_or_self`` — Dependency factory.  The caller may
+8. ``require_admin_or_self`` — Dependency factory.  The caller may
    always act on their own user record; otherwise a DB-verified
-   superadmin role is required (JWT-only, fail-closed).
+   admin role is required (JWT-only, fail-closed).
 
 9. ``get_actor_permissions`` — Returns the principal's grantable permission
-   set (``None`` for admin/superadmin wildcard).  Routers pass it to
+   set (``None`` for the admin wildcard).  Routers pass it to
    services to cap permission grants; raises 503 when Redis is down.
 
 All dependencies rely on ``request.state`` attributes set by
@@ -121,8 +121,8 @@ async def require_user_id(
     Works with both API keys (key owner's UUID) and JWT tokens (``sub``).
     Raises a 401 error if the request has no valid authentication.
     Row ownership is enforced by the ``user_isolation`` RLS policies
-    (``row.user_id = app.user_id``); a superadmin bypasses RLS via
-    ``get_db_superadmin``.
+    (``row.user_id = app.user_id``); an admin bypasses RLS via
+    ``get_db_admin``.
 
     Args:
         user_id: The user ID from :func:`get_user_id`.
@@ -167,8 +167,8 @@ async def _check_permission(
     - **API key**: the key's permission list
       (``request.state.api_key_permissions``) must contain the required
       permission.
-    - **JWT (dashboard user)**: the ``admin``/``superadmin`` roles are
-      wildcard (implicitly hold every permission); any other role must
+    - **JWT (dashboard user)**: the ``admin`` role is
+      wildcard (implicitly holds every permission); any other role must
       carry the permission in their explicit ``permissions`` column
       (Redis-cached for 60 s, fail-closed to deny).  Ownership of the
       target rows is enforced by RLS, not here.
@@ -238,7 +238,7 @@ async def _check_permission(
         )
 
     role = await get_user_role(redis, db, UUID(user_id))
-    if role in ("admin", "superadmin"):
+    if role == "admin":
         return
 
     permissions = await get_effective_permissions(redis, db, UUID(user_id))
@@ -260,7 +260,7 @@ def require_permission(required_permission: str):
     """Dependency factory requiring a specific permission string.
 
     Works for both API keys (``request.state.api_key_permissions``) and
-    JWT dashboard users (``admin``/``superadmin`` roles are wildcard,
+    JWT dashboard users (``admin`` role is wildcard,
     otherwise the user's explicit ``permissions`` column).  Fails closed:
     any lookup error denies with 403.  Ownership of the target rows is
     enforced by the ``user_isolation`` RLS policies
@@ -306,8 +306,8 @@ async def require_user(
     """Require authentication and return the caller's user ID.
 
     Ownership check helper: compare the returned ID against the target
-    row's ``user_id`` (``row.user_id == token.sub``).  Superadmins bypass
-    via ``get_db_superadmin`` instead of this dependency.
+    row's ``user_id`` (``row.user_id == token.sub``).  Admins bypass
+    via ``get_db_admin`` instead of this dependency.
     """
     return user_id
 
@@ -377,7 +377,7 @@ async def get_actor_permissions(
     ``request.state.api_key_permissions`` (always populated by
     :class:`AuthMiddleware` — ``None`` is treated as an empty set,
     fail-closed).  JWT sessions resolve via the user role
-    (``admin``/``superadmin`` are wildcard) or the cached explicit
+    (``admin`` is wildcard) or the cached explicit
     permission set.
 
     Args:
@@ -385,7 +385,7 @@ async def get_actor_permissions(
         db: Request-scoped async DB session (role/permission lookups).
 
     Returns:
-        ``None`` for admin/superadmin (uncapped — wildcard), otherwise the
+        ``None`` for the admin (uncapped — wildcard), otherwise the
         actor's permission set used to cap grants.
 
     Raises:
@@ -426,7 +426,7 @@ async def get_actor_permissions(
         )
 
     role = await get_user_role(redis, db, UUID(user_id))
-    if role in ("admin", "superadmin"):
+    if role == "admin":
         return None
     return await get_effective_permissions(redis, db, UUID(user_id))
 
@@ -576,35 +576,38 @@ async def get_current_user_id(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Platform super-admin
+# Platform admin
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-async def _ensure_superadmin(
+async def _ensure_admin(
     request: Request,
     user_id: str,
     db: AsyncSession,
 ) -> None:
-    """Raise 403 unless the JWT session is a DB-verified superadmin.
+    """Raise 403 unless the JWT session is a DB-verified admin.
 
     Requires both of:
     1. A JWT dashboard session (``get_dashboard_user`` has already raised
        401 otherwise).
-    2. A DB-verified role of ``superadmin`` (Redis-cached, fail-closed to
+    2. A DB-verified role of ``admin`` (Redis-cached, fail-closed to
        ``member``) — the JWT ``role`` claim is never trusted.
 
     Fail-closed: any Redis/DB error degrades the role lookup to
     ``member``, which denies.  This is the gate that authorises the RLS
-    bypass in ``get_db_superadmin`` — no superadmin check, no bypass.
+    bypass in ``get_db_admin`` — no admin check, no bypass.
 
     Args:
         request: The incoming HTTP request (for ``app.state.redis``).
         user_id: The authenticated dashboard user's UUID string.
         db: Request-scoped async DB session (role lookup).
 
+    Returns:
+        None.
+
     Raises:
         HTTPException: 503 if Redis is not configured on app state.
-        HTTPException: 403 if the role is not ``superadmin``.
+        HTTPException: 403 if the role is not ``admin``.
     """
     redis = getattr(request.app.state, "redis", None)
     if redis is None:
@@ -621,27 +624,27 @@ async def _ensure_superadmin(
             },
         )
     role = await get_user_role(redis, db, UUID(user_id))
-    if role != "superadmin":
+    if role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
                 "type": "https://errors.openzync.tech/authorization_error",
                 "title": "Insufficient Permissions",
                 "status": 403,
-                "detail": "This action requires the platform super-admin role.",
+                "detail": "This action requires the platform admin role.",
             },
         )
 
 
-async def require_superadmin(
+async def require_admin(
     request: Request,
     user_id: str = Depends(get_dashboard_user),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> str:
-    """Require a JWT dashboard session with the platform super-admin role.
+    """Require a JWT dashboard session with the platform admin role.
 
     Raises 401 for API-key auth or a missing user id (via
-    :func:`get_dashboard_user`), 403 for any non-``superadmin`` role or a
+    :func:`get_dashboard_user`), 403 for any non-``admin`` role or a
     user who must still change their password.  The gate is role-only —
     there is no org check (single platform org).  The role is verified
     against the DB (Redis-cached for 60 s, fail-closed) — never trusted
@@ -654,39 +657,39 @@ async def require_superadmin(
         db: Request-scoped async DB session.
 
     Returns:
-        The authenticated superadmin's UUID string.
+        The authenticated admin's UUID string.
 
     Raises:
         HTTPException: 401 if not a JWT-authenticated session.
-        HTTPException: 403 if not a platform superadmin.
+        HTTPException: 403 if not a platform admin.
     """
-    await _ensure_superadmin(request, user_id, db)
+    await _ensure_admin(request, user_id, db)
     return user_id
 
 
-def require_superadmin_or_self():
-    """Dependency factory requiring superadmin, or acting on oneself.
+def require_admin_or_self():
+    """Dependency factory requiring admin, or acting on oneself.
 
     JWT-only via :func:`get_dashboard_user` (API keys raise 401).  The
     caller may always act on their own user record
     (``str(user_id) == caller_id``); otherwise a DB-verified
-    ``superadmin`` role is required via :func:`_ensure_superadmin`
+    ``admin`` role is required via :func:`_ensure_admin`
     (fail-closed — the JWT ``role`` claim is never trusted).  Intended
     for user-management endpoints (``GET/PATCH /v1/users/{user_id}``)
     where self-read/self-edit is allowed but cross-user access is a
-    superadmin operation.
+    admin operation.
 
     Returns:
         A dependency callable that returns the caller's ``user_id``.
     """
 
-    async def _superadmin_or_self_checker(
+    async def _admin_or_self_checker(
         request: Request,
         user_id: UUID = Path(...),  # noqa: B008
         caller_id: str = Depends(get_dashboard_user),  # noqa: B008
         db: AsyncSession = Depends(get_db),  # noqa: B008
     ) -> str:
-        """Inner dependency that performs the self-or-superadmin check.
+        """Inner dependency that performs the self-or-admin check.
 
         Args:
             request: The incoming HTTP request.
@@ -696,15 +699,28 @@ def require_superadmin_or_self():
 
         Returns:
             The caller's ``user_id`` if the caller is the target user or
-            a DB-verified superadmin.
+            a DB-verified admin.
 
         Raises:
-            HTTPException: 401 for non-JWT auth, 403 for a non-superadmin
+            HTTPException: 401 for non-JWT auth, 403 for a non-admin
                 acting on another user, 503 if Redis is not configured.
         """
         if str(user_id) == caller_id:
             return caller_id
-        await _ensure_superadmin(request, caller_id, db)
+        await _ensure_admin(request, caller_id, db)
         return caller_id
 
-    return _superadmin_or_self_checker
+    return _admin_or_self_checker
+
+
+# ── Deprecated aliases (remove next release) ─────────────────────────────────
+_ensure_superadmin = _ensure_admin
+"""Deprecated alias of :func:`_ensure_admin`."""
+
+require_superadmin = require_admin
+"""Deprecated alias of :func:`require_admin`."""
+
+
+def require_superadmin_or_self():
+    """Deprecated alias of :func:`require_admin_or_self`."""
+    return require_admin_or_self()

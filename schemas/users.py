@@ -208,7 +208,7 @@ class UserResponse(BaseModel):
         default_factory=list,
         description=(
             "Explicit permission strings. Empty = wildcard via role "
-            "(admin/superadmin)."
+            "(admin)."
         ),
         examples=[["project:read", "project:write"]],
     )

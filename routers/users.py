@@ -23,14 +23,14 @@ from core.audit import audit_action
 from core.exceptions import RateLimitError, ValidationError
 from core.rls import rls_bypass
 from dependencies.auth import (
-    _ensure_superadmin,
+    _ensure_admin,
     get_actor_permissions,
-    require_superadmin,
-    require_superadmin_or_self,
+    require_admin,
+    require_admin_or_self,
 )
 from dependencies.db import get_db
 from dependencies.services import (
-    get_superadmin_user_service,
+    get_admin_user_service,
     get_user_service,
     get_user_summary_service,
 )
@@ -58,14 +58,14 @@ router = APIRouter(prefix="/v1/users", tags=["Users"])
 @audit_action("user.create", "user", "User created")
 async def create_user(
     body: CreateUserRequest,
-    user_id: str = Depends(require_superadmin),
-    service: UserService = Depends(get_superadmin_user_service),
+    user_id: str = Depends(require_admin),
+    service: UserService = Depends(get_admin_user_service),
 ) -> UserResponse:
     """Create a new user.
 
     The ``external_id`` is caller-defined and must be unique within the
     organization. Returns 409 if a user with this ``external_id`` already
-    exists.  Superadmin-gated (JWT platform superadmin only).
+    exists.  Admin-gated (JWT platform admin only).
     """
     return await service.create_user(
         user_id=UUID(user_id),
@@ -79,10 +79,10 @@ async def create_user(
 
 @router.get("", response_model=UserListResponse)
 async def list_users(
-    # ⚠️ BREAKING: listing members now requires the platform superadmin role —
+    # ⚠️ BREAKING: listing members now requires the platform admin role —
     # previously any principal with ``members:read`` could enumerate the org.
-    user_id: str = Depends(require_superadmin),
-    service: UserService = Depends(get_superadmin_user_service),
+    user_id: str = Depends(require_admin),
+    service: UserService = Depends(get_admin_user_service),
     limit: int = Query(
         default=50,
         ge=1,
@@ -139,8 +139,9 @@ async def get_user(
     request: Request,
     service: UserService = Depends(get_user_service),
     # ⚠️ BREAKING: reading another member's record now requires the platform
-    # superadmin role; a JWT user may still fetch their own record.
-    _viewer_id: str = Depends(require_superadmin_or_self()),  # noqa: B008
+    # admin role (role collapse — ``superadmin`` is gone); a JWT user may
+    # still fetch their own record.
+    _viewer_id: str = Depends(require_admin_or_self()),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> UserResponseWithStats:
     """Get a user by internal UUID.
@@ -148,17 +149,17 @@ async def get_user(
     Returns profile information plus aggregate statistics
     (message_count, fact_count, session_count).
     """
-    # note: tenant session for self-reads; a superadmin reading another
+    # note: tenant session for self-reads; an admin reading another
     # member's row runs under a bypass (tenant policy would hide it).
-    # Only 403 (non-superadmin) is absorbed, 503 fails closed.
+    # Only 403 (non-admin) is absorbed, 503 fails closed.
     try:
-        await _ensure_superadmin(request, _viewer_id, db)
-        is_superadmin = True
+        await _ensure_admin(request, _viewer_id, db)
+        is_admin = True
     except HTTPException as exc:
         if exc.status_code != status.HTTP_403_FORBIDDEN:
             raise
-        is_superadmin = False
-    if is_superadmin:
+        is_admin = False
+    if is_admin:
         async with rls_bypass(db):
             return await service.get_user(user_id)
     return await service.get_user(user_id)
@@ -171,7 +172,7 @@ async def update_user(
     body: UpdateUserRequest,
     request: Request,
     service: UserService = Depends(get_user_service),
-    _caller_id: str = Depends(require_superadmin_or_self()),  # noqa: B008
+    _caller_id: str = Depends(require_admin_or_self()),  # noqa: B008
     actor_permissions: frozenset[str] | None = Depends(get_actor_permissions),
     db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> UserResponse:
@@ -181,11 +182,10 @@ async def update_user(
     - Set a metadata key to ``null`` to remove it.
     - Send ``name: null`` or ``email: null`` to clear those fields.
     - At least one field must be provided.
-    - ``role``/``permissions`` may only be changed by a superadmin (403
-      otherwise — the service enforces this via ``is_superadmin``); you
+    - ``role``/``permissions`` may only be changed by an admin (403
+      otherwise — the service enforces this via ``is_admin``); you
       cannot change your own role.
-    - Superadmin role cannot be changed via this endpoint (422 — use the
-      superadmin console).
+    - The root user's role cannot be changed via this endpoint (422).
 
     Uses ``model_dump(exclude_unset=True)`` so that ``None`` means
     "set to null" and an absent key means "do not update."
@@ -197,17 +197,17 @@ async def update_user(
             "must be provided for update",
         )
     # note: reuses the canonical DB-verified gate so the flag cannot drift
-    # from the dependency above; only 403 (non-superadmin) is absorbed,
+    # from the dependency above; only 403 (non-admin) is absorbed,
     # 503 (no cache) still fails closed.
     try:
-        await _ensure_superadmin(request, _caller_id, db)
-        is_superadmin = True
+        await _ensure_admin(request, _caller_id, db)
+        is_admin = True
     except HTTPException as exc:
         if exc.status_code != status.HTTP_403_FORBIDDEN:
             raise
-        is_superadmin = False
-    if is_superadmin:
-        # note: superadmin edits another member's row — the tenant policy
+        is_admin = False
+    if is_admin:
+        # note: an admin edits another member's row — the tenant policy
         # would match zero rows, so this call runs under a bypass on the
         # request session (same session the service was built on).
         async with rls_bypass(db):
@@ -216,7 +216,7 @@ async def update_user(
                 update_fields=update_fields,
                 actor_user_id=UUID(request.state.user_id),
                 actor_permissions=actor_permissions,
-                is_superadmin=is_superadmin,
+                is_admin=is_admin,
             )
     return await service.update_user(
 
@@ -224,7 +224,7 @@ async def update_user(
         update_fields=update_fields,
         actor_user_id=UUID(request.state.user_id),
         actor_permissions=actor_permissions,
-        is_superadmin=is_superadmin,
+        is_admin=is_admin,
     )
 
 
@@ -233,8 +233,8 @@ async def update_user(
 async def delete_user(
     user_id: UUID,
     request: Request,
-    service: UserService = Depends(get_superadmin_user_service),
-    _writer_id: str = Depends(require_superadmin),  # noqa: B008
+    service: UserService = Depends(get_admin_user_service),
+    _writer_id: str = Depends(require_admin),  # noqa: B008
 ) -> Response:
     """Delete a user and all associated data.
 
@@ -248,9 +248,9 @@ async def delete_user(
     If you re-create a user with the same ``external_id`` within the 30-day
     grace period, it will be treated as a new user.
 
-    Superadmin-gated (JWT platform superadmin only).  You cannot delete
-    your own account, the organization's last admin (422), or a superadmin
-    account (422 — use the superadmin console).
+    Admin-gated (JWT platform admin only).  You cannot delete
+    your own account, the organization's last admin (422), or the root
+    account (422).
     """
     await service.delete_user(
 
@@ -270,26 +270,26 @@ async def get_user_summary(
     user_id: UUID,
     request: Request,
     service: UserSummaryService = Depends(get_user_summary_service),
-    _viewer_id: str = Depends(require_superadmin_or_self()),  # noqa: B008
+    _viewer_id: str = Depends(require_admin_or_self()),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> UserSummaryResponse:
     """Get the current summary for a user.
 
-    Readable by the target user themself or a platform superadmin (JWT only).
+    Readable by the target user themself or a platform admin (JWT only).
 
     Returns 404 if no summary has been generated yet.
     """
-    # note: same DB-verified gate as update_user — a superadmin reading
+    # note: same DB-verified gate as update_user — an admin reading
     # another member's row runs under a bypass, self reads keep the
     # tenant session. Only 403 absorbed, 503 re-raised.
     try:
-        await _ensure_superadmin(request, _viewer_id, db)
-        is_superadmin = True
+        await _ensure_admin(request, _viewer_id, db)
+        is_admin = True
     except HTTPException as exc:
         if exc.status_code != status.HTTP_403_FORBIDDEN:
             raise
-        is_superadmin = False
-    if is_superadmin:
+        is_admin = False
+    if is_admin:
         async with rls_bypass(db):
             summary = await service.get_summary(user_id=user_id)
     else:
@@ -314,12 +314,12 @@ async def get_user_summary(
 async def trigger_user_summary(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
-    _writer_id: str = Depends(require_superadmin_or_self()),  # noqa: B008
+    _writer_id: str = Depends(require_admin_or_self()),  # noqa: B008
 ) -> UserSummaryTriggerResponse:
     """Trigger generation of a user summary.
 
     Enqueues an ARQ background job.  Gated on the target user themself or
-    a platform superadmin (JWT only): this mutates another user's data
+    a platform admin (JWT only): this mutates another user's data
     and enqueues paid LLM work.  Rate-limited to once per 5 minutes
     per user (enforced via Redis).
     """
@@ -339,24 +339,24 @@ async def list_user_summary_instructions(
     user_id: UUID,
     request: Request,
     service: UserSummaryService = Depends(get_user_summary_service),
-    _viewer_id: str = Depends(require_superadmin_or_self()),  # noqa: B008
+    _viewer_id: str = Depends(require_admin_or_self()),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> CustomInstructionsResponse:
     """List custom instructions for a user's summary generation.
 
-    Readable by the target user themself or a platform superadmin (JWT only).
+    Readable by the target user themself or a platform admin (JWT only).
     """
-    # note: same DB-verified gate as update_user — a superadmin reading
+    # note: same DB-verified gate as update_user — an admin reading
     # another member's rows runs under a bypass, self reads keep the
     # tenant session. Only 403 absorbed, 503 re-raised.
     try:
-        await _ensure_superadmin(request, _viewer_id, db)
-        is_superadmin = True
+        await _ensure_admin(request, _viewer_id, db)
+        is_admin = True
     except HTTPException as exc:
         if exc.status_code != status.HTTP_403_FORBIDDEN:
             raise
-        is_superadmin = False
-    if is_superadmin:
+        is_admin = False
+    if is_admin:
         async with rls_bypass(db):
             instructions = await service.get_instructions(
                 user_id=user_id,
@@ -381,26 +381,26 @@ async def set_user_summary_instructions(
     body: SetCustomInstructionsRequest,
     request: Request,
     service: UserSummaryService = Depends(get_user_summary_service),
-    _writer_id: str = Depends(require_superadmin_or_self()),  # noqa: B008
+    _writer_id: str = Depends(require_admin_or_self()),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> CustomInstructionsResponse:
     """Replace all summary instructions for a user.
 
-    Gated on the target user themself or a platform superadmin (JWT
+    Gated on the target user themself or a platform admin (JWT
     only): mutates another user's data.
     """
     instructions_data = [i.model_dump() for i in body.instructions]
-    # note: same DB-verified gate as update_user — a superadmin writing
+    # note: same DB-verified gate as update_user — an admin writing
     # another member's rows runs under a bypass, self writes keep the
     # tenant session.
     try:
-        await _ensure_superadmin(request, _writer_id, db)
-        is_superadmin = True
+        await _ensure_admin(request, _writer_id, db)
+        is_admin = True
     except HTTPException as exc:
         if exc.status_code != status.HTTP_403_FORBIDDEN:
             raise
-        is_superadmin = False
-    if is_superadmin:
+        is_admin = False
+    if is_admin:
         async with rls_bypass(db):
             instructions = await service.set_instructions(
                 user_id=user_id,
@@ -422,25 +422,25 @@ async def delete_user_summary_instructions(
     user_id: UUID,
     request: Request,
     service: UserSummaryService = Depends(get_user_summary_service),
-    _writer_id: str = Depends(require_superadmin_or_self()),  # noqa: B008
+    _writer_id: str = Depends(require_admin_or_self()),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> Response:
     """Clear all summary instructions for a user.
 
-    Gated on the target user themself or a platform superadmin (JWT
+    Gated on the target user themself or a platform admin (JWT
     only): mutates another user's data.
     """
-    # note: same DB-verified gate as update_user — a superadmin clearing
+    # note: same DB-verified gate as update_user — an admin clearing
     # another member's rows runs under a bypass, self writes keep the
     # tenant session.
     try:
-        await _ensure_superadmin(request, _writer_id, db)
-        is_superadmin = True
+        await _ensure_admin(request, _writer_id, db)
+        is_admin = True
     except HTTPException as exc:
         if exc.status_code != status.HTTP_403_FORBIDDEN:
             raise
-        is_superadmin = False
-    if is_superadmin:
+        is_admin = False
+    if is_admin:
         async with rls_bypass(db):
             await service.delete_instructions(user_id=user_id)
     else:

@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING
 
 from core.config import get_settings
 from core.exceptions import ConflictError, ExternalServiceError, NotFoundError
-from core.rbac import MEMBER_DEFAULT_PERMISSIONS
+from core.rbac import ALL_PERMISSIONS
 from core.rls import rls_bypass
 from repositories.user_repository import UserRepository  # noqa: TC001
 from schemas.auth import (
@@ -101,7 +101,7 @@ async def send_invite_email(
     Args:
         email_service: The email service used to send.
         org_name: Inviting organization's name (subject + body).
-        inviter_name: Name of the inviting actor (admin or superadmin).
+        inviter_name: Name of the inviting actor (an admin).
         invitee_name: Invitee display name (greeting).
         invitee_email: Recipient address.
         raw_token: The plaintext magic-link token — appears only in the
@@ -209,7 +209,7 @@ class InviteService:
             )
             raise ConflictError("An account with this email already exists.")
 
-        # Superadmin invite runs without a tenant context — the users-table
+        # Admin invite runs without a tenant context — the users-table
         # RLS policies would hide/match-zero every row, so the admin read +
         # the insert run under a transaction-local bypass (router gate is
         # the authz). get_by_uuid/create carry no inner bypass.
@@ -234,7 +234,7 @@ class InviteService:
                 name=payload.name,
                 email=payload.email,
                 role="member",
-                permissions=list(MEMBER_DEFAULT_PERMISSIONS),
+                permissions=list(ALL_PERMISSIONS),
                 password_hash=None,
                 invite_token_hash=token_hash,
             )

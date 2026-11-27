@@ -2,13 +2,16 @@
 
 An admin invites a user by email; the invitee sets a password via the
 emailed magic link (``POST /v1/auth/invites/accept``).  Both endpoints
-require the platform ``superadmin`` role (JWT only) — the router is a
+require the platform ``admin`` role (JWT only) — the router is a
 thin adapter:
-it extracts the admin user from the superadmin gate,
+it extracts the admin user from the admin gate,
 delegates to :class:`InviteService`, and maps the result to a schema.
 
 The raw invite token never appears in any response — it is delivered to
 the invitee by email only.
+
+# ⚠️ BREAKING: role collapse — the ``superadmin`` role is gone; admin
+# gates now mean ``require_admin`` (DB-verified ``admin`` role).
 """
 
 from __future__ import annotations
@@ -18,8 +21,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Response
 
 from core.audit import audit_action
-from dependencies.auth import require_superadmin
-from dependencies.services import get_superadmin_invite_service
+from dependencies.auth import require_admin
+from dependencies.services import get_admin_invite_service
 from schemas.auth import InviteRequest, InviteResponse
 from services.invite_service import InviteService  # noqa: TC001
 
@@ -37,20 +40,20 @@ router = APIRouter(
     description=(
         "Creates a pending member user and emails them a magic link to "
         "set a password.  The response never contains the raw token.  "
-        "Requires the platform superadmin role (JWT)."
+        "Requires the platform admin role (JWT)."
     ),
 )
 @audit_action("admin.user_invite", "user", "Admin invited user")
 async def invite_user(
     payload: InviteRequest,
-    user_id: str = Depends(require_superadmin),  # noqa: B008
-    service: InviteService = Depends(get_superadmin_invite_service),  # noqa: B008
+    user_id: str = Depends(require_admin),  # noqa: B008
+    service: InviteService = Depends(get_admin_invite_service),  # noqa: B008
 ) -> InviteResponse:
-    """Invite a user by email (superadmin-gated).
+    """Invite a user by email (admin-gated).
 
     Args:
         payload: Invitee email + name.
-        user_id: Authenticated superadmin user ID (for inviter attribution).
+        user_id: Authenticated admin user ID (for inviter attribution).
         service: Invite service (injected).
 
     Returns:
@@ -74,16 +77,16 @@ async def invite_user(
         "Hard-deletes the pending user row for an invite that has not been "
         "accepted.  Only pending invites are affected — accepted or "
         "ordinary users are never touched.  Requires the platform "
-        "superadmin role (JWT)."
+        "admin role (JWT)."
     ),
 )
 @audit_action("admin.user_invite_revoke", "user", "Admin revoked user invite")
 async def revoke_invite(
     user_id: UUID,
-    _admin_id: str = Depends(require_superadmin),  # noqa: B008
-    service: InviteService = Depends(get_superadmin_invite_service),  # noqa: B008
+    _admin_id: str = Depends(require_admin),  # noqa: B008
+    service: InviteService = Depends(get_admin_invite_service),  # noqa: B008
 ) -> Response:
-    """Revoke a pending invite (superadmin-gated).
+    """Revoke a pending invite (admin-gated).
 
     Returns an explicit empty ``Response(status_code=204)`` — returning
     bare ``None`` would make FastAPI serialize ``null`` as a JSON body,

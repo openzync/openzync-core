@@ -70,8 +70,8 @@ class User(TimestampMixin, Base):
         default=list,
         server_default="{}",
         comment=(
-            "Permission strings; empty = wildcard via role (admin/superadmin); "
-            "non-admin = member defaults ∪ optional grants."
+            "Permission strings; empty = wildcard via role (admin); "
+            "member = member defaults ∪ optional grants."
         ),
     )
     password_hash: Mapped[str | None] = mapped_column(

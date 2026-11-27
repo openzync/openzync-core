@@ -217,7 +217,7 @@ class UserRepository:
             return result.scalar_one_or_none()
 
     async def create_platform_root(self, password_hash: str) -> bool:
-        """Insert the platform root superadmin, idempotently.
+        """Insert the platform root admin, idempotently.
 
         ``ON CONFLICT (external_id) DO NOTHING`` — exactly
         one concurrent setup caller wins; the losers get ``False`` and must
@@ -238,7 +238,7 @@ class UserRepository:
                     external_id="root",
                     email="root",
                     name="Platform Root",
-                    role="superadmin",
+                    role="admin",
                     permissions=[],
                     password_hash=password_hash,
                     is_email_verified=True,

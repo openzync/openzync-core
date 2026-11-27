@@ -4,7 +4,7 @@ Single platform org: signup creates a dashboard user inside the existing
 platform org — no org is ever created here.  Registration is governed by
 ``instance_settings.registration_mode``:
 
-- ``open`` → the user is created live (role ``admin``) and sent an OTP.
+- ``open`` → the user is created live (role ``member``) and sent an OTP.
 - ``invite_only`` → 403 (the user must arrive via an admin invite).
 - ``approval`` → the user is created inactive (``is_active=False``) and
   the response is ``status='pending'`` — an admin activates them later.
@@ -18,6 +18,7 @@ from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 
+from core.rbac import ALL_PERMISSIONS
 from core.rls import set_user_context
 from repositories.instance_settings_repository import InstanceSettingsRepository
 from schemas.auth import (
@@ -106,9 +107,9 @@ class RegistrationMixin:
         # transaction-local bypass inside create_dashboard_user.  Bind
         # the new user's own context right after creation for the
         # reads below.
-        # Signup mints the first live user as ``admin`` (self-serve
-        # bootstrap); the org-code join path below mints ``member`` —
-        # invited/joined users never self-promote.
+        # Open signup mints a ``member`` with the full permission
+        # vocabulary — members never self-promote (only root promotes
+        # to admin).
         try:
             # bcrypt blocks the event loop — offload to a worker thread.
             from services import auth_service as _facade  # via facade (patchable)
@@ -120,8 +121,8 @@ class RegistrationMixin:
                 email=payload.email,
                 password_hash=pw_hash,
                 name=payload.email.split("@")[0],
-                role="admin" if mode == "open" else "member",
-                permissions=[],
+                role="member",
+                permissions=list(ALL_PERMISSIONS),
                 # Approval gate is atomic: inactive at creation, never a
                 # live-then-deactivate window where the user could log in.
                 is_active=mode != "approval",

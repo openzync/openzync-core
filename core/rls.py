@@ -10,8 +10,8 @@ policies read two GUCs:
     middleware-provided ``request.state.user_id`` (JWT ``sub``).
 
 ``app.bypass_rls``
-    ``'true'`` disables the policies.  Reserved for the superadmin
-    session (:func:`dependencies.db.get_db_superadmin`) and for
+    ``'true'`` disables the policies.  Reserved for the admin
+    session (:func:`dependencies.db.get_db_admin`) and for
     the narrowly scoped pre-authentication lookups (see
     :func:`rls_bypass`).
 
@@ -42,8 +42,8 @@ session-creation paths that establish it:
 
 * ``dependencies.db.get_db`` — :func:`init_context` with the request's
   ``request.state.user_id`` (empty for public endpoints).
-* ``dependencies.db.get_db_superadmin`` — :func:`init_context` on the
-  verification session; the bypass session then binds the superadmin's
+* ``dependencies.db.get_db_admin`` — :func:`init_context` on the
+  verification session; the bypass session then binds the admin's
   own ``app.user_id`` and ``app.bypass_rls='true'`` explicitly.
 * ``services.worker.worker.rls_scoped_session_factory`` —
   :func:`init_context` with ``None`` (fail-closed) for every worker
