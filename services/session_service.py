@@ -306,7 +306,9 @@ class SessionService:
             sort: Validated sort spec (forwarded opaque to the repository).
 
         Returns:
-            A paginated response with message items.
+            A paginated response with message items.  Each item carries
+            the raw ``enrichment_status`` bitmask off its episode row —
+            populated inline from the already-fetched rows, no extra query.
 
         Raises:
             NotFoundError: If the session does not exist.

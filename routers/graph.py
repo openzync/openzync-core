@@ -80,6 +80,12 @@ async def list_graph_nodes(
         default=None,
         description="Optional: scope entities to those linked to a specific session.",
     ),
+    episode_id: UUID | None = Query(
+        default=None,
+        description="Optional: scope entities to those linked to a specific "
+        "episode via the entity-episode link edges (takes precedence over "
+        "session_id when both are given).",
+    ),
     limit: int = Query(
         default=50,
         ge=1,
@@ -109,6 +115,7 @@ async def list_graph_nodes(
         project_id=project_id,
         entity_type=entity_type,
         session_id=session_id,
+        episode_id=episode_id,
         limit=limit,
         cursor=cursor,
         sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),

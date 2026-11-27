@@ -98,14 +98,21 @@ class GraphService:
         limit: int = 50,
         cursor: str | None = None,
         session_id: UUID | None = None,
+        episode_id: UUID | None = None,
         sort: SortSpec | None = None,
     ) -> dict[str, Any]:
         """List entity nodes with optional type filter and cursor pagination.
 
-        When ``session_id`` is provided, entities are scoped to those linked
-        to episodes in the specified session.  Cursor pagination is not
-        supported for session-scoped queries — all matching entities are
-        returned in a single page.
+        When ``episode_id`` is provided, entities are scoped to those
+        linked to that episode via the entity-episode link edges written
+        by ``link_entities_to_episode`` (PG ``graph_episode_entities``
+        join table / backend-native ``has_entity``/``MENTIONS`` edge) —
+        one backend call, capped at ``min(limit, 200)``.  When only
+        ``session_id`` is provided, episode IDs are resolved from Postgres
+        first, then the same single backend call runs.  ``episode_id``
+        takes precedence when both are given.  Cursor pagination is not
+        supported for episode/session-scoped queries — all matching
+        entities are returned in a single page.
 
         Default ``created_at/asc``; whitelist ``name``, ``created_at``,
         ``entity_type``.
@@ -117,6 +124,8 @@ class GraphService:
             limit: Maximum results per page (max 200).
             cursor: Opaque cursor for pagination.
             session_id: Optional session UUID to scope entities.
+            episode_id: Optional episode UUID to scope entities to a
+                single episode.  Takes precedence over ``session_id``.
             sort: Validated sort spec (forwarded opaque to the backend).
 
         Returns:
@@ -132,36 +141,44 @@ class GraphService:
                 detail={"operation": "get_entities"},
             )
 
-        # Session-scoped query — resolve episode IDs from Postgres, then
-        # traverse Episode→Entity in the graph backend.  Session nodes do
-        # not exist in the graph (no HAS_EPISODE edges / session_id on
-        # prod data), so backend-side session traversal always yields [].
-        if session_id is not None:
-            if self._episode_repo is None:
-                raise GraphBackendUnavailableError(
-                    "Episode repository is not configured for "
-                    "session-scoped graph queries.",
-                    detail={
-                        "operation": "get_entities",
-                        "session_id": str(session_id),
-                    },
+        # Episode/session-scoped query — resolve episode IDs, then
+        # traverse Episode→Entity in the graph backend in one call.
+        # Session nodes do not exist in the graph (no HAS_EPISODE edges /
+        # session_id on prod data), so backend-side session traversal
+        # always yields [].  A direct episode_id skips the PG resolution.
+        if episode_id is not None or session_id is not None:
+            scoped_limit = min(limit, 200)
+            if episode_id is not None:
+                episode_ids = [episode_id]
+            else:
+                if self._episode_repo is None:
+                    raise GraphBackendUnavailableError(
+                        "Episode repository is not configured for "
+                        "session-scoped graph queries.",
+                        detail={
+                            "operation": "get_entities",
+                            "session_id": str(session_id),
+                        },
+                    )
+                assert session_id is not None
+                episodes, next_cursor = await self._episode_repo.get_by_session_id(
+                    session_id, limit=500
                 )
-            episodes, next_cursor = await self._episode_repo.get_by_session_id(
-                session_id, limit=500
-            )
-            if next_cursor is not None:
-                logger.warning(
-                    "graph_service.session_episodes_truncated",
-                    extra={
-                        "user_id": str(user_id),
-                        "session_id": str(session_id),
-                    },
-                )
+                if next_cursor is not None:
+                    logger.warning(
+                        "graph_service.session_episodes_truncated",
+                        extra={
+                            "user_id": str(user_id),
+                            "session_id": str(session_id),
+                        },
+                    )
+                episode_ids = [ep.id for ep in episodes]
+                scoped_limit = 200
             entities = await self._backend.get_entities_for_episodes(
                 user_id=user_id,
                 project_id=project_id,
-                episode_ids=[ep.id for ep in episodes],
-                limit=200,
+                episode_ids=episode_ids,
+                limit=scoped_limit,
             )
 
             # Apply optional entity_type filter client-side

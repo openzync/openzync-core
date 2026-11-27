@@ -1110,6 +1110,7 @@ class FactRepository:
         self,
         user_id: UUID,
         session_id: UUID,
+        episode_id: UUID | None = None,
         limit: int = 50,
         cursor: str | None = None,
         sort: SortSpec | None = None,
@@ -1127,6 +1128,9 @@ class FactRepository:
         Args:
             user_id: Tenant scope.
             session_id: The session to fetch facts for.
+            episode_id: Optional episode UUID — when given, results are
+                restricted to facts whose ``source_episode_id`` exactly
+                matches.  ``None`` preserves the unfiltered semantics.
             limit: Max results (1–200).
             cursor: Opaque base64 cursor from a previous page.
             sort: Validated sort spec (whitelist ``created_at``,
@@ -1204,6 +1208,10 @@ class FactRepository:
             "limit": effective_limit,
             "effective_at": now,
         }
+        episode_filter = ""
+        if episode_id is not None:
+            episode_filter = " AND f.source_episode_id = :episode_id"
+            params["episode_id"] = episode_id
         keyset = ""
         if cursor_id is not None and cursor_val is not None:
             op = ">" if req_dir == "asc" else "<"
@@ -1223,6 +1231,7 @@ class FactRepository:
             params["cursor_id"] = cursor_id
         stmt = sql_text(
             base_query
+            + episode_filter
             + keyset
             + f" ORDER BY {order_col} {order_kw}, f.id {tiebreak}"
             + " LIMIT :limit"
