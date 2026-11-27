@@ -68,19 +68,19 @@ from workers.tasks.base import ENRICHMENT_EMBEDDING
 logger = logging.getLogger("reset_embeddings_for_remodel")
 
 
-async def _list_org_ids(engine: AsyncEngine) -> list[UUID]:
-    """Return every organization ID for the per-org reset loop.
+async def _list_user_ids(engine: AsyncEngine) -> list[UUID]:
+    """Return every user ID for the per-user reset loop.
 
     This is a read-only enumeration of ``organizations.id`` — the only
     statement in this script that runs under ``bypass_rls``, and it
     writes nothing. Every destructive statement below runs under a
-    per-org tenant context instead.
+    per-user tenant context instead.
 
     Args:
         engine: An initialised async engine.
 
     Returns:
-        All organization UUIDs.
+        All user UUIDs.
     """
     async with get_async_session(engine)() as db:
         await set_bypass_rls(db, True)
@@ -96,14 +96,14 @@ async def _count_rows(db: AsyncSession, user_id: UUID) -> tuple[int, int]:
 
     Counts only rows that actually hold a vector — already-NULL rows need
     no work and should not inflate the operator's sense of the blast
-    radius. Scoped to one org (call with the tenant context bound).
+    radius. Scoped to one user (call with the tenant context bound).
 
     Args:
-        db: An open async SQLAlchemy session with the org tenant bound.
-        user_id: The organization the counts are scoped to.
+        db: An open async SQLAlchemy session with the user tenant bound.
+        user_id: The user the counts are scoped to.
 
     Returns:
-        ``(episodes, facts)`` row counts for that org.
+        ``(episodes, facts)`` row counts for that user.
     """
     episodes = await db.execute(
         text(  # noqa: S608
@@ -133,37 +133,37 @@ async def run(db_url: str, *, dry_run: bool) -> None:
     """
     engine = init_db_engine(db_url, pool_size=2, max_overflow=1)
     try:
-        org_ids = await _list_org_ids(engine)
-        if not org_ids:
-            logger.info("reset_embeddings.no_orgs — nothing to reset")
+        user_ids = await _list_user_ids(engine)
+        if not user_ids:
+            logger.info("reset_embeddings.no_users — nothing to reset")
             return
 
         if dry_run:
             total_episodes = 0
             total_facts = 0
-            for user_id in org_ids:
+            for user_id in user_ids:
                 async with get_async_session(engine)() as db:
                     await set_tenant_context(db, user_id)
                     episodes, facts = await _count_rows(db, user_id)
                     total_episodes += episodes
                     total_facts += facts
             logger.info(
-                "reset_embeddings.dry_run episodes=%d facts=%d orgs=%d — "
+                "reset_embeddings.dry_run episodes=%d facts=%d users=%d — "
                 "no rows written",
                 total_episodes,
                 total_facts,
-                len(org_ids),
+                len(user_ids),
             )
             return
 
-        # Per-org rewrite: each org's rows are nulled inside its own
-        # tenant context — RLS narrows every statement to that org, and
+        # Per-user rewrite: each user's rows are nulled inside its own
+        # tenant context — RLS narrows every statement to that user, and
         # the explicit user_id predicates scope them even if a
         # policy were misconfigured. No bulk rewrite ever runs under
         # bypass_rls.
         total_episodes = 0
         total_facts = 0
-        for user_id in org_ids:
+        for user_id in user_ids:
             async with get_async_session(engine)() as db:
                 await set_tenant_context(db, user_id)
                 episodes, facts = await _count_rows(db, user_id)
@@ -193,19 +193,19 @@ async def run(db_url: str, *, dry_run: bool) -> None:
                 total_episodes += episodes
                 total_facts += facts
                 logger.info(
-                    "reset_embeddings.org_completed user_id=%s episodes=%d facts=%d",
+                    "reset_embeddings.user_completed user_id=%s episodes=%d facts=%d",
                     user_id,
                     episodes,
                     facts,
                 )
 
         logger.info(
-            "reset_embeddings.completed episodes=%d facts=%d orgs=%d — "
+            "reset_embeddings.completed episodes=%d facts=%d users=%d — "
             "reconcile_enrichment will re-enqueue these over the next "
             "ticks (100 rows/tick); confirm the ARQ worker is running",
             total_episodes,
             total_facts,
-            len(org_ids),
+            len(user_ids),
         )
     finally:
         await engine.dispose()

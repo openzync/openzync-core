@@ -1,4 +1,4 @@
-# Onboarding defaults for new organizations.
+# Onboarding defaults for the platform.
 #
 # Returned by GET /admin/platform-config/defaults.  The onboarding page
 # pre-fills its config form with these values so the user only needs
@@ -6,7 +6,7 @@
 #
 # These defaults are NOT fallbacks — they are UI seed values.  The
 # backend code never reads this file at runtime to resolve a missing
-# config value.  If a required field is absent from the stored per-org
+# config value.  If a required field is absent from the stored platform
 # config, the backend raises an explicit error.
 
 llm_backend: openai
@@ -31,7 +31,7 @@ context_cache_ttl: 300
 audit_log_response_body: false
 
 # Per-episode enrichment toggles — all-ON by default. Unset keys resolve
-# to true at ingest (system < org < per-request); see core/enrichment_config.
+# to true at ingest (system < user < per-request); see core/enrichment_config.
 enrichment:
   entities: true
   embedding: true
@@ -51,7 +51,7 @@ reranker_top_k: 50
 reranker_top_n: 10
 cohere_api_key: ""
 
-# Enrichment gate — org-level only, off by default. Non-secret tunables,
+# Enrichment gate — user-level only, off by default. Non-secret tunables,
 # safe to serve on the unauthenticated defaults endpoint. The gate model
 # is fixed to the platform default (OpenZync/enrichment-gating-v1) and is
 # never configured here.

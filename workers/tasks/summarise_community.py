@@ -1,12 +1,12 @@
 """ARQ worker for community summarisation — scheduled nightly.
 
 Pipeline:
-1. Find orgs with graph data via the ORM.  Discovery runs under a
-   transaction-local RLS bypass (``app.bypass_rls``); per-org processing
-   re-applies ``app.user_id`` per org because the shared session commits
-   after each org (same rationale as ``cleanup_orphan_blobs``).
-2. Resolve per-org graph backend (surfaces SurrealDB or FalkorDB if configured)
-3. Per project within each org:
+1. Find users with graph data via the ORM.  Discovery runs under a
+   transaction-local RLS bypass (``app.bypass_rls``); per-user processing
+   re-applies ``app.user_id`` per user because the shared session commits
+   after each user (same rationale as ``cleanup_orphan_blobs``).
+2. Resolve per-user graph backend (surfaces SurrealDB or FalkorDB if configured)
+3. Per project within each user:
    a. Fetch all entities + relationships via the graph backend
    b. Build a NetworkX graph
    c. Run Label Propagation community detection
@@ -49,15 +49,15 @@ async def summarise_community(ctx: dict, user_id: str | None = None) -> dict:
     """ARQ worker: run community detection and summarisation.
 
     Can be called:
-    - Without ``user_id`` (scheduled run): processes all eligible orgs.
-    - With ``user_id`` (manual trigger): processes a single org.
+    - Without ``user_id`` (scheduled run): processes all eligible users.
+    - With ``user_id`` (manual trigger): processes a single user.
 
     Args:
         ctx: ARQ worker context (includes ``redis``, ``db``).
-        user_id: Optional org UUID to process (processes all if ``None``).
+        user_id: Optional user UUID to process (processes all if ``None``).
 
     Returns:
-        Dict with ``status``, ``orgs_processed``, ``orgs_failed``,
+        Dict with ``status``, ``users_processed``, ``users_failed``,
         ``communities_created``.
     """
     from core.config import settings
@@ -82,66 +82,66 @@ async def summarise_community(ctx: dict, user_id: str | None = None) -> dict:
 
     try:
         async with session_factory() as db:
-            # Determine which orgs to process
+            # Determine which users to process
             if user_id:
-                org_ids = [UUID(user_id)]
+                user_ids = [UUID(user_id)]
             else:
                 # RLS: the organizations policy requires bypass_rls or a
                 # matching user_id; a global discovery has neither.
                 # The bypass is bound on the session, so it survives the
-                # per-org commit; the per-org work drops it again (see
-                # _process_org) and runs tenant-scoped.
+                # per-user commit; the per-user work drops it again (see
+                # _process_user) and runs tenant-scoped.
                 await rls.set_bypass_rls(db, True)
-                # Discover eligible orgs via the Organization table — each
-                # org's resolved backend answers authoritatively for entity
+                # Discover eligible users via the Organization table — each
+                # user's resolved backend answers authoritatively for entity
                 # counts via get_all_entities().  Direct GraphEntity ORM
                 # queries are incorrect for non-Postgres backends.
                 result = await db.execute(select(Organization.id))
-                all_org_ids = [r[0] for r in result.all()]
+                all_user_ids = [r[0] for r in result.all()]
 
-                org_ids = []
-                for oid in all_org_ids:
+                user_ids = []
+                for uid in all_user_ids:
                     try:
-                        backend = await resolve_graph_backend(ctx, oid, db)
+                        backend = await resolve_graph_backend(ctx, uid, db)
                         if backend is None:
                             continue
-                        # Entity-count filtering happens inside _process_org
+                        # Entity-count filtering happens inside _process_user
                         # via backend.get_all_entities() — no need to
                         # duplicate it here.
-                        org_ids.append(oid)
+                        user_ids.append(uid)
                     except Exception:
                         logger.error(
-                            "community.org_resolution_failed",
-                            extra={"user_id": str(oid)},
+                            "community.user_resolution_failed",
+                            extra={"user_id": str(uid)},
                             exc_info=True,
                         )
                         continue
 
-            if not org_ids:
-                return {"status": "skipped", "reason": "No eligible orgs found"}
+            if not user_ids:
+                return {"status": "skipped", "reason": "No eligible users found"}
 
-            org_errors: list[str] = []
+            user_errors: list[str] = []
             total_communities = 0
-            for current_org_id in org_ids:
+            for current_user_id in user_ids:
                 try:
-                    communities = await _process_org(ctx, db, current_org_id)
+                    communities = await _process_user(ctx, db, current_user_id)
                     total_communities += communities
                 except Exception as exc:
                     logger.error(
-                        "community.process_org_failed",
-                        extra={"user_id": str(current_org_id), "error": str(exc)},
+                        "community.process_user_failed",
+                        extra={"user_id": str(current_user_id), "error": str(exc)},
                     )
-                    org_errors.append(str(current_org_id))
+                    user_errors.append(str(current_user_id))
 
-            if org_errors and len(org_errors) == len(org_ids):
+            if user_errors and len(user_errors) == len(user_ids):
                 raise RuntimeError(
-                    f"All {len(org_ids)} orgs failed: {', '.join(org_errors)}"
+                    f"All {len(user_ids)} users failed: {', '.join(user_errors)}"
                 )
 
             return {
-                "status": "completed" if not org_errors else "partial",
-                "orgs_processed": len(org_ids),
-                "orgs_failed": len(org_errors),
+                "status": "completed" if not user_errors else "partial",
+                "users_processed": len(user_ids),
+                "users_failed": len(user_errors),
                 "communities_created": total_communities,
             }
 
@@ -150,20 +150,20 @@ async def summarise_community(ctx: dict, user_id: str | None = None) -> dict:
             await engine.dispose()
 
 
-async def _process_org(ctx: dict, db: AsyncSession, user_id: UUID) -> int:
-    """Run community detection and summarisation for a single org.
+async def _process_user(ctx: dict, db: AsyncSession, user_id: UUID) -> int:
+    """Run community detection and summarisation for a single user.
 
-    Resolves the per-org graph backend, discovers projects with graph
+    Resolves the per-user graph backend, discovers projects with graph
     data, and processes each project independently.
 
     Sets the transaction-local ``app.user_id`` RLS context first so the
-    projects/organizations policies admit this org's rows; re-applied per
-    org because this function commits and the setting is transaction-local.
+    projects/organizations policies admit this user's rows; re-applied per
+    user because this function commits and the setting is transaction-local.
 
     Args:
         ctx: ARQ worker context (passed to ``resolve_graph_backend``).
         db: Database session.
-        user_id: Organization UUID.
+        user_id: User UUID.
 
     Returns:
         Number of communities created across all projects.
@@ -174,9 +174,9 @@ async def _process_org(ctx: dict, db: AsyncSession, user_id: UUID) -> int:
     )
 
     # RLS: projects/organizations policies need app.user_id (or bypass).
-    # The discovery scan above ran under a bypass; the per-org work drops
-    # it and binds the tenant instead, so it is org-scoped.  The binding is
-    # remembered by the session, so _process_org's commit re-applies it
+    # The discovery scan above ran under a bypass; the per-user work drops
+    # it and binds the tenant instead, so it is user-scoped.  The binding is
+    # remembered by the session, so _process_user's commit re-applies it
     # instead of leaving the session un-tenanted.
     await rls.set_bypass_rls(db, False)
     await rls.set_user_context(db, user_id)
@@ -191,7 +191,7 @@ async def _process_org(ctx: dict, db: AsyncSession, user_id: UUID) -> int:
 
     total_created = 0
     try:
-        # Discover projects for this org that have graph entities
+        # Discover projects for this user that have graph entities
         result = await db.execute(
             select(Project.id).where(
                 Project.user_id == user_id,
@@ -305,16 +305,16 @@ async def _process_org(ctx: dict, db: AsyncSession, user_id: UUID) -> int:
 
         await db.commit()
     except Exception:
-        # The session is shared across orgs in discovery mode: a failed
+        # The session is shared across users in discovery mode: a failed
         # statement aborts the transaction, and any later statement on this
-        # session raises InFailedSqlTransaction.  Roll back so the next org
-        # starts from a clean transaction — and so this org's pending
+        # session raises InFailedSqlTransaction.  Roll back so the next user
+        # starts from a clean transaction — and so this user's pending
         # writes cannot be flushed by a later commit.
         await db.rollback()
         raise
 
     logger.info(
-        "community.org_completed",
+        "community.user_completed",
         extra={"user_id": str(user_id), "communities": total_created},
     )
     return total_created
@@ -336,8 +336,8 @@ async def _delete_prior_communities(
     native ``RELATE`` edge-table rows may survive as orphans.
 
     Args:
-        backend: Initialised graph backend for this org.
-        user_id: Organization UUID.
+        backend: Initialised graph backend for this user.
+        user_id: User UUID.
         project_id: Project UUID.
 
     Returns:
@@ -395,9 +395,9 @@ async def _create_community(
 
     Args:
         ctx: ARQ worker context (used for LLM backend resolution).
-        backend: Initialised graph backend for this org.
-        db: Database session (for org config resolution).
-        user_id: Organization UUID.
+        backend: Initialised graph backend for this user.
+        db: Database session (for platform config resolution).
+        user_id: User UUID.
         project_id: Project UUID.
         entity_ids: UUIDs of entities in this community.
         all_entities: All entities in the project (for building the prompt
@@ -407,7 +407,7 @@ async def _create_community(
     """
     from core.llm import build_cache_config
     from core.llm import resolve_backend as resolve_llm_backend
-    from core.org_config import get_platform_config
+    from core.platform_config import get_platform_config
     from services.usage_service import make_sink
 
     # Build entity name map
@@ -429,15 +429,15 @@ async def _create_community(
     # Generate summary via LLM
     try:
         prompt = _build_community_prompt(context_entities, context_rels)
-        org_cfg = await get_platform_config(user_id, redis=None, db=db)
-        llm_config_dict = org_cfg.to_llm_config_dict()
+        platform_cfg = await get_platform_config(user_id, redis=None, db=db)
+        llm_config_dict = platform_cfg.to_llm_config_dict()
         sink = make_sink(
             db,
             user_id=user_id,
             worker="community_summary",
             project_id=project_id,
         )
-        llm = await resolve_llm_backend(org_config=llm_config_dict, sink=sink)
+        llm = await resolve_llm_backend(platform_config=llm_config_dict, sink=sink)
         response = await llm.chat(
             [
                 {
@@ -448,7 +448,7 @@ async def _create_community(
                 },
                 {"role": "user", "content": prompt},
             ],
-            cache_config=build_cache_config(org_config=llm_config_dict),
+            cache_config=build_cache_config(platform_config=llm_config_dict),
             metered=True,
         )
         summary = response.content.strip()

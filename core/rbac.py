@@ -224,7 +224,7 @@ async def get_effective_permissions(
     back into a frozenset on a cache hit.
 
     **Fails closed**: any Redis or DB *read* error returns an empty
-    frozenset (deny) and logs with org/user context — an outage can never
+    frozenset (deny) and logs with user context — an outage can never
     grant permissions.  A cache-*write* failure after a successful DB read
     does NOT degrade: the permissions were already verified against the
     source of truth, and the write is only an optimization.

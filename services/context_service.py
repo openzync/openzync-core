@@ -32,7 +32,7 @@ from services.context_formatter import format_json, format_text
 from services.hybrid_retriever import HybridRetriever
 
 if TYPE_CHECKING:
-    from schemas.organization_config import PlatformConfigBase
+    from schemas.platform_config import PlatformConfigBase
 
 from repositories.episode_blob_repository import EpisodeBlobRepository
 from services.blob_storage_service import BlobStorageService
@@ -40,10 +40,10 @@ from services.blob_storage_service import BlobStorageService
 logger = structlog.get_logger()
 
 DEFAULT_CONTEXT_CACHE_TTL: int = 300
-"""Fallback context-cache TTL for orgs that have not configured one.
+"""Fallback context-cache TTL for users that have not configured one.
 
-Matches ``context_cache_ttl: 300`` in ``config/defaults/org_config.yaml``.
-A fresh/bootstrap org has a ``None`` org config (or ``None``
+Matches ``context_cache_ttl: 300`` in ``config/defaults/platform_config.yaml``.
+A fresh/bootstrap platform has a ``None`` platform config (or ``None``
 ``context_cache_ttl``) — coalesce to this default instead of passing
 ``None`` into ``CacheService`` (which rejects it with ``ValueError``).
 """
@@ -98,28 +98,28 @@ class ContextService:
         user_id: UUID,
         redis: object | None = None,
         graph_backends: list | None = None,
-        org_config: PlatformConfigBase | None = None,
+        platform_config: PlatformConfigBase | None = None,
         session_factory: object | None = None,
     ) -> None:
         self._db = db
-        reranker = RerankerFactory.create(org_config) if org_config else None
+        reranker = RerankerFactory.create(platform_config) if platform_config else None
         self._retriever = HybridRetriever(
             db,
             user_id,
             redis,
             graph_backends=graph_backends,
-            org_config=org_config,
+            platform_config=platform_config,
             reranker=reranker,
             session_factory=session_factory,
         )
         cache_ttl = (
-            org_config.context_cache_ttl
-            if org_config is not None and org_config.context_cache_ttl is not None
+            platform_config.context_cache_ttl
+            if platform_config is not None and platform_config.context_cache_ttl is not None
             else DEFAULT_CONTEXT_CACHE_TTL
         )
         self._cache = CacheService(redis, default_ttl=cache_ttl) if redis else None
         self._user_id = user_id
-        self._org_config = org_config
+        self._platform_config = platform_config
 
     # ── Public API ──────────────────────────────────────────────────────────────
 
@@ -322,7 +322,7 @@ class ContextService:
         # ═══════════════════════════════════════════════════════════════════
         if self._cache is not None and cache_key is not None:
             # Omit ttl — CacheService falls back to default_ttl, which was
-            # seeded from the org's configured context_cache_ttl at __init__.
+            # seeded from the user's configured context_cache_ttl at __init__.
             # Best-effort: a Redis blip must never turn a computed result
             # into a 500 — the next request simply recomputes.
             try:

@@ -172,7 +172,7 @@ class ProjectRepository:
             return result.scalar_one_or_none()
 
     async def get_by_name(self, user_id: UUID, name: str) -> Project | None:
-        """Look up a project by name within an organisation.
+        """Look up a project by name within a user scope.
 
         Args:
             user_id: Tenant scope.
@@ -242,12 +242,12 @@ class ProjectRepository:
     async def is_archived(self, user_id: UUID, project_id: UUID) -> bool:
         """Check whether a project is archived (or missing).
 
-        Single-column SELECT scoped to the org. Fail-closed: returns
+        Single-column SELECT scoped to the user. Fail-closed: returns
         ``True`` when the row is missing so episode workers skip work
         instead of burning billable I/O on a project that is gone.
 
         Worker-session note: episode workers set the ``app.user_id`` RLS
-        GUC (not ``app.bypass_rls``), so the org-scoped predicate
+        GUC (not ``app.bypass_rls``), so the user-scoped predicate
         matches their session semantics — no unscoped variant needed.
 
         Args:
@@ -278,7 +278,7 @@ class ProjectRepository:
         sort: SortSpec | None = None,
         include_archived: bool = False,
     ) -> list[Project]:
-        """List projects in an organisation.
+        """List projects in a user scope.
 
         When ``user_id`` is provided, only projects where that user is a
         member are returned.  When ``user_id`` is ``None`` (API key auth),
@@ -349,7 +349,7 @@ class ProjectRepository:
         limit: int | None = None,
         include_archived: bool = False,
     ) -> list[Project]:
-        """List every project across all organisations.
+        """List every project across all users.
 
         Requires the caller to have set the ``app.bypass_rls`` GUC (or a
         super-admin context) before invoking — this repository method
@@ -704,7 +704,7 @@ class ProjectRepository:
         """List the user's pending memberships with project names.
 
         Runs under a transaction-scoped RLS bypass so invitee-self reads
-        see invites from orgs RLS would otherwise hide — still scoped to
+        see invites from other users RLS would otherwise hide — still scoped to
         the exact ``user_id`` with ``status == pending`` and non-archived
         projects only.
 

@@ -1,8 +1,8 @@
-"""Project model — collaborative workspace within an organization.
+"""Project model — collaborative workspace within a user scope.
 
 Projects group sessions, facts, graph knowledge, and configurations into
 isolated workspaces. Each project has members with roles (owner, member)
-and is scoped to a single organization for RLS enforcement.
+and is scoped to a single user for RLS enforcement.
 """
 
 from __future__ import annotations
@@ -17,12 +17,12 @@ from models.base import Base, TimestampMixin
 
 
 class Project(TimestampMixin, Base):
-    """A collaborative project workspace within an organization.
+    """A collaborative project workspace within a user scope.
 
     Attributes:
         id: UUID primary key, generated server-side via gen_random_uuid().
-        user_id: Foreign key to the owning organization.
-        name: Human-readable project name (unique within an organization).
+        user_id: Foreign key to the owning user.
+        name: Human-readable project name (unique within a user scope).
         description: Optional longer description of the project's purpose.
         metadata_: Arbitrary JSONB metadata for extensible configuration.
         is_archived: Soft toggle — archived projects are hidden from default

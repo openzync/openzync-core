@@ -27,7 +27,7 @@ class FactInvalidationEvent(TimestampMixin, Base):
 
     Attributes:
         id: UUID primary key.
-        user_id: Denormalized organization ID for RLS — no FK,
+        user_id: Denormalized user ID for RLS — no FK,
             mirrors ``facts.user_id``.
         project_id: Project scope, FK to ``projects`` (CASCADE).
         old_fact_id: The fact that stopped being current (FK to

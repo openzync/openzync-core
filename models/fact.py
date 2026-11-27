@@ -29,7 +29,7 @@ class Fact(TimestampMixin, Base):
     Attributes:
         id: UUID primary key.
         user_id: Foreign key to the owning user.
-        user_id: Denormalized organization ID for RLS enforcement.
+        user_id: Denormalized user ID for RLS enforcement.
         content: Human-readable fact statement (e.g., "Alice likes hiking").
         subject: The subject of the triple (e.g., "Alice").
         predicate: The relationship/predicate (e.g., "likes").

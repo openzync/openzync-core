@@ -170,7 +170,7 @@ class IngestMemoryRequest(BaseModel):
     enrichments: dict[str, bool] | None = Field(
         default=None,
         description="Per-ingest enrichment toggles (highest precedence — "
-        "overrides system and org config). Unset keys default to True.",
+        "overrides system and platform config). Unset keys default to True.",
     )
 
     @field_validator("enrichments", mode="before")

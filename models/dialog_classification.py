@@ -22,7 +22,7 @@ class DialogClassification(TimestampMixin, Base):
 
     Attributes:
         id: UUID primary key.
-        user_id: Foreign key to the owning organization (tenant isolation).
+        user_id: Foreign key to the owning user (tenant isolation).
         episode_id: Foreign key to the classified episode.
         intent: Predicted intent label (e.g., ``greeting``, ``question``,
             ``command``).

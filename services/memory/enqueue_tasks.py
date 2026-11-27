@@ -71,7 +71,7 @@ class EnqueueTasksMixin:
 
         Args:
             job_id: The composite job ID for this ingestion.
-            user_id: The organization UUID string.
+            user_id: The user UUID string.
             project_id: The project UUID string.
             session_id: The session UUID string.
             episodes: List of episode dicts with ``id`` and ``role``.
@@ -152,7 +152,7 @@ class EnqueueTasksMixin:
         as best-effort (logged, never raised).
 
         Args:
-            user_id: The organization UUID string.
+            user_id: The user UUID string.
             project_id: The project UUID string.
         """
         from services.cache_service import CacheService

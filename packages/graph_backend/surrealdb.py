@@ -592,7 +592,7 @@ class SurrealGraphBackend(GraphBackend):
     async def get_entity(
         self, user_id: UUID, project_id: UUID, entity_id: UUID
     ) -> dict | None:
-        """Retrieve an entity node by its ID, scoped to org and project.
+        """Retrieve an entity node by its ID, scoped to user and project.
 
         Returns:
             The entity dict, or ``None`` if not found.
@@ -709,7 +709,7 @@ class SurrealGraphBackend(GraphBackend):
         fields.  Returns the updated entity dict.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             entity_id: UUID of the entity to update.
             name: New name, or ``None`` to leave unchanged.
@@ -1605,7 +1605,7 @@ class SurrealGraphBackend(GraphBackend):
         always yields ``[]`` on prod data.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             user_id: User UUID — log scope only; episode scoping comes
                 from ``episode_ids`` (the graph stores no user linkage).
@@ -1687,7 +1687,7 @@ class SurrealGraphBackend(GraphBackend):
         ``session_id``).
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             episode_ids: Episode UUIDs to scope the lookup to.
             limit: Maximum entities to return (default 200, max 200).
@@ -2342,7 +2342,7 @@ class SurrealGraphBackend(GraphBackend):
         from its built-in idempotency (LET/IF/THEN/ELSE upsert pattern).
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             relationships: List of relationship descriptor dicts.
 
@@ -2637,7 +2637,7 @@ class SurrealGraphBackend(GraphBackend):
 
         Traverses ``entity <-has_entity<- episode`` and returns each
         linked episode's ``created_at`` timestamp.  Only episodes within
-        the org/project scope are considered.
+        the user/project scope are considered.
 
         Returns:
             Sorted list of episode timestamps (oldest first).  Empty list if
@@ -2797,7 +2797,7 @@ class SurrealGraphBackend(GraphBackend):
         RecordID.  ``out`` is the entity RecordID.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
 
         Returns:
@@ -2831,7 +2831,7 @@ class SurrealGraphBackend(GraphBackend):
         """Resolve entity IDs to their names and types.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             entity_ids: List of entity UUIDs to resolve.
 
@@ -2990,7 +2990,7 @@ class SurrealGraphBackend(GraphBackend):
         means a replay matches zero records and returns 0.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             source_id: UUID of the edge source (fact subject entity).
             target_id: UUID of the edge target (fact object entity).

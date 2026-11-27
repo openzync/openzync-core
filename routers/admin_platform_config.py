@@ -6,7 +6,7 @@ that were previously env-var-only.
 
 All endpoints are scoped to the authenticated user — an admin can
 only manage their own config.  The config lives in the caller's own
-``users.config_override`` row (singleton platform org — no per-org rows).
+``users.config_override`` row (singleton platform org — no per-user rows).
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from core.config import get_settings
 from core.exceptions import ExternalServiceError, RateLimitError
 from dependencies.auth import require_permission
 from dependencies.db import get_db
-from schemas.organization_config import (
+from schemas.platform_config import (
     SYSTEM_MANAGED_FALKORDB_FIELDS,
     SYSTEM_MANAGED_SURREALDB_FIELDS,
     PlatformConfigBase,
@@ -35,8 +35,8 @@ from schemas.organization_config import (
     TestPlatformConfigResponse,
     UpdatePlatformConfigRequest,
 )
-from services.org_config_connection_service import PlatformConfigConnectionService
-from services.org_config_service import PlatformConfigService
+from services.platform_config_connection_service import PlatformConfigConnectionService
+from services.platform_config_service import PlatformConfigService
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ router = APIRouter(
 )
 
 #: Path to the onboarding defaults YAML file (relative to project root).
-DEFAULTS_PATH = Path(__file__).parent.parent / "config" / "defaults" / "org_config.yaml"
+DEFAULTS_PATH = Path(__file__).parent.parent / "config" / "defaults" / "platform_config.yaml"
 
 
 def _get_system_managed_fields() -> list[str]:
@@ -112,7 +112,7 @@ async def _check_config_test_throttle(redis: Any | None, user_id: str) -> None:
         # outage must never block config testing.  Non-Redis errors still
         # propagate.
         logger.error(
-            "org_config.test_throttle_failed",
+            "platform_config.test_throttle_failed",
             extra={"user_id": user_id},
             exc_info=True,
         )
@@ -174,8 +174,9 @@ async def get_platform_config(
     Returns only the fields explicitly set in the DB.  Unset fields are
     ``null`` — there is no env-var fallback.
 
-    Permission-gated (``require_permission("configuration:read")``): the
-    response contains unmasked secrets, so members and API keys are denied.
+    Permission-gated (``require_permission("configuration:read")``):
+    members with ``configuration:read`` pass (own override); the
+    response contains unmasked secrets.
     """
     response = await service.get_config_response(UUID(_user_id))
     response.system_managed_fields = _get_system_managed_fields()
@@ -279,7 +280,7 @@ async def replace_platform_config(
     "/test",
     response_model=TestPlatformConfigResponse,
 )
-@audit_action("config.test", "org_config")
+@audit_action("config.test", "platform_config")
 async def test_platform_config(
     body: TestPlatformConfigRequest,
     request: Request,
@@ -288,7 +289,6 @@ async def test_platform_config(
         _get_connection_service
     ),
     as_user: UUID | None = None,
-    db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> TestPlatformConfigResponse:
     """Probe live connectivity for a candidate config without saving it.
 
@@ -302,29 +302,12 @@ async def test_platform_config(
     per user.  The candidate and probe details carry no secrets beyond
     action metadata in the audit log.
     """
-    from repositories.user_repository import UserRepository
-    from services.user_config_service import UserConfigService
-
     redis = getattr(request.app.state, "redis", None)
     await _check_config_test_throttle(redis, _user_id)
-    candidate = body.config
-    if as_user is not None:
-        # Single-call probe path — read through the user-config service
-        # (no direct repo round-trip from the router); the candidate
-        # merge below is in-memory only.
-        user_config_service = UserConfigService(
-            user_repo=UserRepository(db),
-            redis=redis,
-            db=db,
-        )
-        override = await user_config_service.get_override(as_user)
-        if override:
-            from schemas.organization_config import UpdatePlatformConfigRequest
-
-            merged = {**override, **candidate.model_dump(exclude_unset=True)}
-            candidate = UpdatePlatformConfigRequest(**merged)
     try:
-        return await service.test_connections(UUID(_user_id), body.domain, candidate)
+        return await service.test_connections(
+            UUID(_user_id), body.domain, body.config, as_user=as_user
+        )
     except ExternalServiceError as exc:
         raise HTTPException(
             status_code=503,

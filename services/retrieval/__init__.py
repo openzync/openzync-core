@@ -37,7 +37,7 @@ from services.retrieval.vector_search import VectorSearchMixin
 if TYPE_CHECKING:
     from packages.graph_backend.interface import GraphBackend
     from packages.reranker import CrossEncoderReranker
-    from schemas.organization_config import PlatformConfigBase
+    from schemas.platform_config import PlatformConfigBase
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ class HybridRetriever(
 
     Args:
         db: An async SQLAlchemy session (request-scoped).
-        user_id: The authenticated organization UUID for tenant isolation.
+        user_id: The authenticated user UUID for tenant isolation.
         redis: Optional async Redis client for result caching.
     """
 
@@ -62,15 +62,15 @@ class HybridRetriever(
         user_id: UUID,
         redis: object | None = None,
         graph_backends: list[GraphBackend] | None = None,
-        org_config: PlatformConfigBase | None = None,
+        platform_config: PlatformConfigBase | None = None,
         reranker: CrossEncoderReranker | None = None,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
         self._db = db
-        self._org_id = user_id
+        self._user_id = user_id
         self._redis = redis
         self._graph_backends = graph_backends or []
-        self._org_config = org_config
+        self._platform_config = platform_config
         self._reranker = reranker
         self._session_factory = session_factory
         """Sibling-session factory for concurrent legs (``None`` = sequential)."""
@@ -79,13 +79,13 @@ class HybridRetriever(
         no embedding has been generated yet (e.g. all vector legs failed).  Used
         by callers for diagnostic logging to detect dimension mismatches."""
         self._rerank_top_k: int = (
-            org_config.reranker_top_k
-            if org_config and org_config.reranker_top_k
+            platform_config.reranker_top_k
+            if platform_config and platform_config.reranker_top_k
             else DEFAULT_RERANK_TOP_K
         )
         self._rerank_top_n: int = (
-            org_config.reranker_top_n
-            if org_config and org_config.reranker_top_n
+            platform_config.reranker_top_n
+            if platform_config and platform_config.reranker_top_n
             else DEFAULT_RERANK_TOP_N
         )
 
@@ -174,7 +174,7 @@ class HybridRetriever(
             logger.warning(
                 "hybrid_retriever.embedding_degraded",
                 extra={
-                    "user_id": str(self._org_id),
+                    "user_id": str(self._user_id),
                     "project_id": str(project_id),
                     "error": str(exc),
                 },
@@ -200,7 +200,7 @@ class HybridRetriever(
                     "hybrid_retriever.leg_degraded",
                     extra={
                         "leg": leg_name,
-                        "user_id": str(self._org_id),
+                        "user_id": str(self._user_id),
                         "project_id": str(project_id),
                         "error": str(exc),
                     },
@@ -302,7 +302,7 @@ class HybridRetriever(
             query, merged_episodes, merged_facts, sort, failed_legs
         )
 
-        graph_search_latency_seconds.labels(user_id=str(self._org_id)).observe(
+        graph_search_latency_seconds.labels(user_id=str(self._user_id)).observe(
             time.monotonic() - _search_start
         )
 

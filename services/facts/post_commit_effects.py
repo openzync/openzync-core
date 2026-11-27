@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # CacheService requires a non-None ``default_ttl`` at construction, but the
 # purge path (``invalidate_project_context``) is scan+delete only and never
 # reads it — the context writer passes an explicit TTL (``context_service``
-# hardcodes 30s) and the org's real ``context_cache_ttl`` only gates whether a
+# hardcodes 30s) and the user's real ``context_cache_ttl`` only gates whether a
 # cache exists at all.  This placeholder satisfies the constructor contract
 # for the purge path; it is never used for cache expiry.
 PURGE_ONLY_CACHE_TTL: int = 30

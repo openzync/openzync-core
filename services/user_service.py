@@ -1,7 +1,8 @@
 """User service — all business logic for the User domain.
 
 Separation: service orchestrates, repository queries.
-No SQLAlchemy expressions in this file — zero imports from ``sqlalchemy``.
+No SQLAlchemy expressions in this file — only ``sqlalchemy.exc`` for
+IntegrityError → 409 mapping.
 
 Key patterns:
 - Get-or-create with IntegrityError retry for concurrent-creation safety.
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # ╠ This file contains NO SQLAlchemy expressions.
+# ╠ Only ``sqlalchemy.exc.IntegrityError`` is caught (→ 409 mapping).
 # ╠ If you see a ``select()`` or ``where()``, it belongs in the repository.
 
 
@@ -126,23 +128,30 @@ class UserService:
         metadata: dict[str, Any] | None = None,
         role: str = "member",
     ) -> UserResponse:
-        """Create a new user within an organization.
+        """Create a new user in the platform user scope.
 
         Args:
-            user_id: Tenant scope.
+            user_id: Self-ID user scope (singleton platform user).
             external_id: Caller-defined unique user identifier.
             name: Optional display name.
             email: Optional email address.
             metadata: Optional JSON metadata.
-            role: Dashboard role — ``admin`` or ``member`` (default).
+            role: Dashboard role — ``member`` only (``admin`` creation is
+                frozen — raises 422; grant permissions instead).
 
         Returns:
             A :class:`UserResponse` for the newly created user.
 
         Raises:
+            ValidationError: If ``role`` is ``admin`` (frozen).
             ConflictError: A user with this ``external_id`` already exists
-                in the organization.
+                in the user scope.
         """
+        if role == "admin":
+            raise ValidationError(
+                "Admin creation is frozen — create a member and grant "
+                "permissions instead."
+            )
         # Same bypass safety as the invite flow — exists/create must see
         # past RLS even when the session already carries an admin bypass.
         async with rls_bypass(self._repo.session):
@@ -152,7 +161,7 @@ class UserService:
             if exists:
                 raise ConflictError(
                     f"User with external_id '{external_id}' already exists "
-                    f"in organization {user_id}"
+                    f"in user scope {user_id}"
                 )
 
             user = await self._repo.create(
@@ -240,8 +249,6 @@ class UserService:
             return UserResponse.model_validate(self._user_to_dict(user))
 
         # Race: concurrent create — DB constraint is the source of truth
-        from sqlalchemy.exc import IntegrityError
-
         is_new = False
         try:
             user = await self._repo.create(
@@ -365,7 +372,7 @@ class UserService:
                 ``permissions`` (→ 403).
             ValidationError: If ``role`` is present (role changes are
                 disabled) or the actor changes their own permissions.
-            NotFoundError: No user with this UUID in this organization.
+            NotFoundError: No user with this UUID in this user.
         """
         if ("role" in update_fields or "permissions" in update_fields) and not is_admin:
             raise AuthorizationError(
@@ -399,7 +406,7 @@ class UserService:
 
             raise ConflictError("Email is already in use.") from None
         if user is None:
-            raise NotFoundError(f"User {user_id} not found in organization {user_id}")
+            raise NotFoundError(f"User {user_id} not found in user scope {user_id}")
 
         if "permissions" in update_fields:
             await self._invalidate_permissions_cache(user_id)
@@ -412,22 +419,19 @@ class UserService:
         self,
         user_id: UUID,
         role: str,
-        *,
-        permissions: list[str] | None = None,
     ) -> User:
         """Set a member's role (platform admin surface).
 
         The ``admin`` role is frozen: any request with ``role == "admin"``
         raises 422, even from root — grant ``permissions`` instead.  Only
-        ``member`` (demotion) is assignable.  An admin may edit a member's
-        ``permissions``.  The root user's own role is frozen (422), and
-        demoting the last active admin raises 422.  Invalidates the cached
-        role/permissions so RBAC cannot outlive the change.
+        ``member`` (demotion) is assignable.  The root user's own role is
+        frozen (422), and demoting the last active admin raises 422.
+        Invalidates the cached role/permissions so RBAC cannot outlive
+        the change.
 
         Args:
             user_id: The member's user UUID.
             role: The new role (only ``member`` — ``admin`` raises 422).
-            permissions: Optional replacement permission set.
 
         Returns:
             The updated User.
@@ -440,7 +444,7 @@ class UserService:
         target = await self._repo.get_by_uuid(user_id)
         if target is None:
             raise NotFoundError(
-                f"User {user_id} not found in organization {user_id}."
+                f"User {user_id} not found in user scope {user_id}."
             )
         if target.external_id == "root":
             raise ValidationError(
@@ -455,11 +459,9 @@ class UserService:
             admin_count = await self._repo.count_active_admins(user_id)
             if admin_count <= 1:
                 raise ValidationError(
-                    "Cannot demote the last admin in the organization."
+                    "Cannot demote the last admin in the user scope."
                 )
         update_fields: dict[str, Any] = {"role": role}
-        if permissions is not None:
-            update_fields["permissions"] = permissions
         user = await self._repo.update(
 
             user_id=user_id,
@@ -467,7 +469,7 @@ class UserService:
         )
         if user is None:
             raise NotFoundError(
-                f"User {user_id} not found in organization {user_id}."
+                f"User {user_id} not found in user scope {user_id}."
             )
         await self._invalidate_role_cache(user_id)
         await self._invalidate_permissions_cache(user_id)
@@ -490,7 +492,7 @@ class UserService:
 
         Guards (in order): you cannot delete your own account (422),
         the root account cannot be deleted via this endpoint (422), and
-        the last active admin of an organization cannot be deleted (422).
+        the last active admin of a user scope cannot be deleted (422).
         The deleted user's cached role is invalidated.
 
         Args:
@@ -501,7 +503,7 @@ class UserService:
         Raises:
             ValidationError: If the actor deletes their own account, the
                 target is root, or the target is the last admin.
-            NotFoundError: No user with this UUID in this organization.
+            NotFoundError: No user with this UUID in this user.
 
         .. todo::
             Phase 2 — Wire up the ARQ/worker GDPR purge task:
@@ -513,7 +515,7 @@ class UserService:
         user = await self._repo.get_by_uuid(user_id)
         if user is None:
             raise NotFoundError(
-                f"User {user_id} not found in organization {user_id}"
+                f"User {user_id} not found in user scope {user_id}"
             )
         if user.external_id == "root":
             raise ValidationError(
@@ -522,11 +524,11 @@ class UserService:
         if user.role == "admin":
             admin_count = await self._repo.count_active_admins(user_id)
             # ⚠️ Same TOCTOU window as update_user's demotion guard — two
-            # concurrent deletes of different admins (org has exactly 2)
+            # concurrent deletes of different admins (scope has exactly 2)
             # could both pass, leaving zero admins.
             if admin_count <= 1:
                 raise ValidationError(
-                    "Cannot delete the last admin in the organization."
+                    "Cannot delete the last admin in the user scope."
                 )
 
         deleted = await self._repo.soft_delete(
@@ -534,7 +536,7 @@ class UserService:
         )
         if deleted is None:
             raise NotFoundError(
-                f"User {user_id} not found in organization {user_id}"
+                f"User {user_id} not found in user scope {user_id}"
             )
 
         await self._invalidate_role_cache(user_id)

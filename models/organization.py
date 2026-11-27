@@ -18,7 +18,7 @@ from models.base import Base, TimestampMixin
 
 
 class Organization(TimestampMixin, Base):
-    """A tenant organization in the OpenZync platform.
+    """An inert legacy platform tenant row in OpenZync.
 
     Single platform org — there is no ``DELETE /organizations`` endpoint
     and no service-layer delete; all ``organizations.id`` FKs are
@@ -27,14 +27,16 @@ class Organization(TimestampMixin, Base):
 
     Attributes:
         id: UUID primary key, generated server-side via gen_random_uuid().
-        name: Human-readable organization name.  The platform org is always
-            named ``SYSTEM`` (exact match — see :attr:`is_platform`).
+        name: Human-readable organization name (operator-chosen at
+            bootstrap — renames do not affect identity; the platform row
+            is the fixed-ID ``PLATFORM_ORG_ID`` row — see
+            :attr:`is_platform`).
         status: Lifecycle state — one of ``pending``, ``approved``,
-            ``rejected``.  ``pending`` orgs await superadmin approval and
+            ``rejected``.  ``pending`` rows await platform-admin approval and
             are excluded from every tenant-facing lookup.
-        config: JSONB blob for all per-org configuration (LLM, embeddings,
-            graph, behaviour).  UI-exposed.  ``None`` fields fall back to
-            env-var defaults from ``core.config.settings``.
+        config: JSONB blob holding legacy platform-level configuration (LLM,
+            embeddings, graph, behaviour).  UI-exposed.  ``None`` fields
+            fall back to env-var defaults from ``core.config.settings``.
         quotas: JSONB blob for usage quotas (max_sessions, max_episodes, etc.).
         is_active: Soft toggle for deactivation.
     """
@@ -60,7 +62,7 @@ class Organization(TimestampMixin, Base):
         nullable=False,
         default=dict,
         server_default="{}",
-        comment="Per-org UI-exposed configuration (LLM, embeddings, graph, behaviour).",
+        comment="Legacy UI-exposed configuration (LLM, embeddings, graph, behaviour).",
     )
     quotas: Mapped[dict] = mapped_column(
         JSONB,

@@ -96,7 +96,7 @@ class UserRepository:
             name: Optional display name.
             email: Optional email address.
             metadata: Arbitrary JSONB metadata.
-            role: Dashboard role — ``admin`` or ``member`` (default).
+            role: Dashboard role — ``member`` only (admin creation frozen, 422).
             password_hash: Optional bcrypt hash — ``None`` for pending
                 invites (the invitee sets a password at accept time).
             invite_token_hash: Optional SHA-256 hash of a pending invite
@@ -270,7 +270,7 @@ class UserRepository:
         return result.scalar_one_or_none()
 
     async def find_user_by_email(self, email: str) -> User | None:
-        """Find a user by email across all organizations (global lookup).
+        """Find a user by email across the platform (global lookup).
 
         Single implementation lives in
         :meth:`AuthRepository.find_user_by_email` (email is globally
@@ -817,11 +817,11 @@ class UserRepository:
         limit: int = 50,
         sort: SortSpec | None = None,
     ) -> tuple[list[User], int]:
-        """List an organization's dashboard users with offset pagination.
+        """List the platform's dashboard users with offset pagination.
 
         Offset-based counterpart to :meth:`list` (which uses cursors) —
-        for the platform super-admin members listing, where the response
-        shape is ``data/total/page/limit`` like the orgs list.  Soft-
+        for the platform admin users listing (response shape
+        ``data/total/page/limit``). Soft-
         deleted users are excluded. Default ``created_at/asc``.
 
         Args:
@@ -1024,7 +1024,7 @@ class UserRepository:
         return row.summary, row.summary_updated_at
 
     async def count_active(self, user_id: UUID) -> int:
-        """Count non-deleted users for the given organization.
+        """Count non-deleted users for the given platform.
 
         Args:
 
@@ -1039,7 +1039,7 @@ class UserRepository:
         return result.scalar() or 0
 
     async def count_active_admins(self, user_id: UUID) -> int:
-        """Count active admins for the given organization.
+        """Count active admins for the given platform.
 
         Used by the service layer to enforce the "last admin cannot be
         demoted/deleted" rule.

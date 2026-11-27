@@ -45,7 +45,7 @@ from routers import (
     admin_custom_instructions,
     admin_llm_usage,
     admin_metrics,
-    admin_org_config,
+    admin_platform_config,
     admin_schemas,
     admin_quick_actions,
     admin_schemas,
@@ -102,7 +102,7 @@ def create_app() -> FastAPI:
 
         # Init graph-backend dispatcher — a singleton registry of backend
         # classes.  Actual backend instances are created per-request by
-        # dependencies using ``resolve_and_create(org_config, db)``.
+        # dependencies using ``resolve_and_create(platform_config, db)``.
         app.state.graph_backend_dispatcher = init_dispatcher()
 
         # Aux-outage ledger — components that fail init record a reason
@@ -110,7 +110,7 @@ def create_app() -> FastAPI:
         # only Postgres/Redis (above) stay fail-fast.
         app.state.degraded: dict[str, str] = {}
 
-        # Init SurrealDB per-org connection pool (optional — requires surrealdb).
+        # Init SurrealDB per-user connection pool (optional — requires surrealdb).
         from core.surreal_pool import SurrealConnectionPool
 
         app.state.surreal_connection_pool = SurrealConnectionPool()
@@ -234,7 +234,7 @@ def create_app() -> FastAPI:
     #   1. LoggingMiddleware
     #   2. TracingMiddleware
     #   3. AuthMiddleware       — sets user_id
-    #   4. MetricsMiddleware    — reads user_id (moved inside Auth to be org-scoped)
+    #   4. MetricsMiddleware    — reads user_id (moved inside Auth to be user-scoped)
     #   5. RateLimitMiddleware  — reads user_id
     #   6. AuditMiddleware
     #   7. GZipMiddleware
@@ -286,7 +286,7 @@ def create_app() -> FastAPI:
     app.add_middleware(RateLimitMiddleware)
 
     # Runtime 4 — Metrics: registered BEFORE Auth so it runs AFTER Auth,
-    # giving it access to user_id for org-scoped RED metrics.
+    # giving it access to user_id for user-scoped RED metrics.
     # (Moved inside Auth — previously outermost, could not see user_id.)
     app.add_middleware(MetricsMiddleware)
 
@@ -328,7 +328,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_quick_actions.router)
     app.include_router(admin_webhooks.router)
     app.include_router(admin_custom_instructions.router)
-    app.include_router(admin_org_config.router)
+    app.include_router(admin_platform_config.router)
     app.include_router(admin_invites.router)
     app.include_router(admin_system.router)
     app.include_router(audit_log.router)

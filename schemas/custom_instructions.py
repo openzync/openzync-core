@@ -1,4 +1,4 @@
-"""Pydantic schemas for organization-level custom instructions.
+"""Pydantic schemas for platform-level custom instructions.
 
 Custom instructions are named domain-specific text snippets that guide
 extraction behavior.  They are scoped by (user_id, scope, target_id)

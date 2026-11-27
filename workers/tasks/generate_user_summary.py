@@ -54,7 +54,7 @@ async def generate_user_summary(
 
     Args:
         ctx: ARQ worker context (unused — required by ARQ contract).
-        user_id: UUID of the owning organization (string, from ARQ).
+        user_id: UUID of the owning user (string, from ARQ).
         user_id: UUID of the user to summarise.
         project_id: Optional project UUID to scope data fetching.
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
@@ -69,7 +69,7 @@ async def generate_user_summary(
     from core import rls
     from core.config import settings
     from core.db import get_async_session
-    from core.org_config import get_platform_config
+    from core.platform_config import get_platform_config
 
     logger.info(
         "user_summary.started",
@@ -96,7 +96,7 @@ async def generate_user_summary(
     # ── 1-4. Render prompt with auto-injected context ─────────────────────
     # Resolve the graph backend BEFORE rendering — the user-entities
     # provider fails loud on a None backend (a missing backend here is a
-    # wiring bug, never a steady state).  Graph-disabled orgs resolve to
+    # wiring bug, never a steady state).  Graph-disabled users resolve to
     # None and skip entity context via the GraphBackendUnavailableError
     # path below, mirroring enrich_episode's section-2 skip.
     from core.exceptions import GraphBackendUnavailableError
@@ -108,8 +108,8 @@ async def generate_user_summary(
     try:
         async with session_factory() as _backend_db:
             try:
-                # The org-config lookup behind the graph backend is an
-                # org-scoped read — bind the tenant first.
+                # The platform-config lookup behind the graph backend is an
+                # user-scoped read — bind the tenant first.
                 await rls.set_user_context(_backend_db, user_id)
                 graph_backend = await resolve_graph_backend(
                     ctx if isinstance(ctx, dict) else {},
@@ -130,7 +130,7 @@ async def generate_user_summary(
             user_id=user_id,
         )
         raise GraphBackendUnavailableError(
-            f"Graph disabled for org {user_id} — user summary requires "
+            f"Graph disabled for user {user_id} — user summary requires "
             "entity context; refusing to render without it."
         )
 
@@ -160,7 +160,7 @@ async def generate_user_summary(
         llm_config_dict = org_cfg.to_llm_config_dict()
     except Exception:
         logger.warning(
-            "user_summary.org_config_fetch_failed",
+            "user_summary.platform_config_fetch_failed",
             user_id=user_id,
             exc_info=True,
         )
@@ -172,7 +172,7 @@ async def generate_user_summary(
             worker="user_summary",
             project_id=uuid.UUID(project_id) if project_id else None,
         )
-        llm = await resolve_backend(org_config=llm_config_dict, sink=sink)
+        llm = await resolve_backend(platform_config=llm_config_dict, sink=sink)
         response = await llm.chat(
             [
                 {
@@ -184,7 +184,7 @@ async def generate_user_summary(
                 {"role": "user", "content": prompt_text},
             ],
             temperature=0.3,
-            cache_config=build_cache_config(org_config=llm_config_dict),
+            cache_config=build_cache_config(platform_config=llm_config_dict),
             metered=True,
         )
     except Exception as exc:

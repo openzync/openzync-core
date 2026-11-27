@@ -13,17 +13,17 @@ grant permissions instead.
 ⚠️ BREAKING: multi-org approval endpoints are removed (single platform
 org): ``GET /admin/system/orgs``, ``POST .../approve``,
 ``POST .../reject`` are gone.
-⚠️ BREAKING: cross-org ``GET/PATCH /admin/system/orgs/{user_id}/config``
+⚠️ BREAKING: cross-user ``GET/PATCH /admin/system/orgs/{user_id}/config``
 are removed — per-user config is self-serve via
-``GET/PATCH /admin/platform-config`` (singleton org made the cross-org
-variants meaningless).
+``GET/PATCH /admin/platform-config`` (single-platform mode made the
+cross-user variants meaningless).
 
 Endpoints:
     GET    /admin/system/config                        — platform system config
     PATCH  /admin/system/config                        — update platform system config
     GET    /admin/system/registration                  — instance registration mode
     PATCH  /admin/system/registration                  — update registration mode
-    PATCH  /admin/system/users/{user_id}/role          — promote/demote
+    PATCH  /admin/system/users/{user_id}/role          — demote-only (promotion frozen 422)
 """
 
 from __future__ import annotations
@@ -40,8 +40,11 @@ from core.exceptions import NotFoundError, ValidationError
 from core.system_config import get_system_config, update_system_config
 from dependencies.auth import require_admin
 from dependencies.db import get_db, get_db_admin
-from dependencies.services import get_admin_user_service
-from repositories.instance_settings_repository import InstanceSettingsRepository
+from dependencies.services import (
+    get_admin_instance_settings_service,
+    get_admin_user_service,
+    get_instance_settings_service,
+)
 from schemas.admin_system import (
     MemberRoleResponse,
     UpdateMemberRoleRequest,
@@ -52,6 +55,7 @@ from schemas.instance_settings import (
     UpdateRegistrationModeRequest,
 )
 from schemas.system_config import SystemConfigResponse, SystemConfigUpdate
+from services.instance_settings_service import InstanceSettingsService
 from services.user_service import UserService
 
 router = APIRouter(
@@ -162,18 +166,18 @@ def _to_registration_response(row: object) -> InstanceSettingsResponse:
 )
 async def get_instance_registration(
     _user_id: str = Depends(require_admin),  # noqa: B008
-    db: AsyncSession = Depends(get_db),  # noqa: B008
+    service: InstanceSettingsService = Depends(get_instance_settings_service),  # noqa: B008
 ) -> InstanceSettingsResponse:
     """Return the singleton instance registration settings.
 
     Args:
         _user_id: Admin user UUID (admin-gated).
-        db: Async DB session (``instance_settings`` has no RLS).
+        service: Instance settings service (singleton row has no RLS).
 
     Returns:
         Secrets-free :class:`InstanceSettingsResponse`.
     """
-    row = await InstanceSettingsRepository(db).get()
+    row = await service.get_registration()
     return _to_registration_response(row)
 
 
@@ -193,26 +197,26 @@ async def get_instance_registration(
 async def update_instance_registration(
     body: UpdateRegistrationModeRequest,
     _user_id: str = Depends(require_admin),  # noqa: B008
-    db: AsyncSession = Depends(get_db_admin),  # noqa: B008
+    service: InstanceSettingsService = Depends(get_admin_instance_settings_service),  # noqa: B008
 ) -> InstanceSettingsResponse:
     """Update the platform registration mode.
 
     Args:
         body: New registration mode (``open``/``invite_only``/``approval``).
         _user_id: Admin user UUID (admin-gated).
-        db: RLS-bypass session (singleton-row write).
+        service: Instance settings service (RLS-bypass singleton-row write).
 
     Returns:
         Secrets-free :class:`InstanceSettingsResponse` with the new mode.
     """
-    row = await InstanceSettingsRepository(db).update(
+    row = await service.update_registration_mode(
         registration_mode=body.registration_mode
     )
     return _to_registration_response(row)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Member roles (platform-wide — the singleton org has no per-org membership)
+# Member roles (platform-wide — the singleton scope has no per-user membership)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 

@@ -125,7 +125,7 @@ async def _repair_missing_fact_embeddings(
     embedded_at IS NULL``) and not retracted (``invalid_at IS NULL``).  Facts
     retired by ``embed_fact`` (permanent 4xx) have ``embedded_at`` set
     and are excluded.  The embedder is a local ONNX model with no
-    per-org configuration, so there is no misconfigured-org case to skip.
+    platform configuration, so there is no misconfigured case to skip.
 
     Args:
         session_factory: ARQ ctx async session factory.
@@ -142,7 +142,7 @@ async def _repair_missing_fact_embeddings(
 
     rows: list[dict[str, Any]] = []
     async with session_factory() as db:
-        # Cross-org cron scan: bypass RLS so every org is visible.  The
+        # Cross-user cron scan: bypass RLS so every user is visible.  The
         # policies read NULLIF(current_setting('app.user_id', true), ''),
         # so an unset context matches no rows — the bypass is what makes
         # the platform-wide scan possible.  The bypass is bound on the
@@ -184,14 +184,14 @@ async def _repair_missing_fact_embeddings(
         count=len(rows),
     )
 
-    # Resolve org config once per org, not once per fact.
-    by_org: dict[str, list[dict[str, Any]]] = {}
+    # Resolve platform config once per user, not once per fact.
+    by_user: dict[str, list[dict[str, Any]]] = {}
     for fact_row in rows:
-        by_org.setdefault(fact_row["user_id"], []).append(fact_row)
+        by_user.setdefault(fact_row["user_id"], []).append(fact_row)
 
     enqueued: int = 0
-    for user_id, org_facts in by_org.items():
-        for fact_row in org_facts:
+    for user_id, user_facts in by_user.items():
+        for fact_row in user_facts:
             task_kwargs = {
                 "fact_id": fact_row["id"],
                 "user_id": user_id,
@@ -409,7 +409,7 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
     stale_episodes: list[dict[str, Any]] = []
 
     async with session_factory() as db:
-        # Cross-org cron scan: bypass RLS so every org is visible (same
+        # Cross-user cron scan: bypass RLS so every user is visible (same
         # reason as the fact-embedding pass above).
         await rls.set_bypass_rls(db, True)
         result = await db.execute(

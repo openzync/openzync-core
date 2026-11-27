@@ -37,7 +37,7 @@ class BlobIngestMixin:
         this method never raises — it must not mask the original exception.
 
         Args:
-            user_id: The organization UUID (storage config scope).
+            user_id: The user UUID (storage config scope).
             storage_keys: S3 keys uploaded by the failed attempt.
         """
         if not storage_keys:
@@ -46,7 +46,7 @@ class BlobIngestMixin:
             from core.blob_storage import BlobStorage, BlobStorageConfig
             from core.config import get_settings
 
-            # Global backend — fail-fast Settings, never per-org.
+            # Global backend — fail-fast Settings, never per-user.
             storage = BlobStorage(BlobStorageConfig.from_settings(get_settings()))
             for key in storage_keys:
                 try:
@@ -86,7 +86,7 @@ class BlobIngestMixin:
         ``BlobStorageService.upload_blobs`` for each batch.
 
         Args:
-            user_id: Organization UUID.
+            user_id: User UUID.
             project_id: Project UUID.
             session_id: Session UUID.
             created_by: User UUID who uploaded the blobs.
@@ -191,7 +191,7 @@ class BlobIngestMixin:
         Args:
             blob_records: List of ``EpisodeBlob`` ORM instances returned
                 by ``_process_blobs``.
-            user_id: Organization UUID.
+            user_id: User UUID.
             project_id: Project UUID.
             enrichments: Effective per-episode toggles (forwarded into
                 every ARQ payload; workers mark-skipped disabled bits).

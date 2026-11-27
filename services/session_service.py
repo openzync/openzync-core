@@ -101,7 +101,7 @@ class SessionService:
         """Create a new session within a project.
 
         Args:
-            user_id: The organization UUID for tenant isolation.
+            user_id: The user UUID for tenant isolation.
             project_id: The project UUID the session belongs to.
             created_by: The UUID of the user creating the session.
             external_id: Caller-defined session identifier (unique per project).
@@ -165,7 +165,7 @@ class SessionService:
         """Get session by UUID with aggregate statistics.
 
         Args:
-            user_id: The organization UUID for tenant isolation.
+            user_id: The user UUID for tenant isolation.
             session_id: The session's UUID.
             project_id: Optional project UUID for intra-org isolation.
 
@@ -200,7 +200,7 @@ class SessionService:
         """Get a session within a project by its external_id.
 
         Args:
-            user_id: The organization UUID for tenant isolation.
+            user_id: The user UUID for tenant isolation.
             project_id: The project UUID.
             external_id: The caller-defined session identifier.
 
@@ -243,7 +243,7 @@ class SessionService:
         external_id resolution.
 
         Args:
-            user_id: The organization UUID for tenant isolation.
+            user_id: The user UUID for tenant isolation.
             session_id: The session's UUID.
             project_id: Optional project UUID for intra-org isolation.
 
@@ -272,7 +272,7 @@ class SessionService:
         Default order ``created_at DESC``.
 
         Args:
-            user_id: The organization UUID for tenant isolation.
+            user_id: The user UUID for tenant isolation.
             project_id: The project UUID.
             limit: Maximum items per page (1–200).
             cursor: Opaque base64 cursor from a previous page.
@@ -336,7 +336,7 @@ class SessionService:
         an alt without breaking the default.
 
         Args:
-            user_id: The organization UUID for tenant isolation.
+            user_id: The user UUID for tenant isolation.
             session_id: The session's UUID.
             limit: Maximum items per page (1–500).
             cursor: Opaque base64 cursor from a previous page.
@@ -441,7 +441,7 @@ class SessionService:
         likewise never flags — fail closed with a loud log.
 
         Args:
-            user_id: The organization UUID for tenant isolation.
+            user_id: The user UUID for tenant isolation.
             project_id: The project UUID for graph scoping.
             messages: The page's episode rows.
 
@@ -477,7 +477,7 @@ class SessionService:
         """Return ``True`` only when no episode has linked entities.
 
         Args:
-            user_id: The organization UUID for tenant isolation.
+            user_id: The user UUID for tenant isolation.
             project_id: The project UUID for graph scoping.
             episode_ids: Candidate episode UUIDs to scope the lookup to.
 
@@ -526,10 +526,10 @@ class SessionService:
     async def delete_session(
         self, user_id: UUID, session_id: UUID, project_id: UUID | None = None
     ) -> None:
-        """Soft-delete a session, scoped to org and optionally project.
+        """Soft-delete a session, scoped to user and optionally project.
 
         Args:
-            user_id: The organization UUID for tenant isolation.
+            user_id: The user UUID for tenant isolation.
             session_id: The session's UUID.
             project_id: Optional project UUID for intra-org isolation.
 

@@ -64,7 +64,7 @@ class LLMUsageRepository:
         """Insert a metering record, ignoring idempotency-key conflicts.
 
         Args:
-            record: Metering payload (org scope already filled by the sink).
+            record: Metering payload (user scope already filled by the sink).
         """
         stmt = (
             pg_insert(LLMUsage)
@@ -108,10 +108,10 @@ class LLMUsageRepository:
         Args:
             session_factory: Callable returning a new async session
                 (e.g. ``async_sessionmaker``).
-            record: Metering payload (org scope already filled).
+            record: Metering payload (user scope already filled).
 
         Raises:
-            RuntimeError: If the record has no org scope.
+            RuntimeError: If the record has no user scope.
         """
         if record.user_id is None:
             raise RuntimeError("usage sink received a record without user_id")
@@ -140,7 +140,7 @@ class LLMUsageRepository:
         ``completion_tokens``, ``total_tokens``.
 
         Args:
-            user_id: Owning org (RLS also scopes the session).
+            user_id: Owning user (RLS also scopes the session).
             start: Include rows created at/after this instant.
             end: Include rows created before this instant (exclusive).
             project_id: Exact-match filter on project scope.
@@ -213,7 +213,7 @@ class LLMUsageRepository:
         by UTC day. Sparse only — days without calls produce no bucket.
 
         Args:
-            user_id: Owning org (RLS also scopes the session).
+            user_id: Owning user (RLS also scopes the session).
             start: Include rows created at/after this instant.
             end: Include rows created before this instant (exclusive).
             project_id: Exact-match filter on project scope.
@@ -281,7 +281,7 @@ class LLMUsageRepository:
         """Aggregate metering totals over the filtered window.
 
         Args:
-            user_id: Owning org (RLS also scopes the session).
+            user_id: Owning user (RLS also scopes the session).
             start: Include rows created at/after this instant.
             end: Include rows created before this instant (exclusive).
             project_id: Exact-match filter on project scope.

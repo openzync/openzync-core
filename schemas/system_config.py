@@ -17,8 +17,8 @@ Single platform org — registration is governed by
 ``approval``), not by config policy keys.
 
 ⚠️ BREAKING: ``llm_*`` / ``reranker_*`` / ``graph_*`` /
-``context_cache_ttl`` were removed from platform defaults (org-level
-only).  ``enrichment_gate`` is removed too — the gate lives at org
+``context_cache_ttl`` were removed from platform defaults (user-level
+only).  ``enrichment_gate`` is removed too — the gate lives at user
 level only now (``users.config_override``), with the model fixed to the
 platform default.  Both models expose no fields: ``GET`` returns ``{}``
 and any stored/carried key 422s (``extra="forbid"``).
@@ -37,7 +37,7 @@ class SystemConfigUpdate(BaseModel):
     written here.  Every field is optional; only provided fields update.
 
     ⚠️ BREAKING: the whitelist is currently empty — every key (including
-    the former ``enrichment_gate``) is org-level only and 422s here.
+    the former ``enrichment_gate``) is user-level only and 422s here.
     """
 
     model_config = {"extra": "forbid"}
@@ -47,7 +47,7 @@ class SystemConfigResponse(BaseModel):
     """System config as exposed to the platform UI.
 
     ⚠️ BREAKING: all former keys (``llm_*`` / ``reranker_*`` / ``graph_*``
-    / ``context_cache_ttl`` / ``enrichment_gate``) are org-level only
+    / ``context_cache_ttl`` / ``enrichment_gate``) are user-level only
     now.  No fields remain — the response is ``{}``.
     """
 

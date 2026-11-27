@@ -56,7 +56,7 @@ async def embed_episode(
     Args:
         ctx: ARQ worker context (unused — required by ARQ contract).
         episode_id: UUID of the episode to embed.
-        user_id: UUID of the owning organisation (for observability / RLS).
+        user_id: UUID of the owning user (for observability / RLS).
         project_id: UUID of the project for project scoping (observability).
         content: Legacy payload from older enqueues.  ``None`` (the new
             default) loads the text from the episode row instead.
@@ -94,7 +94,7 @@ async def embed_episode(
     )
 
     # ── 1. Resolve DB engine / session factory ─────────────────────────────
-    # Moved up from the DB write section — needed here for org config fetch.
+    # Moved up from the DB write section — needed here for platform config fetch.
     engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
     if engine is None:
         from core.db import init_db_engine
@@ -119,7 +119,7 @@ async def embed_episode(
     try:
         async with session_factory() as db:
             try:
-                # Bind the session to the tenant before the first org-scoped
+                # Bind the session to the tenant before the first user-scoped
                 # query — under enforced RLS an unbound session sees no rows.
                 await rls.set_user_context(db, user_id)
                 episode_repo = EpisodeRepository(db)

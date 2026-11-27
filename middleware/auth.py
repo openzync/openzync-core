@@ -560,7 +560,7 @@ class AuthMiddleware:
     - ``scope["app"].state.db_session_factory`` — an ``async_sessionmaker``.
 
     It sets the following keys on ``scope["state"]``:
-    - ``user_id`` — the authenticated organization's UUID (or ``None``).
+    - ``user_id`` — the authenticated user's UUID (or ``None``).
     - ``user_id`` — the JWT user's UUID, or the API key's ``created_by``
       user UUID (``None`` if either is absent).
     - ``role`` — user role string (JWT only; ``None`` for API key).

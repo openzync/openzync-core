@@ -2,7 +2,7 @@
 
 Replaces direct reads of the PostgreSQL ``graph_entities`` stub table
 (never written by the FalkorDB/SurrealDB paths) with counts derived from
-the org-configured graph backend's ``get_all_entities`` plus Python-side
+the platform-configured graph backend's ``get_all_entities`` plus Python-side
 aggregation.  Only aggregate numbers leave this service — entity rows are
 never exposed via the admin API.
 
@@ -64,7 +64,7 @@ class GraphStatsService:
         *,
         include_archived: bool = False,
     ) -> list[UUID]:
-        """Resolve the project scope for an org-wide or project-scoped query.
+        """Resolve the project scope for a user-wide or project-scoped query.
 
         A concrete ``project_id`` passes through; ``None`` fans out to the
         org's projects (paginated — orgs may exceed one page).
@@ -76,7 +76,7 @@ class GraphStatsService:
 
         Args:
             user_id: Tenant scope.
-            project_id: Explicit project scope, or ``None`` for org-wide.
+            project_id: Explicit project scope, or ``None`` for user scope.
             include_archived: If ``True``, fan out to archived projects too.
                 Has no effect when ``project_id`` is given — an explicit scope
                 is honoured verbatim.

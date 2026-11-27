@@ -1,4 +1,4 @@
-"""Factory for constructing a ``CrossEncoderReranker`` from org-level config.
+"""Factory for constructing a ``CrossEncoderReranker`` from user-level config.
 
 Inspects ``PlatformConfigBase.reranker_backend`` to decide which backend
 to create.  Returns ``None`` when re-ranking is not configured or
@@ -14,7 +14,7 @@ from packages.reranker.cohere import CohereReranker
 from packages.reranker.sentence_transformers import SentenceTransformersReranker
 
 if TYPE_CHECKING:
-    from schemas.organization_config import PlatformConfigBase
+    from schemas.platform_config import PlatformConfigBase
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +29,12 @@ class RerankerFactory:
 
     @staticmethod
     def create(  # noqa: PLR0911
-        org_config: PlatformConfigBase,
+        platform_config: PlatformConfigBase,
     ) -> SentenceTransformersReranker | CohereReranker | None:
-        """Build a re-ranker from an organization's configuration.
+        """Build a re-ranker from a user's platform configuration.
 
         Args:
-            org_config: Organization configuration with ``reranker_backend``
+            platform_config: Platform configuration with ``reranker_backend``
                 and optional ``reranker_model``, ``reranker_top_k``,
                 ``reranker_top_n``, and ``cohere_api_key`` fields.
 
@@ -42,14 +42,14 @@ class RerankerFactory:
             A configured re-ranker instance, or ``None`` if the backend
             is not set, unknown, or its dependencies are missing.
         """
-        backend = org_config.reranker_backend
+        backend = platform_config.reranker_backend
         if not backend:
             return None
 
         if backend == "sentence_transformers":
-            return RerankerFactory._create_sentence_transformers(org_config)
+            return RerankerFactory._create_sentence_transformers(platform_config)
         if backend == "cohere":
-            return RerankerFactory._create_cohere(org_config)
+            return RerankerFactory._create_cohere(platform_config)
 
         logger.warning(
             "reranker.unknown_backend",
@@ -62,7 +62,7 @@ class RerankerFactory:
 
     @staticmethod
     def _create_sentence_transformers(
-        org_config: PlatformConfigBase,
+        platform_config: PlatformConfigBase,
     ) -> SentenceTransformersReranker | None:
         """Create a local cross-encoder re-ranker.
 
@@ -79,17 +79,17 @@ class RerankerFactory:
             return None
 
         return SentenceTransformersReranker(
-            model_name=org_config.reranker_model,
+            model_name=platform_config.reranker_model,
         )
 
     @staticmethod
-    def _create_cohere(org_config: PlatformConfigBase) -> CohereReranker | None:
+    def _create_cohere(platform_config: PlatformConfigBase) -> CohereReranker | None:
         """Create a Cohere API re-ranker.
 
         Validates that ``cohere_api_key`` is set and the ``cohere``
         package is installed.  Returns ``None`` if either is missing.
         """
-        if not org_config.cohere_api_key:
+        if not platform_config.cohere_api_key:
             logger.warning("reranker.cohere_no_api_key")
             return None
 
@@ -103,6 +103,6 @@ class RerankerFactory:
             return None
 
         return CohereReranker(
-            api_key=org_config.cohere_api_key,
-            model_name=org_config.reranker_model,
+            api_key=platform_config.cohere_api_key,
+            model_name=platform_config.reranker_model,
         )

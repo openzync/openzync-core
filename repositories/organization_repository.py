@@ -1,7 +1,7 @@
 """Organization repository — all DB access for the singleton platform org.
 
 Single platform org (``PLATFORM_ORG_ID``): this repository exposes only
-platform-row access plus the per-org ``config``/``quotas`` JSONB reads.
+platform-row access plus the platform ``config``/``quotas`` JSONB reads.
 No business logic — pure query construction and execution.
 """
 
@@ -47,7 +47,8 @@ class OrganizationRepository:
         intentionally sees only the caller's own org.
 
         Args:
-            org_id: The organization UUID.
+            org_id: The organization UUID (singleton org id
+                (= PLATFORM_ORG_ID)).
 
         Returns:
             The Organization if found, or ``None``.
@@ -107,7 +108,8 @@ class OrganizationRepository:
         :meth:`get_by_id`).
 
         Args:
-            org_id: The organization UUID.
+            org_id: The organization UUID (singleton org id
+                (= PLATFORM_ORG_ID)).
 
         Returns:
             The config dict, or ``{}`` if not configured or the org does
@@ -130,7 +132,8 @@ class OrganizationRepository:
         sub-document.  Tenant-scoped read (binds ``org_id`` first).
 
         Args:
-            org_id: The organization UUID.
+            org_id: The organization UUID (singleton org id
+                (= PLATFORM_ORG_ID)).
 
         Returns:
             The PII config dict, or ``{}`` if not configured or the
@@ -157,7 +160,8 @@ class OrganizationRepository:
         keyed by quota name.  Tenant-scoped read (binds ``org_id`` first).
 
         Args:
-            org_id: The organization UUID.
+            org_id: The organization UUID (singleton org id
+                (= PLATFORM_ORG_ID)).
             quota_name: The quota key name (e.g. ``max_users``, ``storage_gb``).
 
         Returns:

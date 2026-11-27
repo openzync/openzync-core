@@ -3,14 +3,17 @@
 Single-root-org cleanup: self-registration join codes are gone — member
 signup lands in the platform org via ``POST /v1/auth/signup`` and consults
 ``instance_settings.registration_mode``, never these columns.  The
-``uq_organizations_org_code`` unique index goes with ``org_code``.
+``uq_organizations_org_code`` unique index goes with ``org_code`` (it is a
+plain unique index, not a table constraint — no constraint drop needed).
+
+Note: ex-admins demoted in 0080 keep the full 7-permission vocabulary
+while fresh members seed 5 (no ``members:*``) — see 0080.
 
 Raw SQL equivalent::
 
-    ALTER TABLE organizations DROP CONSTRAINT IF EXISTS uq_organizations_org_code;
     DROP INDEX IF EXISTS uq_organizations_org_code;
-    ALTER TABLE organizations DROP COLUMN org_code;
-    ALTER TABLE organizations DROP COLUMN join_enabled;
+    ALTER TABLE organizations DROP COLUMN IF EXISTS org_code;
+    ALTER TABLE organizations DROP COLUMN IF EXISTS join_enabled;
 
 Revision ID: 0081
 Revises: 0080
@@ -36,9 +39,9 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Drop the ``uq_organizations_org_code`` index and both legacy columns."""
-    op.drop_index("uq_organizations_org_code", table_name="organizations")
-    op.drop_column("organizations", "org_code")
-    op.drop_column("organizations", "join_enabled")
+    op.execute("DROP INDEX IF EXISTS uq_organizations_org_code")
+    op.execute("ALTER TABLE organizations DROP COLUMN IF EXISTS org_code")
+    op.execute("ALTER TABLE organizations DROP COLUMN IF EXISTS join_enabled")
 
 
 def downgrade() -> None:

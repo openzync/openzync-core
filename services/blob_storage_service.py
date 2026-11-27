@@ -229,7 +229,7 @@ class BlobStorageService:
         entire operation is aborted — no partial DB records are created.
 
         Args:
-            user_id: Organization UUID.
+            user_id: User UUID.
             project_id: Project UUID.
             episode_id: Episode UUID.
             session_id: Session UUID.
@@ -256,7 +256,7 @@ class BlobStorageService:
         """
         # Reuse the caller's client when provided (batch callers build one
         # per ingest, not per episode) — otherwise build from the global
-        # Settings (fail-fast at startup, never per-org).
+        # Settings (fail-fast at startup, never per-user).
         if storage is None:
             storage = BlobStorage(BlobStorageConfig.from_settings(get_settings()))
         max_bytes = storage.max_blob_bytes

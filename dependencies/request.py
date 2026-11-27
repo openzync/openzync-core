@@ -46,14 +46,6 @@ async def get_current_user_id(request: Request) -> UUID:
     return UUID(raw)
 
 
-get_current_org_id = get_current_user_id
-"""Legacy alias of :func:`get_current_user_id` (user scope: ``app.user_id``).
-
-Deferred removal: 0070 dropped only the join-code policies, not the
-``organizations`` table — remove with that table drop.
-"""
-
-
 async def get_project_id(request: Request) -> UUID:
     """Extract and validate ``project_id`` from the request path.
 

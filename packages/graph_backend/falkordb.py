@@ -237,7 +237,7 @@ _O_PROJECT_ID = 12
 class FalkorGraphBackend(GraphBackend):
     """FalkorDB-native graph backend.
 
-    Each org+project pair gets its own isolated FalkorDB graph key
+    Each user+project pair gets its own isolated FalkorDB graph key
     (``openzync_{user_id}_{project_id}``).  This guarantees tenant isolation
     at the database level — ``algo.bfs()`` and ``queryNodes()`` never
     traverse into another tenant's data.
@@ -262,7 +262,7 @@ class FalkorGraphBackend(GraphBackend):
     # ── Internal Helpers ──────────────────────────────────────────────────
 
     def _get_graph(self, user_id: UUID, project_id: UUID):
-        """Resolve the per-tenant graph by org+project.
+        """Resolve the per-tenant graph by user+project.
 
         ``select_graph()`` is a local operation that instantiates a Python
         ``AsyncGraph`` wrapper — no network round-trip.
@@ -705,7 +705,7 @@ class FalkorGraphBackend(GraphBackend):
         """Retrieve an entity node by its ID.
 
         Args:
-            user_id: Organisational scope (used to derive the tenant graph).
+            user_id: User scope (used to derive the tenant graph).
             project_id: Project scope (used to derive the tenant graph).
             entity_id: The UUID of the entity to fetch.
 
@@ -808,7 +808,7 @@ class FalkorGraphBackend(GraphBackend):
         Raises ``NotFoundError`` if the entity does not exist.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             entity_id: UUID of the entity to update.
             name: New name, or ``None`` to leave unchanged.
@@ -1132,7 +1132,7 @@ class FalkorGraphBackend(GraphBackend):
         episodes.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
 
         Returns:
@@ -1182,7 +1182,7 @@ class FalkorGraphBackend(GraphBackend):
         """Resolve entity IDs to their names and types.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             entity_ids: List of entity UUIDs to resolve.
 
@@ -2074,7 +2074,7 @@ class FalkorGraphBackend(GraphBackend):
         making episode-id filtering the only traversal that sees prod data.
 
         Args:
-            user_id: Organisational scope (log scope — tenant isolation
+            user_id: User scope (log scope — tenant isolation
                 comes from the per-project graph key).
             project_id: Project scope (selects the tenant graph key).
             user_id: User UUID — log scope only; episode scoping comes
@@ -2146,7 +2146,7 @@ class FalkorGraphBackend(GraphBackend):
         does not apply.
 
         Args:
-            user_id: Organisational scope (log scope — tenant isolation
+            user_id: User scope (log scope — tenant isolation
                 comes from the per-project graph key).
             project_id: Project scope (selects the tenant graph key).
             episode_ids: Episode UUIDs to scope the lookup to.
@@ -2215,7 +2215,7 @@ class FalkorGraphBackend(GraphBackend):
         ``_CO_OCCURRENCE_QUERY_TIMEOUT_MS`` ms.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             min_co_count: Minimum number of shared episodes. Defaults to 2.
 
@@ -2296,7 +2296,7 @@ class FalkorGraphBackend(GraphBackend):
         millions of rows.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             include_merged: If ``True``, include soft-deleted (merged)
                 entities.  Defaults to ``False``.
@@ -2420,7 +2420,7 @@ class FalkorGraphBackend(GraphBackend):
         The ``fuzzy_threshold`` is applied as a minimum score filter.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             query: Search string to match against entity names/summaries.
             fuzzy_threshold: Minimum BM25 score threshold (0.0–1.0).  Note
@@ -2504,7 +2504,7 @@ class FalkorGraphBackend(GraphBackend):
         5. Soft-delete merged entities (``is_merged = true``).
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             canonical_id: UUID of the surviving entity.
             merged_ids: UUIDs of entities being absorbed.
@@ -2777,7 +2777,7 @@ class FalkorGraphBackend(GraphBackend):
         not excessively large.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             relationships: List of relationship descriptor dicts.
 
@@ -2850,7 +2850,7 @@ class FalkorGraphBackend(GraphBackend):
         discriminator.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             subject_entity_id: The entity this observation is about.
             observation_type: Semantic type label.

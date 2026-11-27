@@ -42,7 +42,7 @@ async def write_audit_log(
 
     Args:
         ctx: ARQ context (contains ``redis``, ``job_id``, etc.).
-        user_id: Organization UUID as string (nullable).
+        user_id: User UUID as string (nullable).
         actor_id: Identifier of the acting entity.
         actor_type: ``user``, ``api_key``, or ``system``.
         action: The action performed (e.g. ``session.create``).
@@ -74,7 +74,7 @@ async def write_audit_log(
             try:
                 # ``audit_logs`` is tenant-scoped — initialise the context
                 # before the row is written, or the insert is rejected by
-                # the policy.  An organisation-less row (a platform-level
+                # the policy.  A user-less row (a platform-level
                 # audit of an unauthenticated request) belongs to no tenant,
                 # and the tightened policy admits no such row to a
                 # tenant-scoped session: it is written under an explicit

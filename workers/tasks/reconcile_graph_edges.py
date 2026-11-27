@@ -114,7 +114,7 @@ async def reconcile_graph_edges(ctx: dict[str, Any]) -> str:
     now = datetime.now(UTC)
     stale_edges: list[dict[str, Any]] = []
     async with session_factory() as db:
-        # Cross-org cron scan: bypass RLS so every org is visible.  The
+        # Cross-user cron scan: bypass RLS so every user is visible.  The
         # policies read NULLIF(current_setting('app.user_id', true), ''),
         # so an unset context matches no rows — the bypass is what makes
         # the platform-wide scan possible.  The bypass is bound on the

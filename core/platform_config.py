@@ -4,7 +4,7 @@ Every request path and background worker that needs user-level settings (LLM,
 embeddings, graph, behaviour) should resolve them through this module.
 
 Resolution order:
-1. Redis cache (key ``org_config:{user_id}``, TTL 5 min) — performance
+1. Redis cache (key ``platform_config:{user_id}``, TTL 5 min) — performance
    optimisation only.  Cache failures are logged at ERROR but the request
    continues to the DB.
 2. ``users.config_override`` (the authoritative store).  DB failures
@@ -29,7 +29,7 @@ from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import ValidationError as PlatformConfigValidationError
-from schemas.organization_config import (
+from schemas.platform_config import (
     PlatformConfigBase,
     UpdatePlatformConfigRequest,
 )
@@ -43,10 +43,10 @@ def _request_id() -> str:
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-ORG_CONFIG_CACHE_TTL: int = 300
-"""TTL in seconds for cached org config (default 5 minutes)."""
-CACHE_KEY_PREFIX: str = "org_config"
-"""Redis key prefix for cached org config."""
+PLATFORM_CONFIG_CACHE_TTL: int = 300
+"""TTL in seconds for cached platform config (default 5 minutes)."""
+CACHE_KEY_PREFIX: str = "platform_config"
+"""Redis key prefix for cached platform config."""
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -92,12 +92,12 @@ def _with_graph_default(raw: dict[str, Any]) -> PlatformConfigBase:
     except PydanticValidationError as exc:
         fields = _invalid_field_names(exc)
         logger.warning(
-            "org_config.stored_config_invalid",
+            "platform_config.stored_config_invalid",
             extra={"fields": fields},
         )
         raise PlatformConfigValidationError(
             message=(
-                "Stored org config failed validation in field(s): "
+                "Stored platform config failed validation in field(s): "
                 f"{', '.join(fields) or 'unknown'}. "
                 "Fix via PATCH /admin/platform-config."
             ),
@@ -149,7 +149,7 @@ async def get_platform_config(
                     # Poisoned cache entry — drop it and fall through to
                     # the DB (authoritative).  Field names only, never values.
                     logger.warning(
-                        "org_config.cache_invalid",
+                        "platform_config.cache_invalid",
                         extra={
                             "user_id": str(user_id),
                             "fields": _invalid_field_names(exc),
@@ -159,7 +159,7 @@ async def get_platform_config(
                         await redis.delete(cache_key)
                     except Exception:
                         logger.error(
-                            "org_config.cache_invalidation_failed",
+                            "platform_config.cache_invalidation_failed",
                             extra={
                                 "user_id": str(user_id),
                                 "request_id": _request_id(),
@@ -168,7 +168,7 @@ async def get_platform_config(
                         )
         except Exception:
             logger.error(
-                "org_config.cache_read_failed",
+                "platform_config.cache_read_failed",
                 extra={"user_id": str(user_id), "request_id": _request_id()},
                 exc_info=True,
             )
@@ -181,22 +181,22 @@ async def get_platform_config(
     raw = await UserRepository(db).get_config_override(user_id)
     # New users have {} — default only graph_backend to falkordb
     # (not disabled); all other fields stay None until explicitly set.
-    org_config = _with_graph_default(dict(raw))
+    platform_config = _with_graph_default(dict(raw))
 
     # 3. Write to cache (best-effort)
     if not skip_cache and redis is not None:
         try:
             await redis.setex(
-                cache_key, ORG_CONFIG_CACHE_TTL, org_config.model_dump_json()
+                cache_key, PLATFORM_CONFIG_CACHE_TTL, platform_config.model_dump_json()
             )
         except Exception:
             logger.error(
-                "org_config.cache_write_failed",
+                "platform_config.cache_write_failed",
                 extra={"user_id": str(user_id), "request_id": _request_id()},
                 exc_info=True,
             )
 
-    return org_config
+    return platform_config
 
 
 async def update_platform_config(
@@ -268,7 +268,7 @@ async def update_platform_config(
             await redis.delete(cache_key)
         except Exception:
             logger.error(
-                "org_config.cache_invalidation_failed",
+                "platform_config.cache_invalidation_failed",
                 extra={"user_id": str(user_id), "request_id": _request_id()},
                 exc_info=True,
             )
@@ -284,6 +284,6 @@ def build_cache_key(user_id: UUID) -> str:
         user_id: The user UUID.
 
     Returns:
-        A string like ``"org_config:<uuid>"``.
+        A string like ``"platform_config:<uuid>"``.
     """
     return f"{CACHE_KEY_PREFIX}:{user_id}"

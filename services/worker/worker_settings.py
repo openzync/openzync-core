@@ -202,8 +202,8 @@ class WorkerSettings(BaseSettings):
         default=None,
         description=(
             "FalkorDB connection URL (Redis RESP protocol).  "
-            "When set at system level, orgs share a single FalkorDB instance.  "
-            "When None (default), per-org falkordb_url from org_config may be used."
+            "When set at system level, users share a single FalkorDB instance.  "
+            "When None (default), per-user falkordb_url from platform_config may be used."
         ),
         validation_alias="OZ_FALKORDB_URL",
     )
@@ -231,9 +231,9 @@ class WorkerSettings(BaseSettings):
         description=(
             "System-level SurrealDB WebSocket connection URL "
             "(e.g. ws://surrealdb:8000/rpc).  "
-            "When set, all orgs use this server and namespace is auto-derived "
-            "from org identity.  When None (default), per-org surrealdb_* "
-            "fields from org_config are used."
+            "When set, all users use this server and namespace is auto-derived "
+            "from org identity.  When None (default), per-user surrealdb_* "
+            "fields from platform_config are used."
         ),
         validation_alias="OZ_SURREALDB_URL",
     )
@@ -243,7 +243,7 @@ class WorkerSettings(BaseSettings):
         default=False,
         description=(
             "If True: enqueues summarise_community after each link_entities_to_episode "
-            "completion (with per-org Redis dedup \u2013 max once per hour per org). "
+            "completion (with per-user Redis dedup \u2013 max once per hour per user). "
             "If False (default): nightly cron at 02:00 UTC."
         ),
     )

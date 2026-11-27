@@ -61,9 +61,9 @@ async def compute_observations(
     to ``graph_observations``.
 
     Pipeline:
-        1. Set RLS context (``app.user_id``) for org-scoped DB work.
+        1. Set RLS context (``app.user_id``) for user-scoped DB work.
         2. Clear the per-project pending-observations marker.
-        3. Resolve the graph backend — skip cleanly if disabled for the org.
+        3. Resolve the graph backend — skip cleanly if disabled for the user.
         4. Check bit 6 — skip if already set (idempotent).
         5. Bootstrap DB engine from worker context.
         6. Instantiate ``ObservationService``.
@@ -77,7 +77,7 @@ async def compute_observations(
     Args:
         ctx: ARQ worker context (provides ``db_engine``, ``redis``).
         episode_id: UUID of the triggering episode.
-        user_id: UUID of the owning organization.
+        user_id: UUID of the owning user.
         project_id: UUID of the project for project scoping.
         trace_id: Request trace ID for end-to-end correlation.
         enrichments: Effective per-episode toggles (``None`` → all-ON).
@@ -134,7 +134,7 @@ async def compute_observations(
     try:
         async with session_factory() as db:
             # ── 1. Set RLS context ──────────────────────────────────────────
-            # All DB work below is org-scoped via the ``app.user_id`` GUC —
+            # All DB work below is user-scoped via the ``app.user_id`` GUC —
             # without it the RLS policies filter out the project's rows and
             # the full scan silently finds nothing.  The binding is
             # remembered by the session, so the commit below re-applies it.
@@ -160,7 +160,7 @@ async def compute_observations(
             ctx_dict: dict = ctx if isinstance(ctx, dict) else {}
             backend = await resolve_graph_backend(ctx_dict, UUID(user_id), db)
             if backend is None:
-                # Graph disabled for this org — skip cleanly. Bit 6 is not
+                # Graph disabled for this user — skip cleanly. Bit 6 is not
                 # set, so a later run can still pick this episode up.
                 logger.info(
                     "compute_observations.graph_disabled_skipping",

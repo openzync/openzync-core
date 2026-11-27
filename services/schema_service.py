@@ -59,10 +59,10 @@ class SchemaService:
         user_id: UUID,
         payload: CreateExtractionSchemaRequest,
     ) -> ExtractionSchemaResponse:
-        """Create a new extraction schema for an organization.
+        """Create a new extraction schema for a user scope.
 
         Args:
-            user_id: The authenticated organization UUID.
+            user_id: The authenticated user UUID.
             payload: Validated creation request.
 
         Returns:
@@ -84,7 +84,7 @@ class SchemaService:
         existing = await self._repo.get_by_name(user_id, payload.name)
         if existing is not None:
             raise ConflictError(
-                f"Schema '{payload.name}' already exists in this organization"
+                f"Schema '{payload.name}' already exists in this user"
             )
 
         try:
@@ -97,7 +97,7 @@ class SchemaService:
             )
         except IntegrityError:
             raise ConflictError(
-                f"Schema '{payload.name}' already exists in this organization"
+                f"Schema '{payload.name}' already exists in this user"
             ) from None
 
         return ExtractionSchemaResponse.model_validate(schema)
@@ -109,7 +109,7 @@ class SchemaService:
         is_active: bool | None = None,
         sort: SortSpec | None = None,
     ) -> list[ExtractionSchemaResponse]:
-        """List schemas for an organization with optional filters.
+        """List schemas for a user scope with optional filters.
 
         Default ``created_at/desc``; whitelist ``name``, ``created_at``,
         ``type``.
@@ -134,7 +134,7 @@ class SchemaService:
         """
         schema = await self._repo.get_by_id(user_id, schema_id)
         if schema is None:
-            raise NotFoundError(f"Schema '{schema_id}' not found in this organization")
+            raise NotFoundError(f"Schema '{schema_id}' not found in this user")
         return ExtractionSchemaResponse.model_validate(schema)
 
     async def update_schema(
@@ -154,7 +154,7 @@ class SchemaService:
         """
         schema = await self._repo.get_by_id(user_id, schema_id)
         if schema is None:
-            raise NotFoundError(f"Schema '{schema_id}' not found in this organization")
+            raise NotFoundError(f"Schema '{schema_id}' not found in this user")
 
         # Build update dict from non-None fields (excluding type)
         update_kwargs: dict = {}
@@ -173,7 +173,7 @@ class SchemaService:
             if existing is not None:
                 raise ConflictError(
                     f"Schema name '{update_kwargs['name']}' already exists "
-                    "in this organization"
+                    "in this user"
                 )
 
         # If updating json_schema with type=classification, validate
@@ -185,7 +185,7 @@ class SchemaService:
         except IntegrityError:
             raise ConflictError(
                 f"Schema name '{update_kwargs.get('name', schema.name)}' "
-                "already exists in this organization"
+                "already exists in this user"
             ) from None
 
         return ExtractionSchemaResponse.model_validate(updated)
@@ -215,7 +215,7 @@ class SchemaService:
         """Run a no-persist extraction preview against a candidate schema.
 
         Validates the schema, renders the shared extraction prompt, calls
-        the org's LLM backend (capped at ``PREVIEW_MAX_TOKENS``), and
+        the user's LLM backend (capped at ``PREVIEW_MAX_TOKENS``), and
         validates the extracted data — returning mismatches as data
         instead of raising.  Performs zero DB writes.
 
@@ -268,7 +268,7 @@ class SchemaService:
             if user_id is not None and session_factory is not None
             else None
         )
-        backend = await resolve_backend(org_config=llm_config, sink=sink)
+        backend = await resolve_backend(platform_config=llm_config, sink=sink)
         response = await backend.chat(
             [
                 {
@@ -310,7 +310,7 @@ class SchemaService:
         """
         schema = await self._repo.get_by_id(user_id, schema_id)
         if schema is None:
-            raise NotFoundError(f"Schema '{schema_id}' not found in this organization")
+            raise NotFoundError(f"Schema '{schema_id}' not found in this user")
         await self._repo.soft_delete(schema)
 
     # ── Private validation helpers ───────────────────────────────────────

@@ -17,7 +17,7 @@ Runtime order (outermost → innermost):
 3. ``LoggingMiddleware`` — logs the request/response lifecycle.
 4. ``TracingMiddleware`` — manages OpenTelemetry spans for the request.
 5. ``AuthMiddleware`` — extracts/validates JWT & API key, sets ``user_id`` state.
-6. ``RateLimitMiddleware`` — enforces per-IP / per-org sliding-window limits.
+6. ``RateLimitMiddleware`` — enforces per-IP / per-user sliding-window limits.
 7. ``AuditMiddleware`` — records every request to audit_logs (post-response).
 8. ``GZipMiddleware`` — compresses responses >= 1 KB.
 9. ``TrustedHostMiddleware`` — prevents host-header attacks.

@@ -17,7 +17,7 @@ class CreateExtractionSchemaRequest(BaseModel):
     """Request body for creating a new extraction schema.
 
     Attributes:
-        name: Human-readable name, unique within the organization.
+        name: Human-readable name, unique within the user's scope.
             Must start with a letter and contain only alphanumeric,
             underscore, hyphen, or space characters.
         json_schema: For ``type='structured'``, a valid JSON Schema document.

@@ -3,7 +3,7 @@
 Synchronises fact supersession into non-Postgres graph backends
 (SurrealDB / FalkorDB).  Enqueued by :class:`GraphEdgeSyncService` on the
 low-priority queue with the edge triple key + the deterministic
-supersession instant.  The task resolves the org's backend inside the
+supersession instant.  The task resolves the user's backend inside the
 worker (``workers.backend.resolve_graph_backend``) and expires the edge
 via the ``expire_relationships_matching`` contract.
 
@@ -14,7 +14,7 @@ double side effect.  This is also what makes ARQ retries and the
 
 Failure semantics: facts are the source of truth and are NEVER rolled
 back on expiry failure.  On final failure the task logs the full context
-(org/project/triple/at_time/fact_id), increments
+(user/project/triple/at_time/fact_id), increments
 ``openzync_graph_edge_sync_failures_total`` and re-raises so ARQ records
 the failure — nothing is swallowed silently.
 """
@@ -42,7 +42,7 @@ graph_edge_sync_failures_total = Counter(
 
 
 async def _resolve_backend(ctx: dict[str, Any], user_id: UUID, db: Any) -> Any:
-    """Resolve the org's graph backend for this task's session.
+    """Resolve the user's graph backend for this task's session.
 
     Delegates to ``workers.backend.resolve_graph_backend`` — the worker
     resolution path the calling context uses.  Raises
@@ -51,12 +51,12 @@ async def _resolve_backend(ctx: dict[str, Any], user_id: UUID, db: Any) -> Any:
 
     Args:
         ctx: ARQ worker context dict.
-        user_id: The organization UUID.
+        user_id: The user UUID.
         db: The task's async SQLAlchemy session.
 
     Returns:
         A resolved ``GraphBackend`` instance, or ``None`` when graph is
-        explicitly disabled for the org.
+        explicitly disabled for the user.
     """
     from workers.backend import resolve_graph_backend
 
@@ -74,7 +74,7 @@ async def _expire_graph_edges(
     relationship_type: str,
     at_time: datetime,
 ) -> int:
-    """Expire matching edges on the org's resolved backend (retried).
+    """Expire matching edges on the user's resolved backend (retried).
 
     Args:
         ctx: ARQ worker context (``db_session_factory`` + dispatcher).
@@ -97,7 +97,7 @@ async def _expire_graph_edges(
         raise RuntimeError("db_session_factory missing from ARQ ctx")
 
     async with session_factory() as db:
-        # Single-org task: scope RLS to this org before any org-scoped
+        # Single-user task: scope RLS to this user before any user-scoped
         # query.  The policies read NULLIF(current_setting('app.user_id',
         # true), ''), so an unset context matches no rows instead of
         # raising.  The binding is remembered by the session, so the commit
@@ -158,7 +158,7 @@ async def expire_graph_edges(
 
     Args:
         ctx: ARQ worker context dict.
-        user_id: Organization UUID string.
+        user_id: User UUID string.
         project_id: Project UUID string.
         source_id: Edge source UUID string.
         target_id: Edge target UUID string.

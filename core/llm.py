@@ -2,7 +2,7 @@
 
 Defines the ``LLMBackend`` abstract base class, the ``LLMBackendRegistry``
 for provider registration, and the ``resolve_backend`` factory that chains
-org-level config → explicit argument → environment variable → auto-detect.
+user-level config → explicit argument → environment variable → auto-detect.
 
 Usage::
 
@@ -74,6 +74,9 @@ class TokenUsage:
 @dataclass
 class PromptCachingConfig:
     """Per-call configuration for provider-side prompt caching.
+
+    Runtime resolved config, distinct from stored Platform overrides schema
+    (``PromptCachingPlatformConfig``).
 
     Each backend interprets the fields relevant to it:
     - Anthropic: enabled, anthropic_min_tokens, anthropic_cache_ttl
@@ -159,25 +162,25 @@ class UsageSink(Protocol):
 
 
 def build_cache_config(
-    org_config: dict | None = None,
+    platform_config: dict | None = None,
     session_id: str | None = None,
 ) -> PromptCachingConfig:
-    """Build a PromptCachingConfig from per-org settings or global defaults.
+    """Build a PromptCachingConfig from per-user settings or global defaults.
 
     ``OZ_PROMPT_CACHING_ENABLED`` is a hard kill switch: when set to
-    ``False``, caching is disabled for all orgs regardless of per-org
+    ``False``, caching is disabled for all users regardless of per-user
     config.  This allows operators to disable caching globally without
-    touching every org's settings.
+    touching every user's settings.
 
     Resolution order:
     1. ``settings.PROMPT_CACHING_ENABLED`` — hard kill switch (returns
        ``enabled=False`` immediately if ``False``).
-    2. ``org_config.get("prompt_caching")`` dict — per-org overrides for
+    2. ``platform_config.get("prompt_caching")`` dict — per-user overrides for
        ``anthropic_min_tokens`` and ``anthropic_cache_ttl``.
     3. ``settings.PROMPT_CACHING_*`` — global defaults fallback.
 
     Args:
-        org_config: Optional per-org config dict (from DB JSONB column).
+        platform_config: Optional per-user config dict (from DB JSONB column).
             May contain a ``"prompt_caching"`` key with ``enabled``,
             ``anthropic_min_tokens``, ``anthropic_cache_ttl``.
         session_id: Optional session ID for provider-side sticky routing.
@@ -192,12 +195,12 @@ def build_cache_config(
         return PromptCachingConfig(enabled=False)
 
     pc: dict = {}
-    if org_config:
-        pc = org_config.get("prompt_caching") or {}
+    if platform_config:
+        pc = platform_config.get("prompt_caching") or {}
 
     # Explicit nulls in the stored config mean "unset" — fall back to the
     # global default instead of letting None flow into the backend (None is
-    # falsy for `enabled` and would silently disable caching for the org).
+    # falsy for `enabled` and would silently disable caching for the user).
     enabled = (
         pc["enabled"]
         if pc.get("enabled") is not None
@@ -692,21 +695,21 @@ BackendMode = Literal["llm"]
 
 async def resolve_backend(
     provider: str | None = None,
-    org_config: dict | None = None,
+    platform_config: dict | None = None,
     mode: BackendMode | None = None,
     sink: UsageSink | None = None,
 ) -> LLMBackend:
-    """Resolve the appropriate LLM backend via org config or explicit argument.
+    """Resolve the appropriate LLM backend via platform config or explicit argument.
 
     The resolution order is:
 
-    1. **Org-level config** — ``org_config.get("llm_backend")``
+    1. **User-level config** — ``platform_config.get("llm_backend")``
     2. **Explicit argument** — the ``provider`` parameter
     3. **Error** — raises :class:`LLMConfigurationError`
 
     Args:
-        provider: Explicit override.  If provided, org config is skipped.
-        org_config: Optional dict with per-organisation LLM settings.
+        provider: Explicit override.  If provided, platform config is skipped.
+        platform_config: Optional dict with per-user LLM settings.
             Supported keys: ``llm_backend``, ``ollama_base_url``,
             ``openai_api_key``, ``openai_model``, ``openai_like_base_url``,
             ``llm_model``, ``azure_endpoint``,
@@ -729,25 +732,25 @@ async def resolve_backend(
     """
     provider_name: str | None = None
 
-    # 1. Org-level config (skip if explicit provider given).
-    if provider is None and org_config and org_config.get("llm_backend"):
-        provider_name = org_config["llm_backend"]
+    # 1. User-level config (skip if explicit provider given).
+    if provider is None and platform_config and platform_config.get("llm_backend"):
+        provider_name = platform_config["llm_backend"]
         logger.debug(
-            "llm.resolved_from_org_config",
+            "llm.resolved_from_platform_config",
             extra={"provider": provider_name},
         )
-        return await _create_backend(provider_name, org_config, mode=mode, sink=sink)
+        return await _create_backend(provider_name, platform_config, mode=mode, sink=sink)
 
     # 2. Explicit argument.
     if provider is not None:
         provider_name = provider
         logger.debug("llm.resolved_from_argument", extra={"provider": provider_name})
-        return await _create_backend(provider_name, org_config, mode=mode, sink=sink)
+        return await _create_backend(provider_name, platform_config, mode=mode, sink=sink)
 
     # 3. Nothing worked.
     raise LLMConfigurationError(
         "No LLM backend configured.  Pass a provider argument or set "
-        "llm_backend in the per-org configuration."
+        "llm_backend in the platform configuration."
     )
 
 
@@ -788,7 +791,7 @@ async def _create_backend(
     if provider == "ollama":
         if config is None or not config.get("ollama_base_url"):
             raise LLMConfigurationError(
-                "Ollama backend requires ollama_base_url in per-org "
+                "Ollama backend requires ollama_base_url in per-user "
                 "configuration.  Set it via PATCH /admin/platform-config."
             )
         instance: LLMBackend = backend_cls(
@@ -798,7 +801,7 @@ async def _create_backend(
     elif provider == "openai":
         if config is None or not config.get("openai_api_key"):
             raise LLMConfigurationError(
-                "OpenAI backend requires openai_api_key in per-org "
+                "OpenAI backend requires openai_api_key in per-user "
                 "configuration.  Set it via PATCH /admin/platform-config."
             )
         api_key: str = config["openai_api_key"]
@@ -807,7 +810,7 @@ async def _create_backend(
     elif provider == "openai_like":
         if config is None or not config.get("openai_like_base_url"):
             raise LLMConfigurationError(
-                "OpenAI-like backend requires openai_like_base_url in per-org "
+                "OpenAI-like backend requires openai_like_base_url in per-user "
                 "configuration.  Set it via PATCH /admin/platform-config."
             )
         instance = backend_cls(
@@ -818,17 +821,17 @@ async def _create_backend(
     elif provider == "azure":
         if config is None or not config.get("azure_endpoint"):
             raise LLMConfigurationError(
-                "Azure backend requires azure_endpoint in per-org "
+                "Azure backend requires azure_endpoint in per-user "
                 "configuration.  Set it via PATCH /admin/platform-config."
             )
         if config is None or not config.get("azure_api_key"):
             raise LLMConfigurationError(
-                "Azure backend requires azure_api_key in per-org "
+                "Azure backend requires azure_api_key in per-user "
                 "configuration.  Set it via PATCH /admin/platform-config."
             )
         if config is None or not config.get("azure_deployment"):
             raise LLMConfigurationError(
-                "Azure backend requires azure_deployment in per-org "
+                "Azure backend requires azure_deployment in per-user "
                 "configuration.  Set it via PATCH /admin/platform-config."
             )
         instance = backend_cls(
@@ -839,7 +842,7 @@ async def _create_backend(
     elif provider == "anthropic":
         if config is None or not config.get("anthropic_api_key"):
             raise LLMConfigurationError(
-                "Anthropic backend requires anthropic_api_key in per-org "
+                "Anthropic backend requires anthropic_api_key in per-user "
                 "configuration.  Set it via PATCH /admin/platform-config."
             )
         api_key = config["anthropic_api_key"]
@@ -848,7 +851,7 @@ async def _create_backend(
     else:
         # ⚠️ Named error (not bare ValueError): unknown providers must
         # surface as a structured problem response, never a plain-500.
-        # Unreachable from org-config flows — the LlmBackend Literal rejects
+        # Unreachable from platform-config flows — the LlmBackend Literal rejects
         # unknown values at write (422) and read (named 422).
         raise LLMConfigurationError(
             f"Unknown provider: {provider}. Expected one of: ollama, openai, "

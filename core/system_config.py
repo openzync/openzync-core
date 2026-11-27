@@ -1,6 +1,6 @@
 """Platform system configuration — cache-first, DB-authoritative.
 
-Resolution order (mirrors ``core.org_config``):
+Resolution order (mirrors ``core.platform_config``):
 1. Redis cache (key ``system_config``, TTL 5 min) — performance
    optimisation only.  Cache failures are logged at ERROR but the request
    continues to the DB.
@@ -13,7 +13,7 @@ read or written — the ``OZ_*`` secret env vars are never exposed.
 
 ⚠️ BREAKING: org-creation policy keys are gone (single platform org).
 Registration is governed by ``instance_settings.registration_mode``.
-⚠️ BREAKING: ``enrichment_gate`` is gone too (org-level only now) —
+⚠️ BREAKING: ``enrichment_gate`` is gone too (user-level only now) —
 the whitelist is empty, ``GET`` returns ``{}`` and any carried key 422s.
 Defaults: all fields ``None`` when the root row has no record.
 """
@@ -24,7 +24,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-import redis.asyncio  # noqa: TC002 — runtime import mirrors core/org_config.py
+import redis.asyncio  # noqa: TC002 — runtime import mirrors core/platform_config.py
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 

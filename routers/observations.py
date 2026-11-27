@@ -33,7 +33,7 @@ def _get_observation_query_service(
 ) -> ObservationQueryService:
     """Dependency factory for ``ObservationQueryService``.
 
-    Wires in a project-scoped ``GraphBackend`` resolved from the org
+    Wires in a project-scoped ``GraphBackend`` resolved from the platform
     configuration.
     """
     return ObservationQueryService(graph_backend=graph_backend)

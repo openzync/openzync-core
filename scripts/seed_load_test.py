@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 """Seed script for the Locust load test (G1.4).
 
-Creates a test org, API key, user, and seeds 500 facts + 100 episodes
-for context assembly load testing.
+Bootstraps the platform (``POST /v1/auth/setup``), logs in as root,
+creates a user + project, and seeds episodes + facts for context
+assembly load testing.
 
 Usage:
     python scripts/seed_load_test.py --api-url http://localhost:8000
 
 Environment variables:
-    OZ_LOAD_TEST_ORG: Organization name (default: "Load Test Org")
-    OZ_LOAD_TEST_USER: User external ID (default: "load_test_user")
+    OZ_LOAD_TEST_ROOT_PASSWORD: Root password for one-time setup
+        (default: "load-test-root-123"). Ignored when setup ran before.
+    OZ_LOAD_TEST_USER: User external ID (default: "load_test_user").
+    OZ_LOAD_TEST_PROJECT: Project name (default: "Load Test Project").
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 
@@ -24,28 +28,49 @@ import httpx
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def _make_client(base_url: str, api_key: str | None = None) -> httpx.AsyncClient:
+def _make_client(base_url: str, token: str | None = None) -> httpx.AsyncClient:
     """Create an authenticated HTTP client."""
     headers = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     return httpx.AsyncClient(base_url=base_url, headers=headers, timeout=30)
 
 
-async def bootstrap_org(client: httpx.AsyncClient) -> dict:
-    """Create a test org and return its API key."""
+async def bootstrap_platform(client: httpx.AsyncClient) -> None:
+    """One-time platform setup — 403 when setup already ran (tolerated)."""
     resp = await client.post(
-        "/admin/organizations",
-        json={"name": os.environ.get("OZ_LOAD_TEST_ORG", "Load Test Org")},
+        "/v1/auth/setup",
+        json={
+            "password": os.environ.get(
+                "OZ_LOAD_TEST_ROOT_PASSWORD", "load-test-root-123"
+            ),
+            "org_name": "Platform",
+        },
+    )
+    if resp.status_code == 403:
+        logger.info("Platform already set up — continuing.")
+        return
+    resp.raise_for_status()
+    logger.info("Platform setup complete.")
+
+
+async def login_root(client: httpx.AsyncClient) -> str:
+    """Log in as root and return the access token."""
+    resp = await client.post(
+        "/v1/auth/login",
+        json={
+            "email": "root",
+            "password": os.environ.get(
+                "OZ_LOAD_TEST_ROOT_PASSWORD", "load-test-root-123"
+            ),
+        },
     )
     resp.raise_for_status()
-    data = resp.json()
-    logger.info("Org created: %s (API key: %s...)",
-                data["user_id"], data["api_key"][:12])
-    return data
+    return resp.json()["access_token"]
 
 
 async def create_user(client: httpx.AsyncClient, user_ext_id: str) -> str:
@@ -57,8 +82,33 @@ async def create_user(client: httpx.AsyncClient, user_ext_id: str) -> str:
     return user_id
 
 
-async def seed_episodes(client: httpx.AsyncClient, user_id: str, count: int = 100) -> None:
-    """Seed episodes (conversation turns) for the test user."""
+async def create_project(client: httpx.AsyncClient, name: str) -> str:
+    """Create a test project and return the project UUID."""
+    resp = await client.post("/v1/projects", json={"name": name})
+    resp.raise_for_status()
+    project_id = resp.json()["id"]
+    logger.info("Project created: %s (name: %s)", project_id, name)
+    return project_id
+
+
+async def create_session(
+    client: httpx.AsyncClient, project_id: str, external_id: str
+) -> None:
+    """Create a session external ID for memory/fact ingestion."""
+    resp = await client.post(
+        f"/v1/projects/{project_id}/sessions",
+        json={"external_id": external_id},
+    )
+    resp.raise_for_status()
+
+
+async def seed_episodes(
+    client: httpx.AsyncClient,
+    project_id: str,
+    session_id: str,
+    count: int = 100,
+) -> None:
+    """Seed episodes (conversation turns) into the project."""
     topics = [
         "python programming", "data structures", "machine learning",
         "database indexes", "API design", "testing strategies",
@@ -92,10 +142,11 @@ async def seed_episodes(client: httpx.AsyncClient, user_id: str, count: int = 10
             )
 
         resp = await client.post(
-            f"/v1/users/{user_id}/memory",
-            json={
-                "session_id": "load_test_session",
-                "messages": messages,
+            f"/v1/projects/{project_id}/memory",
+            data={
+                "data": json.dumps(
+                    {"session_id": session_id, "messages": messages}
+                )
             },
         )
         if resp.status_code == 202:
@@ -110,8 +161,13 @@ async def seed_episodes(client: httpx.AsyncClient, user_id: str, count: int = 10
     logger.info("Episode seeding complete: %d episodes", seeded)
 
 
-async def seed_facts(client: httpx.AsyncClient, user_id: str, count: int = 500) -> None:
-    """Seed facts (triples) for the test user."""
+async def seed_facts(
+    client: httpx.AsyncClient,
+    project_id: str,
+    session_id: str,
+    count: int = 500,
+) -> None:
+    """Seed facts (triples) into the project."""
     fact_templates = [
         ("Python", "is a", "dynamically-typed programming language"),
         ("Python", "supports", "multiple programming paradigms"),
@@ -142,8 +198,8 @@ async def seed_facts(client: httpx.AsyncClient, user_id: str, count: int = 500) 
             })
 
         resp = await client.post(
-            f"/v1/users/{user_id}/facts",
-            json={"facts": facts},
+            f"/v1/projects/{project_id}/facts",
+            json={"session_id": session_id, "facts": facts},
         )
         if resp.status_code == 202:
             seeded += len(facts)
@@ -171,40 +227,45 @@ async def main() -> None:
     args = parser.parse_args()
 
     user_ext_id = os.environ.get("OZ_LOAD_TEST_USER", "load_test_user")
+    project_name = os.environ.get("OZ_LOAD_TEST_PROJECT", "Load Test Project")
+    session_ext_id = "load_test_session"
 
-    # Step 1: Bootstrap org
+    # Step 1: One-time platform bootstrap (tolerates 403 when already set up)
     anon_client = _make_client(args.api_url)
-    org_data = await bootstrap_org(anon_client)
+    await bootstrap_platform(anon_client)
     await anon_client.aclose()
 
-    api_key = org_data["api_key"]
-    auth_client = _make_client(args.api_url, api_key)
+    # Step 2: Root login → admin client
+    anon_client = _make_client(args.api_url)
+    token = await login_root(anon_client)
+    await anon_client.aclose()
+    auth_client = _make_client(args.api_url, token)
 
     try:
-        # Step 2: Create user
+        # Step 3: Create user + project + session
         user_id = await create_user(auth_client, user_ext_id)
+        project_id = await create_project(auth_client, project_name)
+        await create_session(auth_client, project_id, session_ext_id)
 
         # Export for Locust
-        print("\nExport these for Locust:")
-        print(f"  export OZ_LOAD_TEST_API_KEY={api_key}")
+        print("\nExport for Locust:")
+        print(f"  export OZ_LOAD_TEST_TOKEN={token[:16]}...")
         print(f"  export OZ_LOAD_TEST_USER_ID={user_id}")
+        print(f"  export OZ_LOAD_TEST_PROJECT_ID={project_id}")
         print()
 
-        # Step 3: Seed episodes
+        # Step 4: Seed episodes
         logger.info("Seeding episodes...")
-        await seed_episodes(auth_client, user_id, count=100)
+        await seed_episodes(auth_client, project_id, session_ext_id, count=100)
 
-        # Step 4: Seed facts
+        # Step 5: Seed facts
         logger.info("Seeding facts...")
-        await seed_facts(auth_client, user_id, count=500)
+        await seed_facts(auth_client, project_id, session_ext_id, count=500)
 
         logger.info("\n✅ Load test data seeded successfully!")
-        logger.info("Run Locust with:")
         logger.info(
-            f"  OZ_LOAD_TEST_API_KEY={api_key[:16]}... "
-            f"OZ_LOAD_TEST_USER_ID={user_id} "
-            f"locust -f tests/performance/locustfile.py --headless "
-            f"-u 10 -r 2 --run-time 5m --host {args.api_url}"
+            "Run Locust with the exported token/project against "
+            "tests/performance/locustfile.py"
         )
 
     finally:

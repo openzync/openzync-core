@@ -7,7 +7,7 @@ on first :func:`get_settings` call and fails fast when ``OZ_SECRET_KEY``
 (< 32 chars) or ``OZ_DATABASE_URL`` is missing.
 
 Per-user configuration (LLM, embeddings, graph, behaviour) is **not**
-stored here — use ``core.org_config.get_platform_config()`` for those values
+stored here — use ``core.platform_config.get_platform_config()`` for those values
 (they live in ``users.config_override``).  Platform-wide non-secret
 tunables live in the platform root user's ``config_override`` — see
 ``core.system_config``.
@@ -36,9 +36,9 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 PLATFORM_ORG_ID = UUID("00000000-0000-0000-0000-0000000000aa")
-"""Fixed UUID of the platform (root admin) organization.
+"""Fixed UUID of the platform (root admin) user scope.
 
-The platform org (``name="SYSTEM"``) and its root ``admin`` user
+The platform user scope (``name="SYSTEM"``) and its root ``admin`` user
 (``external_id='root'``) are created exactly once via
 ``POST /v1/auth/setup`` (see ``services.setup_service``) — never at
 startup.  A JWT session is root admin only when its ``user_id`` claim
@@ -63,8 +63,8 @@ class Settings(BaseSettings):
 
     .. note::
 
-        Per-org configuration (LLM, embeddings, graph, behaviour) is **not**
-        stored here.  Use ``core.org_config.get_platform_config()`` for those
+        Per-user configuration (LLM, embeddings, graph, behaviour) is **not**
+        stored here.  Use ``core.platform_config.get_platform_config()`` for those
         values — they live in ``users.config_override``.
     """
 
@@ -219,8 +219,8 @@ class Settings(BaseSettings):
         default=None,
         description=(
             "FalkorDB connection URL (Redis RESP protocol).  "
-            "When set at system level, orgs share a single FalkorDB instance.  "
-            "When None (default), per-org falkordb_url from org_config may be used."
+            "When set at system level, users share a single FalkorDB instance.  "
+            "When None (default), per-user falkordb_url from platform_config may be used."
         ),
         validation_alias="OZ_FALKORDB_URL",
     )
@@ -250,9 +250,9 @@ class Settings(BaseSettings):
         description=(
             "System-level SurrealDB WebSocket connection URL "
             "(e.g. ws://surrealdb:8000/rpc).  "
-            "When set, all orgs use this server and namespace is auto-derived "
-            "from org identity.  When None (default), per-org surrealdb_* "
-            "fields from org_config are used."
+            "When set, all users use this server and namespace is auto-derived "
+            "from user identity.  When None (default), per-user surrealdb_* "
+            "fields from platform_config are used."
         ),
         validation_alias="OZ_SURREALDB_URL",
     )
@@ -263,7 +263,7 @@ class Settings(BaseSettings):
         description=(
             "Base URL of the Ollama server serving the sole embedding model "
             "(nomic-embed-text:v1.5 via /api/embed). System-level only — no "
-            "per-org override, no model selection."
+            "per-user override, no model selection."
         ),
         validation_alias="OZ_OLLAMA_EMBED_URL",
     )
@@ -440,8 +440,8 @@ class Settings(BaseSettings):
     )
 
     # ── Blob Storage (S3-compatible, global — env-owned) ─────────────
-    # ⚠️ BREAKING: per-org blob storage was removed — one global backend
-    # for all orgs, configured here. Missing required fields fail fast
+    # ⚠️ BREAKING: per-user blob storage was removed — one global backend
+    # for all users, configured here. Missing required fields fail fast
     # at startup (no silent fallback to shared defaults).
     S3_ENDPOINT_URL: str = Field(
         description="S3-compatible endpoint URL for blob storage (e.g. http://minio:9000).",

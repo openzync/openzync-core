@@ -5,7 +5,7 @@ satisfy.  The shipped implementations are ``SurrealGraphBackend`` and
 ``FalkorGraphBackend`` (external-only ARQ expiry path).
 
 Every method requires ``user_id`` and ``project_id`` — OpenZync enforces
-strict organisational and project-level isolation.  No cross-project
+strict user and project-level isolation.  No cross-project
 graph traversal is possible.
 """
 
@@ -41,7 +41,7 @@ class GraphBackend(ABC):
         """Create a new entity node in the graph.
 
         Args:
-            user_id: Organisational scope — the entity belongs to this org.
+            user_id: User scope — the entity belongs to this user.
             project_id: Project scope — the entity belongs to this project.
             name: Human-readable name for the entity.
             entity_type: Type label (e.g. ``"person"``, ``"document"``,
@@ -61,13 +61,13 @@ class GraphBackend(ABC):
         """Retrieve an entity node by its ID.
 
         Args:
-            user_id: Organisational scope for isolation.
+            user_id: User scope for isolation.
             project_id: Project scope for isolation.
             entity_id: The UUID of the entity to fetch.
 
         Returns:
             The entity dict, or ``None`` if no entity with that ID exists
-            within the given org and project.
+            within the given user and project.
         """
         ...
 
@@ -78,7 +78,7 @@ class GraphBackend(ABC):
         """Remove an entity node from the graph.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             entity_id: The UUID of the entity to delete.
 
@@ -104,7 +104,7 @@ class GraphBackend(ABC):
         untouched.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             entity_id: UUID of the entity to update.
             name: New name, or ``None`` to leave unchanged.
@@ -138,7 +138,7 @@ class GraphBackend(ABC):
         """Create a directed edge between two entity nodes.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             source_id: UUID of the source entity.
             target_id: UUID of the target entity.
@@ -169,7 +169,7 @@ class GraphBackend(ABC):
         """Traverse the graph outward from a starting node.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             start_node_id: UUID of the node to begin traversal from.
             max_depth: Maximum number of edge hops (default 2).
@@ -199,7 +199,7 @@ class GraphBackend(ABC):
         similarity depending on the engine capabilities.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             query: Free-text search string.
             types: Optional filter — only return entities matching these
@@ -233,7 +233,7 @@ class GraphBackend(ABC):
         ``entity_type``.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             entity_type: Optional filter by entity type (e.g. ``"Person"``).
             limit: Maximum results per page (max 200).
@@ -265,7 +265,7 @@ class GraphBackend(ABC):
         whitelist ``created_at``, ``predicate``.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             entity_id: UUID of the entity node whose edges to list.
             predicate: Optional filter by edge label.
@@ -290,7 +290,7 @@ class GraphBackend(ABC):
         """Retrieve a single entity node with all its incident edges.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             entity_id: UUID of the entity to fetch.
 
@@ -318,7 +318,7 @@ class GraphBackend(ABC):
         can use its native strengths (recursive CTE, Cypher, etc.).
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             query: Free-text search string.
             match_limit: Max entities to match before traversal.
@@ -364,7 +364,7 @@ class GraphBackend(ABC):
         Must be idempotent (ON CONFLICT DO NOTHING).
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             episode_id: UUID of the episode the entity appears in.
             entity_id: UUID of the entity appearing in the episode.
@@ -395,7 +395,7 @@ class GraphBackend(ABC):
             episode IDs instead.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             session_id: UUID of the processing session.
 
@@ -426,7 +426,7 @@ class GraphBackend(ABC):
         ``episode_ids`` list returns ``[]`` without touching the backend.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             user_id: UUID of the user — log scope only; episode scoping
                 comes from ``episode_ids``.
@@ -461,7 +461,7 @@ class GraphBackend(ABC):
         without touching the backend.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             episode_ids: Episode UUIDs to scope the lookup to.
             limit: Maximum entities to return (default 200, max 200).
@@ -482,7 +482,7 @@ class GraphBackend(ABC):
         """Find entity pairs that co-appear in episodes above a threshold.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             min_co_count: Minimum number of co-occurring episodes required.
                 Defaults to 2 (pairs appearing in at least 2 episodes).
@@ -510,7 +510,7 @@ class GraphBackend(ABC):
         Do NOT expose via API — no limit means it can return millions of rows.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             include_merged: If ``True``, include entities that have been
                 soft-deleted via merge. Defaults to ``False``.
@@ -533,7 +533,7 @@ class GraphBackend(ABC):
         Same warning as :meth:`get_all_entities` — batch use only.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
 
         Returns:
@@ -562,7 +562,7 @@ class GraphBackend(ABC):
         distance, or equivalent fuzzy matching.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             query: Search string to match against entity names.
             fuzzy_threshold: Minimum similarity score (0.0 – 1.0) for a
@@ -599,7 +599,7 @@ class GraphBackend(ABC):
         3. Set ``is_merged = true`` on all ``merged_ids``.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             canonical_id: UUID of the entity that survives the merge.
             merged_ids: UUIDs of entities being absorbed into the
@@ -633,7 +633,7 @@ class GraphBackend(ABC):
         ``valid_from``, ``valid_to``.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             relationships: List of relationship descriptor dicts.
 
@@ -676,7 +676,7 @@ class GraphBackend(ABC):
         ``(subject_entity_id, observation_type, COALESCE(related_entity_id, '00000000-0000-0000-0000-000000000000'))``.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             subject_entity_id: The entity this observation is about.
             observation_type: Semantic type label (e.g. ``"co_occurrence"``,
@@ -719,7 +719,7 @@ class GraphBackend(ABC):
         (maps to ``content``), ``created_at``.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             subject_entity_id: Optional filter — only observations about this
                 entity.
@@ -748,7 +748,7 @@ class GraphBackend(ABC):
         Used by temporal gap analysis in the observation service.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             entity_id: UUID of the entity to query.
 
@@ -772,7 +772,7 @@ class GraphBackend(ABC):
         co-occurrence observations.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             entity_a_id: UUID of the first entity.
             entity_b_id: UUID of the second entity.
@@ -797,7 +797,7 @@ class GraphBackend(ABC):
         query may override this with a single round trip.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             pairs: ``(entity_a_id, entity_b_id)`` tuples to fetch
                 evidence for.
@@ -834,7 +834,7 @@ class GraphBackend(ABC):
         Replaces direct SQL on ``graph_episode_entities``.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
 
         Returns:
@@ -860,7 +860,7 @@ class GraphBackend(ABC):
         direct SQL join between ``facts`` and ``graph_entities``.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             entity_ids: List of entity UUIDs to resolve.
 
@@ -886,7 +886,7 @@ class GraphBackend(ABC):
         """Soft-delete a relationship by setting ``invalid_at``.
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             relationship_id: UUID of the relationship to expire.
 
@@ -912,11 +912,11 @@ class GraphBackend(ABC):
         Synchronizes edge invalidation into the graph backend when a fact is
         superseded: every edge keyed by ``(source_id, target_id,
         relationship_type)`` that is still active (``invalid_at IS NULL``) in
-        the org+project gets ``invalid_at`` set to ``at_time`` — and only that
+        the user+project gets ``invalid_at`` set to ``at_time`` — and only that
         field.  ``valid_to`` is never touched (it remains the natural expiry).
 
         Args:
-            user_id: Organisational scope.
+            user_id: User scope.
             project_id: Project scope.
             source_id: UUID of the source entity of the edges to expire.
             target_id: UUID of the target entity of the edges to expire.

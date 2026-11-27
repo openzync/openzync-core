@@ -1,6 +1,6 @@
 """Custom instruction model — domain-specific text snippets for extraction guidance.
 
-Each row represents a named instruction scoped to an organization, extraction
+Each row represents a named instruction scoped to a user, extraction
 domain, and optional target entity (user UUID for ``user_summary`` scope).
 Instructions are injected into LLM prompts to guide extraction behavior.
 """
@@ -20,10 +20,10 @@ class CustomInstruction(TimestampMixin, Base):
 
     Attributes:
         id: UUID primary key, generated server-side.
-        user_id: Foreign key to the owning organization.
+        user_id: Foreign key to the owning user.
         scope: Instruction scope — ``extraction`` or ``user_summary``.
         target_id: Optional target entity UUID (e.g. user UUID for
-            ``user_summary``).  ``NULL`` represents org-level instructions.
+            ``user_summary``).  ``NULL`` represents platform-level instructions.
         name: Human-readable label (e.g. ``legal_domain``, ``healthcare``).
         text: The instruction text content injected into extraction prompts.
     """
@@ -45,7 +45,7 @@ class CustomInstruction(TimestampMixin, Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
 
     def __repr__(self) -> str:
-        target = f"target={self.target_id}" if self.target_id else "org-level"
+        target = f"target={self.target_id}" if self.target_id else "platform-level"
         return (
             f"<CustomInstruction id={self.id} name={self.name!r} "
             f"scope={self.scope!r} {target}>"

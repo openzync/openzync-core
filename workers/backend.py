@@ -45,7 +45,7 @@ async def resolve_graph_backend(
     the correct backend class based on the user's per-user config.
 
     Resolution order:
-    1. Read ``user_config.graph_backend`` (cache-first via ``core.org_config``,
+    1. Read ``user_config.graph_backend`` (cache-first via ``core.platform_config``,
        DB-authoritative).
     2. No ``graph_backend_dispatcher`` in ctx → worker misconfiguration,
        raises ``GraphBackendUnavailableError``.
@@ -93,7 +93,7 @@ async def resolve_graph_backend(
         # raises on failure, so user_config is only None if resolution broke.
         # Fail loud rather than run enrichment as if graph were disabled.
         logger.error(
-            "worker.org_config_unresolved",
+            "worker.platform_config_unresolved",
             extra={"user_id": str(user_id)},
         )
         raise GraphBackendUnavailableError(
@@ -158,7 +158,7 @@ async def resolve_graph_backend(
 
     try:
         backend: GraphBackend | None = dispatcher.resolve_and_create(
-            org_config=user_config,
+            platform_config=user_config,
             db=db,
             surreal=surreal,
             falkordb_client=falkordb_client,
@@ -217,9 +217,9 @@ async def _resolve_user_config(
     user_id: UUID,
     db: AsyncSession,
 ) -> Any | None:
-    """Fetch the per-user config, cache-first via ``core.org_config``, DB-authoritative.
+    """Fetch the per-user config, cache-first via ``core.platform_config``, DB-authoritative.
 
-    Uses ``core.org_config.get_platform_config`` (the standard resolution path)
+    Uses ``core.platform_config.get_platform_config`` (the standard resolution path)
     if available, which supports Redis caching.  Falls back to a direct DB
     query via ``UserRepository.get_config_override``.
 
@@ -234,15 +234,15 @@ async def _resolve_user_config(
     """
     # ── Primary path: standard user-config resolution (cache-first) ───────
     try:
-        from core.org_config import get_platform_config
+        from core.platform_config import get_platform_config
 
         redis = ctx.get("redis")  # may not be present in worker ctx
         return await get_platform_config(user_id, redis=redis, db=db)
     except ImportError:
-        logger.debug("worker.org_config_module_not_available")
+        logger.debug("worker.platform_config_module_not_available")
     except Exception:
         logger.warning(
-            "worker.org_config_resolution_failed",
+            "worker.platform_config_resolution_failed",
             extra={"user_id": str(user_id)},
             exc_info=True,
         )
@@ -250,20 +250,20 @@ async def _resolve_user_config(
     # ── Fallback: direct DB query ─────────────────────────────────────────
     try:
         from repositories.user_repository import UserRepository
-        from schemas.organization_config import PlatformConfigBase
+        from schemas.platform_config import PlatformConfigBase
 
         repo = UserRepository(db)
         raw_config = await repo.get_config_override(user_id)
 
         # Flat users.config_override shape — mirror
-        # core.org_config._with_graph_default (unset graph_backend → falkordb;
+        # core.platform_config._with_graph_default (unset graph_backend → falkordb;
         # never an all-None wrong default from a dropped nesting level).
         if not raw_config.get("graph_backend"):
             raw_config = {**raw_config, "graph_backend": "falkordb"}
         return PlatformConfigBase(**raw_config)
     except Exception:
         logger.error(
-            "worker.org_config_fallback_failed",
+            "worker.platform_config_fallback_failed",
             extra={"user_id": str(user_id)},
             exc_info=True,
         )

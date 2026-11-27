@@ -380,7 +380,7 @@ async def _fetch_org_entity_types(
     user_id: UUID,
     **_: Any,
 ) -> dict[str, Any]:
-    """Fetch entity type ontology from the org's extraction schemas.
+    """Fetch entity type ontology from the user's extraction schemas.
 
     Falls back to the default set if no schemas are configured.
     Returns ``{"entity_types": [...]}``.
@@ -433,7 +433,7 @@ async def _fetch_classification_labels(
     user_id: UUID,
     **_: Any,
 ) -> dict[str, Any]:
-    """Fetch classification labels from the org's extraction schemas.
+    """Fetch classification labels from the user's extraction schemas.
 
     Merges label sets if multiple schemas exist.
     Falls back to default label sets.
@@ -593,7 +593,7 @@ async def _fetch_user_entities(
 
     Raises:
         GraphBackendUnavailableError: If ``graph_backend`` is ``None``.
-            Graph-disabled orgs skip upstream (the callers that resolve
+            Graph-disabled users skip upstream (the callers that resolve
             ``None`` never reach this provider with entity needs) — a
             ``None`` backend here is a wiring bug, never a steady state,
             so it fails loud instead of silently returning no entities.
@@ -720,7 +720,7 @@ async def _fetch_custom_instructions(
     user_id: UUID,
     **_: Any,
 ) -> dict[str, Any]:
-    """Fetch custom instructions for the org.
+    """Fetch custom instructions for the user.
 
     For ``user_summary`` scope, also accepts a ``user_id`` for per-user
     custom instructions.  Returns ``{"custom_instructions": "<text>"}``
@@ -809,7 +809,7 @@ async def render_prompt(
             Used to look up the registry of data sources to auto-inject.
         template_text: Raw template string.  If ``None``, resolved from
             the startup disk cache via ``resolve_prompt_template_by_type``.
-        user_id: Organisation UUID.  Required for auto-injection.
+        user_id: User UUID.  Required for auto-injection.
         episode_id: Episode UUID.  Used to fetch conversation content
             and recent history.
         session_id: Session UUID.  Used to fetch known entities and
@@ -873,14 +873,13 @@ async def render_prompt(
                 f"Known types: {', '.join(sorted(TYPE_DATA_SOURCES))}"
             )
 
-        resolved_org_id = UUID(user_id) if isinstance(user_id, str) else user_id
+        resolved_user_id = UUID(user_id) if isinstance(user_id, str) else user_id
         resolved_episode_id = (
             UUID(episode_id) if isinstance(episode_id, str) else episode_id
         )
         resolved_session_id = (
             UUID(session_id) if isinstance(session_id, str) else session_id
         )
-        resolved_user_id = UUID(user_id) if isinstance(user_id, str) else user_id
         resolved_project_id = (
             UUID(project_id) if isinstance(project_id, str) else project_id
         )
@@ -888,8 +887,8 @@ async def render_prompt(
         async with db_session_factory() as db:
             try:
                 # Every provider below reads tenant-scoped rows — bind the
-                # session to the org before the first query.
-                await rls.set_tenant_context(db, resolved_org_id)
+                # session to the user before the first query.
+                await rls.set_tenant_context(db, resolved_user_id)
                 for source in sources:
                     if skip_sources is not None and source in skip_sources:
                         continue
@@ -899,7 +898,7 @@ async def render_prompt(
 
                     result = await provider(
                         db=db,
-                        user_id=resolved_org_id,
+                        user_id=resolved_user_id,
                         episode_id=resolved_episode_id,
                         session_id=resolved_session_id,
                         project_id=resolved_project_id,

@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from models.fact import Fact
-    from schemas.organization_config import PlatformConfigBase
+    from schemas.platform_config import PlatformConfigBase
 
 logger = structlog.get_logger()
 
@@ -82,7 +82,7 @@ async def _resolve_existing_fact_refs(
     service (which reads ``valid_to``/entity columns off the ORM objects).
 
     Args:
-        db: Active session, RLS-scoped to the org.
+        db: Active session, RLS-scoped to the user.
         existing_facts: The exact list rendered into the prompt's
             EXISTING FACTS table, in table order.
 
@@ -150,7 +150,7 @@ async def enrich_episode(
         3. Resolve ``user_id`` from the episode record.
         4. Render the ``enrich_episode_v1.jinja2`` prompt with auto-injected
            context (entities, facts, schemas, history, …).
-        5. Resolve LLM backend from org config.
+        5. Resolve LLM backend from platform config.
         6. Single LLM call with ``CombinedLLMOutput`` as ``response_model``.
         7. Process each enrichment section in an independent savepoint:
            - Classification  (bit 4)
@@ -168,7 +168,7 @@ async def enrich_episode(
     Args:
         ctx: ARQ worker context (``db_session_factory``, ``redis``).
         episode_id: UUID of the source episode (string, from ARQ).
-        user_id: UUID of the owning organization.
+        user_id: UUID of the owning user.
         project_id: UUID of the project for project scoping.
         content: Legacy payload from older enqueues — ignored.  Text is
             always loaded from the episode row (``episode_id``-only jobs).
@@ -220,7 +220,7 @@ async def enrich_episode(
     from core.config import settings
     from core.db import get_async_session
     from core.llm import build_cache_config, resolve_backend
-    from core.org_config import get_platform_config
+    from core.platform_config import get_platform_config
     from repositories.entity_repository import EntityRepository
     from repositories.episode_blob_repository import EpisodeBlobRepository
     from repositories.episode_repository import EpisodeRepository
@@ -542,7 +542,7 @@ async def enrich_episode(
                     exc_info=True,
                 )
 
-            # ── 4. Fetch per-organization config ────────────────────────
+            # ── 4. Fetch per-user config ────────────────────────
             org_cfg: PlatformConfigBase | None = None
             llm_config_dict: dict | None = None
             try:
@@ -555,7 +555,7 @@ async def enrich_episode(
                 # model/policy silently misroutes cost attribution and
                 # quality.  Fail loud so ARQ retries with the real config.
                 log.error(
-                    "enrich_episode.org_config_fetch_failed",
+                    "enrich_episode.platform_config_fetch_failed",
                     exc_info=True,
                 )
                 raise
@@ -575,7 +575,7 @@ async def enrich_episode(
                     episode_id=uuid.UUID(episode_id),
                     session_id=uuid.UUID(session_id) if session_id else None,
                 )
-                llm = await resolve_backend(org_config=llm_config_dict, sink=sink)
+                llm = await resolve_backend(platform_config=llm_config_dict, sink=sink)
                 response = await llm.chat(
                     [
                         {
@@ -587,7 +587,7 @@ async def enrich_episode(
                     response_model=CombinedLLMOutput,
                     temperature=0.0,
                     max_tokens=8192,
-                    cache_config=build_cache_config(org_config=llm_config_dict),
+                    cache_config=build_cache_config(platform_config=llm_config_dict),
                     metered=True,
                     validation_context={"disabled": disabled_keys},
                 )
@@ -612,9 +612,9 @@ async def enrich_episode(
             )
 
             # ── LLM-driven fact invalidation gate ───────────────────────
-            # Default ON; the org opts out with ``llm_fact_invalidation_enabled:
+            # Default ON; the user opts out with ``llm_fact_invalidation_enabled:
             # false``.  The single LLM call above succeeding is the availability
-            # gate — resolve_backend raises without an org-level llm_backend,
+            # gate — resolve_backend raises without an user-level llm_backend,
             # so a completed call means an LLM is actually configured.
             invalidation_enabled = (
                 org_cfg is not None
@@ -699,7 +699,7 @@ async def enrich_episode(
                                         {"name": ename, "id": eid}
                                     )
                         else:
-                            # Graph disabled for this org — nothing was
+                            # Graph disabled for this user — nothing was
                             # persisted to a graph.  The bit is still set so
                             # the episode is not re-enriched; entities can be
                             # back-filled later once a backend exists.

@@ -1,7 +1,7 @@
 """Repository for extraction schemas — all DB access for ``extraction_schemas``.
 
 All methods accept an ``user_id`` parameter that must match the authenticated
-organization's UUID.  RLS ensures cross-tenant isolation at the database level.
+user's UUID.  RLS ensures cross-tenant isolation at the database level.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ class ExtractionSchemaRepository:
         self._db = db
 
     async def get_by_id(self, user_id: UUID, schema_id: UUID) -> ExtractionSchema | None:
-        """Fetch a single schema by ID, scoped to the organization."""
+        """Fetch a single schema by ID, scoped to the user."""
         result = await self._db.execute(
             select(ExtractionSchema).where(
                 ExtractionSchema.id == schema_id,
@@ -41,7 +41,7 @@ class ExtractionSchemaRepository:
     async def get_by_name(
         self, user_id: UUID, name: str
     ) -> ExtractionSchema | None:
-        """Fetch a single schema by name within an organization."""
+        """Fetch a single schema by name within a user scope."""
         result = await self._db.execute(
             select(ExtractionSchema).where(
                 ExtractionSchema.user_id == user_id,
@@ -95,8 +95,8 @@ class ExtractionSchemaRepository:
         """Create a new extraction schema.
 
         Args:
-            user_id: Owning organization UUID.
-            name: Schema name (must be unique per org).
+            user_id: Owning user UUID.
+            name: Schema name (must be unique per user).
             json_schema: JSON Schema or classification label definitions.
             type: Schema type — ``'structured'`` or ``'classification'``.
             prompt_template: Optional prompt template override.
@@ -106,7 +106,7 @@ class ExtractionSchemaRepository:
 
         Raises:
             sqlalchemy.exc.IntegrityError: If a schema with the same name
-                already exists in this organization.
+                already exists in this user.
         """
         schema = ExtractionSchema(
             user_id=user_id,

@@ -85,7 +85,7 @@ async def list_structured_extractions(
 
     Returns an empty list if no episodes in the session have been processed
     by the ``extract_structured`` worker yet, or if no structured schemas
-    are configured for the organization.
+    are configured for the user.
     """
     user_id = UUID(request.state.user_id)
     project_id = UUID(request.path_params["project_id"])

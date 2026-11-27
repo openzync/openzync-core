@@ -245,12 +245,12 @@ class IdempotencyService:
 
         Keys are tenant-namespaced — the cache key is
         ``OpenZync:{env}:idempotency:{user_id}:{key}`` — so the same key
-        used by two different organizations never collides.
+        used by two different users never collides.
 
         Args:
             key: The ``Idempotency-Key`` header value (max 255 chars).
             body_hash: SHA-256 hex digest of the canonical request body.
-            user_id: The tenant (organization) UUID or string. Normalized
+            user_id: The tenant (user) UUID or string. Normalized
                 to ``str`` for the cache key.
 
         Returns:
@@ -339,13 +339,13 @@ class IdempotencyService:
 
         The cache key is tenant-namespaced
         (``OpenZync:{env}:idempotency:{user_id}:{key}``) so replays cannot
-        cross organization boundaries.
+        cross user boundaries.
 
         Args:
             key: The ``Idempotency-Key`` header value.
             body_hash: SHA-256 hex digest of the canonical request body.
             response_data: The response dict to cache for replay.
-            user_id: The tenant (organization) UUID or string. Normalized
+            user_id: The tenant (user) UUID or string. Normalized
                 to ``str`` for the cache key.
         """
         cache_key = f"{self._idem_prefix}{user_id}:{key}"
@@ -388,7 +388,7 @@ class IdempotencyService:
         vs presence of metadata/blobs do not collide.
 
         Args:
-            user_id: Organisation UUID string.
+            user_id: User UUID string.
             user_id: User UUID string.
             session_id: Session UUID or external ID string.
             messages: List of message dicts, each containing at minimum
@@ -433,7 +433,7 @@ class IdempotencyService:
         ``ingest_dedup`` UNIQUE claim as DB backstop.
 
         Args:
-            user_id: Organisation UUID string.
+            user_id: User UUID string.
             user_id: User UUID string.
             session_id: Session UUID string.
             messages: List of message dicts.
@@ -480,7 +480,7 @@ class IdempotencyService:
         refreshing TTL after a won claim.
 
         Args:
-            user_id: Organisation UUID string.
+            user_id: User UUID string.
             user_id: User UUID string.
             session_id: Session UUID string.
             messages: List of message dicts.
@@ -540,7 +540,7 @@ class IdempotencyService:
         without inserting anything.
 
         Args:
-            user_id: Organisation UUID string.
+            user_id: User UUID string.
             user_id: User UUID string.
             session_id: Session UUID string.
             messages: List of message dicts.
@@ -599,7 +599,7 @@ class IdempotencyService:
         (:meth:`claim_content_hash`) stays fail-closed.
 
         Args:
-            user_id: Organisation UUID string.
+            user_id: User UUID string.
             user_id: User UUID string.
             session_id: Session UUID string.
             messages: List of message dicts (recomputes the claim key).
@@ -697,7 +697,7 @@ class IdempotencyService:
         ``OpenZync:{env}:cache:{user_id}:{user_id}:*``.
 
         Args:
-            user_id: Organisation UUID string.
+            user_id: User UUID string.
             user_id: User UUID string.
         """
         pattern = f"{self._cache_prefix}{user_id}:{user_id}:*"

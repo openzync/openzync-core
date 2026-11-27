@@ -28,7 +28,7 @@ from models.user import User
 class AuthRepository:
     """All database access for authentication flows.
 
-    Every public method works within a single organization scope
+    Every public method works within a single user scope
     except ``find_user_by_email`` which scans globally (email is
     globally unique).
     """
@@ -47,9 +47,9 @@ class AuthRepository:
         """Find a dashboard user by email (global lookup).
 
         Uses the partial unique index on ``email`` — email is globally
-        unique across all organizations. Runs under a scoped RLS bypass
+        unique across all users. Runs under a scoped RLS bypass
         (reset in ``finally``) so public-login sessions with no
-        org context can see the row.
+        user context can see the row.
 
         Args:
             email: The user's email address.
@@ -67,10 +67,10 @@ class AuthRepository:
             return result.scalar_one_or_none()
 
     async def get_user_by_id(self, user_id: uuid.UUID) -> User | None:
-        """Get a user by UUID (no org scope — used during token validation).
+        """Get a user by UUID (no user scope — used during token validation).
 
         Runs under a scoped RLS bypass (reset in ``finally``) so
-        token validation without org context can see the row.
+        token validation without user context can see the row.
 
         Args:
             user_id: The internal user UUID.

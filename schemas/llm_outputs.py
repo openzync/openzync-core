@@ -129,7 +129,7 @@ class ClassificationOutput(BaseModel):
 
     All fields are optional — the LLM may choose not to classify a dimension
     if the input is ambiguous.  The worker applies further label validation
-    against the org's configured allowed sets.
+    against the user's configured allowed sets.
     """
 
     intent: str | None = None
@@ -147,7 +147,7 @@ class ClassificationOutput(BaseModel):
 class StructuredExtractionOutput(BaseModel):
     """Expected LLM output for structured data extraction.
 
-    Accepts **any** JSON object keys — the shape is defined by the org's
+    Accepts **any** JSON object keys — the shape is defined by the user's
     configured extraction schemas, which vary per deployment.  This model
     ensures the LLM returned a valid JSON object; further schema-level
     validation is performed by the worker via ``_validate_against_schema``.

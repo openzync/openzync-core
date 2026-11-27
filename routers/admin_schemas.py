@@ -1,8 +1,8 @@
-"""Schema CRUD API — manage extraction and classification schemas per organization.
+"""Schema CRUD API — manage extraction and classification schemas per user.
 
 Endpoints:
     POST   /v1/admin/schemas          — Create a new schema (requires ``admin`` scope)
-    GET    /v1/admin/schemas          — List schemas for the org (authenticated)
+    GET    /v1/admin/schemas          — List schemas for the user (authenticated)
     POST   /v1/admin/schemas/preview  — Preview extraction (no persistence)
     GET    /v1/admin/schemas/templates — List static starter templates
     GET    /v1/admin/schemas/{id}     — Get a single schema by ID
@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.audit import audit_action
 from dependencies.auth import require_permission
 from dependencies.db import get_db
-from dependencies.org_config import get_platform_config as get_platform_config_dep
+from dependencies.platform_config import get_platform_config as get_platform_config_dep
 from repositories.extraction_schema_repository import (
     ExtractionSchemaRepository,
 )
@@ -33,7 +33,7 @@ from schemas.extraction_schemas import (
     SchemaTemplateResponse,
     UpdateExtractionSchemaRequest,
 )
-from schemas.organization_config import PlatformConfigBase
+from schemas.platform_config import PlatformConfigBase
 from schemas.sorting import AdminSchemaSortBy, SortDir, SortSpec
 from services.schema_service import SchemaService
 
@@ -64,7 +64,7 @@ async def create_schema(
     """Create a new extraction or classification schema.
 
     Requires ``admin`` scope.  The schema name must be unique within the
-    organization.  For ``type='classification'``, the ``json_schema`` must
+    user scope.  For ``type='classification'``, the ``json_schema`` must
     follow the expected classification label structure.
     """
     return await service.create_schema(
@@ -98,7 +98,7 @@ async def list_schemas(
     service: SchemaService = Depends(_get_schema_service),
     user_id: str = Depends(require_permission("configuration:read")),
 ) -> ExtractionSchemaListResponse:
-    """List all schemas for the authenticated organization.
+    """List all schemas for the authenticated user scope.
 
     Supports optional filtering by ``type`` (structured/classification) and
     ``is_active`` status.
@@ -123,13 +123,13 @@ async def preview_schema_extraction(
     payload: PreviewExtractionRequest,
     request: Request,
     service: SchemaService = Depends(_get_schema_service),
-    org_config: PlatformConfigBase = Depends(get_platform_config_dep),
+    platform_config: PlatformConfigBase = Depends(get_platform_config_dep),
     user_id: str = Depends(require_permission("configuration:read")),
 ) -> PreviewExtractionResponse:
     """Preview structured extraction against a candidate schema.
 
     Renders the shared extraction prompt for ``payload.json_schema`` and
-    ``payload.sample_text``, calls the org's LLM backend, and returns the
+    ``payload.sample_text``, calls the user's LLM backend, and returns the
     extracted data with field-level validation errors.  Performs no DB
     writes — the schema is validated but never persisted.
     """
@@ -137,7 +137,7 @@ async def preview_schema_extraction(
         json_schema=payload.json_schema,
         sample_text=payload.sample_text,
         prompt_template=payload.prompt_template,
-        llm_config=org_config.to_llm_config_dict(),
+        llm_config=platform_config.to_llm_config_dict(),
         user_id=UUID(user_id),
         session_factory=request.app.state.db_session_factory,
     )
@@ -171,7 +171,7 @@ async def get_schema(
     service: SchemaService = Depends(_get_schema_service),
     user_id: str = Depends(require_permission("configuration:read")),
 ) -> ExtractionSchemaResponse:
-    """Get a single schema by ID.  Scoped to the authenticated organization."""
+    """Get a single schema by ID.  Scoped to the authenticated user scope."""
     return await service.get_schema(
         user_id=UUID(user_id),
         schema_id=schema_id,
@@ -192,7 +192,7 @@ async def update_schema(
     """Update an existing schema.
 
     Requires ``admin`` scope.  The ``type`` field is immutable after creation.
-    Name uniqueness is enforced within the organization.
+    Name uniqueness is enforced within the user's scope.
     """
     return await service.update_schema(
         user_id=UUID(user_id),

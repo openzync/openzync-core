@@ -1,4 +1,4 @@
-"""Connection testing for per-organization config candidates.
+"""Connection testing for platform configuration candidates.
 
 Overlays a candidate :class:`UpdatePlatformConfigRequest` in-memory on the
 stored DB config and probes the requested domain against the live
@@ -15,7 +15,7 @@ Probe transport notes:
   followed by ``health_check()``, with a candidate-scoped client built
   from the effective (candidate → system) URL.
 - ⚠️ BREAKING: there is no blob probe. Blob storage is a single global
-  backend (``OZ_S3_*`` Settings) with nothing per-org to configure or
+  backend (``OZ_S3_*`` Settings) with nothing per-user to configure or
   connect to — ``domain="blob"`` is rejected with 422.
 """
 
@@ -32,8 +32,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import get_settings
 from core.exceptions import ValidationError
 from core.graph_backend import GraphBackendDispatcher, init_dispatcher
-from core.org_config import get_platform_config
-from schemas.organization_config import (
+from core.platform_config import get_platform_config
+from schemas.platform_config import (
     SYSTEM_MANAGED_FALKORDB_FIELDS,
     SYSTEM_MANAGED_SURREALDB_FIELDS,
     PlatformConfigBase,
@@ -80,6 +80,7 @@ class PlatformConfigConnectionService:
         user_id: UUID,
         domain: str,
         candidate: UpdatePlatformConfigRequest,
+        as_user: UUID | None = None,
     ) -> TestPlatformConfigResponse:
         """Probe live connectivity for one config domain.
 
@@ -88,10 +89,13 @@ class PlatformConfigConnectionService:
         yield ``ok: False`` entries — never exceptions.
 
         Args:
-            user_id: The organization UUID.
+            user_id: The user UUID.
             domain: One of ``llm``, ``graph``.
             candidate: Partial candidate config; only ``exclude_unset``
                 fields overlay the stored config.
+            as_user: Optional user whose stored override is layered under
+                the candidate (``candidate ⊕ user ⊕ stored``), in-memory
+                only — nothing is persisted.
 
         Returns:
             A :class:`TestPlatformConfigResponse` with one entry per probe.
@@ -101,6 +105,19 @@ class PlatformConfigConnectionService:
                 fields, or *domain* is unknown.
         """
         self._reject_system_managed_overrides(candidate)
+        if as_user is not None:
+            from repositories.user_repository import UserRepository
+            from services.user_config_service import UserConfigService
+
+            override = await UserConfigService(
+                user_repo=UserRepository(self._db),
+                redis=self._redis,
+                db=self._db,
+            ).get_override(as_user)
+            if override:
+                candidate = UpdatePlatformConfigRequest(
+                    **{**override, **candidate.model_dump(exclude_unset=True)}
+                )
         stored = await get_platform_config(
             user_id,
             redis=self._redis,
@@ -109,7 +126,7 @@ class PlatformConfigConnectionService:
         )
         merged = self._overlay_candidate(stored, candidate)
         logger.info(
-            "org_config.test_started",
+            "platform_config.test_started",
             extra={"user_id": str(user_id), "domain": domain},
         )
         probe = self._resolve_probe(domain)
@@ -135,7 +152,7 @@ class PlatformConfigConnectionService:
         else:
             raise outcome
         logger.info(
-            "org_config.test_finished",
+            "platform_config.test_finished",
             extra={
                 "user_id": str(user_id),
                 "domain": domain,
@@ -160,7 +177,7 @@ class PlatformConfigConnectionService:
                 return self._probe_graph
         raise ValidationError(
             f"Unknown config test domain: {domain!r}. Expected one of: llm, graph."
-            # ⚠️ BREAKING: the blob probe was removed with per-org blob
+            # ⚠️ BREAKING: the blob probe was removed with per-user blob
             # storage — blob storage is global (OZ_S3_*) now.
         )
 
@@ -170,7 +187,7 @@ class PlatformConfigConnectionService:
     ) -> None:
         """Reject candidates that override system-managed URL fields.
 
-        Mirrors the enforcement in ``routers/admin_org_config.py`` without
+        Mirrors the enforcement in ``routers/admin_platform_config.py`` without
         importing from the router layer (wrong dependency direction).
 
         Raises:
@@ -213,7 +230,7 @@ class PlatformConfigConnectionService:
         try:
             from core.llm import resolve_backend
 
-            backend = await resolve_backend(org_config=merged.to_llm_config_dict())
+            backend = await resolve_backend(platform_config=merged.to_llm_config_dict())
             chat_kwargs: dict[str, Any] = {"max_tokens": 1}
             if merged.llm_model is not None:
                 chat_kwargs["model"] = merged.llm_model
@@ -289,7 +306,7 @@ class PlatformConfigConnectionService:
             try:
                 await pool.aclose()
             except Exception:
-                logger.warning("org_config.test_pool_close_failed", exc_info=True)
+                logger.warning("platform_config.test_pool_close_failed", exc_info=True)
         if not healthy:
             return self._failure(
                 start, "graph probe failed: FalkorDB health check false"
@@ -348,7 +365,7 @@ class PlatformConfigConnectionService:
             try:
                 await surreal.close()
             except Exception:
-                logger.warning("org_config.test_surreal_close_failed", exc_info=True)
+                logger.warning("platform_config.test_surreal_close_failed", exc_info=True)
         if not healthy:
             return self._failure(
                 start, "graph probe failed: SurrealDB health check false"
@@ -364,7 +381,7 @@ class PlatformConfigConnectionService:
     def _failure(cls, start: float, detail: str) -> ProbeResult:
         """Build a failed :class:`ProbeResult` (detail redacted/truncated)."""
         redacted = cls._redact(detail)
-        logger.warning("org_config.probe_failed", extra={"detail": redacted})
+        logger.warning("platform_config.probe_failed", extra={"detail": redacted})
         return ProbeResult(ok=False, latency_ms=_elapsed_ms(start), detail=redacted)
 
     @staticmethod

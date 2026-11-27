@@ -32,12 +32,12 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.db import get_db, get_db_admin
-from dependencies.org_config import get_platform_config
+from dependencies.platform_config import get_platform_config
 
 if TYPE_CHECKING:
     from core.graph_backend import GraphBackendDispatcher
     from packages.graph_backend.interface import GraphBackend
-    from schemas.organization_config import PlatformConfigBase
+    from schemas.platform_config import PlatformConfigBase
 from core.config import get_settings
 from core.email import EmailConfig
 from core.exceptions import GraphBackendUnavailableError
@@ -60,6 +60,7 @@ from services.email_service import EmailService
 from services.fact_service import FactService
 from services.graph_service import GraphService
 from services.invite_service import InviteService
+from services.instance_settings_service import InstanceSettingsService
 from services.memory_service import MemoryService
 from services.otp_service import OtpService
 from services.quick_actions_service import QuickActionsService
@@ -245,6 +246,40 @@ def get_instance_settings_repository(
         An initialised ``InstanceSettingsRepository``.
     """
     return InstanceSettingsRepository(db)
+
+
+async def get_instance_settings_service(
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> InstanceSettingsService:
+    """Dependency that yields an InstanceSettingsService (tenant session).
+
+    Serves ``GET /admin/system/registration`` — the singleton settings
+    row has no RLS, so the tenant session suffices.
+
+    Args:
+        db: Async DB session from dependency injection.
+
+    Returns:
+        An initialised ``InstanceSettingsService``.
+    """
+    return InstanceSettingsService(repo=InstanceSettingsRepository(db))
+
+
+async def get_admin_instance_settings_service(
+    db: AsyncSession = Depends(get_db_admin),  # noqa: B008
+) -> InstanceSettingsService:
+    """Dependency that yields an InstanceSettingsService (bypass session).
+
+    Serves ``PATCH /admin/system/registration`` — the singleton-row
+    write runs on the RLS-bypass session.
+
+    Args:
+        db: RLS-bypass async DB session from dependency injection.
+
+    Returns:
+        An initialised ``InstanceSettingsService``.
+    """
+    return InstanceSettingsService(repo=InstanceSettingsRepository(db))
 
 
 # ── Invite ─────────────────────────────────────────────────────────────────────
@@ -455,7 +490,7 @@ async def get_memory_service(
 
 async def get_graph_service(
     request: Request,
-    org_config: PlatformConfigBase = Depends(get_platform_config),
+    platform_config: PlatformConfigBase = Depends(get_platform_config),
     db: AsyncSession = Depends(get_db),
     webhook: WebhookService = Depends(get_webhook_service),
 ) -> GraphService:
@@ -473,14 +508,14 @@ async def get_graph_service(
     # network round-trips and prevents failures when SurrealDB is down.
     surreal = None
     user_id = UUID(request.state.user_id)
-    if org_config.graph_backend == "surrealdb":
+    if platform_config.graph_backend == "surrealdb":
         pool = request.app.state.surreal_connection_pool
         if pool is not None:
             try:
                 settings = get_settings()
                 surreal = await pool.get_or_create(
                     user_id,
-                    org_config,
+                    platform_config,
                     system_url=settings.SURREALDB_URL,
                 )
             except Exception as exc:
@@ -499,7 +534,7 @@ async def get_graph_service(
 
     # SurrealDB configured but no pool / no connection → fail loud rather
     # than constructing a doomed SurrealGraphBackend(surreal=None).
-    if org_config.graph_backend == "surrealdb" and surreal is None:
+    if platform_config.graph_backend == "surrealdb" and surreal is None:
         raise GraphBackendUnavailableError(
             f"SurrealDB configured for user {user_id} (graph_backend="
             f"'surrealdb') but no connection is available — the "
@@ -509,7 +544,7 @@ async def get_graph_service(
     # Read the FalkorDB client from app state (may be None if not configured).
     # If not configured at system level, try per-user config.
     falkordb_client = getattr(request.app.state, "falkordb_client", None)
-    if falkordb_client is None and org_config.falkordb_url:
+    if falkordb_client is None and platform_config.falkordb_url:
         try:
             from falkordb.asyncio import FalkorDB
             from redis.asyncio import (
@@ -522,13 +557,13 @@ async def get_graph_service(
             # pool that hides the outage.  Otherwise one pool per distinct
             # per-user URL, sized from the single canonical setting.
             _s = get_settings()
-            if org_config.falkordb_url == _s.FALKORDB_URL:
+            if platform_config.falkordb_url == _s.FALKORDB_URL:
                 raise GraphBackendUnavailableError(
                     f"FalkorDB configured for user {user_id} but the shared "
                     "client failed to initialise — refusing a shadow pool."
                 )
             pool = AsyncBlockingConnectionPool.from_url(
-                org_config.falkordb_url,
+                platform_config.falkordb_url,
                 max_connections=_s.FALKORDB_MAX_CONNECTIONS,
                 socket_timeout=_s.FALKORDB_SOCKET_TIMEOUT,
                 socket_connect_timeout=5,  # hung TCP must fail fast
@@ -546,16 +581,16 @@ async def get_graph_service(
             ) from exc
 
     # FalkorDB configured but no client anywhere → fail loud (same rationale).
-    if org_config.graph_backend == "falkordb" and falkordb_client is None:
+    if platform_config.graph_backend == "falkordb" and falkordb_client is None:
         raise GraphBackendUnavailableError(
             f"FalkorDB configured for user {user_id} (graph_backend="
             f"'falkordb') but no client is available — neither a system-level "
-            "FALKORDB_URL nor a per-org falkordb_url."
+            "FALKORDB_URL nor a per-user falkordb_url."
         )
 
     try:
         graph_backend = dispatcher.resolve_and_create(
-            org_config,
+            platform_config,
             db,
             surreal=surreal,
             falkordb_client=falkordb_client,
@@ -569,11 +604,11 @@ async def get_graph_service(
             "graph_service.unknown_backend",
             extra={
                 "user_id": str(user_id),
-                "backend": org_config.graph_backend,
+                "backend": platform_config.graph_backend,
             },
         )
         raise GraphBackendUnavailableError(
-            f"Unknown graph backend '{org_config.graph_backend}' for org "
+            f"Unknown graph backend '{platform_config.graph_backend}' for user "
             f"{user_id}: {exc}"
         ) from exc
 
@@ -639,7 +674,7 @@ async def get_quick_actions_service(
 
 async def get_graph_backend_for_project(
     request: Request,
-    org_config: PlatformConfigBase = Depends(get_platform_config),
+    platform_config: PlatformConfigBase = Depends(get_platform_config),
     db: AsyncSession = Depends(get_db),
 ) -> GraphBackend:
     """Dependency that resolves and returns a project-scoped graph backend.
@@ -651,7 +686,7 @@ async def get_graph_backend_for_project(
 
     Args:
         request: Incoming HTTP request (for ``app.state`` access).
-        org_config: The resolved user configuration including backend type.
+        platform_config: The resolved user configuration including backend type.
         db: Async DB session (required by some backends).
 
     Returns:
@@ -667,7 +702,7 @@ async def get_graph_backend_for_project(
 
     surreal = None
     user_id = UUID(request.state.user_id)
-    if org_config.graph_backend == "surrealdb":
+    if platform_config.graph_backend == "surrealdb":
         pool = request.app.state.surreal_connection_pool
         if pool is not None:
             try:
@@ -675,7 +710,7 @@ async def get_graph_backend_for_project(
 
                 surreal = await pool.get_or_create(
                     user_id,
-                    org_config,
+                    platform_config,
                     system_url=get_settings().SURREALDB_URL,
                 )
             except Exception as exc:
@@ -692,7 +727,7 @@ async def get_graph_backend_for_project(
                 ) from exc
 
     falkordb_client = getattr(request.app.state, "falkordb_client", None)
-    if falkordb_client is None and org_config.falkordb_url:
+    if falkordb_client is None and platform_config.falkordb_url:
         try:
             from falkordb.asyncio import FalkorDB
             from redis.asyncio import (
@@ -704,13 +739,13 @@ async def get_graph_backend_for_project(
             # fork a second pool.  Per-user URLs pool from the one canonical
             # size (see Settings.FALKORDB_MAX_CONNECTIONS).
             _s = get_settings()
-            if org_config.falkordb_url == _s.FALKORDB_URL:
+            if platform_config.falkordb_url == _s.FALKORDB_URL:
                 raise GraphBackendUnavailableError(
                     f"FalkorDB configured for user {user_id} but the shared "
                     "client failed to initialise — refusing a shadow pool."
                 )
             pool = AsyncBlockingConnectionPool.from_url(
-                org_config.falkordb_url,
+                platform_config.falkordb_url,
                 max_connections=_s.FALKORDB_MAX_CONNECTIONS,
                 socket_timeout=_s.FALKORDB_SOCKET_TIMEOUT,
                 socket_connect_timeout=5,  # hung TCP must fail fast
@@ -730,22 +765,22 @@ async def get_graph_backend_for_project(
     # Configured-but-unavailable guards — mirror get_graph_service so the
     # read-only path never constructs a doomed backend or 500s on an
     # unknown backend name.
-    if org_config.graph_backend == "surrealdb" and surreal is None:
+    if platform_config.graph_backend == "surrealdb" and surreal is None:
         raise GraphBackendUnavailableError(
             f"SurrealDB configured for user {user_id} (graph_backend="
             f"'surrealdb') but no connection is available — the "
             "surreal_connection_pool is missing or unreachable."
         )
-    if org_config.graph_backend == "falkordb" and falkordb_client is None:
+    if platform_config.graph_backend == "falkordb" and falkordb_client is None:
         raise GraphBackendUnavailableError(
             f"FalkorDB configured for user {user_id} (graph_backend="
             f"'falkordb') but no client is available — neither a system-level "
-            "FALKORDB_URL nor a per-org falkordb_url."
+            "FALKORDB_URL nor a per-user falkordb_url."
         )
 
     try:
         graph_backend = dispatcher.resolve_and_create(
-            org_config,
+            platform_config,
             db,
             surreal=surreal,
             falkordb_client=falkordb_client,
@@ -757,11 +792,11 @@ async def get_graph_backend_for_project(
             "graph_backend.unknown_backend",
             extra={
                 "user_id": str(user_id),
-                "backend": org_config.graph_backend,
+                "backend": platform_config.graph_backend,
             },
         )
         raise GraphBackendUnavailableError(
-            f"Unknown graph backend '{org_config.graph_backend}' for org "
+            f"Unknown graph backend '{platform_config.graph_backend}' for user "
             f"{user_id}: {exc}"
         ) from exc
 
@@ -771,7 +806,7 @@ async def get_graph_backend_for_project(
     if graph_backend is None:
         logger.error(
             "graph_backend.not_configured",
-            extra={"user_id": str(user_id), "backend": org_config.graph_backend},
+            extra={"user_id": str(user_id), "backend": platform_config.graph_backend},
         )
         raise GraphBackendUnavailableError(
             f"No graph backend is configured for user {user_id} "

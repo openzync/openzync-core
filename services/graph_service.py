@@ -65,14 +65,14 @@ class GraphService:
     # ── User validation (moved from router layer) ───────────────────────────────
 
     async def ensure_user_exists(self, user_id: UUID) -> None:
-        """Verify the user exists in the organization.
+        """Verify the user exists in the user scope.
 
         Args:
-            user_id: The authenticated organization UUID.
+            user_id: The authenticated user UUID.
             user_id: The requested user UUID.
 
         Raises:
-            NotFoundError: If the user does not exist in the organization
+            NotFoundError: If the user does not exist in the user scope
                 or no user repository is configured.
         """
         if self._user_repo is None:
@@ -83,7 +83,7 @@ class GraphService:
         user = await self._user_repo.get_by_uuid(user_id)
         if user is None:
             raise NotFoundError(
-                message=f"User {user_id} not found in organization {user_id}",
+                message=f"User {user_id} not found in user scope {user_id}",
                 detail={"user_id": str(user_id)},
             )
 
@@ -118,7 +118,7 @@ class GraphService:
         ``entity_type``.
 
         Args:
-            user_id: The authenticated organization UUID.
+            user_id: The authenticated user UUID.
             project_id: The project UUID for intra-org isolation.
             entity_type: Optional filter by entity type.
             limit: Maximum results per page (max 200).
@@ -133,11 +133,11 @@ class GraphService:
 
         Raises:
             GraphBackendUnavailableError: If the graph backend is not
-                available for this organization.
+                available for this user.
         """
         if self._backend is None:
             raise GraphBackendUnavailableError(
-                "Graph backend is not available for this organization.",
+                "Graph backend is not available for this user.",
                 detail={"operation": "get_entities"},
             )
 
@@ -219,7 +219,7 @@ class GraphService:
         """Get a single entity node with all its incident edges.
 
         Args:
-            user_id: The authenticated organization UUID.
+            user_id: The authenticated user UUID.
             project_id: The project UUID for intra-org isolation.
             entity_id: The UUID of the entity to fetch.
 
@@ -228,13 +228,13 @@ class GraphService:
 
         Raises:
             GraphBackendUnavailableError: If the graph backend is not
-                available for this organization.
+                available for this user.
             EntityNotFoundError: If the entity does not exist in the
                 knowledge graph.
         """
         if self._backend is None:
             raise GraphBackendUnavailableError(
-                "Graph backend is not available for this organization.",
+                "Graph backend is not available for this user.",
                 detail={"operation": "get_entity", "entity_id": str(entity_id)},
             )
 
@@ -258,7 +258,7 @@ class GraphService:
         """Delete an entity node from the knowledge graph.
 
         Args:
-            user_id: The authenticated organization UUID.
+            user_id: The authenticated user UUID.
             project_id: The project UUID for intra-org isolation.
             entity_id: The UUID of the entity to delete.
 
@@ -267,12 +267,12 @@ class GraphService:
 
         Raises:
             GraphBackendUnavailableError: If the graph backend is not
-                available for this organization.
+                available for this user.
             ExternalServiceError: If the graph operation fails.
         """
         if self._backend is None:
             raise GraphBackendUnavailableError(
-                "Graph backend is not available for this organization.",
+                "Graph backend is not available for this user.",
                 detail={"operation": "delete_entity", "entity_id": str(entity_id)},
             )
 
@@ -303,7 +303,7 @@ class GraphService:
         ``predicate``.
 
         Args:
-            user_id: The authenticated organization UUID.
+            user_id: The authenticated user UUID.
             project_id: The project UUID for intra-org isolation.
             subject_id: Optional filter by source entity UUID.
             subject_ids: Batch of entity UUIDs to fetch edges for.
@@ -317,11 +317,11 @@ class GraphService:
 
         Raises:
             GraphBackendUnavailableError: If the graph backend is not
-                available for this organization.
+                available for this user.
         """
         if self._backend is None:
             raise GraphBackendUnavailableError(
-                "Graph backend is not available for this organization.",
+                "Graph backend is not available for this user.",
                 detail={"operation": "get_edges"},
             )
 
@@ -392,7 +392,7 @@ class GraphService:
         community list fits one page).
 
         Args:
-            user_id: The authenticated organization UUID.
+            user_id: The authenticated user UUID.
             project_id: The project UUID for intra-org isolation.
             sort: Validated sort spec (forwarded opaque; ``member_count``
                 sorts in Python post-fetch).
@@ -403,13 +403,13 @@ class GraphService:
 
         Raises:
             GraphBackendUnavailableError: If the graph backend is not
-                available for this organization.
+                available for this user.
         """
         from core.exceptions import ValidationError
 
         if self._backend is None:
             raise GraphBackendUnavailableError(
-                "Graph backend is not available for this organization.",
+                "Graph backend is not available for this user.",
                 detail={"operation": "get_communities"},
             )
 

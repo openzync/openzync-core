@@ -23,9 +23,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.exceptions import GraphBackendUnavailableError
 from dependencies.auth import require_permission
 from dependencies.db import get_db
-from dependencies.org_config import get_platform_config
+from dependencies.platform_config import get_platform_config
 from dependencies.project_auth import require_project_membership
-from schemas.organization_config import PlatformConfigBase
+from schemas.platform_config import PlatformConfigBase
 from schemas.sorting import SearchSort
 from services.hybrid_retriever import HybridRetriever
 
@@ -79,7 +79,7 @@ async def search_memory(
     db: AsyncSession = Depends(get_db),
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:read")),
-    org_config: PlatformConfigBase = Depends(get_platform_config),
+    platform_config: PlatformConfigBase = Depends(get_platform_config),
 ) -> dict:
     """Hybrid search across a project's memory.
 
@@ -97,13 +97,13 @@ async def search_memory(
     backend).
 
     Args:
-        request: The FastAPI request object — used to access org/project IDs.
+        request: The FastAPI request object — used to access user/project IDs.
         query: The search query string.
         limit: Maximum results per source type.
         types: Comma-separated result type filter.
         sort: Result order — ``relevance`` or ``recent``.
         db: An async SQLAlchemy session (injected).
-        org_config: Org-level configuration (injected).
+        platform_config: Platform configuration (injected).
 
     Returns:
         A dict with ``query`` (the original query), ``results`` (the
@@ -116,15 +116,15 @@ async def search_memory(
     # ── Run hybrid search ───────────────────────────────────────────────
     dispatcher = request.app.state.graph_backend_dispatcher
 
-    # Connect to SurrealDB only when the org explicitly configures it.
+    # Connect to SurrealDB only when the user explicitly configures it.
     # For falkordb or none backends, skip the pool entirely — avoids
     # unnecessary connections and prevents 503 when SurrealDB isn't running.
     surreal = None
-    if org_config.graph_backend == "surrealdb":
+    if platform_config.graph_backend == "surrealdb":
         pool = request.app.state.surreal_connection_pool
         if pool is not None:
             try:
-                surreal = await pool.get_or_create(user_id, org_config)
+                surreal = await pool.get_or_create(user_id, platform_config)
             except Exception as exc:
                 logger.error(
                     "search.surreal_connection_failed",
@@ -135,16 +135,16 @@ async def search_memory(
                     },
                 )
                 raise GraphBackendUnavailableError(
-                    f"SurrealDB connection failed for org {user_id} "
+                    f"SurrealDB connection failed for user {user_id} "
                     f"with graph_backend='surrealdb': {exc}"
                 ) from exc
 
-    graph_backends = dispatcher.create_all_backends(db, org_config, surreal=surreal)
+    graph_backends = dispatcher.create_all_backends(db, platform_config, surreal=surreal)
     retriever = HybridRetriever(
         db,
         user_id,
         graph_backends=graph_backends,
-        org_config=org_config,
+        platform_config=platform_config,
         session_factory=request.app.state.db_session_factory,
     )
     results = await retriever.hybrid_search(

@@ -244,7 +244,7 @@ def rls_scoped_session_factory(
     session-scoped ``app.user_id`` outlives the transaction on the pooled
     connection.  Initialising the context to an **empty** tenant when the
     session is opened makes the pool fail closed: a task that forgets to
-    bind its tenant sees no rows at all instead of another org's rows.
+    bind its tenant sees no rows at all instead of another user's rows.
 
     Args:
         factory: The raw session factory bound to the worker's engine.
@@ -685,14 +685,14 @@ async def main() -> NoReturn:
     db_session_factory = rls_scoped_session_factory(get_async_session(db_engine))
 
     # ── Graph backend dispatcher ──────────────────────────────────────────
-    # Single app-level registry of backend classes.  Per-org resolution
+    # Single app-level registry of backend classes.  Per-user resolution
     # happens inside worker tasks via resolve_graph_backend().
     from core.graph_backend import init_dispatcher
 
     dispatcher = init_dispatcher()
 
-    # ── SurrealDB per-org connection pool ────────────────────────────────
-    # Created once per worker process, caches per-org AsyncSurreal
+    # ── SurrealDB per-user connection pool ────────────────────────────────
+    # Created once per worker process, caches per-user AsyncSurreal
     # connections lazily.  SurrealDB is optional — the pool handles missing
     # URLs gracefully by raising GraphBackendUnavailableError.
     from core.surreal_pool import SurrealConnectionPool

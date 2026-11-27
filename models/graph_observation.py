@@ -32,7 +32,7 @@ class GraphObservation(TimestampMixin, Base):
 
     Attributes:
         id: UUID primary key.
-        user_id: Owning organization (RLS enforcement).
+        user_id: Owning user (RLS enforcement).
         project_id: Owning project (project-scoped isolation).
         subject_entity_id: The entity this observation is about.
         related_entity_id: For pair-level observations (e.g., co-occurrence),

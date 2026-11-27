@@ -157,7 +157,7 @@ async def list_facts_at_time(
     endpoint automatically reflects supersession semantics.
 
     Args:
-        request: The FastAPI request object (org/project IDs).
+        request: The FastAPI request object (user/project IDs).
         as_of: Effective-at timestamp; ``None`` resolves to now.
         limit: Max facts per page.
         offset: Pagination offset.
@@ -233,7 +233,7 @@ async def retract_fact(
     projects).
 
     Args:
-        request: The FastAPI request object (org/project IDs).
+        request: The FastAPI request object (user/project IDs).
         fact_id: The fact to retract.
         payload: Optional retraction metadata (reason).
         service: Request-scoped FactService (injected).
@@ -301,7 +301,7 @@ async def get_fact_history(
     returned (existence is not leaked across projects).
 
     Args:
-        request: The FastAPI request object (org/project IDs).
+        request: The FastAPI request object (user/project IDs).
         fact_id: The fact whose lineage to fetch.
         limit: Max events per page (1–200).
         offset: Number of events to skip.

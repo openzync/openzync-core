@@ -25,7 +25,7 @@ LlmBackend = Literal["ollama", "openai", "openai_like", "azure", "anthropic"]
 
 # ── System-managed field sets ──────────────────────────────────────────────
 # These fields are overridden at the system level (via OZ_* env vars)
-# and cannot be set through org_config when the corresponding system
+# and cannot be set through platform_config when the corresponding system
 # setting is active.
 
 SYSTEM_MANAGED_SURREALDB_FIELDS: frozenset[str] = frozenset(
@@ -101,7 +101,7 @@ def _validate_enrichment_values(
 
 
 def _coerce_enrichment_gate(v: Any) -> Any:
-    """Coerce legacy gate shapes to the org gate object shape.
+    """Coerce legacy gate shapes to the user gate object shape.
 
     ``True``/``False`` → ``{"enabled": v, "threshold": 0.5}``; dicts pass
     through with the legacy ``model`` subkey stripped (the model is
@@ -119,7 +119,7 @@ def _coerce_enrichment_gate(v: Any) -> Any:
 
 
 class EnrichmentGatePlatformConfig(BaseModel):
-    """Per-org enrichment gate (non-secret tunables only).
+    """Per-user enrichment gate (non-secret tunables only).
 
     The gate skips the single LLM call for low-signal episodes.  The Hub
     model is fixed to the platform default — a ``model`` subkey is
@@ -139,7 +139,7 @@ class EnrichmentGatePlatformConfig(BaseModel):
 
 
 class PromptCachingPlatformConfig(BaseModel):
-    """Per-org overrides for provider-side prompt caching.
+    """Platform overrides for provider-side prompt caching.
 
     Mirrors the global ``PROMPT_CACHING_*`` settings.  Every field is
     optional — unset fields fall back to the global value in
@@ -241,13 +241,13 @@ class PlatformConfigBase(BaseModel):
     )
     enrichment_gate: EnrichmentGatePlatformConfig | None = Field(
         default=None,
-        description="Enrichment gate for this org "
+        description="Enrichment gate for this platform "
         "({enabled, threshold 0-1}); None inherits the gate defaults "
         "(disabled, 0.5).",
     )
     prompt_caching: PromptCachingPlatformConfig | None = Field(
         default=None,
-        description="Per-org overrides for provider-side prompt caching "
+        description="Platform overrides for provider-side prompt caching "
         "(enabled, anthropic_min_tokens, anthropic_cache_ttl).  Unset "
         "fields fall back to the global PROMPT_CACHING_* settings.",
     )
@@ -279,7 +279,7 @@ class PlatformConfigBase(BaseModel):
         description="Maximum BFS traversal depth for the graph backend.",
     )
 
-    # ── SurrealDB (per-org connection) ─────────────────────────────
+    # ── SurrealDB (platform connection) ────────────────────────────
     surrealdb_url: str | None = Field(
         default=None,
         description="SurrealDB WebSocket connection URL (e.g. ws://surrealdb:8000/rpc).",
@@ -301,10 +301,10 @@ class PlatformConfigBase(BaseModel):
         description="SurrealDB database within the namespace.",
     )
 
-    # ── FalkorDB (per-org connection details) ────────────────────────────
+    # ── FalkorDB (platform connection details) ─────────────────────────
     falkordb_url: str | None = Field(
         default=None,
-        description="FalkorDB connection URL for per-org configuration "
+        description="FalkorDB connection URL for platform configuration "
         "(e.g. redis://falkordb:6379).  Only used when system-level "
         "FALKORDB_URL is not set.",
     )
@@ -346,7 +346,7 @@ class PlatformConfigBase(BaseModel):
         description="Cohere API key for the Cohere Rerank backend.",
     )
 
-    # ⚠️ BREAKING: per-org blob storage was removed — one global backend
+    # ⚠️ BREAKING: per-user blob storage was removed — one global backend
     # (``OZ_S3_*`` / ``OZ_BLOB_*`` Settings, env-owned). The deleted
     # fields (``blob_storage_backend``, ``s3_endpoint_url``, ``s3_region``,
     # ``s3_access_key_id``, ``s3_secret_access_key``, ``s3_bucket_name``,
@@ -425,7 +425,7 @@ class PlatformConfigBase(BaseModel):
         our canonical field names to the provider-specific keys that
         ``_create_backend()`` in ``core/llm.py`` expects.  ``prompt_caching``
         is included as a nested dict so ``build_cache_config()`` can honour
-        per-org overrides.
+        platform overrides.
         """
         d: dict[str, str | float | int | dict[str, object]] = {}
         if self.llm_backend is not None:
@@ -498,7 +498,7 @@ class UpdatePlatformConfigRequest(BaseModel):
     )
     enrichment_gate: EnrichmentGatePlatformConfig | None = Field(
         default=None,
-        description="Enrichment gate for this org "
+        description="Enrichment gate for this platform "
         "({enabled, threshold 0-1}). Null removes the stored override "
         "(restores the gate defaults: disabled, 0.5).",
     )
@@ -613,7 +613,7 @@ ConfigTestDomain = Literal["llm", "graph"]
 
 ⚠️ BREAKING: ``"embeddings"`` was removed — there is no embedder to
 configure or probe.  POSTing it now fails schema validation (422).
-⚠️ BREAKING: ``"blob"`` was removed with per-org blob storage — blob
+⚠️ BREAKING: ``"blob"`` was removed with per-user blob storage — blob
 storage is global (``OZ_S3_*``) with nothing to probe.  POSTing it now
 fails schema validation (422).
 """

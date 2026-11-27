@@ -1,6 +1,6 @@
 """Quick actions service — context-aware action suggestions for the dashboard.
 
-Determines which quick actions to show based on the organization's current
+Determines which quick actions to show based on the user's current
 state (projects, LLM config, users).  Called by the overview page router.
 """
 
@@ -11,7 +11,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.org_config import get_platform_config
+from core.platform_config import get_platform_config
 from repositories.organization_repository import OrganizationRepository
 from repositories.project_repository import ProjectRepository
 from repositories.user_repository import UserRepository
@@ -23,9 +23,9 @@ class QuickActionsService:
     Args:
         project_repo: Repository for project queries.
         user_repo: Repository for user queries.
-        org_repo: Repository for organization queries.
+        org_repo: Repository for platform queries.
         db: Async session for canonical per-user config resolution
-            (``core.org_config`` reads flat ``users.config_override``).
+            (``core.platform_config`` reads flat ``users.config_override``).
             Falls back to ``org_repo.session`` when omitted.
         redis: Optional async Redis client for cache-first config reads.
             ``None`` skips the cache (DB-authoritative).
@@ -46,10 +46,10 @@ class QuickActionsService:
         self._redis = redis
 
     async def get_actions(self, user_id: UUID) -> list[dict]:
-        """Build a prioritized list of quick actions based on org state.
+        """Build a prioritized list of quick actions based on platform state.
 
         Args:
-            user_id: The organization UUID.
+            user_id: The user UUID.
 
         Returns:
             A list of action dicts, each with ``label``, ``href``, ``icon``,
@@ -61,7 +61,7 @@ class QuickActionsService:
         project_count = await self._project_repo.count_active(user_id)
         # Canonical per-user config (flat users.config_override shape,
         # cache-first) — never the legacy nested organizations.config.
-        org_config = await get_platform_config(
+        platform_config = await get_platform_config(
             user_id, redis=self._redis, db=self._db
         )
         user_count = await self._user_repo.count_active(user_id)
@@ -83,10 +83,10 @@ class QuickActionsService:
             })
 
         # 2. LLM config
-        if not org_config.llm_backend:
+        if not platform_config.llm_backend:
             actions.append({
                 "label": "Configure LLM Provider",
-                "href": "/settings/org-config/llm",
+                "href": "/settings/platform-config/llm",
                 "icon": "brain-circuit",
                 "description": "Set up your LLM provider to start using sessions",
             })
@@ -111,7 +111,7 @@ class QuickActionsService:
             "label": "View Audit Log",
             "href": "/audit",
             "icon": "shield",
-            "description": "Track changes across your organization",
+            "description": "Track changes across your workspace",
         })
 
         return actions

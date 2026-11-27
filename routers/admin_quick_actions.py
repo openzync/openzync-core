@@ -1,7 +1,7 @@
 """Admin dashboard quick-actions endpoint — context-aware action suggestions.
 
-Returns a list of actionable items for the org-level overview page,
-based on the organization's current state (projects, config, users, etc.).
+Returns a list of actionable items for the platform-level overview page,
+based on the platform user's current state (projects, config, users, etc.).
 
 All endpoints require JWT authentication (dashboard session).
 """
@@ -43,11 +43,11 @@ async def list_quick_actions(
     service: QuickActionsService = Depends(get_quick_actions_service),
     user_id: str = Depends(require_permission("members:read")),
 ) -> QuickActionsResponse:
-    """Return a prioritized list of quick actions based on org state.
+    """Return a prioritized list of quick actions based on platform state.
 
     Args:
         service: Quick actions service (injected).
-        user_id: Authenticated organization ID (from JWT).
+        user_id: Authenticated user ID (from JWT).
         _user_id: Authenticated dashboard user ID (ensures JWT auth).
 
     Returns:

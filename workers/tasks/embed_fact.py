@@ -55,7 +55,7 @@ async def _retire_fact(
         engine: The worker's async engine (disposed when ``own_engine``).
         own_engine: True when this worker created the engine itself.
         fact_id: UUID of the fact to retire.
-        user_id: UUID of the owning organization (RLS tenant scope).
+        user_id: UUID of the owning user (RLS tenant scope).
     """
     # Any keeps sqlalchemy out of module top-level (ARQ lazy-import convention).
     from sqlalchemy import text
