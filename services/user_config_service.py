@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import get_settings
 from core.dict_merge import deep_merge
 from core.exceptions import NotFoundError, ValidationError
-from core.org_config import get_org_config
+from core.org_config import get_platform_config
 from core.system_config import get_system_config
 from repositories.auth_repository import AuthRepository
 from repositories.user_repository import UserRepository
@@ -136,7 +136,7 @@ class UserConfigService:
         effective: dict[str, Any] = deep_merge(
             {}, system.model_dump(exclude_none=True)
         )
-        org = await get_org_config(
+        org = await get_platform_config(
             user.id,
             redis=self._redis,
             db=self._db,

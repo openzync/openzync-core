@@ -122,7 +122,7 @@ async def link_entities_to_episode(
     try:
         async with session_factory() as db:
             try:
-                await rls.set_tenant_context(db, user_id)
+                await rls.set_user_context(db, user_id)
                 # ── 1. Get the episode ──────────────────────────────────────────
                 result = await db.execute(
                     select(Episode).where(Episode.id == episode_id)

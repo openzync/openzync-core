@@ -179,7 +179,7 @@ async def _process_org(ctx: dict, db: AsyncSession, user_id: UUID) -> int:
     # remembered by the session, so _process_org's commit re-applies it
     # instead of leaving the session un-tenanted.
     await rls.set_bypass_rls(db, False)
-    await rls.set_tenant_context(db, user_id)
+    await rls.set_user_context(db, user_id)
 
     backend = await resolve_graph_backend(ctx, user_id, db)
     if backend is None:
@@ -407,7 +407,7 @@ async def _create_community(
     """
     from core.llm import build_cache_config
     from core.llm import resolve_backend as resolve_llm_backend
-    from core.org_config import get_org_config
+    from core.org_config import get_platform_config
     from services.usage_service import make_sink
 
     # Build entity name map
@@ -429,7 +429,7 @@ async def _create_community(
     # Generate summary via LLM
     try:
         prompt = _build_community_prompt(context_entities, context_rels)
-        org_cfg = await get_org_config(user_id, redis=None, db=db)
+        org_cfg = await get_platform_config(user_id, redis=None, db=db)
         llm_config_dict = org_cfg.to_llm_config_dict()
         sink = make_sink(
             db,

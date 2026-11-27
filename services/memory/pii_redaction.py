@@ -45,9 +45,9 @@ class PIIRedactionMixin:
         """
         trace_id = structlog.contextvars.get_contextvars().get("request_id", "unknown")
         try:
-            from core.org_config import get_org_config
+            from core.org_config import get_platform_config
 
-            org_cfg = await get_org_config(user_id, redis=self._redis, db=self._db)
+            org_cfg = await get_platform_config(user_id, redis=self._redis, db=self._db)
         except Exception as exc:
             logger.error(
                 "pii.fail_closed",

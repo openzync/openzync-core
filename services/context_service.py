@@ -32,7 +32,7 @@ from services.context_formatter import format_json, format_text
 from services.hybrid_retriever import HybridRetriever
 
 if TYPE_CHECKING:
-    from schemas.organization_config import OrgConfigBase
+    from schemas.organization_config import PlatformConfigBase
 
 from repositories.episode_blob_repository import EpisodeBlobRepository
 from services.blob_storage_service import BlobStorageService
@@ -98,7 +98,7 @@ class ContextService:
         user_id: UUID,
         redis: object | None = None,
         graph_backends: list | None = None,
-        org_config: OrgConfigBase | None = None,
+        org_config: PlatformConfigBase | None = None,
         session_factory: object | None = None,
     ) -> None:
         self._db = db

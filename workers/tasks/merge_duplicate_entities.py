@@ -135,7 +135,7 @@ async def merge_duplicate_entities(
                     # Bind the session to the org being processed before any
                     # org-scoped query — under enforced RLS an unbound session
                     # sees no rows.
-                    await rls.set_tenant_context(db, current_org_id)
+                    await rls.set_user_context(db, current_org_id)
                     try:
                         clusters = await _process_org(
                             ctx, db, current_org_id,

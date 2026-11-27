@@ -22,7 +22,7 @@ from services.graph_stats_service import GraphStatsService
 
 if TYPE_CHECKING:
     from packages.graph_backend.interface import GraphBackend
-    from schemas.organization_config import OrgConfigBase
+    from schemas.organization_config import PlatformConfigBase
     from services.metrics_service import MetricsService
 
 logger = structlog.get_logger(__name__)
@@ -39,7 +39,7 @@ class AdminMetricsService:
     async def get_summary(
         self,
         request: Request,
-        org_config: OrgConfigBase,
+        org_config: PlatformConfigBase,
         user_id: UUID,
         start: datetime,
         end: datetime,

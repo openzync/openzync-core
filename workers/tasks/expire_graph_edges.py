@@ -102,7 +102,7 @@ async def _expire_graph_edges(
         # true), ''), so an unset context matches no rows instead of
         # raising.  The binding is remembered by the session, so the commit
         # below re-applies it.
-        await rls.set_tenant_context(db, user_id)
+        await rls.set_user_context(db, user_id)
         backend = await _resolve_backend(ctx, user_id, db)
         if backend is None:
             logger.info(

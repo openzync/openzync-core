@@ -28,10 +28,10 @@ import structlog
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.exceptions import ValidationError as OrgConfigValidationError
+from core.exceptions import ValidationError as PlatformConfigValidationError
 from schemas.organization_config import (
-    OrgConfigBase,
-    UpdateOrgConfigRequest,
+    PlatformConfigBase,
+    UpdatePlatformConfigRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -73,8 +73,8 @@ def _invalid_field_names(exc: PydanticValidationError) -> list[str]:
     return sorted(fields)
 
 
-def _with_graph_default(raw: dict[str, Any]) -> OrgConfigBase:
-    """Build an :class:`OrgConfigBase` defaulting an unset graph backend.
+def _with_graph_default(raw: dict[str, Any]) -> PlatformConfigBase:
+    """Build an :class:`PlatformConfigBase` defaulting an unset graph backend.
 
     Args:
         raw: The stored override dict (may be empty).
@@ -83,35 +83,35 @@ def _with_graph_default(raw: dict[str, Any]) -> OrgConfigBase:
         The validated config with ``graph_backend="falkordb"`` when unset.
 
     Raises:
-        OrgConfigValidationError: If stored values fail schema validation.
+        PlatformConfigValidationError: If stored values fail schema validation.
     """
     if not raw.get("graph_backend"):
         raw = {**raw, "graph_backend": "falkordb"}
     try:
-        return OrgConfigBase(**raw)
+        return PlatformConfigBase(**raw)
     except PydanticValidationError as exc:
         fields = _invalid_field_names(exc)
         logger.warning(
             "org_config.stored_config_invalid",
             extra={"fields": fields},
         )
-        raise OrgConfigValidationError(
+        raise PlatformConfigValidationError(
             message=(
                 "Stored org config failed validation in field(s): "
                 f"{', '.join(fields) or 'unknown'}. "
-                "Fix via PATCH /admin/org/config."
+                "Fix via PATCH /admin/platform-config."
             ),
             detail={"fields": fields},
         ) from None
 
 
-async def get_org_config(
+async def get_platform_config(
     user_id: UUID,
     redis: redis.asyncio.Redis | None = None,
     db: AsyncSession | None = None,
     *,
     skip_cache: bool = False,
-) -> OrgConfigBase:
+) -> PlatformConfigBase:
     """Fetch the stored config for a user: cache → DB.
 
     There is no env-var fallback — every field is returned as stored in
@@ -127,7 +127,7 @@ async def get_org_config(
         skip_cache: If ``True``, bypass cache and always fetch from the DB.
 
     Returns:
-        An :class:`OrgConfigBase` with only the fields that are explicitly
+        An :class:`PlatformConfigBase` with only the fields that are explicitly
         set.  Unset fields are ``None`` (except ``graph_backend``, which
         defaults to ``"falkordb"`` for new users).
 
@@ -144,7 +144,7 @@ async def get_org_config(
             cached = await redis.get(cache_key)
             if cached:
                 try:
-                    return OrgConfigBase.model_validate_json(cached)
+                    return PlatformConfigBase.model_validate_json(cached)
                 except PydanticValidationError as exc:
                     # Poisoned cache entry — drop it and fall through to
                     # the DB (authoritative).  Field names only, never values.
@@ -175,7 +175,7 @@ async def get_org_config(
 
     # 2. Fetch from DB (authoritative)
     if db is None:
-        raise RuntimeError("get_org_config requires a DB session on cache miss")
+        raise RuntimeError("get_platform_config requires a DB session on cache miss")
     from repositories.user_repository import UserRepository  # noqa: PLC0415 — lazy, avoids import cycle
 
     raw = await UserRepository(db).get_config_override(user_id)
@@ -199,12 +199,12 @@ async def get_org_config(
     return org_config
 
 
-async def update_org_config(
+async def update_platform_config(
     user_id: UUID,
-    update_data: UpdateOrgConfigRequest | dict[str, Any],
+    update_data: UpdatePlatformConfigRequest | dict[str, Any],
     redis: redis.asyncio.Redis | None = None,
     db: AsyncSession | None = None,
-) -> OrgConfigBase:
+) -> PlatformConfigBase:
     """Update stored user config in the DB, invalidate cache, return fresh config.
 
     Performs a one-level-deep merge: provided keys replace existing stored
@@ -219,7 +219,7 @@ async def update_org_config(
 
     Args:
         user_id: The user UUID.
-        update_data: Fields to update.  Can be a :class:`UpdateOrgConfigRequest`
+        update_data: Fields to update.  Can be a :class:`UpdatePlatformConfigRequest`
             or a plain dict.
         redis: An optional async Redis client (for cache invalidation).
         db: Async DB session for the read/write.  Required.
@@ -227,13 +227,13 @@ async def update_org_config(
     Returns:
         The freshly stored config after the update.
     """
-    if isinstance(update_data, UpdateOrgConfigRequest):
+    if isinstance(update_data, UpdatePlatformConfigRequest):
         update_dict = update_data.model_dump(exclude_unset=True)
     else:
         update_dict = update_data
 
     if db is None:
-        raise RuntimeError("update_org_config requires a DB session")
+        raise RuntimeError("update_platform_config requires a DB session")
     from repositories.user_repository import UserRepository  # noqa: PLC0415 — lazy, avoids import cycle
 
     repo = UserRepository(db)
@@ -274,7 +274,7 @@ async def update_org_config(
             )
 
     # 5. Re-read from DB (cache is cold — forces fresh read)
-    return await get_org_config(user_id, redis=redis, db=db, skip_cache=True)
+    return await get_platform_config(user_id, redis=redis, db=db, skip_cache=True)
 
 
 def build_cache_key(user_id: UUID) -> str:

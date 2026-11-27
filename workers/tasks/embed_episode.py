@@ -121,7 +121,7 @@ async def embed_episode(
             try:
                 # Bind the session to the tenant before the first org-scoped
                 # query — under enforced RLS an unbound session sees no rows.
-                await rls.set_tenant_context(db, user_id)
+                await rls.set_user_context(db, user_id)
                 episode_repo = EpisodeRepository(db)
                 episode = await episode_repo.get_by_id(uuid.UUID(episode_id))
                 if episode is None:
@@ -191,7 +191,7 @@ async def embed_episode(
         # ── 4. Re-acquire row lock, recheck bit, then write ──────────
         async with session_factory() as db:
             try:
-                await rls.set_tenant_context(db, user_id)
+                await rls.set_user_context(db, user_id)
                 episode_repo = EpisodeRepository(db)
                 # Acquire the row lock first — concurrent same-episode
                 # writers serialize here.  The bit is then rechecked on a

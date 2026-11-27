@@ -42,11 +42,11 @@ from middleware.request_id import RequestIDMiddleware
 from middleware.tracing import TracingMiddleware
 from routers import (
     admin_invites,
+    admin_custom_instructions,
     admin_llm_usage,
     admin_metrics,
     admin_org_config,
     admin_schemas,
-    admin_organizations,
     admin_quick_actions,
     admin_schemas,
     admin_stats,
@@ -327,7 +327,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_stats.router)
     app.include_router(admin_quick_actions.router)
     app.include_router(admin_webhooks.router)
-    app.include_router(admin_organizations.router)
+    app.include_router(admin_custom_instructions.router)
     app.include_router(admin_org_config.router)
     app.include_router(admin_invites.router)
     app.include_router(admin_system.router)

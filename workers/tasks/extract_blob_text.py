@@ -281,9 +281,9 @@ async def _redact_extracted_text(
     from core.exceptions import PIIUnavailableError, ValidationError
 
     try:
-        from core.org_config import get_org_config
+        from core.org_config import get_platform_config
 
-        org_cfg = await get_org_config(
+        org_cfg = await get_platform_config(
             UUID(user_id),
             redis=None,
             db=db,  # type: ignore[arg-type]

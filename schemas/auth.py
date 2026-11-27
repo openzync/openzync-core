@@ -58,7 +58,7 @@ class SignupRequest(BaseModel):
 
 
 class JoinRequest(BaseModel):
-    """Request body for ``POST /v1/auth/join``.
+    """Request body for member signup into the singleton platform org.
 
     Joins the singleton platform org as a member (email + password).
     """

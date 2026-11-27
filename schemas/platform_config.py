@@ -1,11 +1,11 @@
-"""Pydantic schemas for per-organization configuration.
+"""Pydantic schemas for per-user platform configuration.
 
 All settings that were previously env-var-only (Groups A, B, C) are now
-storable in the ``organizations.config`` JSONB column and exposed via UI.
+storable in the ``users.config_override`` JSONB column and exposed via UI.
 
 Key pattern:
-- ``OrgConfigBase`` — the raw DB shape (all fields optional).
-- ``UpdateOrgConfigRequest`` — API input for partial updates.
+- ``PlatformConfigBase`` — the raw DB shape (all fields optional).
+- ``UpdatePlatformConfigRequest`` — API input for partial updates.
 """
 
 from __future__ import annotations
@@ -107,7 +107,7 @@ def _coerce_enrichment_gate(v: Any) -> Any:
     through with the legacy ``model`` subkey stripped (the model is
     fixed to the platform default, never configured).
     """
-    if v is None or isinstance(v, EnrichmentGateOrgConfig):
+    if v is None or isinstance(v, EnrichmentGatePlatformConfig):
         return v
     if isinstance(v, bool):
         return {"enabled": v, "threshold": 0.5}
@@ -118,7 +118,7 @@ def _coerce_enrichment_gate(v: Any) -> Any:
     return v
 
 
-class EnrichmentGateOrgConfig(BaseModel):
+class EnrichmentGatePlatformConfig(BaseModel):
     """Per-org enrichment gate (non-secret tunables only).
 
     The gate skips the single LLM call for low-signal episodes.  The Hub
@@ -138,7 +138,7 @@ class EnrichmentGateOrgConfig(BaseModel):
     )
 
 
-class PromptCachingOrgConfig(BaseModel):
+class PromptCachingPlatformConfig(BaseModel):
     """Per-org overrides for provider-side prompt caching.
 
     Mirrors the global ``PROMPT_CACHING_*`` settings.  Every field is
@@ -168,11 +168,11 @@ class PromptCachingOrgConfig(BaseModel):
         return "5m"
 
 
-# ── DB shape (stored in organizations.config JSONB) ──────────────────────────
+# ── DB shape (stored in users.config_override JSONB) ──────────────────────────
 
 
-class OrgConfigBase(BaseModel):
-    """Raw per-org config stored in the ``organizations.config`` JSONB column.
+class PlatformConfigBase(BaseModel):
+    """Raw per-user config stored in the ``users.config_override`` JSONB column.
 
     Every field is **optional**.  When a field is ``None`` (absent from the
     JSONB), the caller must decide what to do — there is no env-var fallback
@@ -239,13 +239,13 @@ class OrgConfigBase(BaseModel):
         "Validated on ingest: facts/entity_links require entities, "
         "llm_invalidation requires facts.",
     )
-    enrichment_gate: EnrichmentGateOrgConfig | None = Field(
+    enrichment_gate: EnrichmentGatePlatformConfig | None = Field(
         default=None,
         description="Enrichment gate for this org "
         "({enabled, threshold 0-1}); None inherits the gate defaults "
         "(disabled, 0.5).",
     )
-    prompt_caching: PromptCachingOrgConfig | None = Field(
+    prompt_caching: PromptCachingPlatformConfig | None = Field(
         default=None,
         description="Per-org overrides for provider-side prompt caching "
         "(enabled, anthropic_min_tokens, anthropic_cache_ttl).  Unset "
@@ -462,15 +462,15 @@ class OrgConfigBase(BaseModel):
 # ── API request / response ─────────────────────────────────────────────────
 
 
-class UpdateOrgConfigRequest(BaseModel):
-    """Request body for ``PATCH /admin/organizations/{user_id}/config``.
+class UpdatePlatformConfigRequest(BaseModel):
+    """Request body for ``PATCH /admin/platform-config``.
 
-    Same shape as ``OrgConfigBase`` — every field is optional, only provided
+    Same shape as ``PlatformConfigBase`` — every field is optional, only provided
     fields are updated.  Set a field to ``null`` to remove it (the caller
     will receive ``None`` for that field on the next read).
     """
 
-    # Same fields as OrgConfigBase, all optional
+    # Same fields as PlatformConfigBase, all optional
     llm_backend: LlmBackend | None = None
     llm_model: str | None = None
     llm_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
@@ -496,15 +496,15 @@ class UpdateOrgConfigRequest(BaseModel):
         "Validated on ingest: facts/entity_links require entities, "
         "llm_invalidation requires facts.",
     )
-    enrichment_gate: EnrichmentGateOrgConfig | None = Field(
+    enrichment_gate: EnrichmentGatePlatformConfig | None = Field(
         default=None,
         description="Enrichment gate for this org "
         "({enabled, threshold 0-1}). Null removes the stored override "
         "(restores the gate defaults: disabled, 0.5).",
     )
-    prompt_caching: PromptCachingOrgConfig | None = None
+    prompt_caching: PromptCachingPlatformConfig | None = None
     # ⚠️ BREAKING: embedding_* fields removed — see the note on
-    # ``OrgConfigBase``. Embedding settings now live in no config surface at all.
+    # ``PlatformConfigBase``. Embedding settings now live in no config surface at all.
     graph_backend: str | None = Field(
         default=None,
         description="Graph backend (falkordb, surrealdb, none). "
@@ -541,7 +541,7 @@ class UpdateOrgConfigRequest(BaseModel):
     reranker_top_n: int | None = Field(default=None, ge=1, le=100)
     cohere_api_key: str | None = None
     # ⚠️ BREAKING: blob_storage_backend / s3_* / max_blob_size_mb /
-    # image_extraction removed — see the note on ``OrgConfigBase``.
+    # image_extraction removed — see the note on ``PlatformConfigBase``.
     pii_mode: str | None = Field(
         default=None,
         pattern=r"^(off|mask|block)$",
@@ -609,7 +609,7 @@ class UpdateOrgConfigRequest(BaseModel):
 
 
 ConfigTestDomain = Literal["llm", "graph"]
-"""Domain selector for ``POST /admin/org/config/test``.
+"""Domain selector for ``POST /admin/platform-config/test``.
 
 ⚠️ BREAKING: ``"embeddings"`` was removed — there is no embedder to
 configure or probe.  POSTing it now fails schema validation (422).
@@ -619,18 +619,18 @@ fails schema validation (422).
 """
 
 
-class TestOrgConfigRequest(BaseModel):
-    """Request body for ``POST /admin/org/config/test``.
+class TestPlatformConfigRequest(BaseModel):
+    """Request body for ``POST /admin/platform-config/test``.
 
     ``config`` is a partial candidate — same shape as
-    :class:`UpdateOrgConfigRequest`, only explicitly provided fields
+    :class:`UpdatePlatformConfigRequest`, only explicitly provided fields
     overlay the stored config in-memory.  Nothing is persisted.
     """
 
     domain: ConfigTestDomain = Field(
         description="Which connection family to probe (llm, graph).",
     )
-    config: UpdateOrgConfigRequest = Field(
+    config: UpdatePlatformConfigRequest = Field(
         description="Partial candidate config overlaid on the stored "
         "config in-memory for this probe only.",
     )
@@ -649,8 +649,8 @@ class ProbeResult(BaseModel):
     )
 
 
-class TestOrgConfigResponse(BaseModel):
-    """Response for ``POST /admin/org/config/test``.
+class TestPlatformConfigResponse(BaseModel):
+    """Response for ``POST /admin/platform-config/test``.
 
     Per-probe failures are reported inline with ``ok: false`` — the
     endpoint still returns 200.  Only invalid payloads (422) or a
@@ -662,14 +662,14 @@ class TestOrgConfigResponse(BaseModel):
     )
 
 
-class OrgConfigResponse(BaseModel):
+class PlatformConfigResponse(BaseModel):
     """Response for config GET endpoints.
 
     Returns the raw stored config along with metadata about which
     fields are managed at the system level.
     """
 
-    stored: OrgConfigBase = Field(
+    stored: PlatformConfigBase = Field(
         description="Raw config stored in the DB — only explicitly set fields.",
     )
     system_managed_fields: list[str] = Field(

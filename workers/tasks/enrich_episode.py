@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from models.fact import Fact
-    from schemas.organization_config import OrgConfigBase
+    from schemas.organization_config import PlatformConfigBase
 
 logger = structlog.get_logger()
 
@@ -220,7 +220,7 @@ async def enrich_episode(
     from core.config import settings
     from core.db import get_async_session
     from core.llm import build_cache_config, resolve_backend
-    from core.org_config import get_org_config
+    from core.org_config import get_platform_config
     from repositories.entity_repository import EntityRepository
     from repositories.episode_blob_repository import EpisodeBlobRepository
     from repositories.episode_repository import EpisodeRepository
@@ -268,7 +268,7 @@ async def enrich_episode(
             # The binding is remembered by the session, so the commit at the
             # end of the task re-applies it — a bare ``set_config`` would
             # leave the session un-tenanted after that commit.
-            await rls.set_tenant_context(db, user_id)
+            await rls.set_user_context(db, user_id)
 
             episode_repo = EpisodeRepository(db)
             # Lock-free read: the gate infer below is CPU-bound, so the
@@ -543,10 +543,10 @@ async def enrich_episode(
                 )
 
             # ── 4. Fetch per-organization config ────────────────────────
-            org_cfg: OrgConfigBase | None = None
+            org_cfg: PlatformConfigBase | None = None
             llm_config_dict: dict | None = None
             try:
-                org_cfg = await get_org_config(
+                org_cfg = await get_platform_config(
                     uuid.UUID(user_id), redis=None, db=db
                 )
                 llm_config_dict = org_cfg.to_llm_config_dict()

@@ -6,7 +6,7 @@ Layering (lowest → highest precedence)::
 
 Every layer is an optional ``dict[str, bool]``; any missing key defaults to
 ``True`` (all-ON).  Callers extract the raw dict from their config object
-(``OrgConfigBase.enrichment``) and pass
+(``PlatformConfigBase.enrichment``) and pass
 it here — this module never touches the DB, Redis, or Pydantic layers.
 
 Disabled steps skip work but still stamp their
@@ -50,7 +50,7 @@ def _as_dict(layer: EnrichmentMap | Any | None) -> EnrichmentMap | None:
     """Unwrap a layer to a plain dict.
 
     Accepts a raw ``dict`` or any object carrying an ``enrichment`` attribute
-    (``OrgConfigBase``).  Anything else is a loud
+    (``PlatformConfigBase``).  Anything else is a loud
     wiring error — never silently treated as all-ON.
     """
     if layer is None:
@@ -184,7 +184,7 @@ def _as_org_gate_block(org: Any | None) -> dict[str, Any]:
 
     Accepts ``None``, a legacy bool, a raw gate dict, the nested gate
     object (``enabled`` / ``threshold`` attributes), or any object
-    carrying an ``enrichment_gate`` attribute (``OrgConfigBase``).  A
+    carrying an ``enrichment_gate`` attribute (``PlatformConfigBase``).  A
     ``model`` subkey is stripped here — the model is fixed to
     GATE_DEFAULT_MODEL, never parsed from config.  A dict carrying an
     ``enrichment_gate`` key is unwrapped one level (full stored config).
@@ -224,7 +224,7 @@ def resolve_enrichment_gate(
     GATE_DEFAULT_MODEL (fixed, not configurable).
 
     Args:
-        org: Org gate block, ``OrgConfigBase``, raw dict, or legacy bool.
+        org: Org gate block, ``PlatformConfigBase``, raw dict, or legacy bool.
 
     Returns:
         The effective ``{"enabled", "threshold", "model"}`` gate config

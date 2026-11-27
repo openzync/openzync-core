@@ -45,9 +45,9 @@ flows that cannot know their tenant up front:
     organization row without being bound to that organization therefore
     fails at the flush, not at the CHECK.  This is why the organization id
     is minted in Python and bound to the session **before** the flush (see
-    ``AuthRepository.create_organization`` and
-    ``OrganizationService.create_organization``): the id must be known and
-    bound before the INSERT runs, because the database cannot hand it back.
+    ``OrganizationRepository.ensure_platform_org``): the id must be known
+    and bound before the INSERT runs, because the database cannot hand it
+    back.
 
 ``org_anon_insert`` (``FOR INSERT`` only)
     The public signup path generates the organization id itself and creates
@@ -310,7 +310,7 @@ def upgrade() -> None:
     # RETURNING raises "new row violates row-level security policy" even
     # though the INSERT's own CHECK passed.  That is why the organization id
     # is minted in Python and bound to the session before the flush (see
-    # ``AuthRepository.create_organization``): the RETURNING clause is
+    # ``OrganizationRepository.ensure_platform_org``): the RETURNING clause is
     # filtered by the SELECT policy, so the session must already be bound
     # to the new organization when the INSERT runs.
     op.execute("""

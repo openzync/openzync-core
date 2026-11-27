@@ -1,7 +1,7 @@
 """Per-org SurrealDB connection pool — created lazily, cached by user_id.
 
 Each org gets its own ``AsyncSurreal`` connection using credentials from
-:class:`OrgConfigBase`.  Connections are created on first use and cached
+:class:`PlatformConfigBase`.  Connections are created on first use and cached
 for the lifetime of the worker (or until :meth:`close_all` is called on
 shutdown).
 
@@ -31,7 +31,7 @@ from surrealdb import AsyncSurreal
 from core.exceptions import GraphBackendUnavailableError
 
 if TYPE_CHECKING:
-    from schemas.organization_config import OrgConfigBase
+    from schemas.organization_config import PlatformConfigBase
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ class SurrealConnectionPool:
     async def get_or_create(
         self,
         user_id: UUID,
-        org_config: OrgConfigBase,
+        org_config: PlatformConfigBase,
         system_url: str | None = None,
     ) -> AsyncSurreal:
         """Return a cached ``AsyncSurreal`` for this org, or create one.

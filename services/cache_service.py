@@ -67,7 +67,7 @@ class CacheService:
             raise ValueError(
                 "default_ttl is required. "
                 "Set context_cache_ttl in the per-org configuration "
-                "via PATCH /admin/org/config."
+                "via PATCH /admin/platform-config."
             )
         self._redis = redis
         self._default_ttl: int = default_ttl

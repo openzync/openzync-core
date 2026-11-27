@@ -789,7 +789,7 @@ async def _create_backend(
         if config is None or not config.get("ollama_base_url"):
             raise LLMConfigurationError(
                 "Ollama backend requires ollama_base_url in per-org "
-                "configuration.  Set it via PATCH /admin/org/config."
+                "configuration.  Set it via PATCH /admin/platform-config."
             )
         instance: LLMBackend = backend_cls(
             base_url=config["ollama_base_url"],
@@ -799,7 +799,7 @@ async def _create_backend(
         if config is None or not config.get("openai_api_key"):
             raise LLMConfigurationError(
                 "OpenAI backend requires openai_api_key in per-org "
-                "configuration.  Set it via PATCH /admin/org/config."
+                "configuration.  Set it via PATCH /admin/platform-config."
             )
         api_key: str = config["openai_api_key"]
         model: str | None = config.get("openai_model")
@@ -808,7 +808,7 @@ async def _create_backend(
         if config is None or not config.get("openai_like_base_url"):
             raise LLMConfigurationError(
                 "OpenAI-like backend requires openai_like_base_url in per-org "
-                "configuration.  Set it via PATCH /admin/org/config."
+                "configuration.  Set it via PATCH /admin/platform-config."
             )
         instance = backend_cls(
             base_url=config["openai_like_base_url"],
@@ -819,17 +819,17 @@ async def _create_backend(
         if config is None or not config.get("azure_endpoint"):
             raise LLMConfigurationError(
                 "Azure backend requires azure_endpoint in per-org "
-                "configuration.  Set it via PATCH /admin/org/config."
+                "configuration.  Set it via PATCH /admin/platform-config."
             )
         if config is None or not config.get("azure_api_key"):
             raise LLMConfigurationError(
                 "Azure backend requires azure_api_key in per-org "
-                "configuration.  Set it via PATCH /admin/org/config."
+                "configuration.  Set it via PATCH /admin/platform-config."
             )
         if config is None or not config.get("azure_deployment"):
             raise LLMConfigurationError(
                 "Azure backend requires azure_deployment in per-org "
-                "configuration.  Set it via PATCH /admin/org/config."
+                "configuration.  Set it via PATCH /admin/platform-config."
             )
         instance = backend_cls(
             endpoint=config["azure_endpoint"],
@@ -840,7 +840,7 @@ async def _create_backend(
         if config is None or not config.get("anthropic_api_key"):
             raise LLMConfigurationError(
                 "Anthropic backend requires anthropic_api_key in per-org "
-                "configuration.  Set it via PATCH /admin/org/config."
+                "configuration.  Set it via PATCH /admin/platform-config."
             )
         api_key = config["anthropic_api_key"]
         model = config.get("anthropic_model")

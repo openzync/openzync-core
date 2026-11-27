@@ -1,6 +1,6 @@
 # Onboarding defaults for new organizations.
 #
-# Returned by GET /admin/org/config/defaults.  The onboarding page
+# Returned by GET /admin/platform-config/defaults.  The onboarding page
 # pre-fills its config form with these values so the user only needs
 # to fill in secrets (API keys) and tweak any preferences before saving.
 #

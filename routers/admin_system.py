@@ -15,7 +15,7 @@ org): ``GET /admin/system/orgs``, ``POST .../approve``,
 ``POST .../reject`` are gone.
 ⚠️ BREAKING: cross-org ``GET/PATCH /admin/system/orgs/{user_id}/config``
 are removed — per-user config is self-serve via
-``GET/PATCH /admin/org/config`` (singleton org made the cross-org
+``GET/PATCH /admin/platform-config`` (singleton org made the cross-org
 variants meaningless).
 
 Endpoints:

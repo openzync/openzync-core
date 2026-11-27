@@ -224,7 +224,7 @@ class SchemaService:
             sample_text: Raw text to extract from.
             prompt_template: Optional raw Jinja2 prompt override.
             llm_config: Org LLM config dict (from
-                ``OrgConfigBase.to_llm_config_dict()``); required to
+                ``PlatformConfigBase.to_llm_config_dict()``); required to
                 resolve the backend.
             user_id: Authenticated org — enables metering when
                 ``session_factory`` is also given.

@@ -30,7 +30,7 @@ from services.admin_metrics.prom_queries_service import PromMetricsQueriesServic
 
 if TYPE_CHECKING:
     from packages.graph_backend.interface import GraphBackend
-    from schemas.organization_config import OrgConfigBase
+    from schemas.organization_config import PlatformConfigBase
 
 logger = structlog.get_logger(__name__)
 
@@ -161,7 +161,7 @@ class AdminMetricsBatchService:
     async def run_batch(
         self,
         request: Request,
-        org_config: OrgConfigBase,
+        org_config: PlatformConfigBase,
         user_id: UUID,
         start: datetime,
         end: datetime,

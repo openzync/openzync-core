@@ -23,9 +23,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.exceptions import GraphBackendUnavailableError
 from dependencies.auth import require_permission
 from dependencies.db import get_db
-from dependencies.org_config import get_org_config
+from dependencies.org_config import get_platform_config
 from dependencies.project_auth import require_project_membership
-from schemas.organization_config import OrgConfigBase
+from schemas.organization_config import PlatformConfigBase
 from schemas.sorting import SearchSort
 from services.hybrid_retriever import HybridRetriever
 
@@ -79,7 +79,7 @@ async def search_memory(
     db: AsyncSession = Depends(get_db),
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:read")),
-    org_config: OrgConfigBase = Depends(get_org_config),
+    org_config: PlatformConfigBase = Depends(get_platform_config),
 ) -> dict:
     """Hybrid search across a project's memory.
 

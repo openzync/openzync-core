@@ -516,7 +516,7 @@ async def _set_org_graph_backend(
     resp = await _request_with_retry(
         client,
         "PATCH",
-        "/admin/org/config",
+        "/admin/platform-config",
         json={"graph_backend": graph_backend},
         headers=_auth_header(token),
     )

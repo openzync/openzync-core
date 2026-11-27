@@ -1,13 +1,13 @@
-"""FastAPI dependency for per-organization configuration.
+"""FastAPI dependency for per-user platform configuration.
 
 Usage in a router::
 
-    from dependencies.org_config import get_org_config
-    from schemas.organization_config import OrgConfigBase
+    from dependencies.org_config import get_platform_config
+    from schemas.organization_config import PlatformConfigBase
 
     @router.get("/example")
     async def example(
-        org_config: OrgConfigBase = Depends(get_org_config),
+        org_config: PlatformConfigBase = Depends(get_platform_config),
     ):
         ...  # use org_config.llm_model, org_config.graph_backend, etc.
 """
@@ -23,11 +23,11 @@ from dependencies.auth import require_user_id
 from dependencies.db import get_db
 
 
-async def get_org_config(
+async def get_platform_config(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(require_user_id),
-) -> OrgConfigBase:
+) -> PlatformConfigBase:
     """FastAPI dependency that yields the stored org config for the current org.
 
     The config is fetched from Redis cache (fast path) or the DB
@@ -38,14 +38,14 @@ async def get_org_config(
 
         @router.get("/my-endpoint")
         async def handler(
-            org_config: OrgConfigBase = Depends(get_org_config),
+            org_config: PlatformConfigBase = Depends(get_platform_config),
         ):
             model = org_config.llm_model  # str | None
     """
     # Lazy imports to avoid circulars (schemas + core pull heavy deps).
-    from core.org_config import get_org_config as _get_org_config  # noqa: PLC0415
-    from schemas.organization_config import OrgConfigBase  # noqa: PLC0415
+    from core.org_config import get_platform_config as _get_platform_config  # noqa: PLC0415
+    from schemas.organization_config import PlatformConfigBase  # noqa: PLC0415
 
     redis = getattr(request.app.state, "redis", None)
-    config: OrgConfigBase = await _get_org_config(UUID(user_id), redis=redis, db=db)
+    config: PlatformConfigBase = await _get_platform_config(UUID(user_id), redis=redis, db=db)
     return config

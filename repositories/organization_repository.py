@@ -7,8 +7,6 @@ No business logic — pure query construction and execution.
 
 from __future__ import annotations
 
-import secrets
-import uuid as uuid_lib
 from typing import Any
 from uuid import UUID
 
@@ -38,10 +36,10 @@ class OrganizationRepository:
 
     # ── Organization rows ───────────────────────────────────────────────────
 
-    async def get_by_id(self, user_id: UUID) -> Organization | None:
+    async def get_by_id(self, org_id: UUID) -> Organization | None:
         """Fetch an organization by UUID.
 
-        Tenant-scoped read: binds the session to ``user_id`` first so the
+        Tenant-scoped read: binds the session to ``org_id`` first so the
         RLS ``FOR ALL`` policy admits the row (mirrors the write-path
         convention in ``create_dashboard_user`` callers).  Public,
         tenant-less callers (invite info/accept) must use
@@ -49,47 +47,16 @@ class OrganizationRepository:
         intentionally sees only the caller's own org.
 
         Args:
-            user_id: The organization UUID.
+            org_id: The organization UUID.
 
         Returns:
             The Organization if found, or ``None``.
         """
-        await rls.set_user_context(self._db, user_id)
+        await rls.set_user_context(self._db, org_id)
         result = await self._db.execute(
-            select(Organization).where(Organization.id == user_id)
+            select(Organization).where(Organization.id == org_id)
         )
         return result.scalar_one_or_none()
-
-    async def create_organization(self, name: str) -> Organization:
-        """Insert an organization row (flush only — the caller commits).
-
-        # shortcut: no src callers (single platform org is ensured via
-        # ensure_platform_org); kept for scripts/one-off provisioning,
-        # remove when a second org flow exists.
-
-        The id is minted here so the session can be bound to the new
-        tenant before the row is written (see ``set_tenant_context``).
-
-        Args:
-            name: Human-readable organization name.
-
-        Returns:
-            The newly created Organization (flushed, uncommitted).
-        """
-        org = Organization(
-            id=uuid_lib.uuid4(),
-            name=name,
-            # Legacy NOT NULL column — join codes are removed (single org);
-            # a random placeholder keeps the constraint satisfied.
-            # shortcut: drop the column + backfill once 0044-era deploys are
-            # gone; blocked on a NOT NULL migration, not worth it yet.
-            org_code=secrets.token_hex(4).upper(),
-        )
-        await rls.set_user_context(self._db, org.id)
-        self._db.add(org)
-        await self._db.flush()
-        await self._db.refresh(org)
-        return org
 
     async def get_platform_org(self) -> Organization | None:
         """Fetch the platform (SYSTEM) organization, bypassing RLS.
@@ -125,12 +92,6 @@ class OrganizationRepository:
                     id=PLATFORM_ORG_ID,
                     name=name,
                     status="approved",
-                    join_enabled=False,
-                    # Legacy NOT NULL column — join codes are removed;
-                    # a random placeholder keeps the constraint satisfied.
-                    # shortcut: drop the column when a NOT NULL migration
-                    # is scheduled; the random mint is dead weight until then.
-                    org_code=secrets.token_hex(4).upper(),
                     is_active=True,
                 )
                 .on_conflict_do_nothing(index_elements=["id"])
@@ -139,49 +100,49 @@ class OrganizationRepository:
 
     # ── Config JSONB (Groups A, B, C — UI-exposed settings) ─────────────────
 
-    async def get_config(self, user_id: UUID) -> dict[str, Any]:
+    async def get_config(self, org_id: UUID) -> dict[str, Any]:
         """Read the full ``config`` JSONB column for an organization.
 
-        Tenant-scoped read: binds the session to ``user_id`` first (see
+        Tenant-scoped read: binds the session to ``org_id`` first (see
         :meth:`get_by_id`).
 
         Args:
-            user_id: The organization UUID.
+            org_id: The organization UUID.
 
         Returns:
             The config dict, or ``{}`` if not configured or the org does
             not exist.
         """
-        await rls.set_user_context(self._db, user_id)
+        await rls.set_user_context(self._db, org_id)
         result = await self._db.execute(
-            text("SELECT config FROM organizations WHERE id = :user_id"),
-            {"user_id": user_id},
+            text("SELECT config FROM organizations WHERE id = :org_id"),
+            {"org_id": org_id},
         )
         row = result.one_or_none()
         return dict(row.config) if row and row.config else {}
 
     # ── PII config (from quotas->'pii') ──────────────────────────────────────
 
-    async def get_pii_config(self, user_id: UUID) -> dict:
+    async def get_pii_config(self, org_id: UUID) -> dict:
         """Fetch the PII configuration for an organization.
 
         The PII config lives at ``organizations.quotas -> 'pii'`` as a JSONB
-        sub-document.  Tenant-scoped read (binds ``user_id`` first).
+        sub-document.  Tenant-scoped read (binds ``org_id`` first).
 
         Args:
-            user_id: The organization UUID.
+            org_id: The organization UUID.
 
         Returns:
             The PII config dict, or ``{}`` if not configured or the
             organization does not exist.
         """
-        await rls.set_user_context(self._db, user_id)
+        await rls.set_user_context(self._db, org_id)
         result = await self._db.execute(
             text(
                 "SELECT quotas->'pii' AS pii_config "
-                "FROM organizations WHERE id = :user_id"
+                "FROM organizations WHERE id = :org_id"
             ),
-            {"user_id": user_id},
+            {"org_id": org_id},
         )
         row = result.one_or_none()
         if row is None:
@@ -189,27 +150,27 @@ class OrganizationRepository:
         pii_config = row[0]
         return pii_config if isinstance(pii_config, dict) else {}
 
-    async def get_quota(self, user_id: UUID, quota_name: str) -> int | None:
+    async def get_quota(self, org_id: UUID, quota_name: str) -> int | None:
         """Get a specific quota value for an organization.
 
         Quotas are stored as a JSONB column (``organizations.quotas``)
-        keyed by quota name.  Tenant-scoped read (binds ``user_id`` first).
+        keyed by quota name.  Tenant-scoped read (binds ``org_id`` first).
 
         Args:
-            user_id: The organization UUID.
+            org_id: The organization UUID.
             quota_name: The quota key name (e.g. ``max_users``, ``storage_gb``).
 
         Returns:
             The quota value as an ``int``, or ``None`` if the quota key is
             not set or the organization does not exist.
         """
-        await rls.set_user_context(self._db, user_id)
+        await rls.set_user_context(self._db, org_id)
         result = await self._db.execute(
             text(
                 "SELECT quotas->>:quota_name AS quota "
-                "FROM organizations WHERE id = :user_id"
+                "FROM organizations WHERE id = :org_id"
             ),
-            {"user_id": user_id, "quota_name": quota_name},
+            {"org_id": org_id, "quota_name": quota_name},
         )
         row = result.one_or_none()
         if row and row.quota is not None:

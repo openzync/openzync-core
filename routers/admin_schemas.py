@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.audit import audit_action
 from dependencies.auth import require_permission
 from dependencies.db import get_db
-from dependencies.org_config import get_org_config as get_org_config_dep
+from dependencies.org_config import get_platform_config as get_platform_config_dep
 from repositories.extraction_schema_repository import (
     ExtractionSchemaRepository,
 )
@@ -33,7 +33,7 @@ from schemas.extraction_schemas import (
     SchemaTemplateResponse,
     UpdateExtractionSchemaRequest,
 )
-from schemas.organization_config import OrgConfigBase
+from schemas.organization_config import PlatformConfigBase
 from schemas.sorting import AdminSchemaSortBy, SortDir, SortSpec
 from services.schema_service import SchemaService
 
@@ -123,7 +123,7 @@ async def preview_schema_extraction(
     payload: PreviewExtractionRequest,
     request: Request,
     service: SchemaService = Depends(_get_schema_service),
-    org_config: OrgConfigBase = Depends(get_org_config_dep),
+    org_config: PlatformConfigBase = Depends(get_platform_config_dep),
     user_id: str = Depends(require_permission("configuration:read")),
 ) -> PreviewExtractionResponse:
     """Preview structured extraction against a candidate schema.

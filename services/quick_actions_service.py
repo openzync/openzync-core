@@ -11,7 +11,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.org_config import get_org_config
+from core.org_config import get_platform_config
 from repositories.organization_repository import OrganizationRepository
 from repositories.project_repository import ProjectRepository
 from repositories.user_repository import UserRepository
@@ -61,7 +61,7 @@ class QuickActionsService:
         project_count = await self._project_repo.count_active(user_id)
         # Canonical per-user config (flat users.config_override shape,
         # cache-first) — never the legacy nested organizations.config.
-        org_config = await get_org_config(
+        org_config = await get_platform_config(
             user_id, redis=self._redis, db=self._db
         )
         user_count = await self._user_repo.count_active(user_id)

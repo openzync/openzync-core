@@ -18,19 +18,19 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.org_config import get_org_config
+from core.org_config import get_platform_config
 from core.org_config import (
-    update_org_config as core_update_org_config,
+    update_platform_config as core_update_platform_config,
 )
 from schemas.organization_config import (
-    OrgConfigBase,
-    OrgConfigResponse,
-    UpdateOrgConfigRequest,
+    PlatformConfigBase,
+    PlatformConfigResponse,
+    UpdatePlatformConfigRequest,
 )
 
 
-class OrgConfigService:
-    """Business logic for per-organization configuration management.
+class PlatformConfigService:
+    """Business logic for per-user platform configuration management.
 
     Args:
         db: Async DB session for ``users.config_override`` access.
@@ -41,37 +41,37 @@ class OrgConfigService:
         self._db = db
         self._redis = redis
 
-    async def get_config(self, user_id: UUID) -> OrgConfigBase:
+    async def get_config(self, user_id: UUID) -> PlatformConfigBase:
         """Return the stored config for an org.
 
         Args:
             user_id: The owner user UUID.
 
         Returns:
-            An ``OrgConfigBase`` with only explicitly stored fields.
+            An ``PlatformConfigBase`` with only explicitly stored fields.
             Unset fields are ``None``.
         """
-        return await get_org_config(
+        return await get_platform_config(
             user_id,
             redis=self._redis,
             db=self._db,
         )
 
-    async def get_config_response(self, user_id: UUID) -> OrgConfigResponse:
-        """Return the stored config wrapped in an ``OrgConfigResponse``.
+    async def get_config_response(self, user_id: UUID) -> PlatformConfigResponse:
+        """Return the stored config wrapped in an ``PlatformConfigResponse``.
 
         Args:
             user_id: The owner user UUID.
 
         Returns:
-            An ``OrgConfigResponse`` containing the stored config.
+            An ``PlatformConfigResponse`` containing the stored config.
         """
         stored = await self.get_config(user_id)
-        return OrgConfigResponse(stored=stored)
+        return PlatformConfigResponse(stored=stored)
 
     async def update_config(
-        self, user_id: UUID, payload: UpdateOrgConfigRequest
-    ) -> OrgConfigBase:
+        self, user_id: UUID, payload: UpdatePlatformConfigRequest
+    ) -> PlatformConfigBase:
         """Partially update an org's configuration.
 
         Only the fields explicitly set in *payload* are updated.  Fields
@@ -85,7 +85,7 @@ class OrgConfigService:
         Returns:
             The freshly stored config after the update.
         """
-        return await core_update_org_config(
+        return await core_update_platform_config(
             user_id,
             update_data=payload,
             redis=self._redis,

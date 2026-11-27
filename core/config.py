@@ -7,7 +7,7 @@ on first :func:`get_settings` call and fails fast when ``OZ_SECRET_KEY``
 (< 32 chars) or ``OZ_DATABASE_URL`` is missing.
 
 Per-user configuration (LLM, embeddings, graph, behaviour) is **not**
-stored here — use ``core.org_config.get_org_config()`` for those values
+stored here — use ``core.org_config.get_platform_config()`` for those values
 (they live in ``users.config_override``).  Platform-wide non-secret
 tunables live in the platform root user's ``config_override`` — see
 ``core.system_config``.
@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     .. note::
 
         Per-org configuration (LLM, embeddings, graph, behaviour) is **not**
-        stored here.  Use ``core.org_config.get_org_config()`` for those
+        stored here.  Use ``core.org_config.get_platform_config()`` for those
         values — they live in ``users.config_override``.
     """
 

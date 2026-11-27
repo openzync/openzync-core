@@ -89,7 +89,7 @@ async def resolve_graph_backend(
     user_config = await _resolve_user_config(ctx, user_id, db)
 
     if user_config is None:
-        # Defensive: get_org_config never returns None and the DB fallback
+        # Defensive: get_platform_config never returns None and the DB fallback
         # raises on failure, so user_config is only None if resolution broke.
         # Fail loud rather than run enrichment as if graph were disabled.
         logger.error(
@@ -219,7 +219,7 @@ async def _resolve_user_config(
 ) -> Any | None:
     """Fetch the per-user config, cache-first via ``core.org_config``, DB-authoritative.
 
-    Uses ``core.org_config.get_org_config`` (the standard resolution path)
+    Uses ``core.org_config.get_platform_config`` (the standard resolution path)
     if available, which supports Redis caching.  Falls back to a direct DB
     query via ``UserRepository.get_config_override``.
 
@@ -229,15 +229,15 @@ async def _resolve_user_config(
         db: An async SQLAlchemy session.
 
     Returns:
-        An ``OrgConfigBase`` instance (never ``None`` — an unset backend
+        An ``PlatformConfigBase`` instance (never ``None`` — an unset backend
         defaults to ``"falkordb"``); raises on resolution failure.
     """
     # ── Primary path: standard user-config resolution (cache-first) ───────
     try:
-        from core.org_config import get_org_config
+        from core.org_config import get_platform_config
 
         redis = ctx.get("redis")  # may not be present in worker ctx
-        return await get_org_config(user_id, redis=redis, db=db)
+        return await get_platform_config(user_id, redis=redis, db=db)
     except ImportError:
         logger.debug("worker.org_config_module_not_available")
     except Exception:
@@ -250,7 +250,7 @@ async def _resolve_user_config(
     # ── Fallback: direct DB query ─────────────────────────────────────────
     try:
         from repositories.user_repository import UserRepository
-        from schemas.organization_config import OrgConfigBase
+        from schemas.organization_config import PlatformConfigBase
 
         repo = UserRepository(db)
         raw_config = await repo.get_config_override(user_id)
@@ -260,7 +260,7 @@ async def _resolve_user_config(
         # never an all-None wrong default from a dropped nesting level).
         if not raw_config.get("graph_backend"):
             raw_config = {**raw_config, "graph_backend": "falkordb"}
-        return OrgConfigBase(**raw_config)
+        return PlatformConfigBase(**raw_config)
     except Exception:
         logger.error(
             "worker.org_config_fallback_failed",

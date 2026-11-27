@@ -185,7 +185,7 @@ class WebhookRepository:
         binding the lookup would match no rows and the event would be
         silently dropped.
         """
-        await rls.set_tenant_context(self._db, user_id)
+        await rls.set_user_context(self._db, user_id)
         result = await self._db.execute(
             select(WebhookEndpoint).where(
                 WebhookEndpoint.user_id == user_id,

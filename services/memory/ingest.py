@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
     from models.session import Session
     from models.user import User
-    from schemas.organization_config import OrgConfigBase
+    from schemas.organization_config import PlatformConfigBase
 
 logger = logging.getLogger(__name__)
 
@@ -108,9 +108,9 @@ class IngestMixin:
         # ── Step 0b: Resolve + validate enrichment toggles ──────────────
         # Before any state — a 422 here never claims, inserts, or enqueues.
         # One org-config read per ingest, shared by both resolvers.
-        from core.org_config import get_org_config
+        from core.org_config import get_platform_config
 
-        org_cfg = await get_org_config(user_id, redis=self._redis, db=self._db)
+        org_cfg = await get_platform_config(user_id, redis=self._redis, db=self._db)
         effective_enrichments = await self._resolve_enrichments(
             org_cfg, enrichments
         )
@@ -237,7 +237,7 @@ class IngestMixin:
 
     async def _resolve_enrichments(
         self,
-        org_cfg: OrgConfigBase,
+        org_cfg: PlatformConfigBase,
         request_param: dict[str, bool] | None,
     ) -> dict[str, bool]:
         """Resolve the effective per-episode enrichment toggles.
@@ -276,7 +276,7 @@ class IngestMixin:
 
     async def _resolve_enrichment_gate(
         self,
-        org_cfg: OrgConfigBase,
+        org_cfg: PlatformConfigBase,
     ) -> dict[str, bool | float | str]:
         """Resolve the effective enrichment gate (org-only).
 

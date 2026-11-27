@@ -115,13 +115,13 @@ async def cleanup_orphan_blobs(
         org_log = logger.bind(user_id=user_id)
         org_log.info("cleanup_orphan_blobs.org_start")
 
-        # Bind the tenant on the session.  ``rls.set_tenant_context`` is
+        # Bind the tenant on the session.  ``rls.set_user_context`` is
         # remembered by the session, so the per-org commit below re-applies
         # it — a bare ``set_config`` would leave the session un-tenanted
         # after that commit.  The discovery scan above ran under a bypass;
         # the per-org work drops it and runs tenant-scoped.
         await rls.set_bypass_rls(db, False)
-        await rls.set_tenant_context(db, org_uuid)
+        await rls.set_user_context(db, org_uuid)
 
         blob_repo = EpisodeBlobRepository(db)
 

@@ -69,7 +69,7 @@ async def generate_user_summary(
     from core import rls
     from core.config import settings
     from core.db import get_async_session
-    from core.org_config import get_org_config
+    from core.org_config import get_platform_config
 
     logger.info(
         "user_summary.started",
@@ -110,7 +110,7 @@ async def generate_user_summary(
             try:
                 # The org-config lookup behind the graph backend is an
                 # org-scoped read — bind the tenant first.
-                await rls.set_tenant_context(_backend_db, user_id)
+                await rls.set_user_context(_backend_db, user_id)
                 graph_backend = await resolve_graph_backend(
                     ctx if isinstance(ctx, dict) else {},
                     uuid.UUID(user_id),
@@ -154,7 +154,7 @@ async def generate_user_summary(
     llm_config_dict: dict | None = None
     try:
         async with session_factory() as _cfg_db:
-            org_cfg = await get_org_config(
+            org_cfg = await get_platform_config(
                 uuid.UUID(user_id), redis=None, db=_cfg_db
             )
         llm_config_dict = org_cfg.to_llm_config_dict()
@@ -201,7 +201,7 @@ async def generate_user_summary(
     try:
         async with session_factory() as db:
             try:
-                await rls.set_tenant_context(db, user_id)
+                await rls.set_user_context(db, user_id)
                 await UserRepository(db).update_summary(
                     user_id=uuid.UUID(user_id),
                     summary=response.content,

@@ -9,7 +9,7 @@ ownership is user-scoped (RLS ``user_isolation`` policies keyed on
 
 import uuid
 
-from sqlalchemy import Boolean, CheckConstraint, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -37,10 +37,6 @@ class Organization(TimestampMixin, Base):
             env-var defaults from ``core.config.settings``.
         quotas: JSONB blob for usage quotas (max_sessions, max_episodes, etc.).
         is_active: Soft toggle for deactivation.
-        org_code: Join code a new member presents at ``POST /v1/auth/join``
-            to join the organization.  Plaintext by explicit product decision.
-        join_enabled: Org-code self-registration toggle — when False,
-            ``POST /v1/auth/join`` rejects the code with 403.
     """
 
     __tablename__ = "organizations"  # inert: kept mapped; drop deferred beyond 0070.
@@ -78,28 +74,12 @@ class Organization(TimestampMixin, Base):
         default=True,
         server_default="true",
     )
-    org_code: Mapped[str] = mapped_column(
-        String(24),
-        nullable=False,
-        comment="Legacy join-code column (self-registration removed; admin toggle deleted). Plaintext by product decision.",
-    )
-    # Legacy self-registration toggle — the admin GET/PATCH endpoints were
-    # removed (the gate was inert: signup/join consult registration_mode,
-    # never this flag).  Column retained for the NOT NULL constraint;
-    # always FALSE on the platform row.
-    join_enabled: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        default=True,
-        server_default="true",
-    )
 
     __table_args__ = (
         CheckConstraint(
             "status IN ('pending', 'approved', 'rejected')",
             name="ck_organization_status",
         ),
-        UniqueConstraint("org_code", name="uq_organizations_org_code"),
     )
 
     @property

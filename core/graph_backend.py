@@ -22,7 +22,7 @@ Usage::
     backend = dispatcher.resolve_and_create(org_config, db, surreal=surreal)
 
     The default backend is ``"falkordb"`` (set in
-:class:`~schemas.organization_config.OrgConfigBase`); ``"none"``
+:class:`~schemas.organization_config.PlatformConfigBase`); ``"none"``
 disables the graph entirely. ``"postgres"`` was removed in v1.1.0
 and now returns HTTP 410 Gone.
 
@@ -49,7 +49,7 @@ from core.exceptions import GraphBackendUnavailableError
 from packages.graph_backend.interface import GraphBackend
 
 if TYPE_CHECKING:
-    from schemas.organization_config import OrgConfigBase
+    from schemas.organization_config import PlatformConfigBase
 
 logger = logging.getLogger(__name__)
 _resolve_logger = structlog.get_logger(__name__)
@@ -100,7 +100,7 @@ class GraphBackendDispatcher:
 
     def resolve_and_create(
         self,
-        org_config: OrgConfigBase | None,
+        org_config: PlatformConfigBase | None,
         db: AsyncSession,
         surreal: Any = None,
         falkordb_client: Any = None,
@@ -171,7 +171,7 @@ class GraphBackendDispatcher:
                 f"Unknown graph backend: '{backend_name}'. "
                 f"Available backends: {list(self._registry.keys())}. "
                 f"Set graph_backend in the per-org configuration "
-                f"via PATCH /admin/org/config."
+                f"via PATCH /admin/platform-config."
             )
 
         # Backend-specific kwargs — each backend receives only the
@@ -204,7 +204,7 @@ class GraphBackendDispatcher:
     def create_all_backends(
         self,
         db: AsyncSession,
-        org_config: OrgConfigBase | None = None,
+        org_config: PlatformConfigBase | None = None,
         surreal: Any = None,
         falkordb_client: Any = None,
     ) -> list[GraphBackend]:
@@ -264,7 +264,7 @@ class GraphBackendDispatcher:
 
     # ── Resolution only (no instance) ────────────────────────────────────────────
 
-    def resolve_backend_name(self, org_config: OrgConfigBase | None) -> str | None:
+    def resolve_backend_name(self, org_config: PlatformConfigBase | None) -> str | None:
         """Determine which backend name this org should use.
 
         This is a pure lookup — it does **not** create an instance.
@@ -283,7 +283,7 @@ class GraphBackendDispatcher:
     # ── Internals ───────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _resolve_backend_name(org_config: OrgConfigBase | None) -> str | None:
+    def _resolve_backend_name(org_config: PlatformConfigBase | None) -> str | None:
         """Extract the backend name from org config.
 
         Returns ``None`` when the graph is intentionally disabled
@@ -320,7 +320,7 @@ def init_dispatcher() -> GraphBackendDispatcher:
 
 async def resolve_graph_backend_fail_soft(
     request: Request,
-    org_config: OrgConfigBase,
+    org_config: PlatformConfigBase,
     user_id: UUID,
     db: AsyncSession,
     log_prefix: str,

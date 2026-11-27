@@ -32,12 +32,12 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.db import get_db, get_db_admin
-from dependencies.org_config import get_org_config
+from dependencies.org_config import get_platform_config
 
 if TYPE_CHECKING:
     from core.graph_backend import GraphBackendDispatcher
     from packages.graph_backend.interface import GraphBackend
-    from schemas.organization_config import OrgConfigBase
+    from schemas.organization_config import PlatformConfigBase
 from core.config import get_settings
 from core.email import EmailConfig
 from core.exceptions import GraphBackendUnavailableError
@@ -455,7 +455,7 @@ async def get_memory_service(
 
 async def get_graph_service(
     request: Request,
-    org_config: OrgConfigBase = Depends(get_org_config),
+    org_config: PlatformConfigBase = Depends(get_platform_config),
     db: AsyncSession = Depends(get_db),
     webhook: WebhookService = Depends(get_webhook_service),
 ) -> GraphService:
@@ -639,7 +639,7 @@ async def get_quick_actions_service(
 
 async def get_graph_backend_for_project(
     request: Request,
-    org_config: OrgConfigBase = Depends(get_org_config),
+    org_config: PlatformConfigBase = Depends(get_platform_config),
     db: AsyncSession = Depends(get_db),
 ) -> GraphBackend:
     """Dependency that resolves and returns a project-scoped graph backend.

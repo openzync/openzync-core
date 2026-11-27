@@ -1,4 +1,4 @@
-"""Auth org join — singleton-org join, email verify, resend."""
+"""Auth member signup — singleton-org member signup, email verify, resend."""
 
 from __future__ import annotations
 
@@ -42,10 +42,10 @@ class OrgJoinMixin:
             return self._settings_repo
         return InstanceSettingsRepository(self._repo.session)
 
-    # ── Org-code join ────────────────────────────────────────────────────────
+    # ── Member signup ──────────────────────────────────────────────────────
 
-    async def join_organization(self, payload: JoinRequest) -> SignupResponse:
-        """Join the singleton platform organization as a member.
+    async def signup_member(self, payload: JoinRequest) -> SignupResponse:
+        """Sign up a member in the singleton platform organization.
 
         Single platform org: the join code is gone — every join lands in
         the platform org.  Registration is governed by

@@ -95,7 +95,7 @@ class LegDispatchMixin:
                 ) from exc
         async with self._session_factory() as leg_db:
             from services import hybrid_retriever as _hr  # via facade (patchable)
-            await _hr.set_tenant_context(leg_db, self._org_id)
+            await _hr.set_user_context(leg_db, self._org_id)
             try:
                 return await run(self._scoped(leg_db))
             except SearchLegFailedError:

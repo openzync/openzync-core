@@ -2,7 +2,7 @@
 
 Endpoints:
     POST   /v1/auth/setup   — One-time platform root bootstrap (public)
-    POST   /v1/auth/signup             — Create org + admin user, send OTP
+    POST   /v1/auth/signup             — Member signup into the root org, send OTP
     POST   /v1/auth/verify-email       — Verify email with OTP, return JWT
     POST   /v1/auth/resend-otp         — Resend verification OTP
     POST   /v1/auth/login/otp/send     — Send passwordless login OTP
@@ -45,7 +45,6 @@ from schemas.auth import (
     DashboardUserResponse,
     InviteInfoResponse,
     InviteTokenRequest,
-    JoinRequest,
     LoginRequest,
     LoginResponse,
     MfaDisableRequest,
@@ -233,42 +232,6 @@ async def signup(
             password=payload.password,
         )
     return await service.signup(payload)
-
-
-@router.post(
-    "/join",
-    response_model=SignupResponse,
-    status_code=201,
-    summary="Join the platform organization",
-    description=(
-        "Creates a member dashboard user in the singleton platform org. "
-        "A verification code is sent to the user's email.  The user must "
-        "call ``POST /v1/auth/verify-email`` with the code to complete "
-        "signup and receive JWT tokens.  If the email is already "
-        "registered, the same generic response is returned.  Under "
-        "``invite_only`` mode join returns 403."
-    ),
-)
-@audit_action("auth.join", "user", "User joined organization")
-async def join_organization(
-    payload: JoinRequest,
-    request: Request,
-    service: AuthService = Depends(get_auth_service),  # noqa: B008
-    throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
-) -> SignupResponse:
-    """Join the platform org as a member.
-
-    Args:
-        payload: Email and password.
-        request: Incoming HTTP request (for IP extraction).
-        service: Injected auth service.
-        throttle: Injected auth throttle.
-
-    Returns:
-        Confirmation message (tokens obtained via verify-email).
-    """
-    await throttle.check_signup_attempt(_client_ip(request))
-    return await service.join_organization(payload)
 
 
 @router.post(

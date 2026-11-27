@@ -37,7 +37,7 @@ from services.retrieval.vector_search import VectorSearchMixin
 if TYPE_CHECKING:
     from packages.graph_backend.interface import GraphBackend
     from packages.reranker import CrossEncoderReranker
-    from schemas.organization_config import OrgConfigBase
+    from schemas.organization_config import PlatformConfigBase
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ class HybridRetriever(
         user_id: UUID,
         redis: object | None = None,
         graph_backends: list[GraphBackend] | None = None,
-        org_config: OrgConfigBase | None = None,
+        org_config: PlatformConfigBase | None = None,
         reranker: CrossEncoderReranker | None = None,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:

@@ -138,7 +138,7 @@ async def compute_observations(
             # without it the RLS policies filter out the project's rows and
             # the full scan silently finds nothing.  The binding is
             # remembered by the session, so the commit below re-applies it.
-            await rls.set_tenant_context(db, user_id)
+            await rls.set_user_context(db, user_id)
 
             # ── 2. Clear the pending-observations marker ────────────────────
             # One full-scan run clears the need for everything ingested before

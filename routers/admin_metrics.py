@@ -34,9 +34,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import get_settings
 from dependencies.auth import require_permission
 from dependencies.db import get_db
-from dependencies.org_config import get_org_config
+from dependencies.org_config import get_platform_config
 from schemas.admin_metrics import MetricsSummaryResponse
-from schemas.organization_config import OrgConfigBase
+from schemas.organization_config import PlatformConfigBase
 from schemas.sorting import MonitorTargetSortBy, SortDir
 from services.admin_metrics_queries_service import AdminMetricsQueriesService
 from services.admin_metrics_service import AdminMetricsService
@@ -135,7 +135,7 @@ async def get_metrics_summary(
         "Requires from; mutually exclusive with days.",
     ),
     user_id: str = Depends(require_permission("members:read")),
-    org_config: OrgConfigBase = Depends(get_org_config),
+    org_config: PlatformConfigBase = Depends(get_platform_config),
     service: AdminMetricsService = Depends(_get_admin_metrics_service),
 ) -> MetricsSummaryResponse:
     """Get aggregated metrics for the admin dashboard.
@@ -297,7 +297,7 @@ async def get_metrics_batch(
         default=None, description="Optional project filter"
     ),
     user_id: str = Depends(require_permission("members:read")),
-    org_config: OrgConfigBase = Depends(get_org_config),
+    org_config: PlatformConfigBase = Depends(get_platform_config),
     service: AdminMetricsQueriesService = Depends(_get_admin_metrics_queries_service),
 ) -> dict:
     """Run every predefined query concurrently; partial failures stay HTTP 200.

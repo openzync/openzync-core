@@ -1,6 +1,6 @@
 """Factory for constructing a ``CrossEncoderReranker`` from org-level config.
 
-Inspects ``OrgConfigBase.reranker_backend`` to decide which backend
+Inspects ``PlatformConfigBase.reranker_backend`` to decide which backend
 to create.  Returns ``None`` when re-ranking is not configured or
 the required dependencies are not installed.
 """
@@ -14,7 +14,7 @@ from packages.reranker.cohere import CohereReranker
 from packages.reranker.sentence_transformers import SentenceTransformersReranker
 
 if TYPE_CHECKING:
-    from schemas.organization_config import OrgConfigBase
+    from schemas.organization_config import PlatformConfigBase
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +22,14 @@ logger = logging.getLogger(__name__)
 class RerankerFactory:
     """Factory for constructing a ``CrossEncoderReranker`` from config.
 
-    Inspects ``OrgConfigBase.reranker_backend`` to decide which backend
+    Inspects ``PlatformConfigBase.reranker_backend`` to decide which backend
     to create.  Returns ``None`` when re-ranking is not configured or
     the required dependencies are not installed.
     """
 
     @staticmethod
     def create(  # noqa: PLR0911
-        org_config: OrgConfigBase,
+        org_config: PlatformConfigBase,
     ) -> SentenceTransformersReranker | CohereReranker | None:
         """Build a re-ranker from an organization's configuration.
 
@@ -62,7 +62,7 @@ class RerankerFactory:
 
     @staticmethod
     def _create_sentence_transformers(
-        org_config: OrgConfigBase,
+        org_config: PlatformConfigBase,
     ) -> SentenceTransformersReranker | None:
         """Create a local cross-encoder re-ranker.
 
@@ -83,7 +83,7 @@ class RerankerFactory:
         )
 
     @staticmethod
-    def _create_cohere(org_config: OrgConfigBase) -> CohereReranker | None:
+    def _create_cohere(org_config: PlatformConfigBase) -> CohereReranker | None:
         """Create a Cohere API re-ranker.
 
         Validates that ``cohere_api_key`` is set and the ``cohere``

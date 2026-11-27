@@ -1,6 +1,6 @@
 """Connection testing for per-organization config candidates.
 
-Overlays a candidate :class:`UpdateOrgConfigRequest` in-memory on the
+Overlays a candidate :class:`UpdatePlatformConfigRequest` in-memory on the
 stored DB config and probes the requested domain against the live
 backend.  Nothing is ever written to the DB or Redis by this service.
 
@@ -32,14 +32,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import get_settings
 from core.exceptions import ValidationError
 from core.graph_backend import GraphBackendDispatcher, init_dispatcher
-from core.org_config import get_org_config
+from core.org_config import get_platform_config
 from schemas.organization_config import (
     SYSTEM_MANAGED_FALKORDB_FIELDS,
     SYSTEM_MANAGED_SURREALDB_FIELDS,
-    OrgConfigBase,
+    PlatformConfigBase,
     ProbeResult,
-    TestOrgConfigResponse,
-    UpdateOrgConfigRequest,
+    TestPlatformConfigResponse,
+    UpdatePlatformConfigRequest,
 )
 
 if TYPE_CHECKING:
@@ -62,13 +62,13 @@ def _elapsed_ms(start: float) -> int:
     return max(0, int((time.perf_counter() - start) * 1000))
 
 
-class OrgConfigConnectionService:
-    """Probe live backend connectivity for a candidate org config.
+class PlatformConfigConnectionService:
+    """Probe live backend connectivity for a candidate platform config.
 
     Args:
         db: Async DB session for the stored-config read (cache bypassed).
         redis: Accepted for constructor symmetry with
-            :class:`OrgConfigService`; unused — probes bypass the cache.
+            :class:`PlatformConfigService`; unused — probes bypass the cache.
     """
 
     def __init__(self, db: AsyncSession, redis: Any | None = None) -> None:
@@ -79,8 +79,8 @@ class OrgConfigConnectionService:
         self,
         user_id: UUID,
         domain: str,
-        candidate: UpdateOrgConfigRequest,
-    ) -> TestOrgConfigResponse:
+        candidate: UpdatePlatformConfigRequest,
+    ) -> TestPlatformConfigResponse:
         """Probe live connectivity for one config domain.
 
         Reads the stored config (cache bypassed), overlays the fields
@@ -94,14 +94,14 @@ class OrgConfigConnectionService:
                 fields overlay the stored config.
 
         Returns:
-            A :class:`TestOrgConfigResponse` with one entry per probe.
+            A :class:`TestPlatformConfigResponse` with one entry per probe.
 
         Raises:
             ValidationError: If *candidate* overrides system-managed
                 fields, or *domain* is unknown.
         """
         self._reject_system_managed_overrides(candidate)
-        stored = await get_org_config(
+        stored = await get_platform_config(
             user_id,
             redis=self._redis,
             db=self._db,
@@ -143,11 +143,11 @@ class OrgConfigConnectionService:
                 "latency_ms": result.latency_ms,
             },
         )
-        return TestOrgConfigResponse(results={domain: result})
+        return TestPlatformConfigResponse(results={domain: result})
 
     def _resolve_probe(
         self, domain: str
-    ) -> Callable[[OrgConfigBase], Awaitable[ProbeResult]]:
+    ) -> Callable[[PlatformConfigBase], Awaitable[ProbeResult]]:
         """Return the probe coroutine for *domain*.
 
         Raises:
@@ -166,7 +166,7 @@ class OrgConfigConnectionService:
 
     @staticmethod
     def _reject_system_managed_overrides(
-        candidate: UpdateOrgConfigRequest,
+        candidate: UpdatePlatformConfigRequest,
     ) -> None:
         """Reject candidates that override system-managed URL fields.
 
@@ -194,8 +194,8 @@ class OrgConfigConnectionService:
 
     @staticmethod
     def _overlay_candidate(
-        stored: OrgConfigBase, candidate: UpdateOrgConfigRequest
-    ) -> OrgConfigBase:
+        stored: PlatformConfigBase, candidate: UpdatePlatformConfigRequest
+    ) -> PlatformConfigBase:
         """Overlay set candidate fields on the stored config (in-memory).
 
         Explicit ``None`` values override stored values (same semantics
@@ -205,9 +205,9 @@ class OrgConfigConnectionService:
             **stored.model_dump(),
             **candidate.model_dump(exclude_unset=True),
         }
-        return OrgConfigBase(**merged_data)
+        return PlatformConfigBase(**merged_data)
 
-    async def _probe_llm(self, merged: OrgConfigBase) -> ProbeResult:
+    async def _probe_llm(self, merged: PlatformConfigBase) -> ProbeResult:
         """Minimal chat round-trip (``max_tokens=1``) via resolved backend."""
         start = time.perf_counter()
         try:
@@ -228,7 +228,7 @@ class OrgConfigConnectionService:
         except Exception as exc:
             return self._failure(start, f"llm probe failed: {exc}")
 
-    async def _probe_graph(self, merged: OrgConfigBase) -> ProbeResult:
+    async def _probe_graph(self, merged: PlatformConfigBase) -> ProbeResult:
         """Resolve the candidate graph backend and run ``health_check()``."""
         start = time.perf_counter()
         try:
@@ -255,7 +255,7 @@ class OrgConfigConnectionService:
 
     async def _probe_falkordb(
         self,
-        merged: OrgConfigBase,
+        merged: PlatformConfigBase,
         dispatcher: GraphBackendDispatcher,
         start: float,
     ) -> ProbeResult:
@@ -298,7 +298,7 @@ class OrgConfigConnectionService:
 
     async def _probe_surrealdb(
         self,
-        merged: OrgConfigBase,
+        merged: PlatformConfigBase,
         dispatcher: GraphBackendDispatcher,
         start: float,
     ) -> ProbeResult:
