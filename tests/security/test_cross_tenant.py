@@ -11,12 +11,12 @@ Gate truth table (verified against the routers/services, not guessed):
   ┌──────────────────────────────────────────────┬────────┬───────────────┐
   │ Operation (org A credential, org B resource) │ Status │ Deciding gate │
   ├──────────────────────────────────────────────┼────────┼───────────────┤
-  │ GET /v1/users/<B user UUID>                  │ 404    │ service org-  │
-  │ PATCH /v1/users/<B user UUID>                │ 404    │ scope →       │
-  │ DELETE /v1/users/<B user UUID>               │ 404    │ NotFoundError │
-  │ GET /v1/users (list, cursor pagination)      │ 200    │ service org-  │
-  │                                              │        │ scope (own    │
-  │                                              │        │ rows only)    │
+  │ GET /v1/users/<B user UUID> (member JWT)     │ 403    │ require_      │
+  │ PATCH /v1/users/<B user UUID> (member JWT)   │ 403    │ admin_or_self │
+  │ DELETE /v1/users/<B user UUID> (member JWT) │ 403    │ (platform     │
+  │ GET /v1/users (member JWT)                   │ 403    │ admin only)   │
+  │ GET /v1/users (superadmin)                   │ 200    │ platform-     │
+  │                                              │        │ visible       │
   │ GET /v1/search?q=...                    │ 200    │ service org-  │
 │                                              │        │ scope (own    │
 │                                              │        │ rows only)    │
@@ -32,12 +32,14 @@ Gate truth table (verified against the routers/services, not guessed):
 Global ``GET /v1/search`` is covered in test 8 (org-B project/user/session
 rows seeded, zero leakage asserted with an org-A positive control).
 
-Why 404 (not 403) for users: the admin JWT carries wildcard permissions,
-so ``require_permission[_or_self]`` passes and the org-scoped service
-lookup misses → ``NotFoundError`` → 404 (``core/exceptions.py`` mapping).
-Project-scoped API keys cannot reach these endpoints at all (403 at the
-permission gate) — user seeding therefore goes through the per-tenant
-JWT clients.
+Why 403 (not 404) for users: user endpoints are platform-admin-gated
+(``require_admin`` / ``require_admin_or_self``) — a member JWT is neither
+admin nor the target user, so the gate rejects before any service code
+runs.  Members can only GET/PATCH their own record; listing and all
+cross-user access need the platform admin (platform-visible, all rows).
+User seeding therefore goes through the ``superadmin_client`` fixture —
+project-scoped API keys cannot reach these endpoints at all (403 at the
+permission gate).
 
 Why 403 (not 404) for project-scoped URLs: ``require_project_membership``
 rejects an API key scoped to a different project before any service code
@@ -64,7 +66,11 @@ pytestmark = pytest.mark.security
 
 
 async def _create_user(client: AsyncClient, external_id: str) -> dict[str, Any]:
-    """Create a user via ``POST /v1/users``; return the response body."""
+    """Create a user via ``POST /v1/users``; return the response body.
+
+    ``client`` must be the ``superadmin_client`` — user creation is
+    platform-admin-gated (member JWTs get 403).
+    """
     resp = await client.post("/v1/users", json={"external_id": external_id})
     assert resp.status_code == 201, f"User creation failed: {resp.text}"
     body = resp.json()
@@ -75,7 +81,10 @@ async def _create_user(client: AsyncClient, external_id: str) -> dict[str, Any]:
 async def _create_named_user(
     client: AsyncClient, external_id: str, name: str
 ) -> dict[str, Any]:
-    """Create a user with a display name (needed for global-search labels)."""
+    """Create a user with a display name (needed for global-search labels).
+
+    ``client`` must be the ``superadmin_client`` — see :func:`_create_user`.
+    """
     resp = await client.post(
         "/v1/users", json={"external_id": external_id, "name": name}
     )
@@ -163,83 +172,77 @@ class TestCrossTenantIsolation:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("target", ["b", "c"])
-    async def test_cross_org_get_user_returns_404(
+    async def test_cross_org_get_user_returns_403(
         self,
+        superadmin_client: AsyncClient,
         jwt_client_org_a: AsyncClient,
-        jwt_client_org_b: AsyncClient,
-        jwt_client_org_c: AsyncClient,
         target: str,
     ) -> None:
-        """GET /v1/users/<foreign UUID> → 404 (org-scoped service lookup)."""
-        # Seed via the owning org's client so the row genuinely exists there.
-        seed_clients = {"b": jwt_client_org_b, "c": jwt_client_org_c}
-        seeded = await _create_user(seed_clients[target], f"xtenant-user-{target}")
+        """GET /v1/users/<foreign UUID> via member JWT → 403 (admin-only gate)."""
+        # Seed via the platform admin (only it may create users).
+        seed_map = {"b": "xtenant-user-b", "c": "xtenant-user-c"}
+        seeded = await _create_user(superadmin_client, seed_map[target])
         foreign_id = seeded["id"]
 
         resp = await jwt_client_org_a.get(f"/v1/users/{foreign_id}")
-        assert resp.status_code == 404, (
-            f"GET /v1/users/{foreign_id} returned {resp.status_code}, expected 404"
+        assert resp.status_code == 403, (
+            f"GET /v1/users/{foreign_id} returned {resp.status_code}, expected 403"
         )
 
     @pytest.mark.asyncio
-    async def test_list_users_returns_only_own_org(
+    async def test_list_users_member_forbidden_superadmin_visible(
         self,
+        superadmin_client: AsyncClient,
         jwt_client_org_a: AsyncClient,
         jwt_client_org_b: AsyncClient,
     ) -> None:
-        """GET /v1/users returns only the caller's org members (non-vacuous)."""
-        await _create_user(jwt_client_org_a, "xtenant-a-alice")
-        await _create_user(jwt_client_org_a, "xtenant-a-bob")
-        await _create_user(jwt_client_org_b, "xtenant-b-carol")
-        await _create_user(jwt_client_org_b, "xtenant-b-dave")
+        """User listing is platform-admin-only: members get 403.
 
-        resp_a = await jwt_client_org_a.get("/v1/users", params={"limit": 200})
-        resp_b = await jwt_client_org_b.get("/v1/users", params={"limit": 200})
-        assert resp_a.status_code == 200
-        assert resp_b.status_code == 200
+        Seeds via the superadmin (platform-visible, all rows), asserts both
+        member JWTs get 403 on ``GET /v1/users``, and guards vacuity by
+        asserting the superadmin list contains every seeded row.
+        """
+        await _create_user(superadmin_client, "xtenant-a-alice")
+        await _create_user(superadmin_client, "xtenant-a-bob")
+        await _create_user(superadmin_client, "xtenant-b-carol")
+        await _create_user(superadmin_client, "xtenant-b-dave")
 
-        data_a = resp_a.json()["data"]
-        data_b = resp_b.json()["data"]
-        ext_a = {u["external_id"] for u in data_a}
-        ext_b = {u["external_id"] for u in data_b}
-        # Guard against vacuous disjointness: both sides must hold seeded rows.
-        assert {"xtenant-a-alice", "xtenant-a-bob"} <= ext_a
-        assert {"xtenant-b-carol", "xtenant-b-dave"} <= ext_b
+        for member_client in (jwt_client_org_a, jwt_client_org_b):
+            resp = await member_client.get("/v1/users", params={"limit": 200})
+            assert resp.status_code == 403, (
+                f"member user-list returned {resp.status_code}, expected 403"
+            )
 
-        ids_a = {u["id"] for u in data_a}
-        ids_b = {u["id"] for u in data_b}
-        assert ids_a.isdisjoint(ids_b), (
-            f"Overlapping user IDs between orgs: {ids_a & ids_b}"
-        )
-        user_ids_a = {u["user_id"] for u in data_a}
-        user_ids_b = {u["user_id"] for u in data_b}
-        assert len(user_ids_a) == 1 and len(user_ids_b) == 1
-        assert user_ids_a != user_ids_b
+        admin_resp = await superadmin_client.get("/v1/users", params={"limit": 200})
+        assert admin_resp.status_code == 200
+        ext_all = {u["external_id"] for u in admin_resp.json()["data"]}
+        assert {"xtenant-a-alice", "xtenant-a-bob"} <= ext_all
+        assert {"xtenant-b-carol", "xtenant-b-dave"} <= ext_all
 
     @pytest.mark.asyncio
-    async def test_cross_org_update_and_delete_user_return_404(
+    async def test_cross_org_update_and_delete_user_return_403(
         self,
+        superadmin_client: AsyncClient,
         jwt_client_org_a: AsyncClient,
-        jwt_client_org_b: AsyncClient,
     ) -> None:
-        """PATCH/DELETE /v1/users/<foreign UUID> → 404; row untouched."""
-        seeded = await _create_user(jwt_client_org_b, "xtenant-b-erin")
+        """PATCH/DELETE /v1/users/<foreign UUID> via member JWT → 403; row untouched."""
+        seeded = await _create_user(superadmin_client, "xtenant-b-erin")
         foreign_id = seeded["id"]
 
         patch_resp = await jwt_client_org_a.patch(
             f"/v1/users/{foreign_id}", json={"name": "Mallory"}
         )
-        assert patch_resp.status_code == 404, (
-            f"PATCH returned {patch_resp.status_code}, expected 404"
+        assert patch_resp.status_code == 403, (
+            f"PATCH returned {patch_resp.status_code}, expected 403"
         )
 
         delete_resp = await jwt_client_org_a.delete(f"/v1/users/{foreign_id}")
-        assert delete_resp.status_code == 404, (
-            f"DELETE returned {delete_resp.status_code}, expected 404"
+        assert delete_resp.status_code == 403, (
+            f"DELETE returned {delete_resp.status_code}, expected 403"
         )
 
-        # No side effects: the owner still sees the unchanged row.
-        check = await jwt_client_org_b.get(f"/v1/users/{foreign_id}")
+        # No side effects: the platform admin still sees the unchanged row.
+        check = await superadmin_client.get(f"/v1/users/{foreign_id}")
         assert check.status_code == 200
         assert check.json()["name"] != "Mallory"
 
@@ -322,36 +325,38 @@ class TestCrossTenantIsolation:
     @pytest.mark.asyncio
     async def test_paginated_list_does_not_leak(
         self,
+        superadmin_client: AsyncClient,
         jwt_client_org_a: AsyncClient,
-        jwt_client_org_b: AsyncClient,
     ) -> None:
-        """Cursor-walking the whole A roster never yields a B row."""
-        seeded_a = {
-            (await _create_user(jwt_client_org_a, f"xtenant-a-p{i}"))["id"]
+        """Member JWTs cannot paginate the roster at all — 403 leaks nothing."""
+        seeded = {
+            (await _create_user(superadmin_client, f"xtenant-p{i}"))["id"]
             for i in range(3)
         }
-        seeded_b = {
-            (await _create_user(jwt_client_org_b, f"xtenant-b-p{i}"))["id"]
-            for i in range(2)
-        }
 
+        # A member cursor-walk is rejected on the first page.
+        resp = await jwt_client_org_a.get("/v1/users", params={"limit": 1})
+        assert resp.status_code == 403, (
+            f"member user-list returned {resp.status_code}, expected 403"
+        )
+
+        # Vacuity guard: the superadmin walk finds every seeded row.
         collected: set[str] = set()
         cursor: str | None = None
         while True:
             params: dict[str, Any] = {"limit": 1}
             if cursor is not None:
                 params["cursor"] = cursor
-            resp = await jwt_client_org_a.get("/v1/users", params=params)
-            assert resp.status_code == 200
-            body = resp.json()
+            page = await superadmin_client.get("/v1/users", params=params)
+            assert page.status_code == 200
+            body = page.json()
             collected.update(u["id"] for u in body["data"])
             cursor = body["next_cursor"]
             if not body["has_more"]:
                 assert cursor is None
                 break
 
-        assert seeded_a <= collected, "Pagination missed own-org rows"
-        assert collected.isdisjoint(seeded_b), "Paginated listing leaked!"
+        assert seeded <= collected, "Superadmin walk missed seeded rows"
 
     # ── Search leakage (project hybrid search) ──────────────────────────
 
@@ -361,8 +366,7 @@ class TestCrossTenantIsolation:
         isolated_app: Any,
         auth_client_org_a: AsyncClient,
         auth_client_org_b: AsyncClient,
-        jwt_client_org_a: AsyncClient,
-        jwt_client_org_b: AsyncClient,
+        superadmin_client: AsyncClient,
         tenants: dict[str, dict[str, Any]],
         _search_dispatcher: None,
         _fake_embeddings: None,
@@ -464,7 +468,7 @@ class TestCrossTenantIsolation:
             isolated_app, tenants["b"]["jwt"], f"Project {gmarker} B"
         )
         guser_b = await _create_named_user(
-            jwt_client_org_b,
+            superadmin_client,
             f"gsearch-{gmarker}-b-user",
             f"Gsearch {gmarker} User B",
         )
@@ -472,7 +476,7 @@ class TestCrossTenantIsolation:
             auth_client_org_b, project_b, f"gsearch-{gmarker}-b-session"
         )
         guser_a = await _create_named_user(
-            jwt_client_org_a,
+            superadmin_client,
             f"gsearch-{gmarker}-a-user",
             f"Gsearch {gmarker} User A",
         )
@@ -480,7 +484,7 @@ class TestCrossTenantIsolation:
         # via the external_id ILIKE leg and render with external_id label
         # (guards the label-fallback fix — the old code 500'd here).
         gnameless_a = await _create_user(
-            jwt_client_org_a, f"gsearch-{gmarker}-a-nameless"
+            superadmin_client, f"gsearch-{gmarker}-a-nameless"
         )
 
         gresp = await auth_client_org_a.get(

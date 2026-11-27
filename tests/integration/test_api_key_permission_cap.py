@@ -105,9 +105,9 @@ class TestApiKeyPermissionCap:
         transport = asgi_transport(isolated_app)
         async with AsyncClient(
             transport=transport, base_url="http://test"
-        ) as admin_client:
-            admin_client.headers["Authorization"] = f"Bearer {tenant['jwt']}"
-            added = await admin_client.post(
+        ) as jwt_client:
+            jwt_client.headers["Authorization"] = f"Bearer {tenant['jwt']}"
+            added = await jwt_client.post(
                 f"/v1/projects/{project_id}/members",
                 json={"email": _MEMBER_EMAIL, "role": "member"},
             )
@@ -158,9 +158,9 @@ class TestApiKeyPermissionCap:
         transport = asgi_transport(isolated_app)
         async with AsyncClient(
             transport=transport, base_url="http://test"
-        ) as admin_client:
-            admin_client.headers["Authorization"] = f"Bearer {tenant['jwt']}"
-            added = await admin_client.post(
+        ) as jwt_client:
+            jwt_client.headers["Authorization"] = f"Bearer {tenant['jwt']}"
+            added = await jwt_client.post(
                 f"/v1/projects/{project_id}/members",
                 json={"email": _MEMBER_EMAIL, "role": "member"},
             )

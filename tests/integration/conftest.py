@@ -291,9 +291,13 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
     endpoint that runs before auth exists):
 
     1. Insert the org row directly (fixture infra).
-    2. Insert a user row directly (fixture infra — there is no public
-       "create user" endpoint that runs before auth exists).
-    3. Mint a JWT for that user (signed with the test app's SECRET_KEY).
+    2. Insert a member user row directly (fixture infra — there is no
+       public "create user" endpoint that runs before auth exists).  The
+       member carries the default grant set (``MEMBER_DEFAULT_PERMISSIONS``:
+       everything except ``members:*``), so project/API-key bootstrap below
+       still passes the ``project:manage`` gates while ``/v1/users*`` and
+       audit-log reads stay 403 (platform-admin-only).
+    3. Mint a JWT for that member (signed with the test app's SECRET_KEY).
     4. Create a project via ``POST /v1/projects`` with the JWT (the
        creator is auto-added as owner).
     5. Create a project-scoped API key via the JWT (owner-gated).
@@ -309,6 +313,7 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
     from sqlalchemy import text as _sql
 
     from core.config import get_settings
+    from core.rbac import MEMBER_DEFAULT_PERMISSIONS
     from repositories.user_repository import UserRepository
     from utils.crypto import create_jwt_token
 
@@ -332,16 +337,17 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
     ):
         user = await UserRepository(session).create(
             external_id=f"bootstrap_{uuid4().hex[:8]}",
-            role="admin",
+            role="member",
+            permissions=list(MEMBER_DEFAULT_PERMISSIONS),
         )
     user_id = user.id
 
-    # ── Mint a JWT for the user ─────────────────────────────────────────
+    # ── Mint a JWT for the member ─────────────────────────────────────
     jwt_token = create_jwt_token(
         data={
             "sub": str(user_id),
             "user_id": str(user_id),
-            "role": "admin",
+            "role": "member",
             "type": "access",
         },
         secret=get_settings().SECRET_KEY,
@@ -404,12 +410,13 @@ async def auth_client(app: Any, org_and_key: dict) -> AsyncGenerator[AsyncClient
 async def admin_client(
     app: Any, org_and_key: dict
 ) -> AsyncGenerator[AsyncClient, None]:
-    """HTTP client pre-authenticated with the bootstrap admin JWT.
+    """HTTP client pre-authenticated with the bootstrap member JWT.
 
-    Org-wide endpoints (``POST/GET/PATCH/DELETE /v1/users*``,
-    audit-log reads) require ``members:*`` — only the admin JWT
-    (wildcard) satisfies those gates now that the shared key carries
-    project-only permissions.
+    Project-scoped endpoints (projects, sessions, API keys, search,
+    schemas, platform-config) pass on the member default grant set.
+    Org-wide user management (``POST/GET/PATCH/DELETE /v1/users*``) and
+    audit-log reads are platform-admin-gated — use
+    ``isolated_superadmin_client`` (or ``superadmin_jwt``) for those.
     """
     transport = asgi_transport(app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -598,9 +605,10 @@ async def isolated_admin_client(
 ) -> AsyncGenerator[AsyncClient, None]:
     """JWT-authenticated client backed by the isolated app.
 
-    Mirrors :func:`admin_client` for the per-test isolation fixtures —
-    org-wide calls (``/v1/users*``, audit-logs) must go through this,
-    project-scoped calls stay on ``isolated_auth_client``.
+    Member JWT — good for project-scoped calls and the
+    ``configuration:*`` endpoints.  User management (``/v1/users*``) and
+    audit-log reads are platform-admin-gated: use
+    ``isolated_superadmin_client`` for those.
     """
     transport = asgi_transport(isolated_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

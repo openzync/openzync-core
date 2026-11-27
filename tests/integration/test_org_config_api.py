@@ -34,7 +34,8 @@ async def jwt_client(
 
     ``GET /admin/platform-config`` is gated by
     ``require_permission("configuration:read")`` — the project-scoped API
-    key lacks it, so config reads use the admin JWT (wildcard).
+    key lacks it, so config reads use the bootstrap member JWT (the
+    permission is in the member default grant set).
     """
     from tests.integration.conftest import asgi_transport
 

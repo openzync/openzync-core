@@ -662,9 +662,11 @@ class TestMemoryCrossTenant:
         """Memory ingested by org A must not be accessible by org B.
 
         1. Bootstrap org A + org B.
-        2. Org A creates a user and ingests memory.
+        2. Org A creates a user (via platform superadmin — user creation
+           is admin-gated) and ingests memory.
         3. Org B tries to access the same project by UUID → 404 (RLS).
         """
+        from tests.integration.conftest import superadmin_jwt
         # ── Bootstrap org A ───────────────────────────────────────────────
         transport_a = ASGITransport(app=app)  # type: ignore[arg-type]
         async with AsyncClient(transport=transport_a, base_url="http://test") as cli:
@@ -677,16 +679,22 @@ class TestMemoryCrossTenant:
             tenant_b = await bootstrap_tenant(app, cli, "Org B")
 
         # ── Org A: create user + ingest memory ────────────────────────────
+        # User creation is platform-admin-gated — the bootstrap member JWT
+        # gets 403, so this goes through the superadmin (same bypass
+        # session shape the old admin JWT used; downstream visibility is
+        # unchanged).
+        super_headers = {"Authorization": f"Bearer {await superadmin_jwt(app)}"}
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {tenant_a['jwt']}"
             user_resp = await cli.post(
                 "/v1/users",
                 json={"external_id": "cross_tenant_mem_user"},
+                headers=super_headers,
             )
             assert user_resp.status_code == 201
 
+            cli.headers["Authorization"] = f"Bearer {tenant_a['jwt']}"
             # Create session before ingesting
             session_resp = await cli.post(
                 f"/v1/projects/{project_id_a}/sessions",
