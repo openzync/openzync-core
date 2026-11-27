@@ -24,8 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import audit_action
 from core.exceptions import AuthenticationError
-from core.rls import rls_bypass
 from dependencies.auth import (
+    _check_permission,
     _ensure_superadmin,
     require_permission,
     require_user_id,
@@ -377,6 +377,7 @@ async def add_member(
     ],
 )
 async def list_members(
+    request: Request,
     project_id: UUID = Path(...),
     sort_by: ProjectMemberSortBy | None = Query(
         default=None,
@@ -387,13 +388,26 @@ async def list_members(
         description="Sort direction (default asc).",
     ),
     service: ProjectService = Depends(_get_project_service),
+    user_id: str = Depends(require_user_id),
+    db: AsyncSession = Depends(get_db),
 ) -> list[ProjectMemberResponse]:
     """List all members of a project (``pending`` invites included).
 
-    Requires membership.
+    Requires membership. Managers (``project:manage``) get populated
+    ``user`` profiles; other readers get IDs-only (``user`` null except
+    self per the users RLS policy).
     """
+    try:
+        await _check_permission(request, user_id, db, "project:manage")
+        can_see_profiles = True
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_403_FORBIDDEN:
+            raise
+        can_see_profiles = False
     return await service.list_members(
-        project_id=project_id, sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir)
+        project_id=project_id,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
+        can_see_profiles=can_see_profiles,
     )
 
 
@@ -419,9 +433,9 @@ async def _resolve_is_superadmin(
 )
 @audit_action("project.member.approve", "project_member", "Member invite approved")
 async def approve_member(
-    payload: MemberApprovalRequest,
+    request: Request,
     project_id: UUID = Path(...),
-    request: Request = None,
+    payload: MemberApprovalRequest | None = None,
     service: ProjectMembershipService = Depends(_get_membership_service),
     user_id: str = Depends(require_user_id),
     db: AsyncSession = Depends(get_db),
@@ -434,23 +448,13 @@ async def approve_member(
 
     Already-active memberships reject with 422 ``already_member``.
     """
-    target = payload.user_id if payload.user_id is not None else UUID(user_id)
+    target = payload.user_id if payload and payload.user_id is not None else UUID(user_id)
     is_superadmin = await _resolve_is_superadmin(request, user_id, db)
-    # note: a superadmin sees rows RLS would hide from them (the invitee's
-    # row carries the invitee's user_id) — same bypass as users.py self-reads.
-    if is_superadmin:
-        async with rls_bypass(db):
-            return await service.approve(
-                project_id=project_id,
-                user_id=target,
-                actor=UUID(user_id),
-                is_superadmin=True,
-            )
     return await service.approve(
         project_id=project_id,
         user_id=target,
         actor=UUID(user_id),
-        is_superadmin=False,
+        is_superadmin=is_superadmin,
     )
 
 
@@ -460,9 +464,9 @@ async def approve_member(
 )
 @audit_action("project.member.reject", "project_member", "Member invite rejected")
 async def reject_member(
-    payload: MemberApprovalRequest,
+    request: Request,
     project_id: UUID = Path(...),
-    request: Request = None,
+    payload: MemberApprovalRequest | None = None,
     service: ProjectMembershipService = Depends(_get_membership_service),
     user_id: str = Depends(require_user_id),
     db: AsyncSession = Depends(get_db),
@@ -473,23 +477,14 @@ async def reject_member(
     platform superadmin may reject. Active memberships reject with 422 —
     remove them via ``DELETE`` instead.
     """
-    target = payload.user_id if payload.user_id is not None else UUID(user_id)
+    target = payload.user_id if payload and payload.user_id is not None else UUID(user_id)
     is_superadmin = await _resolve_is_superadmin(request, user_id, db)
-    if is_superadmin:
-        async with rls_bypass(db):
-            await service.reject(
-                project_id=project_id,
-                user_id=target,
-                actor=UUID(user_id),
-                is_superadmin=True,
-            )
-    else:
-        await service.reject(
-            project_id=project_id,
-            user_id=target,
-            actor=UUID(user_id),
-            is_superadmin=False,
-        )
+    await service.reject(
+        project_id=project_id,
+        user_id=target,
+        actor=UUID(user_id),
+        is_superadmin=is_superadmin,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

@@ -333,7 +333,13 @@ class ProjectMembershipService:
                 message="Membership is active — remove it via DELETE instead",
                 detail={"code": "already_member", "user_id": str(user_id)},
             )
-        await self._repo.remove_member(project_id, user_id)
+        removed = await self._repo.remove_member(project_id, user_id)
+        # note: row existed a moment ago; False means a concurrent delete won.
+        if not removed:
+            raise NotFoundError(
+                message=f"Membership not found for user {user_id}",
+                detail={"user_id": str(user_id)},
+            )
         logger.info(
             "project_membership.member_rejected",
             extra={

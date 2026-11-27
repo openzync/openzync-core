@@ -133,7 +133,7 @@ class ProjectService:
         Raises:
             NotFoundError: If the project does not exist.
         """
-        project = await self._repo.get_by_id(user_id, project_id)
+        project = await self._repo.get_accessible_project(project_id, user_id)
         if project is None:
             raise NotFoundError(
                 message=f"Project {project_id} not found",
@@ -278,7 +278,7 @@ class ProjectService:
                 )
 
         project = await self._repo.update(
-
+            user_id=user_id,
             project_id=project_id,
             name=payload.name,
             description=payload.description,
@@ -400,7 +400,7 @@ class ProjectService:
                 or the user is not a member.
             ValidationError: If the user already has ``MAX_PINS`` pins.
         """
-        project = await self._repo.get_by_id(user_id, project_id)
+        project = await self._repo.get_accessible_project(project_id, user_id)
         if project is None:
             raise NotFoundError(
                 message=f"Project {project_id} not found",
@@ -528,6 +528,8 @@ class ProjectService:
         self,
         project_id: UUID,
         sort: SortSpec | None = None,
+        *,
+        can_see_profiles: bool = False,
     ) -> list[ProjectMemberResponse]:
         """List all members of a project with nested user details.
 
@@ -540,12 +542,17 @@ class ProjectService:
         Args:
             project_id: The project's UUID.
             sort: Validated sort spec (forwarded opaque to the repository).
+            can_see_profiles: When ``True``, co-member user rows resolve
+                (managers); otherwise ``user`` stays ``None`` except self
+                per the users RLS policy.
 
         Returns:
             Memberships with ``user`` populated, or ``None`` when the
             user row is missing.
         """
-        members = await self._repo.list_members(project_id, sort=sort)
+        members = await self._repo.list_members(
+            project_id, sort=sort, include_profiles=can_see_profiles
+        )
         return [
             ProjectMemberResponse(
                 id=m.id,
@@ -638,7 +645,7 @@ class ProjectService:
 
     async def _count_owners(self, project_id: UUID) -> int:
         """Count how many ACTIVE owners a project has."""
-        members = await self._repo.list_members(project_id)
-        return sum(
-            1 for m in members if m.role == "owner" and m.status == "active"
-        )
+        # note: dedicated bypassed query — list_members() is RLS-filtered
+        # (non-bypassed read hides co-members), which made the last-owner
+        # guard undercount for non-creator managers.
+        return await self._repo.count_owners(project_id)
