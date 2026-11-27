@@ -62,6 +62,7 @@ class TestAddByEmail:
         member.project_id = kwargs.get("project_id", self.PROJECT_ID)
         member.user_id = kwargs.get("user_id", uuid4())
         member.role = kwargs.get("role", "member")
+        member.status = kwargs.get("status", "pending")
         member.created_at = kwargs.get("created_at", datetime.now(UTC))
         return member
 
@@ -73,7 +74,7 @@ class TestAddByEmail:
         service, mock_repo, mock_user_repo, _, _ = self._make_service()
         user = self._make_mock_user()
         mock_user_repo.find_user_by_email.return_value = user
-        mock_repo.get_member.return_value = None
+        mock_repo.get_membership_any.return_value = None
         mock_repo.add_member.return_value = self._make_mock_member(
             user_id=user.id,
             role="member",
@@ -88,6 +89,7 @@ class TestAddByEmail:
 
         assert result.user_id == user.id
         assert result.role == "member"
+        assert result.status == "pending"
         mock_repo.add_member.assert_awaited_once_with(
             project_id=self.PROJECT_ID,
             user_id=user.id,
@@ -102,7 +104,9 @@ class TestAddByEmail:
         service, mock_repo, mock_user_repo, _, _ = self._make_service()
         user = self._make_mock_user()
         mock_user_repo.find_user_by_email.return_value = user
-        mock_repo.get_member.return_value = self._make_mock_member(user_id=user.id)
+        mock_repo.get_membership_any.return_value = self._make_mock_member(
+            user_id=user.id, status="active"
+        )
 
         with pytest.raises(ValidationError) as exc_info:
             await service.add_by_email(
@@ -123,7 +127,7 @@ class TestAddByEmail:
         service, mock_repo, mock_user_repo, _, _ = self._make_service()
         user = self._make_mock_user(invite_token_hash="hashed-token")
         mock_user_repo.find_user_by_email.return_value = user
-        mock_repo.get_member.return_value = None
+        mock_repo.get_membership_any.return_value = None
 
         with pytest.raises(ConflictError) as exc_info:
             await service.add_by_email(
@@ -166,6 +170,7 @@ class TestAddByEmail:
 
         assert result.user_id == pending_id
         assert result.role == "member"
+        assert result.status == "pending"
         mock_invite.invite_user.assert_awaited_once()
         mock_repo.add_member.assert_awaited_once_with(
             project_id=self.PROJECT_ID,
@@ -227,7 +232,7 @@ class TestAddByEmail:
         service, mock_repo, mock_user_repo, _, _ = self._make_service()
         user = self._make_mock_user()
         mock_user_repo.find_user_by_email.return_value = user
-        mock_repo.get_member.return_value = None
+        mock_repo.get_membership_any.return_value = None
         mock_repo.add_member.return_value = self._make_mock_member(user_id=user.id)
 
         await service.add_by_email(

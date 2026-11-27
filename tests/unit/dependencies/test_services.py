@@ -88,6 +88,7 @@ class TestGetSessionService:
     async def test_creates_session_service(self) -> None:
         from dependencies.services import get_session_service
 
+        request = MagicMock()
         db = AsyncMock(spec=AsyncSession)
         webhook = MagicMock()
 
@@ -102,13 +103,18 @@ class TestGetSessionService:
             mock_blob_cls.return_value = mock_blob
             mock_svc_cls.return_value = "session_service"
 
-            result = await get_session_service(db, webhook)
+            result = await get_session_service(request, db, webhook)
 
             mock_repo_cls.assert_called_once_with(db)
             mock_blob_cls.assert_called_once_with(db)
             mock_svc_cls.assert_called_once_with(
-                repo=mock_repo, blob_repo=mock_blob, webhook_service=webhook
+                repo=mock_repo,
+                blob_repo=mock_blob,
+                webhook_service=webhook,
+                graph_backend_resolver=ANY,
             )
+            resolver = mock_svc_cls.call_args.kwargs["graph_backend_resolver"]
+            assert callable(resolver)
             assert result == "session_service"
 
 

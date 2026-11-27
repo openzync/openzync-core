@@ -19,7 +19,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import AsyncClient
@@ -118,6 +118,19 @@ class TestApiKeyPermissionCap:
             transport=asgi_transport(isolated_app), base_url="http://test"
         ) as member_client:
             member_client.headers["Authorization"] = f"Bearer {member_jwt}"
+            # The invite is pending until the invitee approves it.
+            approved = await member_client.post(
+                f"/v1/projects/{project_id}/members/approve",
+            )
+            assert approved.status_code == 200, (
+                f"member approve failed: {approved.text}"
+            )
+            # 404-first guard order: unknown project 404s before any
+            # membership/permission check.
+            missing = await member_client.get(f"/v1/projects/{uuid4()}/api-keys")
+            assert missing.status_code == 404, (
+                f"unknown project must be 404, got {missing.status_code}"
+            )
             resp = await member_client.post(
                 f"/v1/projects/{project_id}/api-keys",
                 json={"name": "escalation", "permissions": ["members:write"]},
@@ -158,6 +171,19 @@ class TestApiKeyPermissionCap:
             transport=asgi_transport(isolated_app), base_url="http://test"
         ) as member_client:
             member_client.headers["Authorization"] = f"Bearer {member_jwt}"
+            # The invite is pending until the invitee approves it.
+            approved = await member_client.post(
+                f"/v1/projects/{project_id}/members/approve",
+            )
+            assert approved.status_code == 200, (
+                f"member approve failed: {approved.text}"
+            )
+            # 404-first guard order: unknown project 404s before any
+            # membership/permission check.
+            missing = await member_client.get(f"/v1/projects/{uuid4()}/api-keys")
+            assert missing.status_code == 404, (
+                f"unknown project must be 404, got {missing.status_code}"
+            )
             subset = await member_client.post(
                 f"/v1/projects/{project_id}/api-keys",
                 json={"name": "subset", "permissions": ["project:read"]},

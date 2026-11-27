@@ -74,6 +74,7 @@ class TestProjectService:
         member.project_id = kwargs.get("project_id", self.PROJECT_ID)
         member.user_id = kwargs.get("user_id", self.USER_ID)
         member.role = kwargs.get("role", "owner")
+        member.status = kwargs.get("status", "active")
         member.created_at = kwargs.get("created_at", datetime.now(UTC))
         # list_members serialises member.user into a nested UserResponse —
         # an unstubbed MagicMock attribute fails validation there.
@@ -101,6 +102,7 @@ class TestProjectService:
             project_id=self.PROJECT_ID,
             user_id=self.USER_ID,
             role="owner",
+            status="active",
         )
 
     @pytest.mark.asyncio
@@ -124,7 +126,7 @@ class TestProjectService:
     async def test_get_project_found(self) -> None:
         """Getting a project returns the response."""
         service, mock_repo, _ = self._make_service()
-        mock_repo.get_by_id.return_value = self._make_mock_project()
+        mock_repo.get_accessible_project.return_value = self._make_mock_project()
         mock_repo.count_members.return_value = 3
 
         result = await service.get_project(
@@ -139,7 +141,7 @@ class TestProjectService:
     async def test_get_project_not_found_raises_404(self) -> None:
         """Getting a non-existent project raises NotFoundError."""
         service, mock_repo, _ = self._make_service()
-        mock_repo.get_by_id.return_value = None
+        mock_repo.get_accessible_project.return_value = None
 
         with pytest.raises(NotFoundError):
             await service.get_project(
@@ -329,11 +331,9 @@ class TestProjectService:
     async def test_remove_member_success(self) -> None:
         """Removing a member succeeds."""
         service, mock_repo, _ = self._make_service()
-        mock_repo.get_member.return_value = self._make_mock_member(role="member")
-        mock_repo.list_members.return_value = [
-            self._make_mock_member(role="owner", user_id=self.USER_ID),
-            self._make_mock_member(role="member", user_id=uuid4()),
-        ]
+        mock_repo.get_membership_any.return_value = self._make_mock_member(
+            role="member"
+        )
         mock_repo.remove_member.return_value = True
 
         await service.remove_member(
@@ -346,10 +346,10 @@ class TestProjectService:
     async def test_remove_last_owner_raises_validation(self) -> None:
         """Removing the last owner raises ValidationError."""
         service, mock_repo, _ = self._make_service()
-        mock_repo.get_member.return_value = self._make_mock_member(role="owner")
-        mock_repo.list_members.return_value = [
-            self._make_mock_member(role="owner", user_id=self.USER_ID),
-        ]
+        mock_repo.get_membership_any.return_value = self._make_mock_member(
+            role="owner"
+        )
+        mock_repo.count_owners.return_value = 1
 
         with pytest.raises(ValidationError):
             await service.remove_member(
@@ -362,7 +362,7 @@ class TestProjectService:
     async def test_remove_member_not_found_raises_404(self) -> None:
         """Removing a non-existent member raises NotFoundError."""
         service, mock_repo, _ = self._make_service()
-        mock_repo.get_member.return_value = None
+        mock_repo.get_membership_any.return_value = None
 
         with pytest.raises(NotFoundError):
             await service.remove_member(
@@ -374,11 +374,9 @@ class TestProjectService:
     async def test_remove_member_repo_fails_raises_404(self) -> None:
         """When the repo returns False, raise NotFoundError."""
         service, mock_repo, _ = self._make_service()
-        mock_repo.get_member.return_value = self._make_mock_member(role="member")
-        mock_repo.list_members.return_value = [
-            self._make_mock_member(role="owner", user_id=self.USER_ID),
-            self._make_mock_member(role="member", user_id=uuid4()),
-        ]
+        mock_repo.get_membership_any.return_value = self._make_mock_member(
+            role="member"
+        )
         mock_repo.remove_member.return_value = False
 
         with pytest.raises(NotFoundError):
@@ -441,9 +439,7 @@ class TestProjectService:
         """Downgrading the last owner raises ValidationError."""
         service, mock_repo, _ = self._make_service()
         mock_repo.get_member.return_value = self._make_mock_member(role="owner")
-        mock_repo.list_members.return_value = [
-            self._make_mock_member(role="owner", user_id=self.USER_ID),
-        ]
+        mock_repo.count_owners.return_value = 1
 
         with pytest.raises(ValidationError):
             await service.update_member_role(
@@ -496,7 +492,7 @@ class TestProjectService:
     async def test_pin_project_limit_raises_validation(self) -> None:
         """pin_if_under_limit None raises ValidationError with limit detail."""
         service, mock_repo, mock_pin_repo = self._make_service()
-        mock_repo.get_by_id.return_value = self._make_pinnable_project()
+        mock_repo.get_accessible_project.return_value = self._make_pinnable_project()
         mock_repo.get_member.return_value = self._make_mock_member()
         mock_pin_repo.is_pinned.return_value = False
         mock_pin_repo.pin_if_under_limit.return_value = None
@@ -513,7 +509,7 @@ class TestProjectService:
     async def test_pin_project_already_pinned_is_idempotent(self) -> None:
         """Re-pinning returns early without attempting an insert."""
         service, mock_repo, mock_pin_repo = self._make_service()
-        mock_repo.get_by_id.return_value = self._make_pinnable_project()
+        mock_repo.get_accessible_project.return_value = self._make_pinnable_project()
         mock_repo.get_member.return_value = self._make_mock_member()
         mock_pin_repo.is_pinned.return_value = True
 
@@ -558,7 +554,7 @@ class TestProjectService:
     async def test_pin_project_at_max_pins_raises_validation(self) -> None:
         """A 4th pin at the limit raises ValidationError (unit scope, no DB)."""
         service, mock_repo, mock_pin_repo = self._make_service()
-        mock_repo.get_by_id.return_value = self._make_pinnable_project()
+        mock_repo.get_accessible_project.return_value = self._make_pinnable_project()
         mock_repo.get_member.return_value = self._make_mock_member()
         mock_pin_repo.is_pinned.return_value = False
         mock_pin_repo.count_for_user.return_value = MAX_PINS

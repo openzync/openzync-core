@@ -9,11 +9,35 @@ import pytest
 from fastapi import HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.project import Project
+from models.project_member import ProjectMember
+
 pytestmark = pytest.mark.unit
 
 PROJECT_ID = UUID("00000000-0000-0000-0000-0000000000aa")
 ORG_ID_STR = "00000000-0000-0000-0000-000000000001"
 USER_ID_STR = "00000000-0000-0000-0000-000000000002"
+
+
+def _make_project() -> Project:
+    """Real Project entity — JWT branch returns it from get_accessible_project."""
+    return Project(
+        id=PROJECT_ID,
+        user_id=UUID(ORG_ID_STR),
+        name="Test Project",
+        created_by=UUID(USER_ID_STR),
+        is_archived=False,
+    )
+
+
+def _make_member() -> ProjectMember:
+    """Real active ProjectMember entity."""
+    return ProjectMember(
+        project_id=PROJECT_ID,
+        user_id=UUID(USER_ID_STR),
+        role="member",
+        status="active",
+    )
 
 
 class TestRequireProjectMembership:
@@ -27,7 +51,8 @@ class TestRequireProjectMembership:
     def mock_repo(self) -> MagicMock:
         repo = MagicMock()
         repo.get_by_id = AsyncMock()
-        repo.get_member = AsyncMock()
+        repo.get_accessible_project = AsyncMock()
+        repo.get_active_member = AsyncMock()
         return repo
 
     @pytest.mark.asyncio
@@ -41,8 +66,8 @@ class TestRequireProjectMembership:
         request.state.auth_type = "jwt"
         request.state.user_id = USER_ID_STR
 
-        mock_repo.get_by_id.return_value = MagicMock()
-        mock_repo.get_member.return_value = MagicMock()
+        mock_repo.get_accessible_project.return_value = _make_project()
+        mock_repo.get_active_member.return_value = _make_member()
 
         with patch(
             "dependencies.project_auth.ProjectRepository", return_value=mock_repo
@@ -50,10 +75,10 @@ class TestRequireProjectMembership:
             result = await require_project_membership(request, PROJECT_ID, db_session)
 
         assert result is None
-        mock_repo.get_by_id.assert_awaited_once_with(
-            user_id=UUID(USER_ID_STR), project_id=PROJECT_ID
+        mock_repo.get_accessible_project.assert_awaited_once_with(
+            project_id=PROJECT_ID, user_id=UUID(USER_ID_STR)
         )
-        mock_repo.get_member.assert_awaited_once_with(
+        mock_repo.get_active_member.assert_awaited_once_with(
             project_id=PROJECT_ID, user_id=UUID(USER_ID_STR)
         )
 
@@ -68,8 +93,8 @@ class TestRequireProjectMembership:
         request.state.auth_type = "jwt"
         request.state.user_id = USER_ID_STR
 
-        mock_repo.get_by_id.return_value = MagicMock()
-        mock_repo.get_member.return_value = None  # not a member
+        mock_repo.get_accessible_project.return_value = _make_project()
+        mock_repo.get_active_member.return_value = None  # not a member
 
         with patch(
             "dependencies.project_auth.ProjectRepository", return_value=mock_repo
@@ -90,8 +115,8 @@ class TestRequireProjectMembership:
         request.state.auth_type = "jwt"
         request.state.user_id = USER_ID_STR
 
-        mock_repo.get_by_id.return_value = None  # project not found
-        mock_repo.get_member = AsyncMock()
+        mock_repo.get_accessible_project.return_value = None  # not found
+        mock_repo.get_active_member = AsyncMock()
 
         with patch(
             "dependencies.project_auth.ProjectRepository", return_value=mock_repo
