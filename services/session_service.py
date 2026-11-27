@@ -8,12 +8,28 @@ and ``EpisodeBlobRepository`` (message attachments).
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID
 
+from core.enrichment_bits import (
+    ENRICHMENT_CLASSIFICATION,
+    ENRICHMENT_ENTITIES,
+    ENRICHMENT_ENTITY_LINKS,
+    ENRICHMENT_FACTS,
+    ENRICHMENT_STRUCTURED_EXTRACTION,
+)
 from core.events import EventType
-from core.exceptions import ConflictError, NotFoundError, ValidationError
+from core.exceptions import (
+    ConflictError,
+    ExternalServiceError,
+    GraphBackendUnavailableError,
+    NotFoundError,
+    ValidationError,
+)
 from core.sorting import SortSpec
+from models.episode import Episode
+from packages.graph_backend.interface import GraphBackend
 from repositories.episode_blob_repository import EpisodeBlobRepository
 from repositories.mappers import episode_to_dict, session_to_dict, session_to_list_dict
 from repositories.session_repository import SessionRepository
@@ -27,6 +43,19 @@ from services.webhook_service import WebhookService
 
 logger = logging.getLogger(__name__)
 
+# Bits proving the LLM enrichment pass completed-or-skipped for an
+# episode.  Embedding (bit 1), blob text (bit 7), LLM invalidation
+# (bit 8), and deferred observations (bit 6) are excluded — they are
+# not independently gating LLM-section work.
+SKIPPED_LLM_BITS_MASK = (
+    ENRICHMENT_ENTITIES
+    | ENRICHMENT_FACTS
+    | ENRICHMENT_ENTITY_LINKS
+    | ENRICHMENT_CLASSIFICATION
+    | ENRICHMENT_STRUCTURED_EXTRACTION
+)
+"""LLM-section bits; all set + zero LLM rows ⇒ enrichment was skipped."""
+
 
 class SessionService:
     """Business logic for session management.
@@ -38,6 +67,11 @@ class SessionService:
             session mock; production wiring always provides it. When
             ``None``, messages are returned without blob attachments.
         webhook_service: Optional webhook service for event emission.
+        graph_backend_resolver: Optional lazy per-user graph-backend
+            resolver ``(user_id) -> GraphBackend | None``.  Used only to
+            check entity-link presence for ``is_enrichment_skipped``;
+            when ``None`` (e.g. unit tests) links count as unknown and
+            the flag stays ``False`` (fail closed).
     """
 
     def __init__(
@@ -45,10 +79,14 @@ class SessionService:
         repo: SessionRepository,
         blob_repo: EpisodeBlobRepository | None = None,
         webhook_service: WebhookService | None = None,
+        graph_backend_resolver: (
+            Callable[[UUID], Awaitable[GraphBackend | None]] | None
+        ) = None,
     ) -> None:
         self._repo = repo
         self._blob_repo = blob_repo
         self._webhook_service = webhook_service
+        self._graph_resolver = graph_backend_resolver
 
     # ── Create ──────────────────────────────────────────────────────────────
 
@@ -308,7 +346,9 @@ class SessionService:
         Returns:
             A paginated response with message items.  Each item carries
             the raw ``enrichment_status`` bitmask off its episode row —
-            populated inline from the already-fetched rows, no extra query.
+            populated inline from the already-fetched rows, no extra query —
+            plus ``is_enrichment_skipped``, derived from batched
+            presence checks (see below).
 
         Raises:
             NotFoundError: If the session does not exist.
@@ -357,11 +397,17 @@ class SessionService:
             }
 
         items = []
+        skipped_ids = await self._find_skipped_episodes(
+            user_id=user_id,
+            project_id=project_id or session.project_id,
+            messages=messages,
+        )
         for m in messages:
             msg_dict = episode_to_dict(m)
             blobs = episode_blob_map.get(m.id)
             if blobs is not None:
                 msg_dict["blobs"] = blobs
+            msg_dict["is_enrichment_skipped"] = m.id in skipped_ids
             items.append(MessageResponse.model_validate(msg_dict))
 
         return PaginatedResponse[MessageResponse](
@@ -369,6 +415,111 @@ class SessionService:
             next_cursor=next_cursor,
             has_more=next_cursor is not None,
         )
+
+    async def _find_skipped_episodes(
+        self,
+        user_id: UUID,
+        project_id: UUID,
+        messages: list[Episode],
+    ) -> set[UUID]:
+        """Return page episode IDs whose enrichment was mark-skipped.
+
+        An episode flags only when every LLM-section bit is set on its
+        row (in-flight episodes with partial bits never flag) AND no
+        LLM-produced rows exist for it in ``dialog_classifications``,
+        ``facts``, ``structured_extractions``, or the graph entity
+        links.  Presence is checked batched: one ``IN`` query per
+        Postgres table for the whole page plus one
+        ``get_entities_for_episodes`` call.  No query runs when no
+        episode has all bits set.
+
+        The entity-link check is page-wide and conservative: the
+        backend returns a flat entity list with no per-episode
+        mapping, so any linked entity clears the flag for every
+        candidate (an empty result proves zero links for all of
+        them).  Unknown link state (no resolver, backend down)
+        likewise never flags — fail closed with a loud log.
+
+        Args:
+            user_id: The organization UUID for tenant isolation.
+            project_id: The project UUID for graph scoping.
+            messages: The page's episode rows.
+
+        Returns:
+            IDs of episodes to mark ``is_enrichment_skipped``.
+        """
+        candidates = [
+            m
+            for m in messages
+            if (m.enrichment_status or 0) & SKIPPED_LLM_BITS_MASK
+            == SKIPPED_LLM_BITS_MASK
+        ]
+        if not candidates:
+            return set()
+        candidate_ids = [m.id for m in candidates]
+
+        with_rows = await self._repo.get_episodes_with_llm_rows(candidate_ids)
+        if len(with_rows) == len(candidate_ids):
+            return set()
+
+        if not await self._has_no_entity_links(
+            user_id, project_id, candidate_ids
+        ):
+            return set()
+        return {m.id for m in candidates if m.id not in with_rows}
+
+    async def _has_no_entity_links(
+        self,
+        user_id: UUID,
+        project_id: UUID,
+        episode_ids: list[UUID],
+    ) -> bool:
+        """Return ``True`` only when no episode has linked entities.
+
+        Args:
+            user_id: The organization UUID for tenant isolation.
+            project_id: The project UUID for graph scoping.
+            episode_ids: Candidate episode UUIDs to scope the lookup to.
+
+        Returns:
+            ``True`` when the batched backend lookup returns zero
+            entities; ``False`` on any unknown state (no resolver,
+            unresolved backend, backend error) — fail closed.
+        """
+        if self._graph_resolver is None:
+            return False
+        try:
+            backend = await self._graph_resolver(user_id)
+        except GraphBackendUnavailableError as exc:
+            logger.warning(
+                "session.messages.entity_links_unresolved",
+                extra={
+                    "user_id": str(user_id),
+                    "project_id": str(project_id),
+                    "error": str(exc),
+                },
+            )
+            return False
+        if backend is None:
+            return False
+        try:
+            entities = await backend.get_entities_for_episodes(
+                user_id=user_id,
+                project_id=project_id,
+                episode_ids=episode_ids,
+            )
+        except ExternalServiceError as exc:
+            logger.warning(
+                "session.messages.entity_links_lookup_failed",
+                extra={
+                    "user_id": str(user_id),
+                    "project_id": str(project_id),
+                    "episode_count": len(episode_ids),
+                    "error": str(exc),
+                },
+            )
+            return False
+        return len(entities) == 0
 
     # ── Delete ──────────────────────────────────────────────────────────────
 

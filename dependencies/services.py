@@ -167,18 +167,23 @@ async def get_superadmin_user_service(
 
 
 async def get_session_service(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     webhook: WebhookService = Depends(get_webhook_service),
 ) -> SessionService:
     """Dependency that yields an initialised SessionService.
 
     The service is constructed once per request using a DB session from
-    the application's async engine.
+    the application's async engine.  A lazy per-user graph-backend
+    resolver is wired so ``get_messages`` can check entity-link
+    presence for ``is_enrichment_skipped``; link lookup degrades to
+    unknown (flag stays ``False``) when the backend is unavailable.
     """
     return SessionService(
         repo=SessionRepository(db),
         blob_repo=EpisodeBlobRepository(db),
         webhook_service=webhook,
+        graph_backend_resolver=_make_graph_backend_resolver(request, db),
     )
 
 
