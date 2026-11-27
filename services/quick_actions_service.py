@@ -6,6 +6,7 @@ state (projects, LLM config, users).  Called by the overview page router.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -15,6 +16,16 @@ from core.platform_config import get_platform_config
 from repositories.organization_repository import OrganizationRepository
 from repositories.project_repository import ProjectRepository
 from repositories.user_repository import UserRepository
+
+
+@dataclass
+class QuickAction:
+    """A single dashboard quick-action link."""
+
+    label: str
+    href: str
+    icon: str
+    description: str | None = None
 
 
 class QuickActionsService:
@@ -45,17 +56,20 @@ class QuickActionsService:
         self._db = db if db is not None else org_repo.session
         self._redis = redis
 
-    async def get_actions(self, user_id: UUID) -> list[dict]:
+    async def get_actions(self, user_id: UUID) -> list[QuickAction]:
         """Build a prioritized list of quick actions based on platform state.
+
+        Privilege-gated links are omitted (not 403) for under-privileged
+        callers: ``/users`` requires the admin role, ``/audit`` requires
+        ``members:read`` (admins hold it by wildcard).
 
         Args:
             user_id: The user UUID.
 
         Returns:
-            A list of action dicts, each with ``label``, ``href``, ``icon``,
-            and optional ``description`` keys.
+            A list of QuickAction items in display order.
         """
-        actions: list[dict] = []
+        actions: list[QuickAction] = []
 
         # One AsyncSession allows only one in-flight query — sequential, not gather.
         project_count = await self._project_repo.count_active(user_id)
@@ -64,54 +78,63 @@ class QuickActionsService:
         platform_config = await get_platform_config(
             user_id, redis=self._redis, db=self._db
         )
-        user_count = await self._user_repo.count_active(user_id)
+        user_count = await self._user_repo.count_active()
+
+        # Role/permissions gate the admin-only links — read once via RLS
+        # on the request session (fail-closed: unknown user sees neither).
+        caller = await self._user_repo.get_by_uuid(user_id)
+        is_admin = caller is not None and caller.role == "admin"
+        can_read_members = is_admin or (
+            caller is not None and "members:read" in (caller.permissions or [])
+        )
 
         # 1. Projects
         if project_count == 0:
-            actions.append({
-                "label": "Create your first project",
-                "href": "/projects",
-                "icon": "folder-kanban",
-                "description": "Projects organize sessions, memory, and graph data",
-            })
+            actions.append(QuickAction(
+                label="Create your first project",
+                href="/projects",
+                icon="folder-kanban",
+                description="Projects organize sessions, memory, and graph data",
+            ))
         else:
-            actions.append({
-                "label": "View Projects",
-                "href": "/projects",
-                "icon": "folder-kanban",
-                "description": f"{project_count} active project{'s' if project_count != 1 else ''}",
-            })
+            actions.append(QuickAction(
+                label="View Projects",
+                href="/projects",
+                icon="folder-kanban",
+                description=f"{project_count} active project{'s' if project_count != 1 else ''}",
+            ))
 
         # 2. LLM config
         if not platform_config.llm_backend:
-            actions.append({
-                "label": "Configure LLM Provider",
-                "href": "/settings/platform-config/llm",
-                "icon": "brain-circuit",
-                "description": "Set up your LLM provider to start using sessions",
-            })
+            actions.append(QuickAction(
+                label="Configure LLM Provider",
+                href="/settings/platform-config/llm",
+                icon="brain-circuit",
+                description="Set up your LLM provider to start using sessions",
+            ))
 
-        # 3. Team size
-        if user_count < 2:
-            actions.append({
-                "label": "Invite Team Members",
-                "href": "/users",
-                "icon": "users",
-                "description": "Collaborate with your team",
-            })
+        # 3. Team size — admin-only link (/users requires the admin role).
+        if user_count < 2 and is_admin:
+            actions.append(QuickAction(
+                label="Invite Team Members",
+                href="/users",
+                icon="users",
+                description="Collaborate with your team",
+            ))
 
         # 4. Always show
-        actions.append({
-            "label": "View Analytics",
-            "href": "/overview",
-            "icon": "bar-chart-3",
-            "description": "Usage trends and metrics",
-        })
-        actions.append({
-            "label": "View Audit Log",
-            "href": "/audit",
-            "icon": "shield",
-            "description": "Track changes across your workspace",
-        })
+        actions.append(QuickAction(
+            label="View Analytics",
+            href="/overview",
+            icon="bar-chart-3",
+            description="Usage trends and metrics",
+        ))
+        if can_read_members:
+            actions.append(QuickAction(
+                label="View Audit Log",
+                href="/audit",
+                icon="shield",
+                description="Track changes across your workspace",
+            ))
 
         return actions

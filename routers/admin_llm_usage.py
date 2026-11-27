@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.sorting import SortSpec
-from dependencies.auth import require_permission
+from dependencies.auth import require_user
 from dependencies.db import get_db
 from schemas.llm_usage import (
     LlmUsageDailyBucket,
@@ -105,7 +105,7 @@ async def list_llm_usage(
     sort_dir: Literal["asc", "desc"] = Query(default="desc"),
     group_by: Literal["day"] | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_user),
 ) -> LLMUsageListResponse | LLMUsageDailyListResponse:
     """List metering rows with a window summary for the user.
 

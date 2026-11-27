@@ -1023,10 +1023,11 @@ class UserRepository:
             return None, None
         return row.summary, row.summary_updated_at
 
-    async def count_active(self, user_id: UUID) -> int:
-        """Count non-deleted users for the given platform.
+    async def count_active(self) -> int:
+        """Count non-deleted users platform-wide.
 
-        Args:
+        The ``users`` table is the ownership root — it has no ``user_id``
+        column to scope by, so this is always a global count.
 
         Returns:
             Number of active users (0 if none).
@@ -1038,13 +1039,13 @@ class UserRepository:
         )
         return result.scalar() or 0
 
-    async def count_active_admins(self, user_id: UUID) -> int:
-        """Count active admins for the given platform.
+    async def count_active_admins(self) -> int:
+        """Count active admins platform-wide.
 
-        Used by the service layer to enforce the "last admin cannot be
+        The ``users`` table is the ownership root — it has no ``user_id``
+        column to scope by, so this is always a global count. Used by the
+        service layer to enforce the "last admin cannot be
         demoted/deleted" rule.
-
-        Args:
 
         Returns:
             Number of active, non-deleted admins (0 if none).

@@ -13,7 +13,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from dependencies.auth import require_permission
+from dependencies.auth import require_user
 from dependencies.services import get_quick_actions_service
 from services.quick_actions_service import QuickActionsService
 
@@ -41,17 +41,24 @@ class QuickActionsResponse(BaseModel):
 )
 async def list_quick_actions(
     service: QuickActionsService = Depends(get_quick_actions_service),
-    user_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_user),
 ) -> QuickActionsResponse:
     """Return a prioritized list of quick actions based on platform state.
 
     Args:
         service: Quick actions service (injected).
-        user_id: Authenticated user ID (from JWT).
-        _user_id: Authenticated dashboard user ID (ensures JWT auth).
+        user_id: Authenticated dashboard user ID (ensures JWT auth).
 
     Returns:
         QuickActionsResponse with ordered list of actions.
     """
     actions = await service.get_actions(UUID(user_id))
-    return QuickActionsResponse(actions=[QuickActionItem(**a) for a in actions])
+    return QuickActionsResponse(
+        actions=[
+            QuickActionItem(
+                label=a.label, href=a.href, icon=a.icon,
+                description=a.description,
+            )
+            for a in actions
+        ]
+    )

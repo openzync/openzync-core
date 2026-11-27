@@ -456,7 +456,7 @@ class UserService:
                 "Admin role is frozen — grant permissions instead."
             )
         if target.role == "admin" and role != "admin":
-            admin_count = await self._repo.count_active_admins(user_id)
+            admin_count = await self._repo.count_active_admins()
             if admin_count <= 1:
                 raise ValidationError(
                     "Cannot demote the last admin in the user scope."
@@ -522,7 +522,7 @@ class UserService:
                 "The root account cannot be deleted via this endpoint."
             )
         if user.role == "admin":
-            admin_count = await self._repo.count_active_admins(user_id)
+            admin_count = await self._repo.count_active_admins()
             # ⚠️ Same TOCTOU window as update_user's demotion guard — two
             # concurrent deletes of different admins (scope has exactly 2)
             # could both pass, leaving zero admins.

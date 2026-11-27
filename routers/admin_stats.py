@@ -18,7 +18,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dependencies.auth import require_permission
+from dependencies.auth import require_user
 from dependencies.db import get_db
 from schemas.admin_stats import OrgStatsResponse, UsageStatsResponse
 from services.admin_stats_service import AdminStatsService
@@ -89,7 +89,7 @@ def _resolve_window(
 async def get_platform_stats(
     days: int = Query(default=30, ge=1, le=365),
     project_id: UUID | None = Query(default=None),
-    user_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_user),
     service: AdminStatsService = Depends(_get_admin_stats_service),
 ) -> OrgStatsResponse:
     """Get aggregate statistics for the authenticated user.
@@ -127,7 +127,7 @@ async def get_usage_stats(
     from_date: date | None = Query(default=None, alias="from"),
     to_date: date | None = Query(default=None, alias="to"),
     project_id: UUID | None = Query(default=None),
-    user_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_user),
     service: AdminStatsService = Depends(_get_admin_stats_service),
 ) -> list[UsageStatsResponse]:
     """Get daily usage statistics for the user.

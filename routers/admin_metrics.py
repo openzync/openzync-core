@@ -32,7 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import get_settings
-from dependencies.auth import require_permission
+from dependencies.auth import require_permission, require_user
 from dependencies.db import get_db
 from dependencies.platform_config import get_platform_config
 from schemas.admin_metrics import MetricsSummaryResponse
@@ -134,7 +134,7 @@ async def get_metrics_summary(
         "(window ends to 00:00 UTC + 1 day). "
         "Requires from; mutually exclusive with days.",
     ),
-    user_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_user),
     platform_config: PlatformConfigBase = Depends(get_platform_config),
     service: AdminMetricsService = Depends(_get_admin_metrics_service),
 ) -> MetricsSummaryResponse:
@@ -296,7 +296,7 @@ async def get_metrics_batch(
     project_id: UUID | None = Query(
         default=None, description="Optional project filter"
     ),
-    user_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_user),
     platform_config: PlatformConfigBase = Depends(get_platform_config),
     service: AdminMetricsQueriesService = Depends(_get_admin_metrics_queries_service),
 ) -> dict:
