@@ -142,7 +142,7 @@ class TestMemoryIngestion:
     async def test_ingest_memory_returns_202(
         self,
         isolated_auth_client: AsyncClient,
-        isolated_admin_client: AsyncClient,
+        isolated_superadmin_client: AsyncClient,
         isolated_project_id: UUID,
     ) -> None:
         """POST /v1/projects/{project_id}/memory with 2 messages → 202.
@@ -151,7 +151,7 @@ class TestMemoryIngestion:
         messages ingested, and ``status`` set to ``"accepted"``.
         """
         # Create a user first
-        user_resp = await isolated_admin_client.post(
+        user_resp = await isolated_superadmin_client.post(
             "/v1/users",
             json={"external_id": "ingest_happy_user"},
         )
@@ -243,7 +243,7 @@ class TestMemoryIngestion:
     async def test_ingest_without_session_id_returns_422(
         self,
         isolated_auth_client: AsyncClient,
-        isolated_admin_client: AsyncClient,
+        isolated_superadmin_client: AsyncClient,
         isolated_project_id: UUID,
     ) -> None:
         """POST /v1/projects/{project_id}/memory without ``session_id`` → 422.
@@ -253,7 +253,7 @@ class TestMemoryIngestion:
         error); it must now surface as a proper 422 with a ``missing``
         error on ``session_id``.
         """
-        user_resp = await isolated_admin_client.post(
+        user_resp = await isolated_superadmin_client.post(
             "/v1/users",
             json={"external_id": "missing_sesh_user"},
         )
@@ -355,7 +355,7 @@ class TestMemoryIngestion:
     async def test_idempotency_key_replay(
         self,
         isolated_auth_client: AsyncClient,
-        isolated_admin_client: AsyncClient,
+        isolated_superadmin_client: AsyncClient,
         isolated_project_id: UUID,
     ) -> None:
         """Same ``Idempotency-Key`` + same payload → same 202 on replay.
@@ -364,7 +364,7 @@ class TestMemoryIngestion:
         (identical key + body) must return the cached response without
         creating duplicate episodes.
         """
-        user_resp = await isolated_admin_client.post(
+        user_resp = await isolated_superadmin_client.post(
             "/v1/users",
             json={"external_id": "idem_replay_user"},
         )
@@ -425,7 +425,7 @@ class TestMemoryIngestion:
     async def test_idempotency_key_conflict(
         self,
         isolated_auth_client: AsyncClient,
-        isolated_admin_client: AsyncClient,
+        isolated_superadmin_client: AsyncClient,
         isolated_project_id: UUID,
     ) -> None:
         """Same ``Idempotency-Key`` with a different body → 409 conflict.
@@ -434,7 +434,7 @@ class TestMemoryIngestion:
         client error: the endpoint must return RFC 7807 ``Conflict`` and
         must not create a new episode.
         """
-        user_resp = await isolated_admin_client.post(
+        user_resp = await isolated_superadmin_client.post(
             "/v1/users",
             json={"external_id": "idem_conflict_user"},
         )
@@ -510,7 +510,7 @@ class TestMemoryIngestion:
     async def test_content_dedup(
         self,
         isolated_auth_client: AsyncClient,
-        isolated_admin_client: AsyncClient,
+        isolated_superadmin_client: AsyncClient,
         isolated_project_id: UUID,
     ) -> None:
         """Two identical memory payloads → 202 + same job_id (no duplicate).
@@ -520,7 +520,7 @@ class TestMemoryIngestion:
         same content but different Idempotency-Key values must return
         the same ``job_id`` and not create duplicate episode rows.
         """
-        user_resp = await isolated_admin_client.post(
+        user_resp = await isolated_superadmin_client.post(
             "/v1/users",
             json={"external_id": "dedup_user"},
         )
@@ -580,7 +580,7 @@ class TestMemoryIngestion:
     async def test_delete_user_memory(
         self,
         isolated_auth_client: AsyncClient,
-        isolated_admin_client: AsyncClient,
+        isolated_superadmin_client: AsyncClient,
         isolated_project_id: UUID,
     ) -> None:
         """DELETE /v1/projects/{project_id}/memory → 204 + episodes are gone.
@@ -588,7 +588,7 @@ class TestMemoryIngestion:
         After the wipe, subsequent GET calls for episodes should return
         an empty list (or 404-equivalent).
         """
-        user_resp = await isolated_admin_client.post(
+        user_resp = await isolated_superadmin_client.post(
             "/v1/users",
             json={"external_id": "wipe_test_user"},
         )

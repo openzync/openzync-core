@@ -99,7 +99,7 @@ class TestApiKeyPermissionCap:
     ) -> None:
         """Non-admin key with ``members:write`` → 422, nothing minted."""
         tenant = isolated_org_and_key
-        member_id = await _seed_member(isolated_app, tenant["user_id"])
+        await _seed_member(isolated_app, tenant["user_id"])
         project_id = tenant["project_id"]
 
         transport = asgi_transport(isolated_app)
@@ -109,7 +109,7 @@ class TestApiKeyPermissionCap:
             admin_client.headers["Authorization"] = f"Bearer {tenant['jwt']}"
             added = await admin_client.post(
                 f"/v1/projects/{project_id}/members",
-                json={"user_id": str(member_id), "role": "member"},
+                json={"email": _MEMBER_EMAIL, "role": "member"},
             )
             assert added.status_code == 201, f"add project member failed: {added.text}"
 
@@ -139,7 +139,7 @@ class TestApiKeyPermissionCap:
     ) -> None:
         """Subset grant → 201 as-is; superset request → capped to actor set."""
         tenant = isolated_org_and_key
-        member_id = await _seed_member(isolated_app, tenant["user_id"])
+        await _seed_member(isolated_app, tenant["user_id"])
         project_id = tenant["project_id"]
 
         transport = asgi_transport(isolated_app)
@@ -149,7 +149,7 @@ class TestApiKeyPermissionCap:
             admin_client.headers["Authorization"] = f"Bearer {tenant['jwt']}"
             added = await admin_client.post(
                 f"/v1/projects/{project_id}/members",
-                json={"user_id": str(member_id), "role": "member"},
+                json={"email": _MEMBER_EMAIL, "role": "member"},
             )
             assert added.status_code == 201, f"add project member failed: {added.text}"
 

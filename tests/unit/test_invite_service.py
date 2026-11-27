@@ -84,7 +84,12 @@ class TestInviteService:
 
     @pytest.fixture
     def mock_repo(self) -> AsyncMock:
-        return AsyncMock(spec=UserRepository)
+        repo = AsyncMock(spec=UserRepository)
+        # note: InviteService.invite_user runs the admin read + insert under
+        # ``rls_bypass(session)`` — an AsyncMock session keeps the
+        # ``await db.execute(...)`` calls awaitable in unit scope.
+        repo.session = AsyncMock()
+        return repo
 
     @pytest.fixture
     def mock_auth_service(self) -> AsyncMock:

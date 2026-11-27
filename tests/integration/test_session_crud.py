@@ -54,16 +54,15 @@ class TestSessionCrud:
     ) -> str:
         """Create a user via the API (JWT admin session) and return the user ID.
 
-        ``POST /v1/users`` is gated by ``require_permission("members:write")``
-        — only an admin JWT (wildcard) can create users, not the project-scoped
-        API key.  We drive the request through a fresh JWT-authenticated client.
+        ``POST /v1/users`` is superadmin-gated — the request goes through
+        a fresh superadmin-authenticated client.
         """
-        from tests.integration.conftest import asgi_transport
+        from tests.integration.conftest import asgi_transport, superadmin_jwt
 
         transport = asgi_transport(isolated_app)
         async with AsyncClient(transport=transport, base_url="http://test") as cli:
             cli.headers["Authorization"] = (
-                f"Bearer {isolated_org_and_key['jwt']}"
+                f"Bearer {await superadmin_jwt(isolated_app)}"
             )
             resp = await cli.post(
                 "/v1/users",
@@ -379,8 +378,12 @@ class TestSessionCrud:
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            # POST /v1/users is gated by members:write — use the admin JWT.
-            cli.headers["Authorization"] = f"Bearer {tenant_a['jwt']}"
+            # POST /v1/users is superadmin-gated.
+            from tests.integration.conftest import superadmin_jwt
+
+            cli.headers["Authorization"] = (
+                f"Bearer {await superadmin_jwt(isolated_app)}"  # type: ignore[arg-type]
+            )
 
             # Create a user so get_current_user_id has something to return
             user_resp = await cli.post("/v1/users", json={"external_id": "org_a_user"})
@@ -398,7 +401,11 @@ class TestSessionCrud:
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {tenant_b['jwt']}"
+            from tests.integration.conftest import superadmin_jwt
+
+            cli.headers["Authorization"] = (
+                f"Bearer {await superadmin_jwt(isolated_app)}"  # type: ignore[arg-type]
+            )
             user_resp = await cli.post("/v1/users", json={"external_id": "org_b_user"})
             assert user_resp.status_code == 201
             user_id_b = UUID(user_resp.json()["id"])

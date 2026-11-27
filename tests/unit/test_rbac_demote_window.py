@@ -35,6 +35,7 @@ class TestRBACDemoteWindow:
                 user_id=UUID("00000000-0000-0000-0000-000000000012"),
                 update_fields={"role": "member"},
                 actor_user_id=UUID("00000000-0000-0000-0000-000000000013"),
+                is_superadmin=True,
             )
 
     @pytest.mark.asyncio
@@ -64,6 +65,7 @@ class TestRBACDemoteWindow:
                 user_id=UUID("00000000-0000-0000-0000-000000000012"),
                 update_fields={"role": "member"},
                 actor_user_id=UUID("00000000-0000-0000-0000-000000000013"),
+                is_superadmin=True,
             )
         except ValidationError as exc:
             pytest.fail(f"demote should be allowed: {exc}")

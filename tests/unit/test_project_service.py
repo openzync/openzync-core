@@ -15,7 +15,6 @@ import pytest
 from core.exceptions import NotFoundError, ValidationError
 from core.sorting import SortSpec
 from schemas.projects import (
-    AddMemberRequest,
     CreateProjectRequest,
     UpdateProjectRequest,
 )
@@ -323,41 +322,6 @@ class TestProjectService:
                 user_id=self.ORG_ID,
                 project_id=uuid4(),
             )
-
-    # ── Add Member ───────────────────────────────────────────────────────────
-
-    @pytest.mark.asyncio
-    async def test_add_member_success(self) -> None:
-        """Adding a member returns the membership."""
-        service, mock_repo, _ = self._make_service()
-        mock_repo.get_member.return_value = None
-        new_user_id = uuid4()
-        mock_repo.add_member.return_value = self._make_mock_member(
-            user_id=new_user_id,
-            role="member",
-        )
-        payload = AddMemberRequest(user_id=new_user_id, role="member")
-
-        result = await service.add_member(
-            project_id=self.PROJECT_ID,
-            payload=payload,
-        )
-        assert result.user_id == new_user_id
-        assert result.role == "member"
-
-    @pytest.mark.asyncio
-    async def test_add_member_duplicate_raises_validation(self) -> None:
-        """Adding an existing member raises ValidationError."""
-        service, mock_repo, _ = self._make_service()
-        mock_repo.get_member.return_value = self._make_mock_member()
-        payload = AddMemberRequest(user_id=self.USER_ID, role="member")
-
-        with pytest.raises(ValidationError):
-            await service.add_member(
-                project_id=self.PROJECT_ID,
-                payload=payload,
-            )
-        mock_repo.add_member.assert_not_awaited()
 
     # ── Remove Member ────────────────────────────────────────────────────────
 

@@ -32,9 +32,9 @@ from __future__ import annotations
 from uuid import UUID
 
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from dependencies.auth import get_current_user_id
 from tests.integration.conftest import bootstrap_tenant
 
 
@@ -56,24 +56,24 @@ class TestUserCrud:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             yield client
 
-    @pytest.fixture
+    @pytest_asyncio.fixture(loop_scope="function")
     async def admin_client(
         self, isolated_app: pytest.fixture, isolated_org_and_key: dict,
     ) -> AsyncClient:
-        """JWT-authenticated client — user mutations require ``members:write``.
+        """Superadmin-authenticated client — user CRUD requires the role.
 
-        ``POST/PATCH/DELETE /v1/users`` are gated by
-        ``require_permission("members:write")`` — only an admin JWT
-        (wildcard) can mutate users, not the project-scoped API key.
+        ``POST/GET/PATCH/DELETE /v1/users*`` are gated by the platform
+        superadmin role (the bootstrap org admin JWT gets 403).
         """
-        from tests.integration.conftest import asgi_transport
+        from tests.integration.conftest import asgi_transport, superadmin_jwt
 
         transport = asgi_transport(isolated_app)  # type: ignore[arg-type]
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             client.headers["Authorization"] = (
-                f"Bearer {isolated_org_and_key['jwt']}"
+                f"Bearer {await superadmin_jwt(isolated_app)}"  # type: ignore[arg-type]
             )
             yield client
+        _ = isolated_org_and_key
 
     @staticmethod
     def _assert_user_response_shape(body: dict) -> None:
@@ -364,52 +364,54 @@ class TestUserCrud:
     ) -> None:
         """GET /v1/users with cursor-based pagination.
 
-        Each test gets a fixture user (``fixture_user``) created by the
-        ``isolated_org_and_key`` fixture, plus the bootstrap user and
-        4 test users = 6 total.
-        With limit=2: page 1 → 2, page 2 → 2, page 3 → 2.
+        Seeds 4 users, then walks pages of 2 until ``has_more`` is false.
+        Every page holds at most 2 rows, cursors advance, and the union
+        of pages contains all seeded users.  Total counts are not
+        asserted — platform seed rows (e.g. the root superadmin) also
+        exist in the listing.
         """
-        # Seed 4 users (fixture + bootstrap users bring total to 6)
+        # Seed 4 users
+        seeded = set()
         for i in range(4):
             resp = await admin_client.post(
                 "/v1/users",
                 json={"external_id": f"paginate_user_{i}"},
             )
             assert resp.status_code == 201, f"Seed failed at index {i}"
+            seeded.add(f"paginate_user_{i}")
 
-        # Page 1: limit=2
-        page1 = await admin_client.get("/v1/users?limit=2")
-        assert page1.status_code == 200
-        body1 = page1.json()
+        # Walk all pages.
+        seen: set[str] = set()
+        cursor: str | None = None
+        pages = 0
+        while True:
+            params = {"limit": 2}
+            if cursor is not None:
+                params["cursor"] = cursor  # type: ignore[assignment]
+            page = await admin_client.get("/v1/users", params=params)
+            assert page.status_code == 200
+            body = page.json()
 
-        assert "data" in body1, "Missing 'data' in list response"
-        assert "next_cursor" in body1, "Missing 'next_cursor'"
-        assert "has_more" in body1, "Missing 'has_more'"
-        assert len(body1["data"]) == 2, f"Expected 2 items, got {len(body1['data'])}"
-        assert body1["has_more"] is True
-        assert body1["next_cursor"] is not None, (
-            "Expected non-null cursor for page 1"
-        )
+            assert "data" in body, "Missing 'data' in list response"
+            assert "next_cursor" in body, "Missing 'next_cursor'"
+            assert "has_more" in body, "Missing 'has_more'"
+            assert len(body["data"]) <= 2, (
+                f"Expected at most 2 items, got {len(body['data'])}"
+            )
+            for row in body["data"]:
+                seen.add(row["external_id"])
+            pages += 1
+            assert pages < 20, "Pagination did not terminate"
 
-        # Page 2: follow cursor
-        page2 = await admin_client.get(
-            f"/v1/users?limit=2&cursor={body1['next_cursor']}"
-        )
-        assert page2.status_code == 200
-        body2 = page2.json()
-        assert len(body2["data"]) == 2
-        assert body2["has_more"] is True
-        assert body2["next_cursor"] is not None
+            if not body["has_more"]:
+                assert body["next_cursor"] is None
+                break
+            assert body["next_cursor"] is not None, (
+                "Expected non-null cursor while has_more is true"
+            )
+            cursor = body["next_cursor"]
 
-        # Page 3: final page
-        page3 = await admin_client.get(
-            f"/v1/users?limit=2&cursor={body2['next_cursor']}"
-        )
-        assert page3.status_code == 200
-        body3 = page3.json()
-        assert len(body3["data"]) == 2
-        assert body3["has_more"] is False
-        assert body3["next_cursor"] is None
+        assert seeded <= seen, f"Seeded users missing from pages: {seeded - seen}"
 
     # ═════════════════════════════════════════════════════════════════════
     # 9.  List users — search filter
@@ -460,55 +462,29 @@ class TestUserCrud:
         self,
         isolated_app: pytest.fixture,  # noqa: ARG002
     ) -> None:
-        """Users are platform-visible to members:read holders (no orgs).
+        """User records are platform-visible to superadmins, gated for rest.
 
         1. Create tenant A → jwt_A.
         2. Create tenant B → jwt_B.
-        3. Via tenant A, create a user.
-        4. Via tenant B (admin wildcard), GET the same user → 200.
-
-        Tenant isolation now lives at project membership, not user
-        records: the singleton platform has no per-org user boundary.
+        3. Via the superadmin client, create a user.
+        4. Superadmin GET the user → 200 (platform-visible, no org boundary).
+        5. Org admin JWT GET the same user → 403 (superadmin-only gate).
         """
+        from tests.integration.conftest import superadmin_jwt
+
         # -- Bootstrap org A --
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
             tenant_a = await bootstrap_tenant(isolated_app, cli, "Org A")
 
-        # -- Bootstrap org B --
+        # -- Create a user via the superadmin client --
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            tenant_b = await bootstrap_tenant(isolated_app, cli, "Org B")
-
-        # -- Set up fixture user for org A (so get_current_user_id works) --
-        async with AsyncClient(
-            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
-        ) as cli:
-            cli.headers["Authorization"] = f"Bearer {tenant_a['jwt']}"
-            user_resp = await cli.post("/v1/users", json={"external_id": "org_a_fixture"})
-            assert user_resp.status_code == 201
-            user_id_a = UUID(user_resp.json()["id"])
-            isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_a
-
-        # -- Set up fixture user for org B --
-        async with AsyncClient(
-            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
-        ) as cli:
-            cli.headers["Authorization"] = f"Bearer {tenant_b['jwt']}"
-            user_resp = await cli.post("/v1/users", json={"external_id": "org_b_fixture"})
-            assert user_resp.status_code == 201
-            user_id_b = UUID(user_resp.json()["id"])
-            isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_b
-
-        # -- Create a user under org A --
-        async with AsyncClient(
-            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
-        ) as cli:
-            cli.headers["Authorization"] = f"Bearer {tenant_a['jwt']}"
-            isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_a
-
+            cli.headers["Authorization"] = (
+                f"Bearer {await superadmin_jwt(isolated_app)}"  # type: ignore[arg-type]
+            )
             create_resp = await cli.post(
                 "/v1/users",
                 json={
@@ -519,22 +495,23 @@ class TestUserCrud:
             assert create_resp.status_code == 201
             user_id = create_resp.json()["id"]
 
-        # -- Access that user from tenant B → 200 (platform-visible) --
-        # NOTE: must use tenant B's admin JWT (members:read via wildcard),
-        # not the project-scoped API key (project:* only → 403 members:read
-        # missing at the permission gate, never reaching the data layer).
+            # -- Superadmin reads cross-tenant → 200 (platform-visible) --
+            get_resp = await cli.get(f"/v1/users/{user_id}")
+            assert get_resp.status_code == 200, (
+                f"Superadmin should see the user. Got {get_resp.status_code}: {get_resp.text}"
+            )
+            assert get_resp.json()["id"] == user_id
+
+        # -- Org admin JWT reads the same user → 403 (superadmin-only) --
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {tenant_b['jwt']}"
-            isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_b
-            get_resp = await cli.get(f"/v1/users/{user_id}")
-
-        assert get_resp.status_code == 200, (
-            f"Tenant B should see tenant A's user (platform-visible). "
-            f"Got {get_resp.status_code}: {get_resp.text}"
-        )
-        assert get_resp.json()["id"] == user_id
+            cli.headers["Authorization"] = f"Bearer {tenant_a['jwt']}"
+            denied = await cli.get(f"/v1/users/{user_id}")
+            assert denied.status_code == 403, (
+                f"Org admin must be denied user reads. "
+                f"Got {denied.status_code}: {denied.text}"
+            )
 
     # ═════════════════════════════════════════════════════════════════════
     # 11. No auth → 401

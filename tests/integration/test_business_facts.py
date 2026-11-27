@@ -90,12 +90,12 @@ class TestBusinessFacts:
     async def test_ingest_facts_returns_202(
         self,
         isolated_auth_client: AsyncClient,
-        isolated_admin_client: AsyncClient,
+        isolated_superadmin_client: AsyncClient,
         isolated_project_id: UUID,
         isolated_fact_session: str,
     ) -> None:
         """POST /facts with 10 valid triples → 202 + FactBatchResponse."""
-        user_resp = await isolated_admin_client.post(
+        user_resp = await isolated_superadmin_client.post(
             "/v1/users",
             json={"external_id": "facts_happy_user"},
         )
@@ -131,12 +131,12 @@ class TestBusinessFacts:
     async def test_ingest_facts_empty_list_returns_422(
         self,
         isolated_auth_client: AsyncClient,
-        isolated_admin_client: AsyncClient,
+        isolated_superadmin_client: AsyncClient,
         isolated_project_id: UUID,
         isolated_fact_session: str,
     ) -> None:
         """POST /facts with empty facts list → 422 (Pydantic min_length)."""
-        user_resp = await isolated_admin_client.post(
+        user_resp = await isolated_superadmin_client.post(
             "/v1/users",
             json={"external_id": "facts_empty_user"},
         )
@@ -156,12 +156,12 @@ class TestBusinessFacts:
     async def test_ingest_facts_over_limit_returns_422(
         self,
         isolated_auth_client: AsyncClient,
-        isolated_admin_client: AsyncClient,
+        isolated_superadmin_client: AsyncClient,
         isolated_project_id: UUID,
         isolated_fact_session: str,
     ) -> None:
         """POST /facts with 501 triples → 422 (Pydantic max_length)."""
-        user_resp = await isolated_admin_client.post(
+        user_resp = await isolated_superadmin_client.post(
             "/v1/users",
             json={"external_id": "facts_over_limit_user"},
         )
@@ -270,12 +270,12 @@ class TestBusinessFacts:
     async def test_ingest_facts_dedup_returns_same_job_id(
         self,
         isolated_auth_client: AsyncClient,
-        isolated_admin_client: AsyncClient,
+        isolated_superadmin_client: AsyncClient,
         isolated_project_id: UUID,
         isolated_fact_session: str,
     ) -> None:
         """POST /facts with identical payload twice → same job_id."""
-        user_resp = await isolated_admin_client.post(
+        user_resp = await isolated_superadmin_client.post(
             "/v1/users",
             json={"external_id": "facts_dedup_user"},
         )
@@ -316,12 +316,12 @@ class TestBusinessFacts:
     async def test_ingest_facts_with_session(
         self,
         isolated_auth_client: AsyncClient,
-        isolated_admin_client: AsyncClient,
+        isolated_superadmin_client: AsyncClient,
         isolated_project_id: UUID,
     ) -> None:
         """POST /facts with valid session_id → 202."""
         # Create user
-        user_resp = await isolated_admin_client.post(
+        user_resp = await isolated_superadmin_client.post(
             "/v1/users",
             json={"external_id": "facts_session_user"},
         )

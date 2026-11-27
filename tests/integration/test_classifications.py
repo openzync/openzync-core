@@ -39,12 +39,12 @@ class TestClassificationEndpoint:
     async def test_no_classifications_returns_empty_list(
         self,
         isolated_auth_client: AsyncClient,
-        isolated_admin_client: AsyncClient,
+        isolated_superadmin_client: AsyncClient,
         isolated_project_id: UUID,
     ) -> None:
         """GET classifications for session with no data → 200, empty list."""
         # Create a user
-        user_resp = await isolated_admin_client.post(
+        user_resp = await isolated_superadmin_client.post(
             "/v1/users",
             json={"external_id": "no_class_user"},
         )
@@ -90,12 +90,12 @@ class TestClassificationEndpoint:
     async def test_invalid_session_returns_404(
         self,
         isolated_auth_client: AsyncClient,
-        isolated_admin_client: AsyncClient,
+        isolated_superadmin_client: AsyncClient,
         isolated_project_id: UUID,
     ) -> None:
         """GET classifications with non-existent session → 404."""
         # Create a user
-        user_resp = await isolated_admin_client.post(
+        user_resp = await isolated_superadmin_client.post(
             "/v1/users",
             json={"external_id": "bad_session_user"},
         )
@@ -125,13 +125,18 @@ class TestClassificationEndpoint:
 
         # Org A: create user + session
         async with AsyncClient(transport=transport, base_url="http://test") as cli:
-            cli.headers["Authorization"] = f"Bearer {tenant_a['jwt']}"
+            from tests.integration.conftest import superadmin_jwt
+
+            cli.headers["Authorization"] = (
+                f"Bearer {await superadmin_jwt(isolated_app)}"
+            )
             user_resp = await cli.post(
                 "/v1/users",
                 json={"external_id": "class_cross_user"},
             )
             assert user_resp.status_code == 201
             user_id_a = UUID(user_resp.json()["id"])
+            cli.headers["Authorization"] = f"Bearer {tenant_a['jwt']}"
             # Session creation requires a resolvable current user — the
             # isolated_app fixture does not override get_current_user_id.
             isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_a

@@ -77,6 +77,8 @@ def _make_app(*, authenticated: bool, auth_user_id: str | None=None, auth_role: 
     app.state.redis = AsyncMock()
     app.state.db_session_factory = None
     app.dependency_overrides[get_db] = lambda: AsyncMock()
+    from dependencies.db import get_db_superadmin
+    app.dependency_overrides[get_db_superadmin] = lambda: AsyncMock()
     app.dependency_overrides[get_user_summary_service] = lambda: AsyncMock()
     from dependencies.services import get_invite_service
     app.dependency_overrides[get_invite_service] = lambda: AsyncMock()
@@ -181,14 +183,16 @@ def _admin_gate_on_route(route) -> bool:
     """True if the route declares a permission-gate dependency.
 
     Detects ``require_permission("...")`` / ``require_permission_or_self("...")``
-    closures (named ``_permission_checker`` / ``_permission_or_self_checker``)
-    and ``require_superadmin`` directly on the route.
+    closures (named ``_permission_checker`` / ``_permission_or_self_checker``),
+    ``require_superadmin`` directly on the route, and the
+    ``require_superadmin_or_self()`` factory closure (named
+    ``_superadmin_or_self_checker`` — the users self-read/self-write gate).
     """
     for dep in route.dependant.dependencies:
         call = dep.call
         if call in (require_superadmin,):
             return True
-        if getattr(call, '__name__', '') in ('_permission_checker', '_permission_or_self_checker'):
+        if getattr(call, '__name__', '') in ('_permission_checker', '_permission_or_self_checker', '_superadmin_or_self_checker'):
             return True
     return False
 

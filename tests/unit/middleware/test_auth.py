@@ -356,18 +356,29 @@ class TestAuthMiddleware:
 
     def _create_users_app(self) -> FastAPI:
         """Real users router + real AuthMiddleware, route deps mocked."""
-        from dependencies.auth import require_user_id
+        from dependencies.auth import get_dashboard_user, require_user_id
         from dependencies.db import get_db
         from routers.users import get_user_service, router
 
         app = FastAPI()
+        app.state.redis = AsyncMock()
         service = AsyncMock()
         service.list_users.return_value = UserListResponse(
             data=[], next_cursor=None, has_more=False
         )
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[get_user_service] = lambda: service
+        from dependencies.services import (
+            get_superadmin_user_service as _super_svc,
+        )
+
+        app.dependency_overrides[_super_svc] = lambda: service
         app.dependency_overrides[require_user_id] = (
+            lambda: "00000000-0000-0000-0000-000000000001"
+        )
+        # note: the middleware already validated the JWT — downstream only
+        # needs a well-formed UUID, not the token's non-UUID test subject.
+        app.dependency_overrides[get_dashboard_user] = (
             lambda: "00000000-0000-0000-0000-000000000001"
         )
         app.include_router(router)
@@ -401,9 +412,15 @@ class TestAuthMiddleware:
         """mcp=False JWT → GET /v1/users passes the middleware (200)."""
         token = self._create_jwt(mcp=False)
         app = self._create_users_app()
-        # GET /v1/users is permission-gated (members:read); this test pins
-        # the *middleware* contract, so stub the downstream RBAC gate.
-        with patch("dependencies.auth._check_permission", new=AsyncMock()):
+        # GET /v1/users is superadmin-gated; this test pins
+        # the *middleware* contract, so stub the downstream gate.
+        with (
+            patch("dependencies.auth._ensure_superadmin", new=AsyncMock()),
+            patch(
+                "dependencies.auth.get_must_change_password",
+                new=AsyncMock(return_value=False),
+            ),
+        ):
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as c:
                 resp = await c.get(
