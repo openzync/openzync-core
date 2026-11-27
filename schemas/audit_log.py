@@ -15,6 +15,11 @@ class AuditLogResponse(BaseModel):
     user_id: UUID | None = Field(None, description="Organization UUID (may be null for unauthenticated actions)")
     actor_id: str | None = Field(None, description="Identifier of the acting entity")
     actor_type: str | None = Field(None, description="Actor category: user, api_key, or system")
+    actor_display_name: str | None = Field(
+        None,
+        description="Resolved human-readable actor label (batched per page; "
+        "user name/email, API key name/prefix, 'System', or '—')",
+    )
     action: str = Field(..., description="The action performed, e.g. session.create")
     resource_type: str = Field(..., description="Type of resource affected")
     resource_id: str | None = Field(None, description="Identifier of the affected resource")
