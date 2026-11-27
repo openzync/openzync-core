@@ -102,7 +102,7 @@ class UserService:
     def _permissions_for_role(role: str | None) -> list[str]:
         """Seed permissions for a newly created user based on their role.
 
-        Admin/superadmin → empty array (wildcard via role).  Member (or
+        Admin → empty array (wildcard via role).  Member (or
         unset) → member defaults.
 
         Args:
@@ -111,7 +111,7 @@ class UserService:
         Returns:
             The permission list to persist.
         """
-        if role in ("admin", "superadmin"):
+        if role == "admin":
             return []
         return list(MEMBER_DEFAULT_PERMISSIONS)
 
@@ -144,7 +144,7 @@ class UserService:
                 in the organization.
         """
         # Same bypass safety as the invite flow — exists/create must see
-        # past RLS even when the session already carries a superadmin bypass.
+        # past RLS even when the session already carries an admin bypass.
         async with rls_bypass(self._repo.session):
             exists = await self._repo.exists_by_external_id(
                 external_id
@@ -320,7 +320,7 @@ class UserService:
         *,
         actor_user_id: UUID,
         actor_permissions: frozenset[str] | None = None,
-        is_superadmin: bool = False,
+        is_admin: bool = False,
     ) -> UserResponse:
         """Update user fields using the new sentinel-safe pattern.
 
@@ -329,80 +329,52 @@ class UserService:
         with value ``None`` means "set to null" (clear the field).
         An absent key means "do not update".
 
-        ``role``/``permissions`` may only be changed by a platform
-        superadmin (``is_superadmin=True``, resolved DB-side by the
-        router) — any other actor attempting them gets a 403, including
-        self-updates to non-privileged fields' requests.  Non-privileged
-        self-updates (name/email/metadata) remain allowed.
+        ``permissions`` may only be changed by a platform admin
+        (``is_admin=True``, resolved DB-side by the router) — any other
+        actor attempting it gets a 403.  Non-privileged self-updates
+        (name/email/metadata) remain allowed.
 
-        When ``role`` is being changed:
-        - You cannot change your own role.
-        - A superadmin's role cannot be changed via this endpoint (422).
-        - A demotion (admin -> member) is rejected if the target is the
-          organization's last active admin.
-        - The target's cached role is invalidated after the change so the
-          RBAC cache cannot outlive the decision.
+        ``role`` changes are disabled entirely (422): the ``admin`` role
+        is frozen — grant ``permissions`` instead.
 
         When ``permissions`` is provided, it replaces the current set
         (grants survive a role change — a role change alone never touches
         the permission array).  ``actor_permissions`` caps the grant at the
         actor's own set (never escalate); ``None`` means the actor is
-        admin/superadmin (wildcard — uncapped).  The cached permission set
+        admin (wildcard — uncapped).  The cached permission set
         is invalidated after any role or permissions change.
 
         Args:
 
             user_id: The internal OpenZync user UUID.
             update_fields: Only the fields the client explicitly set.
-                Valid keys: ``name``, ``email``, ``metadata``, ``role``,
+                Valid keys: ``name``, ``email``, ``metadata``,
                 ``permissions``.
             actor_user_id: The authenticated user performing the update.
             actor_permissions: The actor's grantable permission set,
                 resolved by the ``get_actor_permissions`` router dependency.
-                ``None`` = wildcard (admin/superadmin), no cap applied.
-            is_superadmin: Whether the actor is a DB-verified platform
-                superadmin.  Required to change ``role``/``permissions``.
+                ``None`` = wildcard (admin), no cap applied.
+            is_admin: Whether the actor is a DB-verified platform
+                admin.  Required to change ``role``/``permissions``.
 
         Returns:
             The updated :class:`UserResponse`.
 
         Raises:
-            AuthorizationError: If a non-superadmin attempts to change
-                ``role`` or ``permissions`` (→ 403).
-            ValidationError: If the actor changes their own role, demotes
-                the last admin, or attempts to change a superadmin's role.
+            AuthorizationError: If a non-admin attempts to change
+                ``permissions`` (→ 403).
+            ValidationError: If ``role`` is present (role changes are
+                disabled) or the actor changes their own permissions.
             NotFoundError: No user with this UUID in this organization.
         """
-        if ("role" in update_fields or "permissions" in update_fields) and not is_superadmin:
+        if ("role" in update_fields or "permissions" in update_fields) and not is_admin:
             raise AuthorizationError(
-                "Only a platform superadmin may change role or permissions."
+                "Only a platform admin may change role or permissions."
             )
         if "role" in update_fields:
-            target = await self._repo.get_by_uuid(user_id)
-            if target is None:
-                raise NotFoundError(
-                    f"User {user_id} not found in organization {user_id}"
-                )
-            new_role = update_fields["role"]
-            if user_id == actor_user_id:
-                raise ValidationError("You cannot change your own role.")
-            if target.role == "superadmin" and new_role != "superadmin":
-                raise ValidationError(
-                    "Superadmin role cannot be changed via this endpoint."
-                )
-            if target.role == "admin" and new_role != "admin":
-                admin_count = await self._repo.count_active_admins(
-                    user_id
-                )
-                # ⚠️ RACE CONDITION: two concurrent demotions of different
-                # admins can both pass this check when the org has exactly 2
-                # admins, leaving zero.  Acceptable for the dashboard scale;
-                # a serializable `SELECT ... FOR UPDATE` on the users row
-                # would close it if this ever becomes a concern.
-                if admin_count <= 1:
-                    raise ValidationError(
-                        "Cannot demote the last admin in the organization."
-                    )
+            raise ValidationError(
+                "Role changes are disabled — grant permissions instead."
+            )
 
         if "permissions" in update_fields:
             if user_id == actor_user_id:
@@ -429,45 +401,69 @@ class UserService:
         if user is None:
             raise NotFoundError(f"User {user_id} not found in organization {user_id}")
 
-        if "role" in update_fields:
-            await self._invalidate_role_cache(user_id)
-        if "role" in update_fields or "permissions" in update_fields:
-            # A role change alters effective permissions (admin = wildcard),
-            # so both caches must drop.
+        if "permissions" in update_fields:
             await self._invalidate_permissions_cache(user_id)
 
         return UserResponse.model_validate(self._user_to_dict(user))
 
-    # ── Platform superadmin (cross-org role change) ──────────────────────────
+    # ── Platform admin (role change) ─────────────────────────────────────────
 
     async def update_member_role(
         self,
-
         user_id: UUID,
         role: str,
+        *,
+        permissions: list[str] | None = None,
     ) -> User:
-        """Set a member's role in any org (platform superadmin surface).
+        """Set a member's role (platform admin surface).
 
-        Cross-org analogue of :meth:`update_user` without the tenant
-        guards (self-change, last-admin) — the actor is a platform
-        superadmin operating outside the target org's tenant rules.
-        Invalidates the cached role so RBAC cannot outlive the change.
+        The ``admin`` role is frozen: any request with ``role == "admin"``
+        raises 422, even from root — grant ``permissions`` instead.  Only
+        ``member`` (demotion) is assignable.  An admin may edit a member's
+        ``permissions``.  The root user's own role is frozen (422), and
+        demoting the last active admin raises 422.  Invalidates the cached
+        role/permissions so RBAC cannot outlive the change.
 
         Args:
-
             user_id: The member's user UUID.
-            role: The new role (``admin`` or ``member``).
+            role: The new role (only ``member`` — ``admin`` raises 422).
+            permissions: Optional replacement permission set.
 
         Returns:
             The updated User.
 
         Raises:
-            NotFoundError: If the user does not exist in the org.
+            ValidationError: If ``role`` is ``admin``, the target is root,
+                or the last admin is demoted.
+            NotFoundError: If the user does not exist.
         """
+        target = await self._repo.get_by_uuid(user_id)
+        if target is None:
+            raise NotFoundError(
+                f"User {user_id} not found in organization {user_id}."
+            )
+        if target.external_id == "root":
+            raise ValidationError(
+                "The root user's role cannot be changed via this endpoint."
+            )
+        if role == "admin":
+            # The admin role is frozen — no promotion path, even for root.
+            raise ValidationError(
+                "Admin role is frozen — grant permissions instead."
+            )
+        if target.role == "admin" and role != "admin":
+            admin_count = await self._repo.count_active_admins(user_id)
+            if admin_count <= 1:
+                raise ValidationError(
+                    "Cannot demote the last admin in the organization."
+                )
+        update_fields: dict[str, Any] = {"role": role}
+        if permissions is not None:
+            update_fields["permissions"] = permissions
         user = await self._repo.update(
 
             user_id=user_id,
-            update_fields={"role": role},
+            update_fields=update_fields,
         )
         if user is None:
             raise NotFoundError(
@@ -493,7 +489,7 @@ class UserService:
         hard-delete after the configured delay (default 30 days).
 
         Guards (in order): you cannot delete your own account (422),
-        superadmin accounts cannot be deleted via this endpoint (422), and
+        the root account cannot be deleted via this endpoint (422), and
         the last active admin of an organization cannot be deleted (422).
         The deleted user's cached role is invalidated.
 
@@ -504,7 +500,7 @@ class UserService:
 
         Raises:
             ValidationError: If the actor deletes their own account, the
-                target is a superadmin, or the target is the last admin.
+                target is root, or the target is the last admin.
             NotFoundError: No user with this UUID in this organization.
 
         .. todo::
@@ -519,10 +515,9 @@ class UserService:
             raise NotFoundError(
                 f"User {user_id} not found in organization {user_id}"
             )
-        if user.role == "superadmin":
+        if user.external_id == "root":
             raise ValidationError(
-                "Superadmin accounts cannot be deleted via this endpoint. "
-                "Use the superadmin console."
+                "The root account cannot be deleted via this endpoint."
             )
         if user.role == "admin":
             admin_count = await self._repo.count_active_admins(user_id)

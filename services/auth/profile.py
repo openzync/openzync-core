@@ -43,7 +43,7 @@ class ProfileMixin:
     def _effective_permissions(user: User) -> list[str]:
         """Return the user's effective permission set for the dashboard profile.
 
-        Admin/superadmin roles are wildcards (their stored ``permissions``
+        The ``admin`` role is a wildcard (its stored ``permissions``
         array is empty) — mirror the allow-all branch of
         ``require_permission`` (dependencies/auth.py) by expanding to the
         full vocabulary.  All other roles surface their stored set.
@@ -54,7 +54,7 @@ class ProfileMixin:
         Returns:
             Sorted effective permission strings.
         """
-        if user.role in ("admin", "superadmin"):
+        if user.role == "admin":
             return sorted(ALL_PERMISSIONS)
         return sorted(user.permissions or [])
 

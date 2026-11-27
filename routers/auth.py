@@ -141,7 +141,7 @@ async def registration_status(
     status_code=201,
     summary="One-time platform setup",
     description=(
-        "Creates the platform root superadmin with the operator-chosen "
+        "Creates the platform root admin with the operator-chosen "
         "password and names the singleton platform org.  Usable exactly "
         "once — after the platform is set up every call returns 403.  "
         "PUBLIC ENDPOINT — no auth required."
@@ -154,7 +154,7 @@ async def setup_platform_root(
     service: SetupService = Depends(get_setup_service),  # noqa: B008
     throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
 ) -> SetupResponse:
-    """Create the platform root superadmin (one-time bootstrap).
+    """Create the platform root admin (one-time bootstrap).
 
     Args:
         payload: Operator-chosen root password + singleton org name.

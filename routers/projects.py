@@ -26,7 +26,7 @@ from core.audit import audit_action
 from core.exceptions import AuthenticationError
 from dependencies.auth import (
     _check_permission,
-    _ensure_superadmin,
+    _ensure_admin,
     require_permission,
     require_user_id,
 )
@@ -411,15 +411,15 @@ async def list_members(
     )
 
 
-async def _resolve_is_superadmin(
+async def _resolve_is_admin(
     request: Request, user_id: str, db: AsyncSession
 ) -> bool:
-    """Return whether the caller is a DB-verified platform superadmin.
+    """Return whether the caller is a DB-verified platform admin.
 
-    Only 403 (non-superadmin) is absorbed; anything else fails closed.
+    Only 403 (non-admin) is absorbed; anything else fails closed.
     """
     try:
-        await _ensure_superadmin(request, user_id, db)
+        await _ensure_admin(request, user_id, db)
     except HTTPException as exc:
         if exc.status_code != status.HTTP_403_FORBIDDEN:
             raise
@@ -443,18 +443,18 @@ async def approve_member(
     """Approve a pending invite, activating the membership.
 
     Only the invitee (``user_id`` omitted or equal to the caller) or a
-    platform superadmin may approve. No project-membership gate here — a
+    platform admin may approve. No project-membership gate here — a
     pending invitee is not an active member yet.
 
     Already-active memberships reject with 422 ``already_member``.
     """
     target = payload.user_id if payload and payload.user_id is not None else UUID(user_id)
-    is_superadmin = await _resolve_is_superadmin(request, user_id, db)
+    is_admin = await _resolve_is_admin(request, user_id, db)
     return await service.approve(
         project_id=project_id,
         user_id=target,
         actor=UUID(user_id),
-        is_superadmin=is_superadmin,
+        is_admin=is_admin,
     )
 
 
@@ -474,16 +474,16 @@ async def reject_member(
     """Reject a pending invite, deleting the membership row.
 
     Only the invitee (``user_id`` omitted or equal to the caller) or a
-    platform superadmin may reject. Active memberships reject with 422 —
+    platform admin may reject. Active memberships reject with 422 —
     remove them via ``DELETE`` instead.
     """
     target = payload.user_id if payload and payload.user_id is not None else UUID(user_id)
-    is_superadmin = await _resolve_is_superadmin(request, user_id, db)
+    is_admin = await _resolve_is_admin(request, user_id, db)
     await service.reject(
         project_id=project_id,
         user_id=target,
         actor=UUID(user_id),
-        is_superadmin=is_superadmin,
+        is_admin=is_admin,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

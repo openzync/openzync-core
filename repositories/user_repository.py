@@ -217,7 +217,7 @@ class UserRepository:
             return result.scalar_one_or_none()
 
     async def create_platform_root(self, password_hash: str) -> bool:
-        """Insert the platform root superadmin, idempotently.
+        """Insert the platform root admin, idempotently.
 
         ``ON CONFLICT (external_id) DO NOTHING`` — exactly
         one concurrent setup caller wins; the losers get ``False`` and must
@@ -238,7 +238,7 @@ class UserRepository:
                     external_id="root",
                     email="root",
                     name="Platform Root",
-                    role="superadmin",
+                    role="admin",
                     permissions=[],
                     password_hash=password_hash,
                     is_email_verified=True,
@@ -552,6 +552,7 @@ class UserRepository:
             user_id: The internal OpenZync user UUID.
             update_fields: Dict of fields to update. Valid keys: ``name``,
                 ``email``, ``metadata``, ``role``, ``permissions``.
+                API layer forbids role; only create/demote pass member.
 
         Returns:
             The updated User, or ``None`` if not found.
@@ -570,6 +571,11 @@ class UserRepository:
         if "email" in update_fields:
             user.email = update_fields["email"]
         if "role" in update_fields:
+            if update_fields["role"] not in ("member",):
+                raise ValidationError(
+                    "Role change is not allowed via this path "
+                    f"(got {update_fields['role']!r})."
+                )
             user.role = update_fields["role"]
         if "permissions" in update_fields:
             user.permissions = update_fields["permissions"]

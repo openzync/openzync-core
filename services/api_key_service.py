@@ -140,7 +140,7 @@ class ApiKeyService:
                 Populated from the JWT session when called via the dashboard.
             actor_permissions: The creator's grantable permission set,
                 resolved by the ``get_actor_permissions`` router dependency.
-                ``None`` = wildcard (admin/superadmin) or system path
+                ``None`` = wildcard (admin) or system path
                 (``created_by`` is ``None``) — no cap applied.
 
         Returns:

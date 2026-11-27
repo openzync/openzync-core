@@ -1,8 +1,8 @@
-"""Pydantic schemas for the platform super-admin system endpoints.
+"""Pydantic schemas for the platform admin system endpoints.
 
 Cross-org administration surfaces: org listings, per-org config access,
 and member-role changes.  These endpoints are reachable only through
-``require_superadmin`` with the RLS-bypass DB session.
+``require_admin`` with the RLS-bypass DB session.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 
 class SystemOrgListItem(BaseModel):
-    """One row of the superadmin org listing."""
+    """One row of the admin org listing."""
 
     id: UUID = Field(..., description="Organization UUID.")
     name: str = Field(..., description="Organization name.")
@@ -35,7 +35,7 @@ class SystemOrgListResponse(BaseModel):
 
 
 class SystemMemberListItem(BaseModel):
-    """One row of the superadmin org-members listing."""
+    """One row of the admin org-members listing."""
 
     id: UUID = Field(..., description="User UUID.")
     email: str = Field(
@@ -61,13 +61,16 @@ class SystemOrgMembersResponse(BaseModel):
 class UpdateMemberRoleRequest(BaseModel):
     """Request body for ``PATCH /admin/system/orgs/{user_id}/members/{user_id}/role``.
 
-    Only the two tenant roles are assignable — anything else fails with
-    422 at the schema boundary.
+    Only demotion is assignable — promotion is frozen, grant
+    ``permissions`` instead.  Anything else fails with 422 at the
+    schema boundary.
     """
 
-    role: Literal["admin", "member"] = Field(
+    # ⚠️ BREAKING: ``role`` narrowed to ``Literal["member"]`` — the
+    # ``admin`` value is gone, promotion raises 422 even for root.
+    role: Literal["member"] = Field(
         ...,
-        description="New role for the member — ``admin`` or ``member``.",
+        description="New role for the member — only ``member`` (demotion).",
     )
 
 

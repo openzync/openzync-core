@@ -1,4 +1,4 @@
-"""One-time platform setup — creates the root superadmin on demand.
+"""One-time platform setup — creates the root admin on demand.
 
 Replaces the removed boot-time ``services.platform_seed`` auto-seed: the
 root user is now created exactly once via ``POST /v1/auth/setup`` instead
@@ -62,7 +62,7 @@ class SetupService:
         return await self._settings().get_registration_mode()
 
     async def create_root_once(self, password: str, org_name: str = "Platform") -> None:
-        """Create the platform root superadmin if the platform is unset up.
+        """Create the platform root admin if the platform is unset up.
 
         The org row is ensured first (idempotent, named ``org_name`` on
         first creation only), then the root row is inserted with ``ON

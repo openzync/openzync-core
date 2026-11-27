@@ -75,8 +75,8 @@ class OrgJoinMixin:
         # No tenant context on this public path — authz is the
         # registration_mode gate above; persistence uses a
         # transaction-local bypass inside create_dashboard_user.
-        # Join mints ``member`` (unlike open signup, which mints the
-        # bootstrapping ``admin``) — joined users never self-promote.
+        # Join mints ``member`` with the member defaults, no members:* —
+        # admin grants explicitly.
         existing = await self._repo.find_user_by_email(payload.email)
         if existing is not None:
             logger.warning(

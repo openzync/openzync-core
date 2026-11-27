@@ -1,6 +1,6 @@
 """Pydantic schemas for platform system configuration.
 
-The platform operator (superadmin) manages a small whitelist of
+The platform operator (admin) manages a small whitelist of
 non-secret system-level defaults through ``core.system_config``, which
 persists them in the platform root user's ``users.config_override``
 alongside other platform keys.

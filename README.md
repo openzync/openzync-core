@@ -121,8 +121,11 @@ stay strict — `routers → services → repositories → models` — and async
 
 One vocabulary, enforced identically for JWT users and API keys by `require_permission`
 ([ADR-007](https://github.com/openzync/openzync-docs/blob/main/adr/007-unified-org-permission-model.rst)).
-An empty array means all permissions (org `admin`, platform `superadmin`); new members get
-`project:read` and `project:write`. Roles live in the DB, cached 60 s in Redis, fail closed.
+An empty array means all permissions (platform `admin` wildcard); new members are
+seeded with the full vocabulary in `permissions[]` (least-privilege default — the
+`admin` wildcard covers elevation). The `root` user (`external_id='root'`) is the
+immortal admin: its role cannot be changed or deleted, and only it may promote to
+`admin`. Former `superadmin` rows migrate to `admin`, former `admin` rows to permission-scoped `member`. Roles live in the DB, cached 60 s in Redis, fail closed.
 
 | Permission | Grants |
 |---|---|

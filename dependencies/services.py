@@ -31,7 +31,7 @@ from uuid import UUID
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dependencies.db import get_db, get_db_superadmin
+from dependencies.db import get_db, get_db_admin
 from dependencies.org_config import get_org_config
 
 if TYPE_CHECKING:
@@ -138,15 +138,15 @@ async def get_user_summary_service(
     return UserSummaryService(db=db, arq=arq, redis=redis)
 
 
-async def get_superadmin_user_service(
+async def get_admin_user_service(
     request: Request,
-    db: AsyncSession = Depends(get_db_superadmin),
+    db: AsyncSession = Depends(get_db_admin),
     webhook: WebhookService = Depends(get_webhook_service),
 ) -> UserService:
-    """Dependency that yields a superadmin-scoped UserService.
+    """Dependency that yields an admin-scoped UserService.
 
     Runs on the RLS-bypass session because the target row belongs to the
-    member, not the acting superadmin (the tenant policy would otherwise
+    member, not the acting admin (the tenant policy would otherwise
     match zero rows).
 
     Args:
@@ -298,13 +298,13 @@ async def get_invite_service(
     )
 
 
-async def get_superadmin_invite_service(
-    db: AsyncSession = Depends(get_db_superadmin),  # noqa: B008
+async def get_admin_invite_service(
+    db: AsyncSession = Depends(get_db_admin),  # noqa: B008
     auth_service: AuthService = Depends(get_auth_service),  # noqa: B008
 ) -> InviteService:
     """Dependency that yields an InviteService on the RLS-bypass session.
 
-    Superadmin-scoped analogue of :func:`get_invite_service` for the
+    Admin-scoped analogue of :func:`get_invite_service` for the
     admin invite endpoints — the pending row belongs to the invitee, so
     the tenant session rejects the INSERT (RLS 500).  The pre-auth
     accept/info flow stays on :func:`get_invite_service`.

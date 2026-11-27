@@ -1,8 +1,14 @@
-"""Platform super-admin endpoints — HTTP adapter layer only.
+"""Platform admin endpoints — HTTP adapter layer only.
 
-Every endpoint requires ``require_superadmin`` (JWT dashboard session,
-DB-verified ``superadmin`` role) and — for member-role changes — the
-RLS-bypass session ``get_db_superadmin``.
+Every endpoint requires ``require_admin`` (JWT dashboard session,
+DB-verified ``admin`` role) and — for member-role changes — the
+RLS-bypass session ``get_db_admin``.
+
+⚠️ BREAKING: role collapse — the ``superadmin`` role is gone.  Only the
+platform root (``external_id='root'``) holds ``admin`` with full powers;
+former ``superadmin`` rows are now ``admin``, former ``admin`` rows are
+now permission-scoped ``member``.  Nobody may promote — not even root;
+grant permissions instead.
 
 ⚠️ BREAKING: multi-org approval endpoints are removed (single platform
 org): ``GET /admin/system/orgs``, ``POST .../approve``,
@@ -30,11 +36,11 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from core.audit import audit_action
-from core.exceptions import NotFoundError
+from core.exceptions import NotFoundError, ValidationError
 from core.system_config import get_system_config, update_system_config
-from dependencies.auth import require_superadmin
-from dependencies.db import get_db, get_db_superadmin
-from dependencies.services import get_superadmin_user_service
+from dependencies.auth import require_admin
+from dependencies.db import get_db, get_db_admin
+from dependencies.services import get_admin_user_service
 from repositories.instance_settings_repository import InstanceSettingsRepository
 from schemas.admin_system import (
     MemberRoleResponse,
@@ -74,19 +80,19 @@ def _get_redis(request: Request) -> object:
     description=(
         "Returns the platform system config.  No whitelisted fields "
         "remain — the response is ``{}``.  Requires the platform "
-        "super-admin role."
+        "admin role."
     ),
 )
 async def get_platform_config(
     request: Request,
-    _user_id: str = Depends(require_superadmin),  # noqa: B008
+    _user_id: str = Depends(require_admin),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> SystemConfigResponse:
     """Return the current platform system config.
 
     Args:
         request: Incoming HTTP request (app-state Redis access).
-        _user_id: Superadmin user UUID (superadmin-gated).
+        _user_id: Admin user UUID (admin-gated).
         db: Async DB session (platform root-row read).
 
     Returns:
@@ -102,24 +108,24 @@ async def get_platform_config(
     description=(
         "Updates the platform system config.  No whitelisted fields "
         "remain — every key is rejected with 422.  Requires the platform "
-        "super-admin role."
+        "admin role."
     ),
 )
 @audit_action("system.config.update", "system", "System configuration updated")
 async def update_platform_config(
     body: SystemConfigUpdate,
     request: Request,
-    _user_id: str = Depends(require_superadmin),  # noqa: B008
-    db: AsyncSession = Depends(get_db_superadmin),  # noqa: B008
+    _user_id: str = Depends(require_admin),  # noqa: B008
+    db: AsyncSession = Depends(get_db_admin),  # noqa: B008
 ) -> SystemConfigResponse:
     """Partially update the platform system config.
 
     Args:
         body: Whitelisted fields to update (``None`` removes a key).
         request: Incoming HTTP request (app-state Redis access).
-        _user_id: Superadmin user UUID (superadmin-gated).
+        _user_id: Admin user UUID (admin-gated).
         db: RLS-bypass session (the root row belongs to the platform
-            root, not the acting superadmin — the tenant policy would
+            root, not the acting admin — the tenant policy would
             otherwise match zero rows fail-closed).
 
     Returns:
@@ -129,7 +135,7 @@ async def update_platform_config(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Instance registration (superadmin-only view of the singleton settings row)
+# Instance registration (admin-only view of the singleton settings row)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -151,17 +157,17 @@ def _to_registration_response(row: object) -> InstanceSettingsResponse:
     description=(
         "Returns the platform registration mode, setup-wizard state, and "
         "default backends.  Secrets are never returned.  Requires the "
-        "platform super-admin role."
+        "admin role."
     ),
 )
 async def get_instance_registration(
-    _user_id: str = Depends(require_superadmin),  # noqa: B008
+    _user_id: str = Depends(require_admin),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> InstanceSettingsResponse:
     """Return the singleton instance registration settings.
 
     Args:
-        _user_id: Superadmin user UUID (superadmin-gated).
+        _user_id: Admin user UUID (admin-gated).
         db: Async DB session (``instance_settings`` has no RLS).
 
     Returns:
@@ -178,7 +184,7 @@ async def get_instance_registration(
     description=(
         "Updates the platform registration mode.  Invalid modes are "
         "rejected with 422 at the schema boundary.  Requires the platform "
-        "super-admin role."
+        "admin role."
     ),
 )
 @audit_action(
@@ -186,14 +192,14 @@ async def get_instance_registration(
 )
 async def update_instance_registration(
     body: UpdateRegistrationModeRequest,
-    _user_id: str = Depends(require_superadmin),  # noqa: B008
-    db: AsyncSession = Depends(get_db_superadmin),  # noqa: B008
+    _user_id: str = Depends(require_admin),  # noqa: B008
+    db: AsyncSession = Depends(get_db_admin),  # noqa: B008
 ) -> InstanceSettingsResponse:
     """Update the platform registration mode.
 
     Args:
         body: New registration mode (``open``/``invite_only``/``approval``).
-        _user_id: Superadmin user UUID (superadmin-gated).
+        _user_id: Admin user UUID (admin-gated).
         db: RLS-bypass session (singleton-row write).
 
     Returns:
@@ -213,36 +219,42 @@ async def update_instance_registration(
 @router.patch(
     "/users/{user_id}/role",
     response_model=MemberRoleResponse,
-    summary="Change a member's role",
+    summary="Demote a member (promotion disabled)",
     description=(
-        "Promotes a member to admin or demotes an admin to member. "
-        "Requires the super-admin role."
+        "Demotes an admin to member.  Role promotion is disabled (422) — "
+        "the ``admin`` role is frozen, even for root; grant permissions "
+        "via ``PATCH /v1/users/{user_id}`` instead.  Requires the admin "
+        "role.  The root user's role is frozen. "
+        # ⚠️ BREAKING: admin promotion removed — ``role`` accepts only
+        # ``member`` (schema 422 otherwise); the service raises 422 for
+        # ``admin``, even from root.
     ),
 )
-@audit_action("org.member.role_changed", "user", "Member role changed by superadmin")
+@audit_action("org.member.role_changed", "user", "Member role changed by admin")
 async def update_member_role(
     user_id: UUID,
     body: UpdateMemberRoleRequest,
-    _admin_id: str = Depends(require_superadmin),  # noqa: B008
-    service: UserService = Depends(get_superadmin_user_service),  # noqa: B008
+    _admin_id: str = Depends(require_admin),  # noqa: B008
+    service: UserService = Depends(get_admin_user_service),  # noqa: B008
 ) -> MemberRoleResponse:
-    """Set a member's role.
+    """Set a member's role (demotion only — promotion is frozen).
 
     Args:
         user_id: The member's user UUID.
-        body: The new role (``admin`` or ``member``).
-        service: Superadmin UserService (bypass session).
-        _admin_id: Superadmin's user ID (superadmin-gated).
+        body: The new role (only ``member``).
+        service: Admin UserService (bypass session).
+        _admin_id: Admin's user ID (admin-gated).
 
     Returns:
         The updated member's id/role.
 
     Raises:
         HTTPException: 404 if the user does not exist.
+        HTTPException: 422 if the target is root, ``admin`` is requested
+            (frozen, even for root), or the last admin would be demoted.
     """
     try:
         user = await service.update_member_role(
-
             user_id=user_id,
             role=body.role,
         )
@@ -250,6 +262,11 @@ async def update_member_role(
         raise HTTPException(
             status_code=404,
             detail=f"User {user_id} not found.",
+        ) from None
+    except ValidationError:
+        raise HTTPException(
+            status_code=422,
+            detail="Role change not allowed for this user and actor.",
         ) from None
     return MemberRoleResponse(
         id=user.id,

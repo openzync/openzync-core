@@ -27,7 +27,7 @@ ProjectRole = Literal["owner", "member"]
 MemberStatus = Literal["pending", "active"]
 """Valid project membership statuses.
 
-- ``pending`` — invite created, awaiting invitee (self) or superadmin approval.
+- ``pending`` — invite created, awaiting invitee (self) or admin approval.
 - ``active`` — full member; the only status that grants project access.
 """
 
