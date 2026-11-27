@@ -135,9 +135,9 @@ async def engine():
         if not result.scalar():
             await conn.execute(
                 text(
-                    "INSERT INTO organizations (id, name, org_code) "
+                    "INSERT INTO organizations (id, name) "
                     "VALUES ('00000000-0000-0000-0000-000000000001', "
-                    "'Bootstrap Org', 'bootstrap01')"
+                    "'Bootstrap Org')"
                 )
             )
         # Seed a project for tests that need project-scoped entities
@@ -319,10 +319,10 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
         user_id = uuid4()
         await session.execute(
             _sql(
-                "INSERT INTO organizations (id, name, org_code) "
-                "VALUES (:id, :name, :code)"
+                "INSERT INTO organizations (id, name) "
+                "VALUES (:id, :name)"
             ),
-            {"id": user_id, "name": org_name, "code": f"boot_{uuid4().hex[:8]}"},
+            {"id": user_id, "name": org_name},
         )
 
     # ── Insert the user row directly (test infra, not a public API) ───
@@ -478,9 +478,9 @@ async def db_session(engine) -> AsyncGenerator[None, None]:
             "INSERT INTO users (id, external_id, name, role) "
             "VALUES ('00000000-0000-0000-0000-000000000001', "
             "'bootstrap-user', 'Bootstrap User', 'admin') ON CONFLICT (id) DO NOTHING",
-            "INSERT INTO organizations (id, name, org_code) "
+            "INSERT INTO organizations (id, name) "
             "VALUES ('00000000-0000-0000-0000-000000000001', "
-            "'Bootstrap Org', 'bootstrap01') ON CONFLICT (id) DO NOTHING",
+            "'Bootstrap Org') ON CONFLICT (id) DO NOTHING",
             "INSERT INTO projects (id, user_id, name) "
             "VALUES ('00000000-0000-0000-0000-000000000002', "
             "'00000000-0000-0000-0000-000000000001', "
