@@ -109,7 +109,7 @@ class ObservationService(DetectionMixin, DescriptionMixin, PersistenceMixin):
 
         Args:
             project_id: Project scope.
-            user_id: Organization scope (for RLS).
+            user_id: User scope (for RLS).
             llm_backend: Optional LLM backend for content generation.
                 If ``None``, template-based descriptions are used.
 

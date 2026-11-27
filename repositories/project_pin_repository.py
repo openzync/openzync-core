@@ -154,7 +154,7 @@ class ProjectPinRepository:
 
             user_id: The user pinning.
             project_id: The project to pin.
-            limit: Maximum pins per user per org (passed by the service).
+            limit: Maximum pins per user per user (passed by the service).
 
         Returns:
             The new (or pre-existing, on a double-pin race) ProjectPin,

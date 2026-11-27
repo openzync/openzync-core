@@ -339,7 +339,7 @@ async def _usage_tokens(engine: Any, org_id: UUID) -> list[int]:
 
 
 async def _patch_org(admin_client: AsyncClient, payload: dict[str, Any]) -> None:
-    resp = await admin_client.patch("/admin/org/config", json=payload)
+    resp = await admin_client.patch("/admin/platform-config", json=payload)
     assert resp.status_code == 200, resp.text
 
 
@@ -629,7 +629,7 @@ class TestNullResetRestoresDefaults:
             isolated_admin_client,
             {"enrichment": {"facts": False, "llm_invalidation": False}},
         )
-        stored = (await isolated_admin_client.get("/admin/org/config")).json()[
+        stored = (await isolated_admin_client.get("/admin/platform-config")).json()[
             "stored"
         ]
         assert stored["enrichment"]["facts"] is False
@@ -638,7 +638,7 @@ class TestNullResetRestoresDefaults:
             isolated_admin_client,
             {"enrichment": {"facts": None, "llm_invalidation": None}},
         )
-        stored = (await isolated_admin_client.get("/admin/org/config")).json()[
+        stored = (await isolated_admin_client.get("/admin/platform-config")).json()[
             "stored"
         ]
         assert "facts" not in (stored.get("enrichment") or {})

@@ -953,10 +953,23 @@ class TestAuditLogsParity:
         Entries are seeded via the repository — HTTP activity does not
         reliably produce rows in tests (audit persistence is org-config
         gated), and the sort contract is what is pinned here.
+
+        ``GET /v1/admin/audit-logs`` requires ``members:read``, which the
+        bootstrap member does not carry — grant it here (test-local; the
+        fixture stays a plain member everywhere else).
         """
+        from core.rbac import invalidate_permissions
         from repositories.audit_log_repository import AuditLogRepository
+        from repositories.user_repository import UserRepository
 
         user_id = isolated_org_and_key["user_id"]
+        async with isolated_app.state.db_session_factory() as db:
+            user = await UserRepository(db).get_by_uuid(user_id)
+            assert user is not None
+            user.permissions = sorted(set(user.permissions or []) | {"members:read"})
+            await db.commit()
+        await invalidate_permissions(isolated_app.state.redis, user_id)
+
         async with isolated_app.state.db_session_factory() as db:
             repo = AuditLogRepository(db)
             for action in ("parity.audit.b", "parity.audit.a", "parity.audit.c"):

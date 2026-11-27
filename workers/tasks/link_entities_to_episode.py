@@ -80,7 +80,7 @@ async def link_entities_to_episode(
     Args:
         ctx: ARQ worker context (unused, required by ARQ contract).
         episode_id: UUID of the episode to sync.
-        user_id: UUID of the owning organization.
+        user_id: UUID of the owning user.
         project_id: UUID of the project for project scoping.
         role: Message role (user/assistant/system/tool).
         content: Legacy payload from older enqueues.  ``None`` (the new
@@ -122,7 +122,7 @@ async def link_entities_to_episode(
     try:
         async with session_factory() as db:
             try:
-                await rls.set_tenant_context(db, user_id)
+                await rls.set_user_context(db, user_id)
                 # ── 1. Get the episode ──────────────────────────────────────────
                 result = await db.execute(
                     select(Episode).where(Episode.id == episode_id)
@@ -324,7 +324,7 @@ async def link_entities_to_episode(
                             settings as w_settings,
                         )
 
-                        # 1h-TTL pending marker, keyed per (org, project).
+                        # 1h-TTL pending marker, keyed per (user, project).
                         # compute_observations deletes it when its full project
                         # scan runs; episodes ingested after that set a fresh
                         # marker.  No TTL would leak one key per project
@@ -372,7 +372,7 @@ async def link_entities_to_episode(
                                     user_id=user_id,
                                     _queue_name=worker_settings.low_queue_full,
                                 )
-                                # Prevent re-enqueueing within 1 hour per org
+                                # Prevent re-enqueueing within 1 hour per user
                                 await arq_redis.set(dedup_key, "1", ex=3600)
                                 logger.info(
                                     "link_entities_to_episode.scheduled_community_detection",

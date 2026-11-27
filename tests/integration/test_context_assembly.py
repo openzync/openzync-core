@@ -31,7 +31,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from schemas.organization_config import OrgConfigBase
+from schemas.platform_config import PlatformConfigBase
 from services.context_service import ContextService
 from services.hybrid_retriever import HybridRetriever
 
@@ -110,7 +110,7 @@ def _build_mocked_retriever(
     user_id_val: UUID,
     sample: dict[str, Any],
     *,
-    org_config: OrgConfigBase | None = None,
+    platform_config: PlatformConfigBase | None = None,
 ) -> HybridRetriever:
     """Construct a ``HybridRetriever`` with all search legs mocked.
 
@@ -123,7 +123,7 @@ def _build_mocked_retriever(
         db: A mock async session.
         user_id_val: Organisation UUID (for tenant isolation).
         sample: The controlled search results to return.
-        org_config: Optional org-level configuration.
+        platform_config: Optional org-level configuration.
 
     Returns:
         A ``HybridRetriever`` instance with mocked search legs.
@@ -133,7 +133,7 @@ def _build_mocked_retriever(
         user_id=user_id_val,
         redis=None,
         graph_backends=[],
-        org_config=org_config,
+        platform_config=platform_config,
         reranker=None,
     )
 
@@ -159,23 +159,23 @@ def _build_context_service(
     mock_db: AsyncMock,
     sample: dict[str, Any],
     *,
-    org_config: OrgConfigBase | None = None,
+    platform_config: PlatformConfigBase | None = None,
     redis: Any = None,
 ) -> ContextService:
     """Build a ``ContextService`` with a fully mocked retriever."""
-    org_config = org_config or OrgConfigBase(reranker_backend=None)
+    platform_config = platform_config or PlatformConfigBase(reranker_backend=None)
     retriever = _build_mocked_retriever(
         mock_db,
         ORG_ID,
         sample,
-        org_config=org_config,
+        platform_config=platform_config,
     )
     service = ContextService(
         db=mock_db,
         user_id=ORG_ID,
         redis=redis,
         graph_backends=[],
-        org_config=org_config,
+        platform_config=platform_config,
     )
     # Replace the internal retriever with our pre-configured one
     service._retriever = retriever
@@ -203,7 +203,7 @@ class TestContextAssembly:
         service = _build_context_service(
             mock_db_session,
             sample_search_results,
-            org_config=OrgConfigBase(reranker_backend=None),
+            platform_config=PlatformConfigBase(reranker_backend=None),
         )
 
         result = await service.assemble(
@@ -242,7 +242,7 @@ class TestContextAssembly:
         service = _build_context_service(
             mock_db_session,
             sample_search_results,
-            org_config=OrgConfigBase(reranker_backend=None),
+            platform_config=PlatformConfigBase(reranker_backend=None),
         )
 
         result = await service.assemble(
@@ -274,14 +274,14 @@ class TestContextAssembly:
         The first assemble() returns cache_hit=false.  The second (same
         params) returns cache_hit=true when Redis caching is operational.
         """
-        org_config = OrgConfigBase(
+        platform_config = PlatformConfigBase(
             reranker_backend=None,
             context_cache_ttl=30,
         )
         service = _build_context_service(
             mock_db_session,
             sample_search_results,
-            org_config=org_config,
+            platform_config=platform_config,
             redis=redis_client,
         )
 

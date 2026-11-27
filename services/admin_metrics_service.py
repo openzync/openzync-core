@@ -22,7 +22,7 @@ from services.graph_stats_service import GraphStatsService
 
 if TYPE_CHECKING:
     from packages.graph_backend.interface import GraphBackend
-    from schemas.organization_config import OrgConfigBase
+    from schemas.platform_config import PlatformConfigBase
     from services.metrics_service import MetricsService
 
 logger = structlog.get_logger(__name__)
@@ -39,21 +39,21 @@ class AdminMetricsService:
     async def get_summary(
         self,
         request: Request,
-        org_config: OrgConfigBase,
+        platform_config: PlatformConfigBase,
         user_id: UUID,
         start: datetime,
         end: datetime,
     ) -> MetricsSummaryResponse:
         """Return aggregated DB counts merged with Prometheus metrics.
 
-        DB counts are scoped to the organization. Only the Prometheus
+        DB counts are scoped to the user. Only the Prometheus
         range time-series honor the window; DB totals and instant queries
         keep snapshot semantics.
 
         Args:
             request: FastAPI request (graph backend dispatcher + pools).
-            org_config: Org config (graph backend selection).
-            user_id: Authenticated organization ID.
+            platform_config: Platform config (graph backend selection).
+            user_id: Authenticated user ID (singleton platform).
             start: Window start.
             end: Window end.
 
@@ -62,7 +62,7 @@ class AdminMetricsService:
             intact when Prometheus is unreachable.
         """
         backend = await resolve_graph_backend_fail_soft(
-            request, org_config, user_id, self._db, "admin_metrics"
+            request, platform_config, user_id, self._db, "admin_metrics"
         )
         episode_stats, graph_stats, user_count = await self._fetch_db_counts(
             user_id, backend
@@ -95,7 +95,7 @@ class AdminMetricsService:
         """Run all DB count queries for the admin summary.
 
         Args:
-            user_id: Organization UUID for tenant isolation.
+            user_id: User UUID for tenant isolation.
             backend: Resolved graph backend for entity counts (``None`` →
                 zeros, degraded).
 
@@ -128,7 +128,7 @@ class AdminMetricsService:
             else 0.0,
         )
 
-        # Graph counts (backend-backed, org-wide fan-out). entities_total is
+        # Graph counts (backend-backed, user-scoped fan-out). entities_total is
         # inventory, so archived projects are included here.
         stats = GraphStatsService(self._db, backend)
         project_ids = await stats.resolve_project_ids(

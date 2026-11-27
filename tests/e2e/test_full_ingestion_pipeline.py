@@ -2,8 +2,9 @@
 
 End-to-end flow (project-scoped contract):
     1. Tenant bootstrap via the ``org_and_key`` fixture → project + API key.
-    2. Create user via ``POST /v1/users`` (admin JWT — project keys carry
-       project-only permissions and cannot manage org users).
+    2. Create user via ``POST /v1/users`` (platform superadmin — project
+       keys carry project-only permissions and the bootstrap member JWT
+       cannot manage users).
     3. Create session via ``POST /v1/projects/{id}/sessions`` → session UUID.
     4. Ingest memory via multipart ``POST /v1/projects/{id}/memory`` → 202.
     5. Read back via ``GET .../sessions/{id}/messages`` and project search.
@@ -20,19 +21,59 @@ synchronous API contract is verified.
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncGenerator
+from typing import Any
 from uuid import UUID
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
 
 from tests.integration.conftest import (  # noqa: F401  (fixtures are re-exported)
-    admin_client,
     app,
+    asgi_transport,
     auth_client,
     engine,
     org_and_key,
     redis_client,
 )
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def admin_client(app: Any) -> AsyncGenerator[AsyncClient, None]:
+    """Platform-superadmin client for ``POST /v1/users`` (admin-gated).
+
+    Shadows the bootstrap-JWT ``admin_client`` from the integration
+    conftest: the bootstrap member JWT gets 403 on user management, so
+    user setup goes through the platform admin instead.
+    """
+    transport = asgi_transport(app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.headers["Authorization"] = f"Bearer {await _e2e_superadmin_token(client)}"
+        yield client
+
+
+async def _e2e_superadmin_token(client: AsyncClient) -> str:
+    """Run platform setup (idempotent) and log in as root.
+
+    The non-isolated ``app`` shares one Redis with no per-test flush, so
+    repeated ``POST /v1/auth/setup`` calls trip the per-IP signup throttle
+    (429) after a few tests.  A 429 here only means an earlier test already
+    set the platform up — the login below proves liveness, so proceed to
+    it instead of failing.
+    """
+    setup = await client.post(
+        "/v1/auth/setup", json={"password": "StrongPass1"}  # noqa: S106
+    )
+    if setup.status_code != 429:
+        assert setup.status_code in (201, 403), f"platform setup failed: {setup.text}"
+    login = await client.post(
+        "/v1/auth/login", json={"email": "root", "password": "StrongPass1"}  # noqa: S106
+    )
+    assert login.status_code == 200, f"root login failed: {login.text}"
+    token = login.json().get("access_token")
+    assert token, "root login issued no access token"
+    return str(token)
 
 
 @pytest.fixture()
@@ -109,7 +150,7 @@ class TestFullIngestionPipeline:
         org_and_key: dict,
     ) -> None:
         """Create a user and then create a session in the project."""
-        # ── Create user (org management — admin JWT) ────────────────────
+        # ── Create user (platform superadmin — admin-gated) ──────────────
         user_resp = await admin_client.post(
             "/v1/users",
             json={"external_id": "e2e-test-user-2"},

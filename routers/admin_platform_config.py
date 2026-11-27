@@ -5,10 +5,8 @@ read and update UI-exposed settings (LLM, embeddings, graph, behaviour)
 that were previously env-var-only.
 
 All endpoints are scoped to the authenticated user — an admin can
-only manage their own config.
-
-NOTE: the ``/admin/org/config`` prefix and ``OrgConfig*`` class names are
-legacy (pre-0070 org scoping) kept for API compat — scope is per-user.
+only manage their own config.  The config lives in the caller's own
+``users.config_override`` row (singleton platform org — no per-user rows).
 """
 
 from __future__ import annotations
@@ -28,27 +26,27 @@ from core.config import get_settings
 from core.exceptions import ExternalServiceError, RateLimitError
 from dependencies.auth import require_permission
 from dependencies.db import get_db
-from schemas.organization_config import (
+from schemas.platform_config import (
     SYSTEM_MANAGED_FALKORDB_FIELDS,
     SYSTEM_MANAGED_SURREALDB_FIELDS,
-    OrgConfigBase,
-    OrgConfigResponse,
-    TestOrgConfigRequest,
-    TestOrgConfigResponse,
-    UpdateOrgConfigRequest,
+    PlatformConfigBase,
+    PlatformConfigResponse,
+    TestPlatformConfigRequest,
+    TestPlatformConfigResponse,
+    UpdatePlatformConfigRequest,
 )
-from services.org_config_connection_service import OrgConfigConnectionService
-from services.org_config_service import OrgConfigService
+from services.platform_config_connection_service import PlatformConfigConnectionService
+from services.platform_config_service import PlatformConfigService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/admin/org/config",
-    tags=["Admin - Organization Config"],
+    prefix="/admin/platform-config",
+    tags=["Admin - Platform Config"],
 )
 
 #: Path to the onboarding defaults YAML file (relative to project root).
-DEFAULTS_PATH = Path(__file__).parent.parent / "config" / "defaults" / "org_config.yaml"
+DEFAULTS_PATH = Path(__file__).parent.parent / "config" / "defaults" / "platform_config.yaml"
 
 
 def _get_system_managed_fields() -> list[str]:
@@ -72,23 +70,23 @@ def _get_system_managed_fields() -> list[str]:
 def _get_config_service(
     request: Request,
     db: AsyncSession = Depends(get_db),  # noqa: B008
-) -> OrgConfigService:
-    """Build a request-scoped OrgConfigService.
+) -> PlatformConfigService:
+    """Build a request-scoped PlatformConfigService.
 
     Reads the DB session from the request and the Redis client from
     ``request.app.state`` (initialised during the application lifespan).
     """
     redis = getattr(request.app.state, "redis", None)
-    return OrgConfigService(db=db, redis=redis)
+    return PlatformConfigService(db=db, redis=redis)
 
 
 def _get_connection_service(
     request: Request,
     db: AsyncSession = Depends(get_db),  # noqa: B008
-) -> OrgConfigConnectionService:
-    """Build a request-scoped OrgConfigConnectionService."""
+) -> PlatformConfigConnectionService:
+    """Build a request-scoped PlatformConfigConnectionService."""
     redis = getattr(request.app.state, "redis", None)
-    return OrgConfigConnectionService(db=db, redis=redis)
+    return PlatformConfigConnectionService(db=db, redis=redis)
 
 
 #: Max config-test probes per user per window (fail-open on Redis errors).
@@ -114,7 +112,7 @@ async def _check_config_test_throttle(redis: Any | None, user_id: str) -> None:
         # outage must never block config testing.  Non-Redis errors still
         # propagate.
         logger.error(
-            "org_config.test_throttle_failed",
+            "platform_config.test_throttle_failed",
             extra={"user_id": user_id},
             exc_info=True,
         )
@@ -136,14 +134,14 @@ async def _check_config_test_throttle(redis: Any | None, user_id: str) -> None:
 
 @router.get(
     "/defaults",
-    response_model=UpdateOrgConfigRequest,
+    response_model=UpdatePlatformConfigRequest,
 )
-async def get_org_config_defaults() -> UpdateOrgConfigRequest:
+async def get_platform_config_defaults() -> UpdatePlatformConfigRequest:
     """Return seeded onboarding defaults for a new user.
 
     These are **not** the stored config — they are starter values for the
     onboarding form.  The user reviews and adjusts them before saving via
-    ``PATCH /admin/org/config``.
+    ``PATCH /admin/platform-config``.
     Empty-string secrets are intentional (frontend treats "" as unset —
     the user MUST fill them in; never persist the placeholder).
 
@@ -155,7 +153,7 @@ async def get_org_config_defaults() -> UpdateOrgConfigRequest:
         raise HTTPException(status_code=500, detail="Defaults configuration file not found")
     with DEFAULTS_PATH.open() as f:
         data: dict = yaml.safe_load(f)
-    return UpdateOrgConfigRequest(**data)
+    return UpdatePlatformConfigRequest(**data)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -165,19 +163,20 @@ async def get_org_config_defaults() -> UpdateOrgConfigRequest:
 
 @router.get(
     "",
-    response_model=OrgConfigResponse,
+    response_model=PlatformConfigResponse,
 )
-async def get_org_config(
+async def get_platform_config(
     _user_id: str = Depends(require_permission("configuration:read")),
-    service: OrgConfigService = Depends(_get_config_service),
-) -> OrgConfigResponse:
+    service: PlatformConfigService = Depends(_get_config_service),
+) -> PlatformConfigResponse:
     """Get the stored configuration for the current user.
 
     Returns only the fields explicitly set in the DB.  Unset fields are
     ``null`` — there is no env-var fallback.
 
-    Permission-gated (``require_permission("configuration:read")``): the
-    response contains unmasked secrets, so members and API keys are denied.
+    Permission-gated (``require_permission("configuration:read")``):
+    members with ``configuration:read`` pass (own override); the
+    response contains unmasked secrets.
     """
     response = await service.get_config_response(UUID(_user_id))
     response.system_managed_fields = _get_system_managed_fields()
@@ -191,14 +190,14 @@ async def get_org_config(
 
 @router.patch(
     "",
-    response_model=OrgConfigBase,
+    response_model=PlatformConfigBase,
 )
 @audit_action("config.update", "config", "Configuration updated")
-async def update_org_config(
-    body: UpdateOrgConfigRequest,
+async def update_platform_config(
+    body: UpdatePlatformConfigRequest,
     _user_id: str = Depends(require_permission("configuration:write")),
-    service: OrgConfigService = Depends(_get_config_service),
-) -> OrgConfigBase:
+    service: PlatformConfigService = Depends(_get_config_service),
+) -> PlatformConfigBase:
     """Partially update the user's configuration.
 
     Only fields explicitly provided in the request body are updated.
@@ -234,15 +233,15 @@ async def update_org_config(
 
 @router.put(
     "",
-    response_model=OrgConfigBase,
+    response_model=PlatformConfigBase,
 )
 @audit_action("config.update", "config", "Configuration updated")
-async def replace_org_config(
-    body: UpdateOrgConfigRequest,
+async def replace_platform_config(
+    body: UpdatePlatformConfigRequest,
     _user_id: str = Depends(require_permission("configuration:write")),
-    service: OrgConfigService = Depends(_get_config_service),
-) -> OrgConfigBase:
-    """Merge-alias for ``PATCH /admin/org/config`` (kept for API compat).
+    service: PlatformConfigService = Depends(_get_config_service),
+) -> PlatformConfigBase:
+    """Merge-alias for ``PATCH /admin/platform-config`` (kept for API compat).
 
     Despite the ``PUT`` verb, this does NOT replace the stored config:
     only fields explicitly provided in the request body are updated and
@@ -279,19 +278,18 @@ async def replace_org_config(
 
 @router.post(
     "/test",
-    response_model=TestOrgConfigResponse,
+    response_model=TestPlatformConfigResponse,
 )
-@audit_action("config.test", "org_config")
-async def test_org_config(
-    body: TestOrgConfigRequest,
+@audit_action("config.test", "platform_config")
+async def test_platform_config(
+    body: TestPlatformConfigRequest,
     request: Request,
     _user_id: str = Depends(require_permission("configuration:write")),  # noqa: B008
-    service: OrgConfigConnectionService = Depends(  # noqa: B008
+    service: PlatformConfigConnectionService = Depends(  # noqa: B008
         _get_connection_service
     ),
     as_user: UUID | None = None,
-    db: AsyncSession = Depends(get_db),  # noqa: B008
-) -> TestOrgConfigResponse:
+) -> TestPlatformConfigResponse:
     """Probe live connectivity for a candidate config without saving it.
 
     Overlays ``body.config`` on the stored config in-memory and probes
@@ -304,29 +302,12 @@ async def test_org_config(
     per user.  The candidate and probe details carry no secrets beyond
     action metadata in the audit log.
     """
-    from repositories.user_repository import UserRepository
-    from services.user_config_service import UserConfigService
-
     redis = getattr(request.app.state, "redis", None)
     await _check_config_test_throttle(redis, _user_id)
-    candidate = body.config
-    if as_user is not None:
-        # Single-call probe path — read through the user-config service
-        # (no direct repo round-trip from the router); the candidate
-        # merge below is in-memory only.
-        user_config_service = UserConfigService(
-            user_repo=UserRepository(db),
-            redis=redis,
-            db=db,
-        )
-        override = await user_config_service.get_override(as_user)
-        if override:
-            from schemas.organization_config import UpdateOrgConfigRequest
-
-            merged = {**override, **candidate.model_dump(exclude_unset=True)}
-            candidate = UpdateOrgConfigRequest(**merged)
     try:
-        return await service.test_connections(UUID(_user_id), body.domain, candidate)
+        return await service.test_connections(
+            UUID(_user_id), body.domain, body.config, as_user=as_user
+        )
     except ExternalServiceError as exc:
         raise HTTPException(
             status_code=503,

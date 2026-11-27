@@ -1,6 +1,6 @@
 """Admin LLM usage read API — HTTP adapter layer only.
 
-Exposes metered inference rows for the authenticated organization,
+Exposes metered inference rows for the authenticated user scope,
 windowed by days/from/to with optional project/worker/model filters,
 plus aggregates over the same window. No SQL here — all queries go
 through ``services.usage_service``.
@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.sorting import SortSpec
-from dependencies.auth import require_permission
+from dependencies.auth import require_user
 from dependencies.db import get_db
 from schemas.llm_usage import (
     LlmUsageDailyBucket,
@@ -83,7 +83,7 @@ def _resolve_window(
     response_model=LLMUsageListResponse | LLMUsageDailyListResponse,
     summary="List metered LLM usage",
     description=(
-        "Returns paginated metering rows for the authenticated organization "
+        "Returns paginated metering rows for the authenticated user scope "
         "plus aggregates over the same window. Windowed by days/from/to "
         "with optional project_id, worker, and model filters. "
         "Default window is last 30 days. "
@@ -105,9 +105,9 @@ async def list_llm_usage(
     sort_dir: Literal["asc", "desc"] = Query(default="desc"),
     group_by: Literal["day"] | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_user),
 ) -> LLMUsageListResponse | LLMUsageDailyListResponse:
-    """List metering rows with a window summary for the org.
+    """List metering rows with a window summary for the user.
 
     Args:
         days: Look-back window in days (1-365). Ignored if from/to provided.
@@ -124,7 +124,7 @@ async def list_llm_usage(
         group_by: ``None`` for metering rows (default); ``"day"`` for sparse
             per-day buckets. Any other value is rejected with 422.
         db: Async database session.
-        user_id: Authenticated organization ID (from JWT or API key).
+        user_id: Authenticated user ID (from JWT or API key).
 
     Returns:
         ``LLMUsageListResponse`` with rows, total, and summary — or, when

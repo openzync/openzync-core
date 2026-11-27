@@ -60,10 +60,10 @@ class TestUserCrud:
     async def admin_client(
         self, isolated_app: pytest.fixture, isolated_org_and_key: dict,
     ) -> AsyncClient:
-        """Superadmin-authenticated client — user CRUD requires the role.
+        """Admin-authenticated client — user CRUD requires the role.
 
         ``POST/GET/PATCH/DELETE /v1/users*`` are gated by the platform
-        superadmin role (the bootstrap org admin JWT gets 403).
+        admin role (the bootstrap org admin JWT gets 403).
         """
         from tests.integration.conftest import asgi_transport, superadmin_jwt
 
@@ -367,7 +367,7 @@ class TestUserCrud:
         Seeds 4 users, then walks pages of 2 until ``has_more`` is false.
         Every page holds at most 2 rows, cursors advance, and the union
         of pages contains all seeded users.  Total counts are not
-        asserted — platform seed rows (e.g. the root superadmin) also
+        asserted — platform seed rows (e.g. the root admin) also
         exist in the listing.
         """
         # Seed 4 users
@@ -466,9 +466,9 @@ class TestUserCrud:
 
         1. Create tenant A → jwt_A.
         2. Create tenant B → jwt_B.
-        3. Via the superadmin client, create a user.
-        4. Superadmin GET the user → 200 (platform-visible, no org boundary).
-        5. Org admin JWT GET the same user → 403 (superadmin-only gate).
+        3. Via the admin client, create a user.
+        4. Admin GET the user → 200 (platform-visible, no org boundary).
+        5. Org admin JWT GET the same user → 403 (admin-only gate).
         """
         from tests.integration.conftest import superadmin_jwt
 
@@ -478,7 +478,7 @@ class TestUserCrud:
         ) as cli:
             tenant_a = await bootstrap_tenant(isolated_app, cli, "Org A")
 
-        # -- Create a user via the superadmin client --
+        # -- Create a user via the admin client --
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
@@ -495,14 +495,14 @@ class TestUserCrud:
             assert create_resp.status_code == 201
             user_id = create_resp.json()["id"]
 
-            # -- Superadmin reads cross-tenant → 200 (platform-visible) --
+            # -- Admin reads cross-tenant → 200 (platform-visible) --
             get_resp = await cli.get(f"/v1/users/{user_id}")
             assert get_resp.status_code == 200, (
-                f"Superadmin should see the user. Got {get_resp.status_code}: {get_resp.text}"
+                f"Admin should see the user. Got {get_resp.status_code}: {get_resp.text}"
             )
             assert get_resp.json()["id"] == user_id
 
-        # -- Org admin JWT reads the same user → 403 (superadmin-only) --
+        # -- Org admin JWT reads the same user → 403 (admin-only) --
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:

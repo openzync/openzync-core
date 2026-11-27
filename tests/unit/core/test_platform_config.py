@@ -1,14 +1,14 @@
-"""Unit tests for per-user configuration resolution (``core.org_config``).
+"""Unit tests for per-user configuration resolution (``core.platform_config``).
 
 Covers:
-- ``get_org_config`` — cache → DB (``users.config_override``) → cache write
+- ``get_platform_config`` — cache → DB (``users.config_override``) → cache write
 - Redis cache hit → no DB read
 - Redis unavailable → fallback to DB
 - Skip-cache flag bypasses Redis
 - Empty override → all-None config (graph_backend defaults to falkordb)
 - No DB on a cache miss → RuntimeError
 - Poisoned stored config → ValidationError (field names only, never values)
-- ``update_org_config`` — shallow merge, None removal, cache invalidation
+- ``update_platform_config`` — shallow merge, None removal, cache invalidation
 - ``build_cache_key`` helper
 
 The DB layer (``UserRepository``) is faked in-memory — these are unit
@@ -23,15 +23,15 @@ from uuid import UUID
 
 import pytest
 
-from core.exceptions import ValidationError as OrgConfigValidationError
-from core.org_config import (
+from core.exceptions import ValidationError as PlatformConfigValidationError
+from core.platform_config import (
     CACHE_KEY_PREFIX,
-    ORG_CONFIG_CACHE_TTL,
+    PLATFORM_CONFIG_CACHE_TTL,
     build_cache_key,
-    get_org_config,
-    update_org_config,
+    get_platform_config,
+    update_platform_config,
 )
-from schemas.organization_config import OrgConfigBase, UpdateOrgConfigRequest
+from schemas.platform_config import PlatformConfigBase, UpdatePlatformConfigRequest
 
 USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 CACHE_KEY = f"{CACHE_KEY_PREFIX}:{USER_ID}"
@@ -49,7 +49,7 @@ def _clean_store():
 
 
 def _patch_repo(monkeypatch: pytest.MonkeyPatch, store: dict | None = None) -> None:
-    """Patch ``UserRepository`` (as imported in ``core.org_config``) with a fake.
+    """Patch ``UserRepository`` (as imported in ``core.platform_config``) with a fake.
 
     Uses the module-level ``_STORE`` unless an explicit *store* is given.
     """
@@ -90,7 +90,7 @@ def mock_db() -> AsyncMock:
 
 
 @pytest.mark.unit
-class TestGetOrgConfig:
+class TestGetPlatformConfig:
     """Reading org config — cache-first, DB-authoritative."""
 
     @pytest.mark.asyncio
@@ -104,7 +104,7 @@ class TestGetOrgConfig:
         _STORE[USER_ID] = {"llm_backend": "openai", "llm_model": "gpt-4"}
         _patch_repo(monkeypatch)
 
-        config = await get_org_config(USER_ID, redis=mock_redis, db=mock_db)
+        config = await get_platform_config(USER_ID, redis=mock_redis, db=mock_db)
 
         assert config.llm_backend == "openai"
         assert config.llm_model == "gpt-4"
@@ -117,12 +117,12 @@ class TestGetOrgConfig:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Config is returned from cache when available — no DB read."""
-        cached_config = OrgConfigBase(llm_backend="anthropic", llm_model="claude-opus-4")
+        cached_config = PlatformConfigBase(llm_backend="anthropic", llm_model="claude-opus-4")
         mock_redis.get.return_value = cached_config.model_dump_json()
         _patch_repo(monkeypatch)
 
         # db=None proves the DB is never touched on a cache hit.
-        config = await get_org_config(USER_ID, redis=mock_redis, db=None)
+        config = await get_platform_config(USER_ID, redis=mock_redis, db=None)
 
         assert config.llm_backend == "anthropic"
         assert config.llm_model == "claude-opus-4"
@@ -139,7 +139,7 @@ class TestGetOrgConfig:
         _STORE[USER_ID] = {"llm_backend": "ollama"}
         _patch_repo(monkeypatch)
 
-        config = await get_org_config(USER_ID, redis=mock_redis, db=mock_db)
+        config = await get_platform_config(USER_ID, redis=mock_redis, db=mock_db)
 
         assert config.llm_backend == "ollama"
 
@@ -154,7 +154,7 @@ class TestGetOrgConfig:
         _STORE[USER_ID] = {"llm_backend": "azure"}
         _patch_repo(monkeypatch)
 
-        config = await get_org_config(
+        config = await get_platform_config(
             USER_ID,
             redis=mock_redis,
             db=mock_db,
@@ -175,7 +175,7 @@ class TestGetOrgConfig:
         _STORE[USER_ID] = {"llm_backend": "openai"}
         _patch_repo(monkeypatch)
 
-        config = await get_org_config(USER_ID, redis=None, db=mock_db)
+        config = await get_platform_config(USER_ID, redis=None, db=mock_db)
 
         assert config.llm_backend == "openai"
 
@@ -191,7 +191,7 @@ class TestGetOrgConfig:
         _STORE[USER_ID] = {"llm_backend": "openai"}
         _patch_repo(monkeypatch)
 
-        config = await get_org_config(USER_ID, redis=mock_redis, db=mock_db)
+        config = await get_platform_config(USER_ID, redis=mock_redis, db=mock_db)
 
         assert config.llm_backend == "openai"
 
@@ -205,11 +205,11 @@ class TestGetOrgConfig:
         """When no config is stored, every field is ``None`` except graph_backend→falkordb."""
         _patch_repo(monkeypatch)
 
-        config = await get_org_config(USER_ID, redis=mock_redis, db=mock_db)
+        config = await get_platform_config(USER_ID, redis=mock_redis, db=mock_db)
 
         # All fields except graph_backend should be None — empty override
         # defaults graph_backend to falkordb.
-        for field_name in OrgConfigBase.model_fields:
+        for field_name in PlatformConfigBase.model_fields:
             if field_name == "graph_backend":
                 assert getattr(config, field_name) == "falkordb", f"{field_name} should be falkordb"
             else:
@@ -223,7 +223,7 @@ class TestGetOrgConfig:
         """A cache miss with ``db=None`` raises ``RuntimeError``."""
         mock_redis.get.return_value = None
         with pytest.raises(RuntimeError, match="requires a DB session"):
-            await get_org_config(USER_ID, redis=mock_redis, db=None)
+            await get_platform_config(USER_ID, redis=mock_redis, db=None)
 
     @pytest.mark.asyncio
     async def test_poisoned_stored_config_raises(
@@ -236,8 +236,8 @@ class TestGetOrgConfig:
         _STORE[USER_ID] = {"llm_backend": "not-a-backend"}
         _patch_repo(monkeypatch)
 
-        with pytest.raises(OrgConfigValidationError, match="llm_backend"):
-            await get_org_config(USER_ID, redis=mock_redis, db=mock_db)
+        with pytest.raises(PlatformConfigValidationError, match="llm_backend"):
+            await get_platform_config(USER_ID, redis=mock_redis, db=mock_db)
 
     @pytest.mark.asyncio
     async def test_cache_write_failure_logged(
@@ -252,7 +252,7 @@ class TestGetOrgConfig:
         mock_redis.setex.side_effect = ConnectionError("Redis write failed")
 
         # Should not raise
-        config = await get_org_config(USER_ID, redis=mock_redis, db=mock_db)
+        config = await get_platform_config(USER_ID, redis=mock_redis, db=mock_db)
         assert config.llm_backend == "openai"
 
     @pytest.mark.asyncio
@@ -265,11 +265,11 @@ class TestGetOrgConfig:
         """The cache TTL is passed to ``redis.setex``."""
         _STORE[USER_ID] = {"llm_backend": "openai"}
         _patch_repo(monkeypatch)
-        config = await get_org_config(USER_ID, redis=mock_redis, db=mock_db)
+        config = await get_platform_config(USER_ID, redis=mock_redis, db=mock_db)
 
         mock_redis.setex.assert_awaited_once_with(
             CACHE_KEY,
-            ORG_CONFIG_CACHE_TTL,
+            PLATFORM_CONFIG_CACHE_TTL,
             config.model_dump_json(),
         )
 
@@ -285,13 +285,13 @@ class TestGetOrgConfig:
         _STORE[USER_ID] = {"llm_backend": "openai"}
         _patch_repo(monkeypatch)
 
-        config = await get_org_config(USER_ID, redis=mock_redis, db=mock_db)
+        config = await get_platform_config(USER_ID, redis=mock_redis, db=mock_db)
 
         assert config.llm_backend == "openai"
 
 
 @pytest.mark.unit
-class TestUpdateOrgConfig:
+class TestUpdatePlatformConfig:
     """Updating org config — write to DB, invalidate cache, re-read."""
 
     @pytest.mark.asyncio
@@ -304,9 +304,9 @@ class TestUpdateOrgConfig:
         """Updating a single field persists it and invalidates cache."""
         _STORE[USER_ID] = {"llm_backend": "openai"}
         _patch_repo(monkeypatch)
-        update = UpdateOrgConfigRequest(llm_backend="anthropic")
+        update = UpdatePlatformConfigRequest(llm_backend="anthropic")
 
-        config = await update_org_config(
+        config = await update_platform_config(
             USER_ID,
             update,
             redis=mock_redis,
@@ -327,9 +327,9 @@ class TestUpdateOrgConfig:
         """Multiple fields can be updated in one call."""
         _STORE[USER_ID] = {"llm_backend": "openai", "llm_model": "gpt-4"}
         _patch_repo(monkeypatch)
-        update = UpdateOrgConfigRequest(llm_backend="anthropic", llm_model="claude-3-5-sonnet")
+        update = UpdatePlatformConfigRequest(llm_backend="anthropic", llm_model="claude-3-5-sonnet")
 
-        config = await update_org_config(
+        config = await update_platform_config(
             USER_ID,
             update,
             redis=mock_redis,
@@ -349,9 +349,9 @@ class TestUpdateOrgConfig:
         """Setting a field to ``None`` removes it from the stored config."""
         _STORE[USER_ID] = {"llm_backend": "openai", "llm_model": "gpt-4"}
         _patch_repo(monkeypatch)
-        update = UpdateOrgConfigRequest(llm_backend=None)
+        update = UpdatePlatformConfigRequest(llm_backend=None)
 
-        config = await update_org_config(
+        config = await update_platform_config(
             USER_ID,
             update,
             redis=mock_redis,
@@ -376,9 +376,9 @@ class TestUpdateOrgConfig:
             "llm_temperature": 0.7,
         }
         _patch_repo(monkeypatch)
-        update = UpdateOrgConfigRequest(llm_temperature=0.9)
+        update = UpdatePlatformConfigRequest(llm_temperature=0.9)
 
-        config = await update_org_config(
+        config = await update_platform_config(
             USER_ID,
             update,
             redis=mock_redis,
@@ -395,11 +395,11 @@ class TestUpdateOrgConfig:
         mock_db: AsyncMock,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """``update_org_config`` accepts a plain dict."""
+        """``update_platform_config`` accepts a plain dict."""
         _STORE[USER_ID] = {"llm_backend": "openai"}
         _patch_repo(monkeypatch)
 
-        config = await update_org_config(
+        config = await update_platform_config(
             USER_ID,
             {"llm_backend": "azure"},
             redis=mock_redis,
@@ -420,9 +420,9 @@ class TestUpdateOrgConfig:
         _patch_repo(monkeypatch)
         mock_redis.delete.side_effect = ConnectionError("Redis delete failed")
 
-        config = await update_org_config(
+        config = await update_platform_config(
             USER_ID,
-            UpdateOrgConfigRequest(llm_backend="anthropic"),
+            UpdatePlatformConfigRequest(llm_backend="anthropic"),
             redis=mock_redis,
             db=mock_db,
         )
@@ -439,9 +439,9 @@ class TestUpdateOrgConfig:
         _STORE[USER_ID] = {"llm_backend": "openai"}
         _patch_repo(monkeypatch)
 
-        config = await update_org_config(
+        config = await update_platform_config(
             USER_ID,
-            UpdateOrgConfigRequest(llm_backend="anthropic"),
+            UpdatePlatformConfigRequest(llm_backend="anthropic"),
             redis=None,
             db=mock_db,
         )
@@ -455,7 +455,7 @@ class TestUpdateOrgConfig:
     ) -> None:
         """Updating without a DB session raises ``RuntimeError``."""
         with pytest.raises(RuntimeError, match="requires a DB session"):
-            await update_org_config(
+            await update_platform_config(
                 USER_ID,
                 {"llm_backend": "ollama"},
                 redis=mock_redis,
@@ -480,9 +480,9 @@ class TestUpdateOrgConfig:
         }
         _patch_repo(monkeypatch)
 
-        await update_org_config(
+        await update_platform_config(
             USER_ID,
-            UpdateOrgConfigRequest(llm_temperature=0.9),
+            UpdatePlatformConfigRequest(llm_temperature=0.9),
             redis=mock_redis,
             db=mock_db,
         )
@@ -499,7 +499,7 @@ class TestCacheKey:
     """``build_cache_key`` helper."""
 
     def test_builds_correct_key(self) -> None:
-        """The cache key follows the pattern ``org_config:<uuid>``."""
+        """The cache key follows the pattern ``platform_config:<uuid>``."""
         key = build_cache_key(USER_ID)
         assert key == CACHE_KEY
 
@@ -519,14 +519,14 @@ class TestCacheKey:
 
 
 @pytest.mark.unit
-class TestOrgConfigConstants:
+class TestPlatformConfigConstants:
     """Module-level constants."""
 
     def test_cache_ttl_default(self) -> None:
-        assert ORG_CONFIG_CACHE_TTL == 300
+        assert PLATFORM_CONFIG_CACHE_TTL == 300
 
     def test_cache_key_prefix(self) -> None:
-        assert CACHE_KEY_PREFIX == "org_config"
+        assert CACHE_KEY_PREFIX == "platform_config"
 
 
 @pytest.mark.unit
@@ -550,9 +550,9 @@ class TestEnrichmentNullReset:
         _STORE[USER_ID] = {"enrichment": {"facts": False}}
         _patch_repo(monkeypatch)
 
-        config = await update_org_config(
+        config = await update_platform_config(
             USER_ID,
-            UpdateOrgConfigRequest(enrichment=None),
+            UpdatePlatformConfigRequest(enrichment=None),
             redis=mock_redis,
             db=mock_db,
         )
@@ -571,9 +571,9 @@ class TestEnrichmentNullReset:
         _STORE[USER_ID] = {"enrichment": {"facts": False, "entities": False}}
         _patch_repo(monkeypatch)
 
-        config = await update_org_config(
+        config = await update_platform_config(
             USER_ID,
-            UpdateOrgConfigRequest(enrichment={"facts": None}),
+            UpdatePlatformConfigRequest(enrichment={"facts": None}),
             redis=mock_redis,
             db=mock_db,
         )
@@ -586,4 +586,4 @@ class TestEnrichmentNullReset:
         from pydantic import ValidationError as PydanticValidationError
 
         with pytest.raises(PydanticValidationError, match="Unknown enrichment keys"):
-            UpdateOrgConfigRequest(enrichment={"bogus": True})  # type: ignore[dict-item]
+            UpdatePlatformConfigRequest(enrichment={"bogus": True})  # type: ignore[dict-item]

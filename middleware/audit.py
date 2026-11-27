@@ -73,7 +73,7 @@ async def _resolve_audit_body_capture(
     # Try Redis cache (fast path)
     if redis is not None:
         try:
-            from core.org_config import CACHE_KEY_PREFIX
+            from core.platform_config import CACHE_KEY_PREFIX
 
             cache_key = f"{CACHE_KEY_PREFIX}:{user_id}"
             cached = await redis.get(cache_key)
@@ -83,24 +83,24 @@ async def _resolve_audit_body_capture(
                 if user_val is not None:
                     return bool(user_val)
         except Exception:
-            logger.warning("audit.org_config_cache_read_failed", exc_info=True)
+            logger.warning("audit.platform_config_cache_read_failed", exc_info=True)
             # Fall through to the DB — cache miss is acceptable, the DB is
             # authoritative
 
     # Cache miss — resolve from the DB (post-response so the user doesn't wait).
     try:
-        from core.org_config import get_org_config
+        from core.platform_config import get_platform_config
 
         session_factory = getattr(app.state, "db_session_factory", None)
         if session_factory is None:
             return False
         async with session_factory() as db:
-            config = await get_org_config(
+            config = await get_platform_config(
                 UUID(user_id), redis=redis, db=db, skip_cache=True
             )
         return bool(config.audit_log_response_body) if config.audit_log_response_body is not None else False
     except Exception as exc:
-        logger.error("audit.org_config_db_resolve_failed", exc_info=True)
+        logger.error("audit.platform_config_db_resolve_failed", exc_info=True)
         raise DatabaseUnavailableError(
             "Cannot resolve user config for audit decision."
         ) from exc
@@ -123,13 +123,8 @@ EXEMPT_PATHS: frozenset = frozenset({
 # - ``routers/admin_webhooks.py`` POST "/v1/admin/webhooks" → create (and any
 #   future rotate route added there) returns the raw webhook signing secret —
 #   shown exactly once to the caller.
-# - ``routers/admin_org_code.py`` (removed — the org-code admin toggle was
-#   inert) POST "/admin/org/org-code/regenerate" → returned the freshly
-#   rotated org join code, a valid join token.
-# - ``routers/admin_org_code.py`` (removed) PATCH "/admin/org/org-code" →
-#   returned the live org join code (unchanged by the toggle).
-# - ``routers/admin_org_config.py`` PATCH/PUT "/admin/org/config" → responses
-#   echo the stored config, which may include unmasked LLM API keys.
+# - ``routers/admin_platform_config.py`` PATCH/PUT "/admin/platform-config"
+#   → responses echo the stored config, which may include unmasked LLM keys.
 # - ``routers/auth.py`` POST "/v1/auth/invites/accept" → returns the JWT
 #   access + refresh pair.  The magic-link flow is unauthenticated, so the
 #   audit middleware cannot derive user_id from request state — the tokens
@@ -142,10 +137,8 @@ EXEMPT_PATHS: frozenset = frozenset({
 # response (org name, invitee email/name) contains no secrets.
 WEBHOOK_SECRET_RESPONSE_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/v1/admin/webhooks"),
-    ("POST", "/admin/org/org-code/regenerate"),
-    ("PATCH", "/admin/org/org-code"),
-    ("PATCH", "/admin/org/config"),
-    ("PUT", "/admin/org/config"),
+    ("PATCH", "/admin/platform-config"),
+    ("PUT", "/admin/platform-config"),
     ("POST", "/v1/auth/invites/accept"),
 })
 

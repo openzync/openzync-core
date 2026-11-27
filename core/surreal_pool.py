@@ -1,19 +1,19 @@
-"""Per-org SurrealDB connection pool — created lazily, cached by user_id.
+"""Per-user SurrealDB connection pool — created lazily, cached by user_id.
 
-Each org gets its own ``AsyncSurreal`` connection using credentials from
-:class:`OrgConfigBase`.  Connections are created on first use and cached
+Each user gets its own ``AsyncSurreal`` connection using credentials from
+:class:`PlatformConfigBase`.  Connections are created on first use and cached
 for the lifetime of the worker (or until :meth:`close_all` is called on
 shutdown).
 
-Thread safety: per-org ``asyncio.Lock`` prevents duplicate connections
-under concurrent requests for the same org.
+Thread safety: per-user ``asyncio.Lock`` prevents duplicate connections
+under concurrent requests for the same user.
 
 Usage::
 
     from core.surreal_pool import SurrealConnectionPool
 
     pool = SurrealConnectionPool()
-    surreal = await pool.get_or_create(user_id, org_config)
+    surreal = await pool.get_or_create(user_id, platform_config)
     # ... use surreal ...
     await pool.close_all()  # on shutdown
 """
@@ -31,23 +31,23 @@ from surrealdb import AsyncSurreal
 from core.exceptions import GraphBackendUnavailableError
 
 if TYPE_CHECKING:
-    from schemas.organization_config import OrgConfigBase
+    from schemas.platform_config import PlatformConfigBase
 
 logger = logging.getLogger(__name__)
 
-# ── Default fallbacks for per-org SurrealDB fields ─────────────────────────
+# ── Default fallbacks for per-user SurrealDB fields ─────────────────────────
 
 DEFAULT_SURREALDB_USER: str = "root"
-"""Fallback username when ``org_config.surrealdb_user`` is ``None``."""
+"""Fallback username when ``platform_config.surrealdb_user`` is ``None``."""
 
 DEFAULT_SURREALDB_PASS: str = "root"
-"""Fallback password when ``org_config.surrealdb_pass`` is ``None``."""
+"""Fallback password when ``platform_config.surrealdb_pass`` is ``None``."""
 
 DEFAULT_SURREALDB_NAMESPACE: str = "openzync"
-"""Fallback namespace when ``org_config.surrealdb_namespace`` is ``None``."""
+"""Fallback namespace when ``platform_config.surrealdb_namespace`` is ``None``."""
 
 DEFAULT_SURREALDB_DATABASE: str = "openzync"
-"""Fallback database when ``org_config.surrealdb_database`` is ``None``."""
+"""Fallback database when ``platform_config.surrealdb_database`` is ``None``."""
 
 SURREAL_IDLE_TTL_S: float = 1800.0
 """Idle connections older than this are closed and evicted on next access
@@ -55,8 +55,8 @@ SURREAL_IDLE_TTL_S: float = 1800.0
 whole lifetime."""
 
 SURREAL_MAX_CACHED: int = 32
-"""Cap on cached per-org connections — beyond this the least-recently-used
-idle entry is evicted.  Bounds FDs when the org count grows."""
+"""Cap on cached per-user connections — beyond this the least-recently-used
+idle entry is evicted.  Bounds FDs when the user count grows."""
 
 SURREAL_CONNECT_TIMEOUT_S: float = 10.0
 """Budget for connect+signin+use — a hung SurrealDB must fail fast into
@@ -67,17 +67,17 @@ SURREAL_CONNECT_TIMEOUT_S: float = 10.0
 
 
 class SurrealConnectionPool:
-    """Per-org ``AsyncSurreal`` connection cache.
+    """Per-user ``AsyncSurreal`` connection cache.
 
     Connections are created **lazily** on the first call to
-    :meth:`get_or_create` for each org.  Subsequent calls return the
+    :meth:`get_or_create` for each user.  Subsequent calls return the
     cached ``AsyncSurreal`` instance.
 
-    The pool is safe for concurrent use — per-org ``asyncio.Lock``
-    prevents duplicate connections when two requests for the same org
+    The pool is safe for concurrent use — per-user ``asyncio.Lock``
+    prevents duplicate connections when two requests for the same user
     arrive simultaneously.
 
-    When an org has no ``surrealdb_url`` configured, or the connection
+    When a user has no ``surrealdb_url`` configured, or the connection
     fails, :meth:`get_or_create` raises ``GraphBackendUnavailableError``.
     """
 
@@ -89,28 +89,28 @@ class SurrealConnectionPool:
     async def get_or_create(
         self,
         user_id: UUID,
-        org_config: OrgConfigBase,
+        platform_config: PlatformConfigBase,
         system_url: str | None = None,
     ) -> AsyncSurreal:
-        """Return a cached ``AsyncSurreal`` for this org, or create one.
+        """Return a cached ``AsyncSurreal`` for this user, or create one.
 
         Args:
-            user_id: The organisation UUID — used as the cache key.
-            org_config: The per-org configuration containing SurrealDB
+            user_id: The user UUID — used as the cache key.
+            platform_config: The platform configuration containing SurrealDB
                 connection details (``surrealdb_url``, ``surrealdb_user``,
                 ``surrealdb_pass``, ``surrealdb_namespace``,
                 ``surrealdb_database``).
             system_url: Optional system-level SurrealDB URL override. When
                 provided, this URL is used instead of
-                ``org_config.surrealdb_url``, and namespace/database are
-                derived from the org config defaults.
+                ``platform_config.surrealdb_url``, and namespace/database are
+                derived from the platform config defaults.
 
         Returns:
             An ``AsyncSurreal`` instance.
 
         Raises:
             GraphBackendUnavailableError: If no SurrealDB URL is configured
-                for the org, or if the connection attempt fails.
+                for the user, or if the connection attempt fails.
         """
         # ── Fast path: already connected ──────────────────────────────────
         # Idle entries past SURREAL_IDLE_TTL_S are closed + dropped here so
@@ -126,23 +126,23 @@ class SurrealConnectionPool:
         # ── Determine connection parameters ────────────────────────────
         if system_url:
             url = system_url
-            username = org_config.surrealdb_user or DEFAULT_SURREALDB_USER
-            password = org_config.surrealdb_pass or DEFAULT_SURREALDB_PASS
-            namespace = org_config.surrealdb_namespace or DEFAULT_SURREALDB_NAMESPACE
-            database = org_config.surrealdb_database or DEFAULT_SURREALDB_DATABASE
+            username = platform_config.surrealdb_user or DEFAULT_SURREALDB_USER
+            password = platform_config.surrealdb_pass or DEFAULT_SURREALDB_PASS
+            namespace = platform_config.surrealdb_namespace or DEFAULT_SURREALDB_NAMESPACE
+            database = platform_config.surrealdb_database or DEFAULT_SURREALDB_DATABASE
         else:
-            # ── No URL configured = SurrealDB not available for this org ──
-            url = org_config.surrealdb_url
+            # ── No URL configured = SurrealDB not available for this user ──
+            url = platform_config.surrealdb_url
             if not url:
                 raise GraphBackendUnavailableError(
-                    f"Failed to connect to SurrealDB for organization {user_id}."
+                    f"Failed to connect to SurrealDB for user {user_id}."
                 )
-            username = org_config.surrealdb_user or DEFAULT_SURREALDB_USER
-            password = org_config.surrealdb_pass or DEFAULT_SURREALDB_PASS
-            namespace = org_config.surrealdb_namespace or DEFAULT_SURREALDB_NAMESPACE
-            database = org_config.surrealdb_database or DEFAULT_SURREALDB_DATABASE
+            username = platform_config.surrealdb_user or DEFAULT_SURREALDB_USER
+            password = platform_config.surrealdb_pass or DEFAULT_SURREALDB_PASS
+            namespace = platform_config.surrealdb_namespace or DEFAULT_SURREALDB_NAMESPACE
+            database = platform_config.surrealdb_database or DEFAULT_SURREALDB_DATABASE
 
-        # ── Per-org lock to prevent duplicate connections ─────────────────
+        # ── Per-user lock to prevent duplicate connections ─────────────────
         if user_id not in self._locks:
             self._locks[user_id] = asyncio.Lock()
 
@@ -152,7 +152,7 @@ class SurrealConnectionPool:
                 return self._pool[user_id]["surreal"]
 
             # Cap: evict the least-recently-used entry when full so the
-            # pool can't grow one socket per org without bound.
+            # pool can't grow one socket per user without bound.
             if len(self._pool) >= SURREAL_MAX_CACHED:
                 lru = min(self._pool, key=lambda k: self._pool[k]["last_used"])
                 await self._close_entry(lru)
@@ -184,7 +184,7 @@ class SurrealConnectionPool:
                     exc_info=True,
                 )
                 raise GraphBackendUnavailableError(
-                    f"SurrealDB connection failed for organization {user_id}."
+                    f"SurrealDB connection failed for user {user_id}."
                 ) from exc
 
     @staticmethod

@@ -87,11 +87,11 @@ async def _seed_user(db: AsyncSession, user_id: UUID) -> None:
 async def _seed_org(db: AsyncSession, org_id: UUID) -> None:
     await db.execute(
         sa_text(
-            "INSERT INTO organizations (id, name, org_code) "
-            "VALUES (:oid, :name, :code) "
+            "INSERT INTO organizations (id, name) "
+            "VALUES (:oid, :name) "
             "ON CONFLICT (id) DO NOTHING"
         ),
-        {"oid": org_id, "name": f"org-{org_id}", "code": uuid4().hex[:8].upper()},
+        {"oid": org_id, "name": f"org-{org_id}"},
     )
 
 

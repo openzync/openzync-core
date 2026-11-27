@@ -1,7 +1,7 @@
 """Admin dashboard quick-actions endpoint — context-aware action suggestions.
 
-Returns a list of actionable items for the org-level overview page,
-based on the organization's current state (projects, config, users, etc.).
+Returns a list of actionable items for the platform-level overview page,
+based on the platform user's current state (projects, config, users, etc.).
 
 All endpoints require JWT authentication (dashboard session).
 """
@@ -13,7 +13,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from dependencies.auth import require_permission
+from dependencies.auth import require_user
 from dependencies.services import get_quick_actions_service
 from services.quick_actions_service import QuickActionsService
 
@@ -41,17 +41,24 @@ class QuickActionsResponse(BaseModel):
 )
 async def list_quick_actions(
     service: QuickActionsService = Depends(get_quick_actions_service),
-    user_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_user),
 ) -> QuickActionsResponse:
-    """Return a prioritized list of quick actions based on org state.
+    """Return a prioritized list of quick actions based on platform state.
 
     Args:
         service: Quick actions service (injected).
-        user_id: Authenticated organization ID (from JWT).
-        _user_id: Authenticated dashboard user ID (ensures JWT auth).
+        user_id: Authenticated dashboard user ID (ensures JWT auth).
 
     Returns:
         QuickActionsResponse with ordered list of actions.
     """
     actions = await service.get_actions(UUID(user_id))
-    return QuickActionsResponse(actions=[QuickActionItem(**a) for a in actions])
+    return QuickActionsResponse(
+        actions=[
+            QuickActionItem(
+                label=a.label, href=a.href, icon=a.icon,
+                description=a.description,
+            )
+            for a in actions
+        ]
+    )

@@ -9,7 +9,7 @@ ownership is user-scoped (RLS ``user_isolation`` policies keyed on
 
 import uuid
 
-from sqlalchemy import Boolean, CheckConstraint, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,7 +18,7 @@ from models.base import Base, TimestampMixin
 
 
 class Organization(TimestampMixin, Base):
-    """A tenant organization in the OpenZync platform.
+    """An inert legacy platform tenant row in OpenZync.
 
     Single platform org — there is no ``DELETE /organizations`` endpoint
     and no service-layer delete; all ``organizations.id`` FKs are
@@ -27,20 +27,18 @@ class Organization(TimestampMixin, Base):
 
     Attributes:
         id: UUID primary key, generated server-side via gen_random_uuid().
-        name: Human-readable organization name.  The platform org is always
-            named ``SYSTEM`` (exact match — see :attr:`is_platform`).
+        name: Human-readable organization name (operator-chosen at
+            bootstrap — renames do not affect identity; the platform row
+            is the fixed-ID ``PLATFORM_ORG_ID`` row — see
+            :attr:`is_platform`).
         status: Lifecycle state — one of ``pending``, ``approved``,
-            ``rejected``.  ``pending`` orgs await superadmin approval and
+            ``rejected``.  ``pending`` rows await platform-admin approval and
             are excluded from every tenant-facing lookup.
-        config: JSONB blob for all per-org configuration (LLM, embeddings,
-            graph, behaviour).  UI-exposed.  ``None`` fields fall back to
-            env-var defaults from ``core.config.settings``.
+        config: JSONB blob holding legacy platform-level configuration (LLM,
+            embeddings, graph, behaviour).  UI-exposed.  ``None`` fields
+            fall back to env-var defaults from ``core.config.settings``.
         quotas: JSONB blob for usage quotas (max_sessions, max_episodes, etc.).
         is_active: Soft toggle for deactivation.
-        org_code: Join code a new member presents at ``POST /v1/auth/join``
-            to join the organization.  Plaintext by explicit product decision.
-        join_enabled: Org-code self-registration toggle — when False,
-            ``POST /v1/auth/join`` rejects the code with 403.
     """
 
     __tablename__ = "organizations"  # inert: kept mapped; drop deferred beyond 0070.
@@ -64,7 +62,7 @@ class Organization(TimestampMixin, Base):
         nullable=False,
         default=dict,
         server_default="{}",
-        comment="Per-org UI-exposed configuration (LLM, embeddings, graph, behaviour).",
+        comment="Legacy UI-exposed configuration (LLM, embeddings, graph, behaviour).",
     )
     quotas: Mapped[dict] = mapped_column(
         JSONB,
@@ -78,28 +76,12 @@ class Organization(TimestampMixin, Base):
         default=True,
         server_default="true",
     )
-    org_code: Mapped[str] = mapped_column(
-        String(24),
-        nullable=False,
-        comment="Legacy join-code column (self-registration removed; admin toggle deleted). Plaintext by product decision.",
-    )
-    # Legacy self-registration toggle — the admin GET/PATCH endpoints were
-    # removed (the gate was inert: signup/join consult registration_mode,
-    # never this flag).  Column retained for the NOT NULL constraint;
-    # always FALSE on the platform row.
-    join_enabled: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        default=True,
-        server_default="true",
-    )
 
     __table_args__ = (
         CheckConstraint(
             "status IN ('pending', 'approved', 'rejected')",
             name="ck_organization_status",
         ),
-        UniqueConstraint("org_code", name="uq_organizations_org_code"),
     )
 
     @property

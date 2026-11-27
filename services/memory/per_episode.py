@@ -48,7 +48,7 @@ class PerEpisodeEnqueueMixin:
         Args:
             arq_pool: The ARQ Redis pool.
             job_id: The composite job ID for this ingestion.
-            user_id: The organization UUID string.
+            user_id: The user UUID string.
             project_id: The project UUID string.
             session_id: The session UUID string.
             trace_id: Request trace ID for end-to-end correlation.

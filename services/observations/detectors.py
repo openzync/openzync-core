@@ -50,7 +50,7 @@ class DetectionMixin:
 
         Args:
             project_id: Project scope.
-            user_id: Organization scope — required for backend
+            user_id: User scope — required for backend
                 calls (RLS enforcement).
 
         Returns:
@@ -127,7 +127,7 @@ class DetectionMixin:
 
         Args:
             project_id: Project scope.
-            user_id: Organization scope — required for backend
+            user_id: User scope — required for backend
                 calls (RLS enforcement).
 
         Returns:
@@ -314,7 +314,7 @@ class DetectionMixin:
 
         Args:
             project_id: Project scope.
-            user_id: Organisation scope (for RLS enforcement).
+            user_id: User scope (for RLS enforcement).
 
         Returns:
             Number of distinct episodes with linked entities.

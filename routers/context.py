@@ -24,10 +24,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.exceptions import GraphBackendUnavailableError
 from dependencies.auth import require_permission
 from dependencies.db import get_db
-from dependencies.org_config import get_org_config
+from dependencies.platform_config import get_platform_config
 from dependencies.project_auth import require_project_membership
 from schemas.context import ContextResponse
-from schemas.organization_config import OrgConfigBase
+from schemas.platform_config import PlatformConfigBase
 from schemas.sorting import SearchSort
 from services.context_service import ContextService
 
@@ -46,7 +46,7 @@ router = APIRouter(
     description="Assemble a context block for a project from a natural-language "
     "query.  The context is assembled from recent episodes, extracted facts, "
     "and knowledge-graph entities via hybrid search (vector + BM25 + RRF). "
-    "Results are cached in Redis — TTL from the per-org "
+    "Results are cached in Redis — TTL from the per-user "
     "`context_cache_ttl` config (default 300 seconds).",
     responses={
         200: {"description": "Context block assembled successfully."},
@@ -89,7 +89,7 @@ async def get_context(
     db: AsyncSession = Depends(get_db),
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:read")),
-    org_config: OrgConfigBase = Depends(get_org_config),
+    platform_config: PlatformConfigBase = Depends(get_platform_config),
     response: Response = None,  # type: ignore[assignment]
 ) -> ContextResponse:
     """Get an assembled context block for LLM injection.
@@ -105,20 +105,20 @@ async def get_context(
     Results are formatted either as plain text (with section headers,
     source labels, and provenance metadata) or as a structured JSON
     object (with typed arrays per source category).  The formatted
-    result is cached in Redis — TTL from the org's `context_cache_ttl`
+    result is cached in Redis — TTL from the user's `context_cache_ttl`
     config (default 300 seconds) — so subsequent identical queries
     return instantaneously.
 
     Args:
         request: The FastAPI request object — used to access
-            ``request.app.state.redis`` and org/project IDs.
+            ``request.app.state.redis`` and user/project IDs.
         query: A natural-language query describing the context needed.
         limit: Maximum items per source type.
         format: Output format (``"text"`` or ``"json"``).
         as_of: Effective-at timestamp for fact retrieval (None = now).
         sort: Result order — ``relevance`` or ``recent``.
         db: An async SQLAlchemy session (injected).
-        org_config: Org-level configuration (injected).
+        platform_config: Platform configuration (injected).
 
     Returns:
         A ``ContextResponse`` with the assembled context string and
@@ -136,15 +136,15 @@ async def get_context(
     redis = getattr(request.app.state, "redis", None) if request else None
     dispatcher = request.app.state.graph_backend_dispatcher
 
-    # Connect to SurrealDB only when the org explicitly configures it.
+    # Connect to SurrealDB only when the user explicitly configures it.
     # For falkordb or none backends, skip the pool entirely — avoids
     # unnecessary connections and prevents 503 when SurrealDB isn't running.
     surreal = None
-    if org_config.graph_backend == "surrealdb":
+    if platform_config.graph_backend == "surrealdb":
         pool = request.app.state.surreal_connection_pool
         if pool is not None:
             try:
-                surreal = await pool.get_or_create(user_id, org_config)
+                surreal = await pool.get_or_create(user_id, platform_config)
             except Exception as exc:
                 logger.error(
                     "context.surreal_connection_failed",
@@ -155,17 +155,17 @@ async def get_context(
                     },
                 )
                 raise GraphBackendUnavailableError(
-                    f"SurrealDB connection failed for org {user_id} "
+                    f"SurrealDB connection failed for user {user_id} "
                     f"with graph_backend='surrealdb': {exc}"
                 ) from exc
 
-    graph_backends = dispatcher.create_all_backends(db, org_config, surreal=surreal)
+    graph_backends = dispatcher.create_all_backends(db, platform_config, surreal=surreal)
     service = ContextService(
         db,
         user_id,
         redis,
         graph_backends=graph_backends,
-        org_config=org_config,
+        platform_config=platform_config,
         session_factory=request.app.state.db_session_factory,
     )
     result = await service.assemble(

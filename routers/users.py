@@ -64,7 +64,7 @@ async def create_user(
     """Create a new user.
 
     The ``external_id`` is caller-defined and must be unique within the
-    organization. Returns 409 if a user with this ``external_id`` already
+    user scope. Returns 409 if a user with this ``external_id`` already
     exists.  Admin-gated (JWT platform admin only).
     """
     return await service.create_user(
@@ -251,7 +251,7 @@ async def delete_user(
     grace period, it will be treated as a new user.
 
     Admin-gated (JWT platform admin only).  You cannot delete
-    your own account, the organization's last admin (422), or the root
+    your own account, the user scope's last admin (422), or the root
     account (422).
     """
     await service.delete_user(

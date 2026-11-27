@@ -35,7 +35,7 @@ ALLOWED_AROUSALS = frozenset({"low", "medium", "high"})
 async def _fetch_validation_sets(
     db: Any, user_id: str
 ) -> dict[str, set[str]]:
-    """Fetch intent and emotion label sets from the org's schemas.
+    """Fetch intent and emotion label sets from the user's schemas.
 
     Returns ``{"intent_set": ..., "emotion_set": ...}`` with possibly
     empty sets.  The caller is responsible for handling empty sets
@@ -136,7 +136,7 @@ async def process_classification_output(
 
     Args:
         db: Database session (caller manages transaction).
-        user_id: Organization UUID string.
+        user_id: User UUID string.
         episode_id: Episode UUID string.
         project_id: Project UUID string.
         parsed: The validated ``ClassificationOutput`` from the LLM.

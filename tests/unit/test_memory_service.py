@@ -684,7 +684,7 @@ class TestMemoryServiceInternal:
         """_get_org_pii_config reads the DB-backed org config (fail-closed).
 
         Observed prod contract: config comes from
-        ``core.org_config.get_org_config`` (Redis cache-first, DB-backed),
+        ``core.platform_config.get_platform_config`` (Redis cache-first, DB-backed),
         mapped to the flat PII dict.
         """
         org_cfg = MagicMock()
@@ -693,7 +693,7 @@ class TestMemoryServiceInternal:
         org_cfg.pii_enabled_types = ["email", "phone"]
         org_cfg.pii_min_confidence = 0.8
         with patch(
-            "core.org_config.get_org_config",
+            "core.platform_config.get_platform_config",
             AsyncMock(return_value=org_cfg),
         ) as mock_get_config:
             result = await service._get_org_pii_config(self.ORG_ID)

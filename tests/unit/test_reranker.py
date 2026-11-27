@@ -29,7 +29,7 @@ from packages.reranker import (
     SentenceTransformersReranker,
 )
 from packages.reranker.sentence_transformers import _MODEL_CACHE, _MODEL_LOCKS
-from schemas.organization_config import OrgConfigBase
+from schemas.platform_config import PlatformConfigBase
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Shared test data
@@ -531,38 +531,38 @@ class TestRerankerFactory:
     # ── Fixtures ──────────────────────────────────────────────────────────
 
     @pytest.fixture
-    def org_config_with_sentence_transformers(self) -> OrgConfigBase:
-        return OrgConfigBase(reranker_backend="sentence_transformers")
+    def org_config_with_sentence_transformers(self) -> PlatformConfigBase:
+        return PlatformConfigBase(reranker_backend="sentence_transformers")
 
     @pytest.fixture
-    def org_config_with_cohere(self) -> OrgConfigBase:
-        return OrgConfigBase(reranker_backend="cohere", cohere_api_key="test-key")
+    def org_config_with_cohere(self) -> PlatformConfigBase:
+        return PlatformConfigBase(reranker_backend="cohere", cohere_api_key="test-key")
 
     @pytest.fixture
-    def org_config_disabled(self) -> OrgConfigBase:
-        return OrgConfigBase(reranker_backend=None)
+    def org_config_disabled(self) -> PlatformConfigBase:
+        return PlatformConfigBase(reranker_backend=None)
 
     # ── Disabled / unknown backends ───────────────────────────────────────
 
-    def test_backend_null_returns_none(self, org_config_disabled: OrgConfigBase) -> None:
+    def test_backend_null_returns_none(self, org_config_disabled: PlatformConfigBase) -> None:
         """``reranker_backend=None`` returns ``None``."""
         assert RerankerFactory.create(org_config_disabled) is None
 
     def test_backend_empty_string_returns_none(self) -> None:
         """``reranker_backend=""`` returns ``None``."""
-        config = OrgConfigBase(reranker_backend="")
+        config = PlatformConfigBase(reranker_backend="")
         assert RerankerFactory.create(config) is None
 
     def test_unknown_backend_returns_none(self) -> None:
         """An unsupported backend string returns ``None``."""
-        config = OrgConfigBase(reranker_backend="some_unknown_backend")
+        config = PlatformConfigBase(reranker_backend="some_unknown_backend")
         assert RerankerFactory.create(config) is None
 
     # ── SentenceTransformers ──────────────────────────────────────────────
 
     def test_sentence_transformers_returns_instance(
         self,
-        org_config_with_sentence_transformers: OrgConfigBase,
+        org_config_with_sentence_transformers: PlatformConfigBase,
     ) -> None:
         """With the correct backend and import available, an instance is returned."""
         with patch.dict("sys.modules", {"sentence_transformers": MagicMock()}):
@@ -572,7 +572,7 @@ class TestRerankerFactory:
 
     def test_sentence_transformers_default_model_name(
         self,
-        org_config_with_sentence_transformers: OrgConfigBase,
+        org_config_with_sentence_transformers: PlatformConfigBase,
     ) -> None:
         """When no ``reranker_model`` is set, the default model is used."""
         with patch.dict("sys.modules", {"sentence_transformers": MagicMock()}):
@@ -583,7 +583,7 @@ class TestRerankerFactory:
 
     def test_sentence_transformers_custom_model_name(self) -> None:
         """A custom ``reranker_model`` is passed through to the instance."""
-        config = OrgConfigBase(
+        config = PlatformConfigBase(
             reranker_backend="sentence_transformers",
             reranker_model="cross-encoder/custom-model",
         )
@@ -595,7 +595,7 @@ class TestRerankerFactory:
 
     def test_sentence_transformers_import_error_returns_none(
         self,
-        org_config_with_sentence_transformers: OrgConfigBase,
+        org_config_with_sentence_transformers: PlatformConfigBase,
     ) -> None:
         """When ``sentence-transformers`` is not installed, returns ``None``."""
         orig_import = builtins.__import__
@@ -615,7 +615,7 @@ class TestRerankerFactory:
 
     def test_cohere_returns_instance(
         self,
-        org_config_with_cohere: OrgConfigBase,
+        org_config_with_cohere: PlatformConfigBase,
     ) -> None:
         """With API key and import available, a ``CohereReranker`` is returned."""
         with patch.dict("sys.modules", {"cohere": MagicMock()}):
@@ -627,7 +627,7 @@ class TestRerankerFactory:
 
     def test_cohere_custom_model_name(self) -> None:
         """A custom ``reranker_model`` is passed through to Cohere."""
-        config = OrgConfigBase(
+        config = PlatformConfigBase(
             reranker_backend="cohere",
             cohere_api_key="test-key",
             reranker_model="rerank-english-v2.0",
@@ -640,19 +640,19 @@ class TestRerankerFactory:
 
     def test_cohere_no_api_key_returns_none(self) -> None:
         """Without a Cohere API key, the factory returns ``None``."""
-        config = OrgConfigBase(reranker_backend="cohere", cohere_api_key=None)
+        config = PlatformConfigBase(reranker_backend="cohere", cohere_api_key=None)
         reranker = RerankerFactory.create(config)
         assert reranker is None
 
     def test_cohere_empty_api_key_returns_none(self) -> None:
         """With an empty Cohere API key, the factory returns ``None``."""
-        config = OrgConfigBase(reranker_backend="cohere", cohere_api_key="")
+        config = PlatformConfigBase(reranker_backend="cohere", cohere_api_key="")
         reranker = RerankerFactory.create(config)
         assert reranker is None
 
     def test_cohere_import_error_returns_none(
         self,
-        org_config_with_cohere: OrgConfigBase,
+        org_config_with_cohere: PlatformConfigBase,
     ) -> None:
         """When ``cohere`` package is not installed, returns ``None``."""
         orig_import = builtins.__import__

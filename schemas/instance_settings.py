@@ -45,7 +45,7 @@ class InstanceSettingsResponse(BaseModel):
     Attributes:
         registration_mode: Current registration mode.
         initialized: Whether the setup wizard has completed.
-        default_backends: Defaults applied to wizard-created orgs.
+        default_backends: Defaults applied to wizard-created users.
     """
 
     registration_mode: RegistrationMode = Field(

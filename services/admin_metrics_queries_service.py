@@ -19,7 +19,7 @@ from starlette.requests import Request
 from services.admin_metrics.batch_service import AdminMetricsBatchService
 
 if TYPE_CHECKING:
-    from schemas.organization_config import OrgConfigBase
+    from schemas.platform_config import PlatformConfigBase
 
 
 class AdminMetricsQueriesService:
@@ -31,7 +31,7 @@ class AdminMetricsQueriesService:
     async def run_batch(
         self,
         request: Request,
-        org_config: OrgConfigBase,
+        platform_config: PlatformConfigBase,
         user_id: UUID,
         start: datetime,
         end: datetime,
@@ -43,13 +43,13 @@ class AdminMetricsQueriesService:
 
         Returns:
             ``{"results": {name: query-dict}, "errors": [...], "meta": {...}}``
-            where each ``results`` value has ``query/org_scoped/columns/rows/
+            where each ``results`` value has ``query/user_scoped/columns/rows/
             total/parameters`` and each ``errors`` entry has
             ``query/code/message``.
         """
         return await self._batch.run_batch(
             request,
-            org_config,
+            platform_config,
             user_id,
             start,
             end,

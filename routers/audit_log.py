@@ -4,8 +4,8 @@ Provides:
     GET /v1/admin/audit-logs — Paginated, filterable audit log listing.
     GET /v1/admin/audit-logs/actions — Distinct action names for filter dropdowns.
 
-All endpoints require a JWT dashboard session with the org ``admin`` role:
-the log is org-wide (IPs, actor IDs, resource IDs, and — with response-body
+All endpoints require a JWT dashboard session with the ``admin`` role:
+the log is user-scoped (IPs, actor IDs, resource IDs, and — with response-body
 capture enabled — response bodies that may contain secrets).
 """
 
@@ -32,7 +32,7 @@ router = APIRouter(
     summary="List audit log entries",
     description=(
         "Returns paginated audit log entries for the authenticated "
-        "organization.  Supports filtering by action, actor, resource, "
+        "user scope.  Supports filtering by action, actor, resource, "
         "status code, and date range."
     ),
 )
@@ -63,11 +63,11 @@ async def list_audit_logs(
     """Get paginated audit log entries for the admin dashboard.
 
     Permission-gated (``require_permission("members:read")``): only members
-    with read access may view the org-wide audit trail.
+    with read access may view the user-scoped audit trail.
 
     Args:
         db: Database session.
-        user_id: Authenticated organization ID (admin-gated).
+        user_id: Authenticated user ID (admin-gated).
         action: Optional action filter.
         actor_id: Optional actor filter.
         actor_type: Optional actor type filter.
@@ -143,7 +143,7 @@ async def list_audit_logs(
     summary="List distinct audit log actions",
     description=(
         "Returns distinct audit log action names for the authenticated "
-        "organization, sorted alphabetically — for filter dropdowns."
+        "user scope, sorted alphabetically — for filter dropdowns."
     ),
 )
 async def list_audit_log_actions(
@@ -153,11 +153,11 @@ async def list_audit_log_actions(
     """Get distinct audit log action names for the admin dashboard.
 
     Permission-gated (``require_permission("members:read")``): same
-    org scope as the list endpoint.
+    user scope as the list endpoint.
 
     Args:
         db: Database session.
-        user_id: Authenticated organization ID (admin-gated).
+        user_id: Authenticated user ID (admin-gated).
 
     Returns:
         Alphabetically sorted distinct action names.

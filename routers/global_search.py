@@ -1,6 +1,6 @@
 """Global search router — ``GET /v1/search`` endpoint.
 
-Scoped to the authenticated user's organization and membership.  Returns
+Scoped to the authenticated user's scope and membership.  Returns
 matching projects, users, and sessions as a flat sorted list.
 """
 
@@ -26,7 +26,7 @@ router = APIRouter(prefix="/v1/search", tags=["Search"])
 @router.get(
     "",
     summary="Global search across resources",
-    description="Search across projects, users, and sessions within your organization.",
+    description="Search across projects, users, and sessions within your user scope.",
     responses={
         200: {"description": "Search results returned successfully."},
         401: {"description": "Missing or invalid authentication."},
@@ -48,12 +48,12 @@ async def global_search(
     # require_permission already depends on require_user_id and returns it —
     # no separate user_id dependency needed.
 ) -> GlobalSearchResponse:
-    """Search across the organization for projects, users, and sessions.
+    """Search across the user scope for projects, users, and sessions.
 
     Results are scoped to resources the authenticated user can access:
 
     * **Projects** — the user must be a project member.
-    * **Users** — any user in the same organization.
+    * **Users** — any user in the same scope.
     * **Sessions** — the user must be a member of the session's project.
 
     Args:

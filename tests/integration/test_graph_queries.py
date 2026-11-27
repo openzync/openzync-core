@@ -42,11 +42,11 @@ async def _graph_backend_env(isolated_app: Any, falkordb_url: str) -> None:
     404 lookups).
     """
     from core.graph_backend import init_dispatcher
-    from dependencies.org_config import get_org_config
-    from schemas.organization_config import OrgConfigBase
+    from dependencies.platform_config import get_platform_config
+    from schemas.platform_config import PlatformConfigBase
 
     isolated_app.state.graph_backend_dispatcher = init_dispatcher()
-    isolated_app.dependency_overrides[get_org_config] = lambda: OrgConfigBase(
+    isolated_app.dependency_overrides[get_platform_config] = lambda: PlatformConfigBase(
         graph_backend="falkordb", falkordb_url=falkordb_url
     )
 

@@ -1,9 +1,9 @@
 """Project router — CRUD and member management for projects.
 
-All endpoints are scoped to the authenticated user's organization.  Project
+All endpoints are scoped to the authenticated user's scope.  Project
 management endpoints (create, update, archive, member management) require
 the user to be a project owner.  Read endpoints (get, list) are available
-to any authenticated user within the organization.
+to any authenticated user within the user's scope.
 """
 
 from __future__ import annotations
@@ -129,19 +129,19 @@ async def list_projects(
     _: None = Depends(require_permission("project:read")),
     service: ProjectService = Depends(_get_project_service),
 ) -> list[ProjectResponse]:
-    """List projects in the organisation (archived excluded by default).
+    """List projects in the platform (archived excluded by default).
 
     For JWT-authenticated dashboard users, returns only projects the user
     is a member of.  For API-key-authenticated SDK requests, returns all
-    projects in the org.  Pass ``include_archived=True`` to include
+    projects in the platform.  Pass ``include_archived=True`` to include
     archived projects.  ``pinned_only`` always excludes archived projects.
     """
     raw_user_id: str | None = getattr(request.state, "user_id", None)
     auth_type: str | None = getattr(request.state, "auth_type", None)
-    # API key auth: list all org projects without membership filter.
+    # API key auth: list all platform projects without membership filter.
     # The key's creator UUID (created_by) is available as user_id for
     # attribution on write endpoints, but for listing we show all projects
-    # in the org.  The key's project scope is enforced individually by
+    # in the platform.  The key's project scope is enforced individually by
     # require_project_membership on project-scoped endpoints.
     user_id: UUID | None = (
         UUID(raw_user_id) if raw_user_id and auth_type != "api_key" else None

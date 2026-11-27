@@ -37,21 +37,6 @@ def _within(*, hours: int) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _stub_permission_gate() -> None:
-    """Stub the permission gate for every test in this file.
-
-    The router gates with ``require_permission("members:read")`` — a
-    closure created at router import time that cannot be keyed in
-    ``dependency_overrides``.  Patching ``dependencies.auth._check_permission``
-    (the shared decision function) stubs the gate while keeping the
-    ``require_user_id`` chain intact.  The real gate matrix is covered by
-    ``test_admin_gate_matrix.py``.
-    """
-    with patch("dependencies.auth._check_permission", new=AsyncMock()):
-        yield
-
-
-@pytest.fixture(autouse=True)
 def _reset_prom_client_singleton() -> None:
     """Reset the lazy ``_prom_client`` singleton around every test.
 
@@ -70,10 +55,10 @@ def _create_app() -> tuple[FastAPI, AsyncMock]:
     db_mock = AsyncMock(spec=AsyncSession)
     # Ensure execute() returns a sync mock so scalar() yields values, not coroutines
     db_mock.execute.return_value = MagicMock()
-    # /metrics/summary and /metrics/batch depend on dependencies.org_config,
+    # /metrics/summary and /metrics/batch depend on dependencies.platform_config,
     # which reads app.state.redis with a DB fallback (users.config_override).
     # Same app.state wiring as test_admin_gate_matrix / test_admin_system;
-    # an empty stored config resolves to the OrgConfigBase defaults
+    # an empty stored config resolves to the PlatformConfigBase defaults
     # (graph_backend="falkordb").
     app.state.redis = AsyncMock()
     app.state.redis.get = AsyncMock(return_value=None)
@@ -236,7 +221,7 @@ async def test_get_metrics_batch_success() -> None:
     assert set(body) == {"results", "errors", "meta"}
     entry = body["results"]["episodes_per_day"]
     assert entry["query"] == "episodes_per_day"
-    assert entry["org_scoped"] is True
+    assert entry["user_scoped"] is True
     assert entry["columns"] == ["date", "count"]
     assert entry["rows"] == [["2026-08-18", 42], ["2026-08-17", 38]]
     assert entry["total"] == 2
@@ -374,7 +359,11 @@ async def test_get_prometheus_targets_success() -> None:
     mock_prom = AsyncMock()
     mock_prom.get.return_value = mock_response
 
-    with patch("routers.admin_metrics._get_prom_client", return_value=mock_prom):
+    with (
+        # ``/metrics/targets`` stays members:read-gated (unlike summary/batch).
+        patch("dependencies.auth._check_permission", new=AsyncMock()),
+        patch("routers.admin_metrics._get_prom_client", return_value=mock_prom),
+    ):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/metrics/targets")
 
@@ -402,7 +391,11 @@ async def test_get_prometheus_targets_empty() -> None:
     mock_prom = AsyncMock()
     mock_prom.get.return_value = mock_response
 
-    with patch("routers.admin_metrics._get_prom_client", return_value=mock_prom):
+    with (
+        # ``/metrics/targets`` stays members:read-gated (unlike summary/batch).
+        patch("dependencies.auth._check_permission", new=AsyncMock()),
+        patch("routers.admin_metrics._get_prom_client", return_value=mock_prom),
+    ):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/metrics/targets")
 
@@ -421,7 +414,11 @@ async def test_get_prometheus_targets_502() -> None:
     mock_prom = AsyncMock()
     mock_prom.get.side_effect = httpx.ConnectError("Connection refused")
 
-    with patch("routers.admin_metrics._get_prom_client", return_value=mock_prom):
+    with (
+        # ``/metrics/targets`` stays members:read-gated (unlike summary/batch).
+        patch("dependencies.auth._check_permission", new=AsyncMock()),
+        patch("routers.admin_metrics._get_prom_client", return_value=mock_prom),
+    ):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/metrics/targets")
 

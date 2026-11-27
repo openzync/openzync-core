@@ -264,10 +264,8 @@ class TestGetDb:
                 pass  # noqa
 
 
-class TestGetDbSuperadmin:
-    """get_db_superadmin: RLS context on the verify session + bypass session."""
-
-    PLATFORM_ORG_ID_STR = "00000000-0000-0000-0000-000000000002"
+class TestGetDbAdmin:
+    """get_db_admin: RLS context on the verify session + bypass session."""
 
     @pytest.fixture
     def request_with_session(self) -> MagicMock:
@@ -297,23 +295,23 @@ class TestGetDbSuperadmin:
         return factory
 
     @pytest.mark.asyncio
-    async def test_verify_session_sets_rls_context_before_superadmin_check(
+    async def test_verify_session_sets_rls_context_before_admin_check(
         self,
         request_with_session: MagicMock,
         verify_and_bypass_sessions: tuple[AsyncMock, AsyncMock],
         two_session_factory: MagicMock,
     ) -> None:
-        """The superadmin role check runs on a session with get_db's RLS context.
+        """The admin role check runs on a session with get_db's RLS context.
 
         Fail-closed: the tenant context is bound on the verify session
-        BEFORE _ensure_superadmin's role lookup, so the lookup is subject
+        BEFORE _ensure_admin's role lookup, so the lookup is subject
         to the same row visibility as every other query in the app — the
         bypass is pinned OFF, not on.  The context is released (the
         remembered context is dropped and the transaction is rolled back)
         before the pool takes the connection back.
         """
-        from dependencies.auth import _ensure_superadmin  # noqa: F401  — patch target
-        from dependencies.db import get_db_superadmin
+        from dependencies.auth import _ensure_admin  # noqa: F401  — patch target
+        from dependencies.db import get_db_admin
 
         verify, bypass = verify_and_bypass_sessions
         request_with_session.app.state.db_session_factory = two_session_factory
@@ -326,13 +324,13 @@ class TestGetDbSuperadmin:
 
         async def record_ensure(*args: object, **kwargs: object) -> None:
             checked_on.append(args[2])
-            events.append("verify:ensure_superadmin")
+            events.append("verify:ensure_admin")
 
         with patch(
-            "dependencies.auth._ensure_superadmin",
+            "dependencies.auth._ensure_admin",
             new=AsyncMock(side_effect=record_ensure),
         ):
-            gen = get_db_superadmin(request_with_session)
+            gen = get_db_admin(request_with_session)
             session = await gen.__anext__()
             assert session is bypass
 
@@ -355,7 +353,7 @@ class TestGetDbSuperadmin:
         # the bypass session is only opened once the check has passed.
         assert events == [
             "verify:execute",
-            "verify:ensure_superadmin",
+            "verify:ensure_admin",
             "verify:rollback(tx_open=True)",
             "bypass:execute",
             "bypass:execute",
@@ -372,13 +370,12 @@ class TestGetDbSuperadmin:
     ) -> None:
         """The yielded bypass session gets bypass_rls='true' + the caller context.
 
-        The bypass is set only AFTER the superadmin check passed.  It is
+        The bypass is set only AFTER the admin check passed.  It is
         transaction-local, so it cannot outlive the transaction — and the
         ``RlsAsyncSession`` re-binds it to the transaction that follows
         every commit, so a mid-request commit cannot silently drop it.
         """
-        from core.config import PLATFORM_ORG_ID
-        from dependencies.db import get_db_superadmin
+        from dependencies.db import get_db_admin
 
         verify, bypass = verify_and_bypass_sessions
         request_with_session.app.state.db_session_factory = two_session_factory
@@ -387,8 +384,8 @@ class TestGetDbSuperadmin:
         _instrument(verify, events, "verify:")
         _instrument(bypass, events, "bypass:")
 
-        with patch("dependencies.auth._ensure_superadmin", new=AsyncMock()):
-            gen = get_db_superadmin(request_with_session)
+        with patch("dependencies.auth._ensure_admin", new=AsyncMock()):
+            gen = get_db_admin(request_with_session)
             session = await gen.__anext__()
             assert session is bypass
 
@@ -423,7 +420,7 @@ class TestGetDbSuperadmin:
     @pytest.mark.asyncio
     async def test_raises_runtime_error_when_state_missing(self) -> None:
         """No user_id/user_id on request.state → RuntimeError (fail-closed)."""
-        from dependencies.db import get_db_superadmin
+        from dependencies.db import get_db_admin
 
         request = MagicMock()
         request.app.state.db_session_factory = MagicMock()
@@ -431,7 +428,7 @@ class TestGetDbSuperadmin:
         request.state.user_id = None
 
         with pytest.raises(RuntimeError, match="requires an authenticated JWT"):
-            async for _ in get_db_superadmin(request):
+            async for _ in get_db_admin(request):
                 pass  # noqa
 
 

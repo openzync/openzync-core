@@ -566,7 +566,7 @@ class TestHybridRetriever:
             db=mock_db,
             user_id=self.ORG_ID,
             reranker=mock_reranker,
-            org_config=mock_org_config,
+            platform_config=mock_org_config,
         )
         service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
 
@@ -787,7 +787,7 @@ class TestEmbedQuery:
         service = HybridRetriever(
             db=AsyncMock(),
             user_id=self.ORG_ID,
-            org_config=mock_org_config,
+            platform_config=mock_org_config,
         )
 
         with (

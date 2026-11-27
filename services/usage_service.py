@@ -1,7 +1,7 @@
 """LLM usage metering — sink construction and read orchestration.
 
 Write path: :func:`make_sink` builds a :class:`UsageSink
-<core.llm.UsageSink>` carrying org/worker/entity scope for
+<core.llm.UsageSink>` carrying user/worker/entity scope for
 :func:`core.llm.resolve_backend` callers. The sink persists records via
 :class:`LLMUsageRepository <repositories.llm_usage_repository
 .LLMUsageRepository>` in an isolated session (session factory) or a
@@ -55,10 +55,10 @@ async def _persist(target: SessionTarget, record: UsageRecord) -> None:
 
     Args:
         target: Session factory or active session (see :data:`SessionTarget`).
-        record: Complete metering payload (org scope already filled).
+        record: Complete metering payload (user scope already filled).
 
     Raises:
-        RuntimeError: If the record has no org scope — a wiring bug that
+        RuntimeError: If the record has no user scope — a wiring bug that
             must stay loud inside the sink's ``try`` so it logs, never
             propagates.
     """
@@ -82,7 +82,7 @@ def make_sink(
     community_id: UUID | None = None,
     task_run_id: UUID | None = None,
 ) -> UsageSink:
-    """Build a metering sink carrying org/worker/entity scope.
+    """Build a metering sink carrying user/worker/entity scope.
 
     The returned sink fills scope fields the metering wrapper leaves
     empty, then persists via :func:`_persist`. Fail-open by contract (see
@@ -94,7 +94,7 @@ def make_sink(
     Args:
         target: Active session (preferred when the caller holds one) or
             session factory (only when no session is open).
-        user_id: Owning organization.
+        user_id: Owning user.
         worker: Task vocabulary label (e.g. ``"enrich_episode"``).
         project_id: Project scope, when known.
         episode_id: Source episode, when the call enriches one.
@@ -148,11 +148,11 @@ async def list_usage(
     offset: int = 0,
     sort: SortSpec | None = None,
 ) -> tuple[list[LLMUsage], int]:
-    """List metering rows for an org with optional filters.
+    """List metering rows for a user with optional filters.
 
     Args:
-        db: Active async session (RLS-scoped to the org).
-        user_id: Owning organization.
+        db: Active async session (RLS-scoped to the user).
+        user_id: Owning user.
         start: Include rows created at/after this instant.
         end: Include rows created before this instant (exclusive).
         project_id: Exact-match filter on project scope.
@@ -193,8 +193,8 @@ async def list_usage_daily(
     """Aggregate metering rows into sparse UTC-day buckets, newest first.
 
     Args:
-        db: Active async session (RLS-scoped to the org).
-        user_id: Owning organization.
+        db: Active async session (RLS-scoped to the user).
+        user_id: Owning user.
         start: Include rows created at/after this instant.
         end: Include rows created before this instant (exclusive).
         project_id: Exact-match filter on project scope.
@@ -228,11 +228,11 @@ async def summarize_usage(
     worker: str | None = None,
     model: str | None = None,
 ) -> UsageSummary:
-    """Aggregate metering totals for an org over the filtered window.
+    """Aggregate metering totals for a user over the filtered window.
 
     Args:
-        db: Active async session (RLS-scoped to the org).
-        user_id: Owning organization.
+        db: Active async session (RLS-scoped to the user).
+        user_id: Owning user.
         start: Include rows created at/after this instant.
         end: Include rows created before this instant (exclusive).
         project_id: Exact-match filter on project scope.

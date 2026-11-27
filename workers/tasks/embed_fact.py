@@ -55,7 +55,7 @@ async def _retire_fact(
         engine: The worker's async engine (disposed when ``own_engine``).
         own_engine: True when this worker created the engine itself.
         fact_id: UUID of the fact to retire.
-        user_id: UUID of the owning organization (RLS tenant scope).
+        user_id: UUID of the owning user (RLS tenant scope).
     """
     # Any keeps sqlalchemy out of module top-level (ARQ lazy-import convention).
     from sqlalchemy import text
@@ -65,7 +65,7 @@ async def _retire_fact(
     try:
         async with session_factory() as db:
             try:
-                await rls.set_tenant_context(db, user_id)
+                await rls.set_user_context(db, user_id)
                 await db.execute(
                     text("UPDATE facts SET embedded_at = now() WHERE id = :id"),
                     {"id": fact_id},
@@ -154,7 +154,7 @@ async def embed_fact(
     if content is None:
         async with session_factory() as db:
             try:
-                await rls.set_tenant_context(db, user_id)
+                await rls.set_user_context(db, user_id)
                 result = await db.execute(
                     text("SELECT content FROM facts WHERE id = :id"),
                     {"id": fact_id},
@@ -206,7 +206,7 @@ async def embed_fact(
     try:
         async with session_factory() as db:
             try:
-                await rls.set_tenant_context(db, user_id)
+                await rls.set_user_context(db, user_id)
                 await db.execute(
                     text(
                         "UPDATE facts SET embedding = "  # noqa: S608

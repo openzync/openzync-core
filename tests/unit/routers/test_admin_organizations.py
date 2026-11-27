@@ -20,7 +20,7 @@ from dependencies.auth import (
     require_user_id,
 )
 from dependencies.db import get_db
-from routers.admin_organizations import (
+from routers.admin_custom_instructions import (
     get_custom_instruction_service,
     router,
 )
@@ -75,7 +75,7 @@ def _now() -> datetime:
 
 @pytest.mark.asyncio
 async def test_list_custom_instructions_success() -> None:
-    """GET /admin/org/custom-instructions returns 200 with instructions."""
+    """GET /admin/custom-instructions returns 200 with instructions."""
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
@@ -89,7 +89,7 @@ async def test_list_custom_instructions_success() -> None:
     )
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/admin/org/custom-instructions")
+        resp = await client.get("/admin/custom-instructions")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -103,7 +103,7 @@ async def test_list_custom_instructions_success() -> None:
 
 @pytest.mark.asyncio
 async def test_set_custom_instructions_success() -> None:
-    """PUT /admin/org/custom-instructions returns 201."""
+    """PUT /admin/custom-instructions returns 201."""
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
@@ -118,7 +118,7 @@ async def test_set_custom_instructions_success() -> None:
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/admin/org/custom-instructions",
+            "/admin/custom-instructions",
             json={
                 "instructions": [
                     {
@@ -138,7 +138,7 @@ async def test_set_custom_instructions_success() -> None:
 
 @pytest.mark.asyncio
 async def test_clear_custom_instructions_success() -> None:
-    """DELETE /admin/org/custom-instructions returns 204."""
+    """DELETE /admin/custom-instructions returns 204."""
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
@@ -149,7 +149,7 @@ async def test_clear_custom_instructions_success() -> None:
     )
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.delete("/admin/org/custom-instructions")
+        resp = await client.delete("/admin/custom-instructions")
 
     assert resp.status_code == 204
     fake_service.clear_for_scope.assert_awaited_once_with(

@@ -58,7 +58,7 @@ class _FakeEmbedBackend:
 
 
 async def _fake_resolve_backend(
-    provider=None, org_config=None, mode=None, sink=None
+    provider=None, platform_config=None, mode=None, sink=None
 ) -> _FakeEmbedBackend:
     return _FakeEmbedBackend()
 

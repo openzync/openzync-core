@@ -29,10 +29,10 @@ from core.enrichment_config import (
     resolve_enrichment_gate,
 )
 from core.exceptions import ValidationError
-from schemas.organization_config import (
-    EnrichmentGateOrgConfig,
-    OrgConfigBase,
-    UpdateOrgConfigRequest,
+from schemas.platform_config import (
+    EnrichmentGatePlatformConfig,
+    PlatformConfigBase,
+    UpdatePlatformConfigRequest,
 )
 
 pytestmark = pytest.mark.unit
@@ -362,7 +362,7 @@ class TestResolveEnrichmentGate:
 class TestLegacyCoercion:
     """Legacy bool/dict gate shapes coerce to the gate object."""
 
-    @pytest.mark.parametrize("cls", [OrgConfigBase, UpdateOrgConfigRequest])
+    @pytest.mark.parametrize("cls", [PlatformConfigBase, UpdatePlatformConfigRequest])
     @pytest.mark.parametrize(
         ("raw", "enabled"),
         [({"enabled": True}, True), ({"enabled": False}, False), ({}, False)],
@@ -375,19 +375,19 @@ class TestLegacyCoercion:
     ) -> None:
         """``{"enabled": …}`` → gate object, ``{}`` → disabled object."""
         assert cls(enrichment_gate=raw).enrichment_gate == (
-            EnrichmentGateOrgConfig(enabled=enabled, threshold=0.5)
+            EnrichmentGatePlatformConfig(enabled=enabled, threshold=0.5)
         )
 
     @pytest.mark.parametrize("value", [True, False, None])
     def test_bool_and_none_passthrough(self, value: bool | None) -> None:
         """Booleans coerce to the gate object; ``None`` passes through
         untouched (both schemas)."""
-        for cls in (OrgConfigBase, UpdateOrgConfigRequest):
+        for cls in (PlatformConfigBase, UpdatePlatformConfigRequest):
             gate = cls(enrichment_gate=value).enrichment_gate
             if value is None:
                 assert gate is None
             else:
-                assert gate == EnrichmentGateOrgConfig(
+                assert gate == EnrichmentGatePlatformConfig(
                     enabled=value, threshold=0.5
                 )
 
@@ -396,14 +396,14 @@ class TestLegacyCoercion:
         from pydantic import ValidationError as PydanticValidationError
 
         with pytest.raises(PydanticValidationError):
-            OrgConfigBase(enrichment_gate=[True])
+            PlatformConfigBase(enrichment_gate=[True])
 
     def test_yes_string_raises(self) -> None:
         """``"yes"`` is not coerced — non-bool/non-dict shapes 422."""
         from pydantic import ValidationError as PydanticValidationError
 
         with pytest.raises(PydanticValidationError):
-            OrgConfigBase(enrichment_gate="yes")
+            PlatformConfigBase(enrichment_gate="yes")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

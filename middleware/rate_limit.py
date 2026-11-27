@@ -45,10 +45,10 @@ AUTH_RATE_WINDOW: int = 60
 """Window in seconds for unauthenticated requests."""
 
 FALLBACK_ORG_RATE_LIMIT: int = 1000
-"""Fallback max requests per window for org-based requests when no quota is set."""
+"""Fallback max requests per window for user-based requests when no quota is set."""
 
 FALLBACK_ORG_WINDOW: int = 60
-"""Window in seconds for org-based requests."""
+"""Window in seconds for user-based requests."""
 
 RFC_7807_TYPE = "https://errors.openzync.tech/rate_limit_exceeded"
 RFC_7807_TYPE_UNAVAILABLE = "https://errors.openzync.tech/rate_limit_unavailable"
@@ -99,12 +99,12 @@ async def _get_org_rate_limit(
 ) -> tuple[int, int]:
     """Retrieve rate-limit configuration for a given organization.
 
-    Checks the org's quota config in Redis (set during org creation/update).
+    Checks the user's quota config in Redis (set during user creation/update).
     Falls back to :data:`FALLBACK_ORG_RATE_LIMIT` if not configured.
 
     Args:
         redis: Async Redis client.
-        user_id: The organization UUID string.
+        user_id: The user UUID string.
 
     Returns:
         Tuple of ``(max_requests, window_seconds)``.

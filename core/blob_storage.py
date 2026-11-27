@@ -1,7 +1,7 @@
 """Async S3-compatible blob storage for episode attachments.
 
 Uses aioboto3 for async S3 operations.  Instantiated once from the
-global :class:`Settings` (``OZ_S3_*`` / ``OZ_BLOB_*``) — never per-org.
+global :class:`Settings` (``OZ_S3_*`` / ``OZ_BLOB_*``) — never per-user.
 """
 
 from __future__ import annotations
@@ -50,8 +50,8 @@ class BlobStorageConfig:
     def from_settings(cls, settings: Settings) -> BlobStorageConfig:
         """Create config from the global :class:`Settings` singleton.
 
-        ⚠️ BREAKING: replaces ``from_org_config`` — per-org blob
-        storage was removed. All orgs share the ``OZ_S3_*`` /
+        ⚠️ BREAKING: replaces ``from_platform_config`` — per-platform blob
+        storage was removed (globalized). All users share the ``OZ_S3_*`` /
         ``OZ_BLOB_*`` settings (env-owned, fail-fast at startup).
 
         Args:

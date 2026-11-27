@@ -32,11 +32,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import get_settings
-from dependencies.auth import require_permission
+from dependencies.auth import require_permission, require_user
 from dependencies.db import get_db
-from dependencies.org_config import get_org_config
+from dependencies.platform_config import get_platform_config
 from schemas.admin_metrics import MetricsSummaryResponse
-from schemas.organization_config import OrgConfigBase
+from schemas.platform_config import PlatformConfigBase
 from schemas.sorting import MonitorTargetSortBy, SortDir
 from services.admin_metrics_queries_service import AdminMetricsQueriesService
 from services.admin_metrics_service import AdminMetricsService
@@ -134,8 +134,8 @@ async def get_metrics_summary(
         "(window ends to 00:00 UTC + 1 day). "
         "Requires from; mutually exclusive with days.",
     ),
-    user_id: str = Depends(require_permission("members:read")),
-    org_config: OrgConfigBase = Depends(get_org_config),
+    user_id: str = Depends(require_user),
+    platform_config: PlatformConfigBase = Depends(get_platform_config),
     service: AdminMetricsService = Depends(_get_admin_metrics_service),
 ) -> MetricsSummaryResponse:
     """Get aggregated metrics for the admin dashboard.
@@ -182,7 +182,7 @@ async def get_metrics_summary(
     else:
         end = datetime.now(UTC)
         start = end - timedelta(hours=24)
-    return await service.get_summary(request, org_config, UUID(user_id), start, end)
+    return await service.get_summary(request, platform_config, UUID(user_id), start, end)
 
 
 @router.get(
@@ -258,7 +258,7 @@ async def get_prometheus_targets(
     "/batch",
     summary="Run all predefined metric queries at once",
     description=(
-        "Runs all 12 predefined org-scoped queries concurrently over an "
+        "Runs all 12 predefined user-scoped queries concurrently over an "
         "explicit ``[start, end)`` window and returns a partial-OK envelope: "
         "per-query failures are reported in ``errors`` with HTTP 200, and "
         "the failing ``results`` entry is omitted. Pass EITHER ``days`` "
@@ -296,15 +296,15 @@ async def get_metrics_batch(
     project_id: UUID | None = Query(
         default=None, description="Optional project filter"
     ),
-    user_id: str = Depends(require_permission("members:read")),
-    org_config: OrgConfigBase = Depends(get_org_config),
+    user_id: str = Depends(require_user),
+    platform_config: PlatformConfigBase = Depends(get_platform_config),
     service: AdminMetricsQueriesService = Depends(_get_admin_metrics_queries_service),
 ) -> dict:
     """Run every predefined query concurrently; partial failures stay HTTP 200.
 
     Returns:
         ``{"results": {name: query-dict}, "errors": [...], "meta": {...}}``
-        where each ``results`` value has ``query/org_scoped/columns/rows/
+        where each ``results`` value has ``query/user_scoped/columns/rows/
         total/parameters`` and each ``errors`` entry has
         ``query/code/message``. ``meta`` echoes the window as either
         ``days`` or ``from``+``to``, plus ``limit``, ``duration_ms``,
@@ -348,7 +348,7 @@ async def get_metrics_batch(
         window_meta = {"from": from_date, "to": to_date}
     result = await service.run_batch(
         request,
-        org_config,
+        platform_config,
         UUID(user_id),
         start,
         end,

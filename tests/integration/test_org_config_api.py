@@ -20,8 +20,8 @@ from typing import Any
 import pytest
 from httpx import AsyncClient
 
-from core.org_config import get_org_config, update_org_config
-from schemas.organization_config import OrgConfigBase, UpdateOrgConfigRequest
+from core.platform_config import get_platform_config, update_platform_config
+from schemas.platform_config import PlatformConfigBase, UpdatePlatformConfigRequest
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -32,9 +32,10 @@ async def jwt_client(
 ) -> AsyncClient:
     """JWT-authenticated client — org config reads require ``configuration:read``.
 
-    ``GET /admin/org/config`` is gated by
+    ``GET /admin/platform-config`` is gated by
     ``require_permission("configuration:read")`` — the project-scoped API
-    key lacks it, so config reads use the admin JWT (wildcard).
+    key lacks it, so config reads use the bootstrap member JWT (the
+    permission is in the member default grant set).
     """
     from tests.integration.conftest import asgi_transport
 
@@ -47,7 +48,7 @@ async def jwt_client(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# GET /admin/org/config
+# GET /admin/platform-config
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -58,7 +59,7 @@ class TestGetOrgConfig:
         self, jwt_client: AsyncClient, org_and_key: dict
     ) -> None:
         """GET should return the stored config (no env defaults)."""
-        resp = await jwt_client.get("/admin/org/config")
+        resp = await jwt_client.get("/admin/platform-config")
         assert resp.status_code == 200
         data = resp.json()
 
@@ -66,8 +67,8 @@ class TestGetOrgConfig:
         assert "stored" in data
         assert "effective" not in data
 
-        # Fresh org: get_org_config defaults graph_backend to
-        # 'falkordb' for empty configs (core/org_config.py); every
+        # Fresh org: get_platform_config defaults graph_backend to
+        # 'falkordb' for empty configs (core/platform_config.py); every
         # other field stays None until explicitly set.
         stored = data["stored"]
         assert stored["graph_backend"] == "falkordb"
@@ -77,12 +78,12 @@ class TestGetOrgConfig:
 
     async def test_requires_auth(self, async_client: AsyncClient) -> None:
         """Unauthenticated requests should return 401."""
-        resp = await async_client.get("/admin/org/config")
+        resp = await async_client.get("/admin/platform-config")
         assert resp.status_code == 401
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PATCH /admin/org/config — scope-gated tests
+# PATCH /admin/platform-config — scope-gated tests
 # ═══════════════════════════════════════════════════════════════════════════════
 # The bootstrap API key has scopes ['read', 'write', 'admin'] (not
 # 'admin:write'), so PATCH/PUT return 403.  The happy path for config
@@ -103,7 +104,7 @@ class TestPatchOrgConfig:
     async def test_requires_auth(self, async_client: AsyncClient) -> None:
         """PATCH without auth should return 401."""
         resp = await async_client.patch(
-            "/admin/org/config",
+            "/admin/platform-config",
             json={"llm_backend": "anthropic"},
         )
         assert resp.status_code == 401
@@ -113,14 +114,14 @@ class TestPatchOrgConfig:
     ) -> None:
         """PATCH with read/write key (no admin:write) should return 403."""
         resp = await auth_client.patch(
-            "/admin/org/config",
+            "/admin/platform-config",
             json={"llm_backend": "anthropic"},
         )
         assert resp.status_code == 403
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PUT /admin/org/config — scope-gated tests
+# PUT /admin/platform-config — scope-gated tests
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -130,7 +131,7 @@ class TestPutOrgConfig:
     async def test_requires_auth(self, async_client: AsyncClient) -> None:
         """PUT without auth should return 401."""
         resp = await async_client.put(
-            "/admin/org/config",
+            "/admin/platform-config",
             json={"llm_backend": "openai"},
         )
         assert resp.status_code == 401
@@ -140,7 +141,7 @@ class TestPutOrgConfig:
     ) -> None:
         """PUT with read/write key (no admin:write) should return 403."""
         resp = await auth_client.put(
-            "/admin/org/config",
+            "/admin/platform-config",
             json={"llm_backend": "openai"},
         )
         assert resp.status_code == 403
@@ -162,12 +163,12 @@ class TestCacheInvalidation:
     ) -> None:
         """A GET request should warm the Redis cache."""
         # Fetch once to warm cache
-        await jwt_client.get("/admin/org/config")
+        await jwt_client.get("/admin/platform-config")
 
         # Verify cache exists
         redis = app.state.redis
         user_id = org_and_key["user_id"]
-        cache_key = f"org_config:{user_id}"
+        cache_key = f"platform_config:{user_id}"
         cached = await redis.get(cache_key)
         assert cached is not None, "Cache should have been warmed by the GET"
 
@@ -179,7 +180,7 @@ class TestCacheInvalidation:
         """After a core-level update, the cache should be invalidated."""
         user_id = org_and_key["user_id"]
         redis = app.state.redis
-        cache_key = f"org_config:{user_id}"
+        cache_key = f"platform_config:{user_id}"
 
         # Warm the cache by fetching via the API
         from tests.integration.conftest import asgi_transport
@@ -187,15 +188,15 @@ class TestCacheInvalidation:
         transport = asgi_transport(app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             headers = {"Authorization": f"Bearer {org_and_key['jwt']}"}
-            await client.get("/admin/org/config", headers=headers)
+            await client.get("/admin/platform-config", headers=headers)
 
         cached_before = await redis.get(cache_key)
         assert cached_before is not None, "Cache should have been warmed"
 
         # Update via core function against the real DB row.
-        update = UpdateOrgConfigRequest(llm_backend="anthropic")
+        update = UpdatePlatformConfigRequest(llm_backend="anthropic")
         async with app.state.db_session_factory() as db:
-            await update_org_config(user_id, update, redis=redis, db=db)
+            await update_platform_config(user_id, update, redis=redis, db=db)
             await db.commit()
 
         # Cache should be invalidated
@@ -218,15 +219,15 @@ class TestResolutionEndToEnd:
     ) -> None:
         """An org with no stored config defaults graph_backend to falkordb."""
         async with app.state.db_session_factory() as db:
-            config = await get_org_config(
+            config = await get_platform_config(
                 org_and_key["user_id"],
                 redis=app.state.redis,
                 db=db,
             )
-        assert isinstance(config, OrgConfigBase)
+        assert isinstance(config, PlatformConfigBase)
         # Empty config defaults graph_backend to 'falkordb'
-        # (core/org_config.py) — every other field should be None.
-        for field_name in OrgConfigBase.model_fields:
+        # (core/platform_config.py) — every other field should be None.
+        for field_name in PlatformConfigBase.model_fields:
             expected = "falkordb" if field_name == "graph_backend" else None
             assert getattr(config, field_name) == expected, (
                 f"Expected {field_name} to be {expected!r}, "
@@ -241,13 +242,13 @@ class TestResolutionEndToEnd:
         """After a DB update, stored config should reflect the override."""
         user_id = org_and_key["user_id"]
 
-        update = UpdateOrgConfigRequest(
+        update = UpdatePlatformConfigRequest(
             llm_backend="anthropic",
             llm_model="claude-3-5-sonnet",
             context_cache_ttl=120,
         )
         async with app.state.db_session_factory() as db:
-            config = await update_org_config(
+            config = await update_platform_config(
                 user_id, update, redis=app.state.redis, db=db
             )
             await db.commit()

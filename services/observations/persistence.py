@@ -45,7 +45,7 @@ class PersistenceMixin:
         Args:
             patterns: Detected co-occurrence patterns.
             project_id: Project scope.
-            user_id: Organization scope.
+            user_id: User scope.
             llm_backend: Optional LLM backend.
 
         Returns:
@@ -113,7 +113,7 @@ class PersistenceMixin:
         Args:
             patterns: Detected temporal gap patterns.
             project_id: Project scope.
-            user_id: Organization scope.
+            user_id: User scope.
             llm_backend: Optional LLM backend.
 
         Returns:
@@ -161,7 +161,7 @@ class PersistenceMixin:
         Args:
             patterns: Detected behavioral patterns.
             project_id: Project scope.
-            user_id: Organization scope.
+            user_id: User scope.
             llm_backend: Optional LLM backend.
 
         Returns:
@@ -220,7 +220,7 @@ class PersistenceMixin:
 
         Args:
             project_id: Project scope.
-            user_id: Organisation scope — required for graph backend
+            user_id: User scope — required for graph backend
                 entity-name resolution.
 
         Returns:

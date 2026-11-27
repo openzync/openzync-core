@@ -48,7 +48,7 @@ class StructuredExtractionService:
         offered without breaking the default.
 
         Args:
-            user_id: The authenticated organization UUID.
+            user_id: The authenticated user UUID.
             session_id: The session UUID.
             project_id: Optional project UUID for intra-org isolation
                 of the session ownership check.
@@ -130,7 +130,7 @@ class StructuredExtractionService:
         """Return the extraction for a specific episode, or ``None``.
 
         Args:
-            user_id: The authenticated organization UUID.
+            user_id: The authenticated user UUID.
             session_id: The session UUID.
             episode_id: The episode UUID.
             project_id: Optional project UUID for intra-org isolation
@@ -162,7 +162,7 @@ class StructuredExtractionService:
         """Count how many extracted episodes exist in a session.
 
         Args:
-            user_id: The authenticated organization UUID.
+            user_id: The authenticated user UUID.
             session_id: The session UUID.
             project_id: Optional project UUID for intra-org isolation —
                 forwarded to the repository filter when set.

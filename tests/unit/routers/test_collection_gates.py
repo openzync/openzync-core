@@ -7,7 +7,7 @@ Covers the ADR-007 gates added to the collection-level endpoints:
 - ``GET /v1/search``      → ``project:read``
 
 (``GET /v1/users`` and ``GET /v1/users/{id}`` moved to the platform-
-superadmin gate — see ``test_admin_gate_matrix.py``.)
+admin gate — see ``test_admin_gate_matrix.py``.)
 
 Same contract-test approach as ``test_admin_gate_matrix.py``: the REAL
 ``require_permission`` / ``require_permission_or_self`` chain is never
@@ -60,7 +60,7 @@ def _stub_search_service() -> None:
 # ── Endpoint table ────────────────────────────────────────────────────────────
 # (test_id, method, path, json_body, required_permission)
 # note: GET /v1/users[/{id}] are intentionally absent — they moved to the
-# platform-superadmin gate (see routers/users.py BREAKING notes) and are
+# platform-admin gate (see routers/users.py BREAKING notes) and are
 # covered by test_admin_gate_matrix.py, not the permission-grant contract here.
 GATED_ENDPOINTS: list[tuple[str, str, str, dict | None, str]] = [
     ("create_project", "POST", "/v1/projects", {"name": "Gate Test"}, "project:manage"),

@@ -1,24 +1,13 @@
-"""Auth org join — singleton-org join, email verify, resend."""
+"""Auth member email verification — verify email, resend OTP."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
-from sqlalchemy.exc import IntegrityError
-
-from core.exceptions import (
-    AuthenticationError,
-    AuthorizationError,
-)
+from core.exceptions import AuthenticationError
 from core.rls import set_user_context
-from core.rbac import (
-    MEMBER_DEFAULT_PERMISSIONS,
-)
-from repositories.instance_settings_repository import InstanceSettingsRepository
 from schemas.auth import (
-    JoinRequest,
     SignupResponse,
     TokenResponse,
     VerifyEmailRequest,
@@ -27,7 +16,8 @@ from utils.pii import mask_email
 
 logger = logging.getLogger(__name__)
 
-class OrgJoinMixin:
+
+class MemberSignupMixin:
     """Composed into :class:`AuthService`."""
 
     _repo: Any
@@ -36,88 +26,6 @@ class OrgJoinMixin:
     _email_service: Any
     _settings_repo: Any
 
-    def _settings(self) -> InstanceSettingsRepository:
-        """Return the injected settings repo (fallback constructs one)."""
-        if self._settings_repo is not None:
-            return self._settings_repo
-        return InstanceSettingsRepository(self._repo.session)
-
-    # ── Org-code join ────────────────────────────────────────────────────────
-
-    async def join_organization(self, payload: JoinRequest) -> SignupResponse:
-        """Join the singleton platform organization as a member.
-
-        Single platform org: the join code is gone — every join lands in
-        the platform org.  Registration is governed by
-        ``instance_settings.registration_mode``: ``open`` creates a live
-        member, ``approval`` creates an inactive member pending admin
-        activation, ``invite_only`` rejects with 403.
-
-        The response is identical whether or not the email already exists.
-
-        Args:
-            payload: Email and password.
-
-        Returns:
-            A ``SignupResponse`` with a confirmation message.
-
-        Raises:
-            AuthorizationError: If registration is ``invite_only`` or the
-                platform org is missing.
-        """
-        # ── Platform policy gate ──────────────────────────────────────────
-        mode = await self._settings().get_registration_mode()
-        if mode == "invite_only":
-            raise AuthorizationError("Registration is invite-only")
-        if mode not in ("open", "approval"):
-            raise AuthorizationError("Registration is disabled")
-
-        # No tenant context on this public path — authz is the
-        # registration_mode gate above; persistence uses a
-        # transaction-local bypass inside create_dashboard_user.
-        # Join mints ``member`` with the member defaults, no members:* —
-        # admin grants explicitly.
-        existing = await self._repo.find_user_by_email(payload.email)
-        if existing is not None:
-            logger.warning(
-                "security.join_existing_email",
-                extra={"email": mask_email(payload.email)},
-            )
-            return self._signup_success_response(payload.email)
-
-        # bcrypt blocks the event loop — offload to a worker thread.
-        from services import auth_service as _facade  # via facade (patchable)
-
-        pw_hash = await asyncio.to_thread(_facade.hash_password, payload.password)
-        try:
-            user = await self._repo.create_dashboard_user(
-                email=payload.email,
-                password_hash=pw_hash,
-                name=payload.email.split("@")[0],  # default name from email
-                role="member",
-                permissions=list(MEMBER_DEFAULT_PERMISSIONS),
-            )
-            await set_user_context(self._repo.session, user.id)
-            if mode == "approval":
-                user.is_active = False
-                await self._repo.flush()
-            else:
-                await self._otp_service.generate_and_send(
-                    email=payload.email,
-                    purpose="signup",
-                )
-        except IntegrityError:
-            # Concurrent duplicate join — the unique email index won.  Same
-            # generic response as a fresh join; roll back the aborted
-            # transaction so the session is usable.
-            logger.warning(
-                "security.join_existing_email",
-                extra={"email": mask_email(payload.email)},
-            )
-            await self._repo.rollback()
-            return self._signup_success_response(payload.email)
-
-        return self._signup_success_response(payload.email)
     async def verify_email(
         self,
         payload: VerifyEmailRequest,

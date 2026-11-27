@@ -1,6 +1,6 @@
 """Pydantic schemas for PII detection configuration and statistics.
 
-Stored per-org in ``organizations.quotas`` JSONB under the ``"pii"`` key.
+Stored per-user in ``organizations.quotas`` JSONB under the ``"pii"`` key.
 Schemas must never import from ``models/``, ``services/``, or ``routers/``.
 """
 
@@ -28,7 +28,7 @@ class PIIMode(str, enum.Enum):
 
 
 class PIIConfig(BaseModel):
-    """Per-org PII configuration, stored in ``organizations.quotas`` JSONB.
+    """Per-user PII configuration, stored in ``organizations.quotas`` JSONB.
 
     Example stored value::
 

@@ -1,4 +1,4 @@
-"""Unit tests for ``schemas.organization_config``.
+"""Unit tests for ``schemas.platform_config``.
 
 Tests the Pydantic schema resolution logic independently of any DB or cache.
 """
@@ -7,22 +7,22 @@ from __future__ import annotations
 
 import pytest
 
-from schemas.organization_config import (
-    OrgConfigBase,
-    OrgConfigResponse,
-    UpdateOrgConfigRequest,
+from schemas.platform_config import (
+    PlatformConfigBase,
+    PlatformConfigResponse,
+    UpdatePlatformConfigRequest,
 )
 
 
-class TestOrgConfigBase:
+class TestPlatformConfigBase:
     """Validate the raw-DB-shape schema."""
 
     def test_defaults_are_none(self) -> None:
-        """Every field in OrgConfigBase should default to None,
+        """Every field in PlatformConfigBase should default to None,
         except ``graph_backend`` which defaults to ``"falkordb"``.
         """
-        cfg = OrgConfigBase()
-        for field_name in OrgConfigBase.model_fields:
+        cfg = PlatformConfigBase()
+        for field_name in PlatformConfigBase.model_fields:
             if field_name == "graph_backend":
                 assert getattr(cfg, field_name) == "falkordb"
                 continue
@@ -32,7 +32,7 @@ class TestOrgConfigBase:
 
     def test_extra_fields_ignored(self) -> None:
         """Unknown keys should be silently dropped (extra='ignore')."""
-        cfg = OrgConfigBase.model_validate(
+        cfg = PlatformConfigBase.model_validate(
             {"llm_backend": "ollama", "nonexistent": "should_be_ignored"}
         )
         assert cfg.llm_backend == "ollama"
@@ -41,19 +41,19 @@ class TestOrgConfigBase:
 
     def test_partial_construction(self) -> None:
         """Constructing with a subset of fields should work."""
-        cfg = OrgConfigBase(llm_backend="openai", llm_model="gpt-4o-mini")
+        cfg = PlatformConfigBase(llm_backend="openai", llm_model="gpt-4o-mini")
         assert cfg.llm_backend == "openai"
         assert cfg.llm_model == "gpt-4o-mini"
         assert cfg.graph_search_type is None  # not set
         assert cfg.graph_backend == "falkordb"  # default when not provided
 
 
-class TestOrgConfigBaseToDict:
-    """Validate the helper methods on OrgConfigBase."""
+class TestPlatformConfigBaseToDict:
+    """Validate the helper methods on PlatformConfigBase."""
 
     def test_to_llm_config_dict_keys(self) -> None:
         """to_llm_config_dict() should produce the expected provider keys."""
-        cfg = OrgConfigBase(
+        cfg = PlatformConfigBase(
             llm_backend="openai",
             llm_model="gpt-4o",
             openai_api_key="sk-test",
@@ -76,13 +76,13 @@ class TestOrgConfigBaseToDict:
 
     def test_to_llm_config_dict_excludes_none(self) -> None:
         """Fields with None values should be omitted from the dict."""
-        cfg = OrgConfigBase()
+        cfg = PlatformConfigBase()
         d = cfg.to_llm_config_dict()
         assert d == {}
 
     def test_to_llm_config_dict_includes_prompt_caching(self) -> None:
         """prompt_caching overrides should be plumbed through as a nested dict."""
-        cfg = OrgConfigBase(
+        cfg = PlatformConfigBase(
             prompt_caching={
                 "enabled": False,
                 "anthropic_min_tokens": 4096,
@@ -96,7 +96,7 @@ class TestOrgConfigBaseToDict:
 
     def test_to_llm_config_dict_prompt_caching_excludes_none(self) -> None:
         """Null prompt_caching fields should be omitted, not leaked as None."""
-        cfg = OrgConfigBase(
+        cfg = PlatformConfigBase(
             prompt_caching={
                 "enabled": None,
                 "anthropic_min_tokens": 4096,
@@ -107,32 +107,32 @@ class TestOrgConfigBaseToDict:
 
     def test_to_llm_config_dict_temperature_boundaries(self) -> None:
         """Temperature should respect inclusive bounds."""
-        cfg = OrgConfigBase(llm_temperature=0.0)
+        cfg = PlatformConfigBase(llm_temperature=0.0)
         assert cfg.to_llm_config_dict()["temperature"] == 0.0
-        cfg = OrgConfigBase(llm_temperature=2.0)
+        cfg = PlatformConfigBase(llm_temperature=2.0)
         assert cfg.to_llm_config_dict()["temperature"] == 2.0
 
 
-class TestUpdateOrgConfigRequest:
+class TestUpdatePlatformConfigRequest:
     """Validate the partial-update request schema."""
 
     def test_defaults_are_none(self) -> None:
         """Every field should default to None for true partial updates."""
-        req = UpdateOrgConfigRequest()
-        for field_name in UpdateOrgConfigRequest.model_fields:
+        req = UpdatePlatformConfigRequest()
+        for field_name in UpdatePlatformConfigRequest.model_fields:
             assert getattr(req, field_name) is None, (
                 f"Expected {field_name} to be None, got {getattr(req, field_name)!r}"
             )
 
     def test_only_unset_fields_excluded(self) -> None:
         """model_dump(exclude_unset=True) should only include provided fields."""
-        req = UpdateOrgConfigRequest(llm_backend="anthropic")
+        req = UpdatePlatformConfigRequest(llm_backend="anthropic")
         dumped = req.model_dump(exclude_unset=True)
         assert dumped == {"llm_backend": "anthropic"}
 
     def test_null_explicitly_sets_none(self) -> None:
         """Setting a field to None explicitly should be included in dump."""
-        req = UpdateOrgConfigRequest(llm_backend=None)
+        req = UpdatePlatformConfigRequest(llm_backend=None)
         dumped = req.model_dump(exclude_unset=True)
         assert dumped == {"llm_backend": None}
 
@@ -141,43 +141,43 @@ class TestUpdateOrgConfigRequest:
         with pytest.raises(
             Exception, match="Input should be greater than or equal to 1"
         ):
-            UpdateOrgConfigRequest(graph_max_traversal_depth=0)
+            UpdatePlatformConfigRequest(graph_max_traversal_depth=0)
 
         with pytest.raises(Exception, match="Input should be less than or equal to 10"):
-            UpdateOrgConfigRequest(graph_max_traversal_depth=20)
+            UpdatePlatformConfigRequest(graph_max_traversal_depth=20)
 
     def test_postgres_graph_backend_hard_rejected(self) -> None:
         """postgres graph_backend is hard-rejected — deprecated, removal v1.1.0."""
         with pytest.raises(Exception, match=r"PostgreSQL graph backend.*v1\.1\.0.*410"):
-            UpdateOrgConfigRequest(graph_backend="postgres")
+            UpdatePlatformConfigRequest(graph_backend="postgres")
 
     def test_falkordb_and_surrealdb_allowed(self) -> None:
         """falkordb and surrealdb graph_backends are still allowed."""
         assert (
-            UpdateOrgConfigRequest(graph_backend="falkordb").graph_backend == "falkordb"
+            UpdatePlatformConfigRequest(graph_backend="falkordb").graph_backend == "falkordb"
         )
         assert (
-            UpdateOrgConfigRequest(graph_backend="surrealdb").graph_backend
+            UpdatePlatformConfigRequest(graph_backend="surrealdb").graph_backend
             == "surrealdb"
         )
-        assert UpdateOrgConfigRequest(graph_backend="none").graph_backend == "none"
-        assert UpdateOrgConfigRequest(graph_backend=None).graph_backend is None
+        assert UpdatePlatformConfigRequest(graph_backend="none").graph_backend == "none"
+        assert UpdatePlatformConfigRequest(graph_backend=None).graph_backend is None
 
 
-class TestOrgConfigResponse:
+class TestPlatformConfigResponse:
     """Validate the response schema."""
 
     def test_response_contains_stored_config(self) -> None:
         """Response should include the stored config."""
-        stored = OrgConfigBase(llm_backend="openai")
-        resp = OrgConfigResponse(stored=stored)
+        stored = PlatformConfigBase(llm_backend="openai")
+        resp = PlatformConfigResponse(stored=stored)
         assert resp.stored.llm_backend == "openai"
 
     def test_response_stored_all_none_when_empty(self) -> None:
         """Response with empty stored config should have all-None fields,
         except ``graph_backend`` which defaults to ``"falkordb"``.
         """
-        resp = OrgConfigResponse(stored=OrgConfigBase())
+        resp = PlatformConfigResponse(stored=PlatformConfigBase())
         dumped = resp.stored.model_dump()
         for field_name, value in dumped.items():
             if field_name == "graph_backend":

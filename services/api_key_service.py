@@ -5,7 +5,7 @@ Handles key generation, hashing, and persistence.  Sits between
 to keep business logic out of the HTTP layer.
 
 Every key created through this service is scoped to a project — there are
-no org-wide API keys.
+no user-wide API keys.
 """
 
 from __future__ import annotations
@@ -133,7 +133,7 @@ class ApiKeyService:
         the hash.  The raw key is returned exactly once.
 
         Args:
-            user_id: The owning organization UUID.
+            user_id: The owning user UUID.
             project_id: The project UUID to scope this key to.
             payload: Key name from the request body.
             created_by: Optional UUID of the user creating the key.
@@ -199,7 +199,7 @@ class ApiKeyService:
         ``last_used_at``.
 
         Args:
-            user_id: The owning organization UUID.
+            user_id: The owning user UUID.
             project_id: The project UUID to list keys for.
             sort: Validated sort spec (forwarded opaque to the repository).
 
@@ -256,13 +256,13 @@ class ApiKeyService:
         Redis auth cache so the key is rejected on the next request.
 
         Args:
-            user_id: The owning organization UUID.
+            user_id: The owning user UUID.
             project_id: The project UUID scope.
             key_id: The UUID of the API key to revoke.
 
         Returns:
             The revoked ``ApiKey``, or ``None`` if not found within the
-            given org + project scope.
+            given user + project scope.
         """
         api_key = await self._repo.revoke(
             user_id=user_id,

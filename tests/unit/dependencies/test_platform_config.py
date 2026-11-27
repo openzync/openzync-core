@@ -1,4 +1,4 @@
-"""Unit tests for dependencies/org_config.py — org config resolver."""
+"""Unit tests for dependencies/platform_config.py — platform config resolver."""
 
 from __future__ import annotations
 
@@ -14,13 +14,13 @@ ORG_UUID = UUID("00000000-0000-0000-0000-000000000001")
 ORG_ID_STR = "00000000-0000-0000-0000-000000000001"
 
 
-class TestGetOrgConfig:
-    """get_org_config: resolves org config from Redis/DB."""
+class TestGetPlatformConfig:
+    """get_platform_config: resolves platform config from Redis/DB."""
 
     @pytest.mark.asyncio
     async def test_returns_org_config_from_resolver(self) -> None:
-        """Valid user_id → delegates to core.org_config.get_org_config."""
-        from dependencies.org_config import get_org_config
+        """Valid user_id → delegates to core.platform_config.get_platform_config."""
+        from dependencies.platform_config import get_platform_config
 
         request = MagicMock(spec=Request)
         request.state.user_id = ORG_ID_STR
@@ -30,16 +30,16 @@ class TestGetOrgConfig:
         fake_config = MagicMock()
         fake_config.llm_model = "gpt-4"
 
-        # _get_org_config is imported locally inside get_org_config() as
-        #   from core.org_config import get_org_config as _get_org_config
-        # so we patch core.org_config.get_org_config directly.
+        # _get_platform_config is imported locally inside get_platform_config() as
+        #   from core.platform_config import get_platform_config as _get_platform_config
+        # so we patch core.platform_config.get_platform_config directly.
         with patch(
-            "core.org_config.get_org_config",
+            "core.platform_config.get_platform_config",
             new_callable=AsyncMock,
         ) as mock_resolver:
             mock_resolver.return_value = fake_config
 
-            result = await get_org_config(request, mock_db, ORG_ID_STR)
+            result = await get_platform_config(request, mock_db, ORG_ID_STR)
 
             mock_resolver.assert_awaited_once_with(
                 ORG_UUID,
@@ -52,7 +52,7 @@ class TestGetOrgConfig:
     @pytest.mark.asyncio
     async def test_handles_none_redis(self) -> None:
         """When redis is None, resolver gets None redis + the request db."""
-        from dependencies.org_config import get_org_config
+        from dependencies.platform_config import get_platform_config
 
         request = MagicMock(spec=Request)
         request.state.user_id = ORG_ID_STR
@@ -60,12 +60,12 @@ class TestGetOrgConfig:
         mock_db = AsyncMock()
 
         with patch(
-            "core.org_config.get_org_config",
+            "core.platform_config.get_platform_config",
             new_callable=AsyncMock,
         ) as mock_resolver:
             mock_resolver.return_value = MagicMock()
 
-            await get_org_config(request, mock_db, ORG_ID_STR)
+            await get_platform_config(request, mock_db, ORG_ID_STR)
 
             mock_resolver.assert_awaited_once_with(
                 ORG_UUID, redis=None, db=mock_db

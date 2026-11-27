@@ -78,7 +78,7 @@ async def list_api_keys(
         project_id: Injected from the URL path.
         service: API key service.
         _: Project owner auth guard.
-        user_id: Authenticated organization ID.
+        user_id: Authenticated user ID.
         sort_by: Whitelisted sort key.
         sort_dir: Sort direction.
 
@@ -124,7 +124,7 @@ async def create_api_key(
         payload: Key name/label.
         service: API key service.
         _: Project owner auth guard.
-        user_id: Authenticated organization ID.
+        user_id: Authenticated user ID.
         user_id: Authenticated user UUID (stored as ``created_by`` for
             attribution in API-key-authenticated requests).
         actor_permissions: Creator's grantable set (``None`` = wildcard);
@@ -180,7 +180,7 @@ async def revoke_api_key(
         key_id: UUID of the key to revoke.
         service: API key service.
         _: Project owner auth guard.
-        user_id: Authenticated organization ID.
+        user_id: Authenticated user ID.
 
     Raises:
         NotFoundError: If the key does not exist in this project.

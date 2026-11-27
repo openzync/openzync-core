@@ -1,11 +1,11 @@
 """User config service — per-user overrides over platform config.
 
-Resolution order: ``user override ⊕ system defaults ⊕ stored org config``,
+Resolution order: ``user override ⊕ system defaults ⊕ stored platform config``,
 later layers only filling keys the earlier ones leave unset.  The system
-layer comes from the platform root row; the org layer from the user's own
-``users.config_override`` row; the user layer is the same row's
-``config_override`` (kept as a separate accessor for the dashboard
-override UI).  No secrets are logged.
+layer comes from the platform root row; the platform/user layers (user row
++ platform defaults) from the user's own ``users.config_override`` row
+(kept as a separate accessor for the dashboard override UI).  No secrets
+are logged.
 """
 
 from __future__ import annotations
@@ -18,11 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import get_settings
 from core.dict_merge import deep_merge
 from core.exceptions import NotFoundError, ValidationError
-from core.org_config import get_org_config
+from core.platform_config import get_platform_config
 from core.system_config import get_system_config
 from repositories.auth_repository import AuthRepository
 from repositories.user_repository import UserRepository
-from schemas.organization_config import (
+from schemas.platform_config import (
     SYSTEM_MANAGED_FALKORDB_FIELDS,
     SYSTEM_MANAGED_SURREALDB_FIELDS,
 )
@@ -33,9 +33,9 @@ class UserConfigService:
 
     Args:
         user_repo: Repository for ``users.config_override`` access.
-        redis: Optional async Redis client (org/system cache).
+        redis: Optional async Redis client (platform/system cache).
         auth_repo: Injected auth repository (shares the request session).
-        db: Async DB session for org/system config reads.
+        db: Async DB session for platform/system config reads.
     """
 
     def __init__(
@@ -109,7 +109,7 @@ class UserConfigService:
         return await self._user_repo.merge_config_override(user_id, patch)
 
     async def get_effective_config(self, user_id: UUID) -> dict[str, Any]:
-        """Resolve ``user ⊕ system ⊕ org`` for a dashboard user.
+        """Resolve ``user ⊕ platform(system)`` for a dashboard user.
 
         Every layer failure propagates — a silently dropped user layer
         would apply the wrong config, so the error is loud, not logged
@@ -136,12 +136,12 @@ class UserConfigService:
         effective: dict[str, Any] = deep_merge(
             {}, system.model_dump(exclude_none=True)
         )
-        org = await get_org_config(
+        platform = await get_platform_config(
             user.id,
             redis=self._redis,
             db=self._db,
         )
-        effective = deep_merge(effective, org.model_dump(exclude_none=True))
+        effective = deep_merge(effective, platform.model_dump(exclude_none=True))
 
         override = await self._user_repo.get_config_override(user_id)
         return deep_merge(effective, override)

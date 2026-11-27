@@ -38,7 +38,7 @@ class ProjectWipeMixin:
         recorded as a destructive-action audit log entry.
 
         Args:
-            user_id: The authenticated organization UUID.
+            user_id: The authenticated user UUID.
             project_id: The project UUID.
             confirm: Must equal ``str(project_id)`` — proves intent.
             actor_id: The authenticated user's UUID (audit attribution).
@@ -53,7 +53,7 @@ class ProjectWipeMixin:
             ValidationError: If ``confirm`` does not match ``project_id``
                 (→ 422, nothing is deleted).
             NotFoundError: If the project does not exist in this
-                organization or is archived (→ 404, nothing is deleted).
+                user scope or is archived (→ 404, nothing is deleted).
                 # ⚠️ BREAKING: cross-org wipes previously deleted by
                 # project_id alone; they are now rejected.
                 # Storage is the global backend (fail-fast Settings) — a
@@ -68,9 +68,9 @@ class ProjectWipeMixin:
                 "confirm does not match project_id — memory wipe rejected"
             )
 
-        # ⚠️ Org gate: the wipe must not touch a project outside the
-        # caller's organization. get_by_id is org-scoped and excludes
-        # archived projects, so cross-org/archived/missing all 404 here.
+        # ⚠️ User gate: the wipe must not touch a project outside the
+        # caller's user scope. get_by_id is user-scoped and excludes
+        # archived projects, so cross-user/archived/missing all 404 here.
         project = await self._project_repo.get_by_id(user_id, project_id)
         if project is None:
             raise NotFoundError(

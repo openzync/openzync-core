@@ -107,9 +107,8 @@ class RegistrationMixin:
         # transaction-local bypass inside create_dashboard_user.  Bind
         # the new user's own context right after creation for the
         # reads below.
-        # Open signup mints a ``member`` with the full permission
-        # vocabulary — members never self-promote (only root promotes
-        # to admin).
+        # Open signup mints a member with member defaults (no
+        # members:*); promotion is frozen, grant permissions instead.
         try:
             # bcrypt blocks the event loop — offload to a worker thread.
             from services import auth_service as _facade  # via facade (patchable)

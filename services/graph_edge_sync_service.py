@@ -23,7 +23,7 @@ Execution routing:
 
 * All backends are external (SurrealDB/FalkorDB) — an ARQ task
   ``expire_graph_edges`` is enqueued on the low-priority queue; the task
-  resolves the org's backend inside the worker and expires there.
+  resolves the user's backend inside the worker and expires there.
   Idempotent via ``WHERE invalid_at IS NULL`` (replay → count 0).
 """
 
@@ -214,7 +214,7 @@ class GraphEdgeSyncService:
     """Synchronises superseded-fact transitions into graph backends.
 
     Args:
-        backends: The resolved per-org graph backends (external only —
+        backends: The resolved per-user graph backends (external only —
             SurrealDB/FalkorDB).  May be empty (graph disabled) — the
             service is a no-op.
         arq_pool: ARQ pool for expiry-task enqueueing.  When

@@ -1088,7 +1088,7 @@ class FactRepository:
 
         Args:
             project_id: The project's UUID.
-            user_id: Tenant scope — only rows in this org are touched.
+            user_id: Tenant scope — only rows in this user are touched.
 
         Returns:
             Number of facts invalidated.

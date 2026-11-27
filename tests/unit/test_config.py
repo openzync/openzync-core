@@ -16,7 +16,7 @@ expected.
 
     LLM / Embedding / Graph / Behaviour settings were removed from this
     class in favour of per-user DB config.  See
-    ``schemas/organization_config.OrgConfigBase``.
+    ``schemas/organization_config.PlatformConfigBase``.
 """
 
 from __future__ import annotations

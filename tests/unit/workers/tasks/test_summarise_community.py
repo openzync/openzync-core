@@ -87,7 +87,7 @@ class TestSummariseCommunity:
                 "packages.community.algorithms.detect_communities_label_propagation"
             ) as mock_detect,
             patch("core.llm.resolve_backend") as mock_llm,
-            patch("core.org_config.get_org_config") as mock_cfg,
+            patch("core.platform_config.get_platform_config") as mock_cfg,
         ):
             mock_graph = MagicMock()
             mock_build.return_value = mock_graph
@@ -147,7 +147,7 @@ class TestSummariseCommunity:
                 "packages.community.algorithms.detect_communities_label_propagation"
             ) as mock_detect,
             patch("core.llm.resolve_backend"),
-            patch("core.org_config.get_org_config"),
+            patch("core.platform_config.get_platform_config"),
         ):
             mock_detect.return_value = [{str(uuid4()), str(uuid4())}]
 
@@ -291,7 +291,7 @@ class TestSummariseCommunity:
         # summarise_community.py:136 — the per-org failure is aggregated and
         # re-raised as ``RuntimeError``; the message embeds the org count and
         # ids, so only the stable literal fragment is pinned.
-        with pytest.raises(RuntimeError, match="orgs failed"):
+        with pytest.raises(RuntimeError, match="users failed"):
             await summarise_community(ctx=self._ctx(db), user_id=_ORG_ID)
 
     @pytest.mark.asyncio
@@ -417,8 +417,8 @@ class TestSummariseCommunity:
             result = await summarise_community(ctx=self._ctx(db))
 
         assert result["status"] == "partial"
-        assert result["orgs_processed"] == 2
-        assert result["orgs_failed"] == 1
+        assert result["users_processed"] == 2
+        assert result["users_failed"] == 1
         db.rollback.assert_awaited_once()
         # Only org_1 committed — org_2's failed transaction was rolled back.
         db.commit.assert_called_once()
@@ -467,7 +467,7 @@ class TestSummariseCommunity:
         ):
             from workers.tasks.summarise_community import summarise_community
 
-            with pytest.raises(RuntimeError, match="All 2 orgs failed"):
+            with pytest.raises(RuntimeError, match="All 2 users failed"):
                 await summarise_community(ctx=self._ctx(db))
 
         calls = db.execute.call_args_list

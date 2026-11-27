@@ -369,7 +369,7 @@ class TestAuthMiddleware:
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[get_user_service] = lambda: service
         from dependencies.services import (
-            get_superadmin_user_service as _super_svc,
+            get_admin_user_service as _super_svc,
         )
 
         app.dependency_overrides[_super_svc] = lambda: service
@@ -412,10 +412,10 @@ class TestAuthMiddleware:
         """mcp=False JWT → GET /v1/users passes the middleware (200)."""
         token = self._create_jwt(mcp=False)
         app = self._create_users_app()
-        # GET /v1/users is superadmin-gated; this test pins
+        # GET /v1/users is admin-gated; this test pins
         # the *middleware* contract, so stub the downstream gate.
         with (
-            patch("dependencies.auth._ensure_superadmin", new=AsyncMock()),
+            patch("dependencies.auth._ensure_admin", new=AsyncMock()),
             patch(
                 "dependencies.auth.get_must_change_password",
                 new=AsyncMock(return_value=False),

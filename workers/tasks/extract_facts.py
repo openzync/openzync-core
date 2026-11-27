@@ -381,7 +381,7 @@ async def process_facts_output(
         fact_repo: Fact repository for batch_create_or_skip.
         episode_repo: Optional episode repository.  If provided, sets
             ``ENRICHMENT_FACTS`` bit on the episode inside the transaction.
-        user_id: Organization UUID string.
+        user_id: User UUID string.
         episode_id: Episode UUID string.
         project_id: Project UUID string.
         session_id: Session UUID string.

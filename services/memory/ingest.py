@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
     from models.session import Session
     from models.user import User
-    from schemas.organization_config import OrgConfigBase
+    from schemas.platform_config import PlatformConfigBase
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ class IngestMixin:
            (all best-effort — never fail a committed ingest).
 
         Args:
-            user_id: The authenticated organization UUID.
+            user_id: The authenticated user UUID.
             project_id: The project UUID for scoping.
             created_by: The authenticated user's UUID (attribution).
             session_external_id: The session external ID. The session must
@@ -82,7 +82,7 @@ class IngestMixin:
             body_hash: Optional SHA-256 of the canonical request body,
                 pre-computed by the router when ``idempotency_key`` is set.
             enrichments: Optional per-ingest enrichment toggles (highest
-                precedence — overrides system and org config).
+                precedence — overrides system and platform config).
 
         Returns:
             An ``IngestMemoryResponse`` with job_id, episode_count,
@@ -107,10 +107,10 @@ class IngestMixin:
 
         # ── Step 0b: Resolve + validate enrichment toggles ──────────────
         # Before any state — a 422 here never claims, inserts, or enqueues.
-        # One org-config read per ingest, shared by both resolvers.
-        from core.org_config import get_org_config
+        # One platform-config read per ingest, shared by both resolvers.
+        from core.platform_config import get_platform_config
 
-        org_cfg = await get_org_config(user_id, redis=self._redis, db=self._db)
+        org_cfg = await get_platform_config(user_id, redis=self._redis, db=self._db)
         effective_enrichments = await self._resolve_enrichments(
             org_cfg, enrichments
         )
@@ -237,7 +237,7 @@ class IngestMixin:
 
     async def _resolve_enrichments(
         self,
-        org_cfg: OrgConfigBase,
+        org_cfg: PlatformConfigBase,
         request_param: dict[str, bool] | None,
     ) -> dict[str, bool]:
         """Resolve the effective per-episode enrichment toggles.
@@ -276,7 +276,7 @@ class IngestMixin:
 
     async def _resolve_enrichment_gate(
         self,
-        org_cfg: OrgConfigBase,
+        org_cfg: PlatformConfigBase,
     ) -> dict[str, bool | float | str]:
         """Resolve the effective enrichment gate (org-only).
 
@@ -310,7 +310,7 @@ class IngestMixin:
         retry in the repository layer.
 
         Args:
-            user_id: The organization UUID.
+            user_id: The user UUID.
             external_id: The caller-defined user identifier.
 
         Returns:
@@ -333,7 +333,7 @@ class IngestMixin:
         IDs — the SDK must call ``POST /sessions`` first.
 
         Args:
-            user_id: The organization UUID.
+            user_id: The user UUID.
             project_id: The project UUID.
             session_external_id: The caller-defined session identifier.
 

@@ -208,7 +208,7 @@ class ProjectMembershipService:
         invite = await self._invite_service.invite_user(
             admin_user_id=invited_by,
             # note: no display name on this endpoint — local part mirrors
-            # the signup default (org_join).
+            # the signup default (member_signup).
             payload=InviteRequest(email=email, name=email.partition("@")[0] or email),
         )
         # Second audit trail for the created user (the router's

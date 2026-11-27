@@ -66,8 +66,8 @@ class CacheService:
         if default_ttl is None:
             raise ValueError(
                 "default_ttl is required. "
-                "Set context_cache_ttl in the per-org configuration "
-                "via PATCH /admin/org/config."
+                "Set context_cache_ttl in the platform configuration "
+                "via PATCH /admin/platform-config."
             )
         self._redis = redis
         self._default_ttl: int = default_ttl
@@ -306,7 +306,7 @@ class CacheService:
         is O(1) and stale keys simply expire via TTL.
 
         Args:
-            user_id: The organization UUID string.
+            user_id: The user UUID string.
             project_id: The project UUID string.
             query: The natural-language query string.
             as_of: ISO-8601 effective-at timestamp; ``None`` omits the
@@ -340,7 +340,7 @@ class CacheService:
         Used by the invalidation routine on new message ingestion.
 
         Args:
-            user_id: The organization UUID string.
+            user_id: The user UUID string.
             project_id: The project UUID string.
 
         Returns:
@@ -357,7 +357,7 @@ class CacheService:
         """Build the Redis key holding a project's context cache generation.
 
         Args:
-            user_id: The organization UUID string.
+            user_id: The user UUID string.
             project_id: The project UUID string.
 
         Returns:
@@ -372,7 +372,7 @@ class CacheService:
         the counter expired — plain ``INCR`` recreates it on next bump).
 
         Args:
-            user_id: The organization UUID string.
+            user_id: The user UUID string.
             project_id: The project UUID string.
 
         Returns:
@@ -408,7 +408,7 @@ class CacheService:
         expire via TTL — no SCAN+DEL.
 
         Args:
-            user_id: The organization UUID string.
+            user_id: The user UUID string.
             project_id: The project UUID string.
 
         Returns:
@@ -445,7 +445,7 @@ class CacheService:
         fetch fresh data from the database.
 
         Args:
-            user_id: The organization UUID string.
+            user_id: The user UUID string.
             project_id: The project UUID string.
 
         Returns:
@@ -488,7 +488,7 @@ class CacheService:
                 exc_info=True,
             )
             raise CacheUnavailableError(
-                f"Cache invalidation failed for org '{user_id}', project '{project_id}'."
+                f"Cache invalidation failed for user '{user_id}', project '{project_id}'."
             ) from exc
 
         return deleted

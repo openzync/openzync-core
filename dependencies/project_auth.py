@@ -42,12 +42,12 @@ async def require_project_membership(
 
     **JWT (dashboard user)**: Verifies:
     1. The request has a valid authenticated user (401 if missing).
-    2. The organization ID is present (401 if missing).
-    3. The project exists within the organization (404 if missing).
+    2. The user ID is present (401 if missing).
+    3. The project exists within the user's scope (404 if missing).
     4. The authenticated user is a member of the project (403 if not).
 
     **API key**: Skips user-level checks; instead verifies:
-    1. The organization ID is present (401 if missing).
+    1. The user ID is present (401 if missing).
     2. The API key is scoped to the requested project (403 if mismatch).
 
     Use this as the sole auth dependency for all ``/v1/projects/...``
@@ -84,7 +84,7 @@ async def require_project_membership(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="This API key is scoped to a different project",
             )
-        # Same org-scoped, archived-excluding lookup as the JWT branch:
+        # Same user-scoped, archived-excluding lookup as the JWT branch:
         # a key scoped to an archived (or deleted, or other-org) project
         # is 404, not silent access.
         repo = ProjectRepository(db)

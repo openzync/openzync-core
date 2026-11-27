@@ -1,5 +1,5 @@
 """Extraction schema model — defines the JSON Schema contract for structured
-extractions within an organization.
+extractions within a user scope.
 
 Each organization maintains its own catalog of extraction schemas. The
 ``json_schema`` field stores a JSON Schema document that ``StructuredExtraction``
@@ -20,8 +20,8 @@ class ExtractionSchema(TimestampMixin, Base):
 
     Attributes:
         id: UUID primary key.
-        user_id: Foreign key to the owning organization.
-        name: Human-readable schema name (unique within an organization).
+        user_id: Foreign key to the owning user.
+        name: Human-readable schema name (unique within a user scope).
         json_schema: The JSON Schema definition that extraction payloads
             must conform to. For ``type='classification'``, this stores the
             label definitions (intent, emotion, valence, arousal options).

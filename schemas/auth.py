@@ -57,26 +57,6 @@ class SignupRequest(BaseModel):
     )
 
 
-class JoinRequest(BaseModel):
-    """Request body for ``POST /v1/auth/join``.
-
-    Joins the singleton platform org as a member (email + password).
-    """
-
-    email: EmailStr = Field(
-        ...,
-        description="Email address for the new member user.",
-        examples=["alice@acme.com"],
-    )
-    password: str = Field(
-        ...,
-        min_length=8,
-        max_length=128,
-        description="Password (min 8 chars, max 128).",
-        examples=["secure-p@ssword-123"],
-    )
-
-
 class SignupResponse(BaseModel):
     """Response body for ``POST /v1/auth/signup``.
 

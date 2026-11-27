@@ -4,12 +4,11 @@ Closes the structural test hole where 7 of 8 admin-router suites override
 the gate with a pass-through stub: those suites would pass even if a gate
 were deleted from an endpoint.  This suite never overrides the gate.  It
 builds the app with the **real** ``require_permission`` /
-``require_permission_or_self`` dependency chain and instead patches the
+``require_permission`` / ``require_admin`` dependency chains and instead patches the
 infrastructure underneath it:
 
 - ``dependencies.auth.get_user_role`` -> ``"member"`` (the role lookup that
   the real gate consults; see the same patch pattern in
-  ``test_admin_org_code.py::_make_member_app`` and
   ``test_rbac.py::TestRequirePermission``),
 - ``dependencies.auth.get_effective_permissions`` -> empty frozenset (a
   member with no explicit grants is denied),
@@ -28,12 +27,16 @@ Plus:
   declares a permission gate, so a NEW admin endpoint added without a
   matrix entry fails this suite.
 
-Excluded by design (documented public / non-admin routes — verified against
-router sources):
+Excluded by design (verified against router sources):
 - ``GET /v1/admin/webhooks/events``  — no auth, public event-type listing.
-- ``GET /admin/org/config/defaults`` — no auth, seeded onboarding defaults.
+- ``GET /admin/platform-config/defaults`` — no auth, seeded onboarding defaults.
 - ``GET /v1/auth/registration-status`` — PUBLIC by design (registration
   policy drives the signup UI).
+- ``GET /v1/admin/stats``, ``GET /v1/admin/stats/usage``,
+  ``GET /metrics/summary``, ``GET /metrics/batch``,
+  ``GET /v1/admin/quick-actions``, ``GET /v1/admin/llm-usage`` —
+  member-visible (``require_user``): every authenticated user sees them.
+  Covered by their own suites (member 200, anonymous 401).
 """
 from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -41,11 +44,10 @@ from uuid import UUID
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from core.config import PLATFORM_ORG_ID
 from core.exceptions import register_exception_handlers
-from dependencies.auth import require_superadmin
+from dependencies.auth import require_admin
 from dependencies.db import get_db
-from routers import admin_invites, admin_metrics, admin_org_config, admin_organizations, admin_quick_actions, admin_schemas, admin_stats, admin_system, admin_webhooks, audit_log, users
+from routers import admin_custom_instructions, admin_invites, admin_metrics, admin_platform_config, admin_quick_actions, admin_schemas, admin_stats, admin_system, admin_webhooks, audit_log, users
 from routers.admin_schemas import _get_schema_service
 from routers.users import get_user_summary_service
 from schemas.extraction_schemas import PreviewExtractionResponse, SchemaTemplateResponse
@@ -55,36 +57,34 @@ MEMBER_USER_ID = UUID('00000000-0000-0000-0000-000000000002')
 OTHER_USER_ID = UUID('00000000-0000-0000-0000-000000000003')
 ENDPOINT_ID = UUID('00000000-0000-0000-0000-000000000004')
 SCHEMA_ID = UUID('00000000-0000-0000-0000-000000000005')
-SUPERADMIN_USER_ID = UUID('00000000-0000-0000-0000-0000000000bb')
-ALL_ROUTERS = [audit_log.router, admin_org_config.router, admin_webhooks.router, admin_organizations.router, admin_stats.router, admin_metrics.router, admin_quick_actions.router, admin_schemas.router, admin_invites.router, admin_system.router, users.router]
-ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [('GET', '/v1/admin/audit-logs', {}, {}), ('GET', '/v1/admin/audit-logs/actions', {}, {}), ('GET', '/admin/org/config', {}, {}), ('PATCH', '/admin/org/config', {}, {}), ('PUT', '/admin/org/config', {}, {}), ('POST', '/admin/org/config/test', {}, {}), ('GET', '/v1/admin/webhooks', {}, {}), ('GET', '/v1/admin/webhooks/{endpoint_id}', {'endpoint_id': str(ENDPOINT_ID)}, {}), ('POST', '/v1/admin/webhooks', {}, {}), ('PATCH', '/v1/admin/webhooks/{endpoint_id}', {'endpoint_id': str(ENDPOINT_ID)}, {}), ('DELETE', '/v1/admin/webhooks/{endpoint_id}', {'endpoint_id': str(ENDPOINT_ID)}, {}), ('GET', '/admin/org/custom-instructions', {}, {}), ('PUT', '/admin/org/custom-instructions', {}, {}), ('DELETE', '/admin/org/custom-instructions', {}, {}), ('GET', '/v1/admin/stats', {}, {}), ('GET', '/v1/admin/stats/usage', {}, {}), ('GET', '/metrics/summary', {}, {}), ('GET', '/metrics/batch', {}, {'days': '7'}), ('GET', '/metrics/targets', {}, {}), ('GET', '/v1/admin/quick-actions', {}, {}), ('POST', '/v1/admin/schemas', {}, {}), ('GET', '/v1/admin/schemas', {}, {}), ('GET', '/v1/admin/schemas/templates', {}, {}), ('POST', '/v1/admin/schemas/preview', {}, {}), ('GET', '/v1/admin/schemas/{schema_id}', {'schema_id': str(SCHEMA_ID)}, {}), ('PUT', '/v1/admin/schemas/{schema_id}', {'schema_id': str(SCHEMA_ID)}, {}), ('DELETE', '/v1/admin/schemas/{schema_id}', {'schema_id': str(SCHEMA_ID)}, {}), ('POST', '/v1/users', {}, {}), ('GET', '/v1/users', {}, {}), ('GET', '/v1/users/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('PATCH', '/v1/users/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('DELETE', '/v1/users/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('POST', '/v1/users/{user_id}/summary', {'user_id': str(OTHER_USER_ID)}, {}), ('PUT', '/v1/users/{user_id}/summary-instructions', {'user_id': str(OTHER_USER_ID)}, {}), ('DELETE', '/v1/users/{user_id}/summary-instructions', {'user_id': str(OTHER_USER_ID)}, {}), ('POST', '/v1/admin/users/invite', {}, {}), ('DELETE', '/v1/admin/users/invites/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('GET', '/v1/users/{user_id}/summary', {'user_id': str(OTHER_USER_ID)}, {}), ('GET', '/v1/users/{user_id}/summary-instructions', {'user_id': str(OTHER_USER_ID)}, {}), ('GET', '/admin/system/config', {}, {}), ('PATCH', '/admin/system/config', {}, {}), ('GET', '/admin/system/registration', {}, {}), ('PATCH', '/admin/system/registration', {}, {}), ('PATCH', '/admin/system/users/{user_id}/role', {'user_id': str(OTHER_USER_ID)}, {})]
+ADMIN_USER_ID = UUID('00000000-0000-0000-0000-0000000000bb')
+ALL_ROUTERS = [audit_log.router, admin_platform_config.router, admin_webhooks.router, admin_custom_instructions.router, admin_stats.router, admin_metrics.router, admin_quick_actions.router, admin_schemas.router, admin_invites.router, admin_system.router, users.router]
+ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [('GET', '/v1/admin/audit-logs', {}, {}), ('GET', '/v1/admin/audit-logs/actions', {}, {}), ('GET', '/admin/platform-config', {}, {}), ('PATCH', '/admin/platform-config', {}, {}), ('PUT', '/admin/platform-config', {}, {}), ('POST', '/admin/platform-config/test', {}, {}), ('GET', '/v1/admin/webhooks', {}, {}), ('GET', '/v1/admin/webhooks/{endpoint_id}', {'endpoint_id': str(ENDPOINT_ID)}, {}), ('POST', '/v1/admin/webhooks', {}, {}), ('PATCH', '/v1/admin/webhooks/{endpoint_id}', {'endpoint_id': str(ENDPOINT_ID)}, {}), ('DELETE', '/v1/admin/webhooks/{endpoint_id}', {'endpoint_id': str(ENDPOINT_ID)}, {}), ('GET', '/admin/custom-instructions', {}, {}), ('PUT', '/admin/custom-instructions', {}, {}), ('DELETE', '/admin/custom-instructions', {}, {}), ('GET', '/metrics/targets', {}, {}), ('POST', '/v1/admin/schemas', {}, {}), ('GET', '/v1/admin/schemas', {}, {}), ('GET', '/v1/admin/schemas/templates', {}, {}), ('POST', '/v1/admin/schemas/preview', {}, {}), ('GET', '/v1/admin/schemas/{schema_id}', {'schema_id': str(SCHEMA_ID)}, {}), ('PUT', '/v1/admin/schemas/{schema_id}', {'schema_id': str(SCHEMA_ID)}, {}), ('DELETE', '/v1/admin/schemas/{schema_id}', {'schema_id': str(SCHEMA_ID)}, {}), ('POST', '/v1/users', {}, {}), ('GET', '/v1/users', {}, {}), ('GET', '/v1/users/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('PATCH', '/v1/users/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('DELETE', '/v1/users/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('POST', '/v1/users/{user_id}/summary', {'user_id': str(OTHER_USER_ID)}, {}), ('PUT', '/v1/users/{user_id}/summary-instructions', {'user_id': str(OTHER_USER_ID)}, {}), ('DELETE', '/v1/users/{user_id}/summary-instructions', {'user_id': str(OTHER_USER_ID)}, {}), ('POST', '/v1/admin/users/invite', {}, {}), ('DELETE', '/v1/admin/users/invites/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('GET', '/v1/users/{user_id}/summary', {'user_id': str(OTHER_USER_ID)}, {}), ('GET', '/v1/users/{user_id}/summary-instructions', {'user_id': str(OTHER_USER_ID)}, {}), ('GET', '/admin/system/config', {}, {}), ('PATCH', '/admin/system/config', {}, {}), ('GET', '/admin/system/registration', {}, {}), ('PATCH', '/admin/system/registration', {}, {}), ('PATCH', '/admin/system/users/{user_id}/role', {'user_id': str(OTHER_USER_ID)}, {})]
 _MUTATING_METHODS = frozenset({'POST', 'PATCH', 'PUT'})
 
 def _make_app(*, authenticated: bool, auth_user_id: str | None=None, auth_role: str='member') -> FastAPI:
     """Build the app with the real permission-gate dependency chain.
 
     ``authenticated=True`` adds middleware that sets a member JWT session
-    on ``request.state`` (same pattern as
-    ``test_admin_org_code.py::_make_member_app``).  The gate dependencies
+    on ``request.state``.  The gate dependencies
     are NEVER overridden — only their infrastructure is mocked.
 
-    ``auth_user_id``/``auth_user_id``/``auth_role`` customise the session
-    (used by the superadmin-200 test, which must present the platform org
-    and the ``superadmin`` role).
+    ``auth_user_id``/``auth_role`` customise the session
+    (used by the admin-200 tests, which present the ``admin`` role).
     """
     app = FastAPI()
     register_exception_handlers(app)
     app.state.redis = AsyncMock()
     app.state.db_session_factory = None
     app.dependency_overrides[get_db] = lambda: AsyncMock()
-    from dependencies.db import get_db_superadmin
-    app.dependency_overrides[get_db_superadmin] = lambda: AsyncMock()
+    from dependencies.db import get_db_admin
+    app.dependency_overrides[get_db_admin] = lambda: AsyncMock()
     app.dependency_overrides[get_user_summary_service] = lambda: AsyncMock()
     from dependencies.services import get_invite_service
     app.dependency_overrides[get_invite_service] = lambda: AsyncMock()
-    from dependencies.org_config import get_org_config as get_org_config_dep
-    from schemas.organization_config import OrgConfigBase
-    app.dependency_overrides[get_org_config_dep] = lambda: OrgConfigBase()
+    from dependencies.platform_config import get_platform_config as get_platform_config_dep
+    from schemas.platform_config import PlatformConfigBase
+    app.dependency_overrides[get_platform_config_dep] = lambda: PlatformConfigBase()
     if authenticated:
 
         @app.middleware('http')
@@ -184,15 +184,15 @@ def _admin_gate_on_route(route) -> bool:
 
     Detects ``require_permission("...")`` / ``require_permission_or_self("...")``
     closures (named ``_permission_checker`` / ``_permission_or_self_checker``),
-    ``require_superadmin`` directly on the route, and the
-    ``require_superadmin_or_self()`` factory closure (named
-    ``_superadmin_or_self_checker`` — the users self-read/self-write gate).
+    ``require_admin`` directly on the route, and the
+    ``require_admin_or_self()`` factory closure (named
+    ``_admin_or_self_checker`` — the users self-read/self-write gate).
     """
     for dep in route.dependant.dependencies:
         call = dep.call
-        if call in (require_superadmin,):
+        if call in (require_admin,):
             return True
-        if getattr(call, '__name__', '') in ('_permission_checker', '_permission_or_self_checker', '_superadmin_or_self_checker'):
+        if getattr(call, '__name__', '') in ('_permission_checker', '_permission_or_self_checker', '_admin_or_self_checker'):
             return True
     return False
 

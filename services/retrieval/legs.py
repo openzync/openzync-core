@@ -19,7 +19,7 @@ class LegDispatchMixin:
     """Concurrent-leg plumbing and the five retrieval-leg entry points."""
 
     _db: AsyncSession
-    _org_id: UUID
+    _user_id: UUID
     _session_factory: async_sessionmaker[AsyncSession] | None
 
     def _scoped(self, db: AsyncSession) -> LegDispatchMixin:
@@ -33,16 +33,16 @@ class LegDispatchMixin:
             db: The sibling session the leg runs on.
 
         Returns:
-            A new retriever sharing org, backends, reranker
-            settings, org config, reranker, and Redis, but no session
+            A new retriever sharing user, backends, reranker
+            settings, platform config, reranker, and Redis, but no session
             factory (no nesting — the parent fans out, legs never re-fan).
         """
         return type(self)(
             db,
-            self._org_id,
+            self._user_id,
             redis=self._redis,
             graph_backends=self._graph_backends,
-            org_config=self._org_config,
+            platform_config=self._platform_config,
             reranker=self._reranker,
             session_factory=None,
         )
@@ -56,7 +56,7 @@ class LegDispatchMixin:
         """Run one retrieval leg, failing loud as ``SearchLegFailedError``.
 
         With a session factory the leg runs on a sibling session bound to
-        this org's RLS tenant; a leg failure rolls back only that session.
+        this user's RLS tenant; a leg failure rolls back only that session.
         Without a factory the leg runs sequentially on the shared session.
         ``SearchLegFailedError`` from the leg itself passes through
         unwrapped; any other exception is logged with leg context and
@@ -76,7 +76,7 @@ class LegDispatchMixin:
         """
         extra = {
             "leg": leg_name,
-            "user_id": str(self._org_id),
+            "user_id": str(self._user_id),
             "project_id": str(project_id),
         }
         if self._session_factory is None:
@@ -95,7 +95,7 @@ class LegDispatchMixin:
                 ) from exc
         async with self._session_factory() as leg_db:
             from services import hybrid_retriever as _hr  # via facade (patchable)
-            await _hr.set_tenant_context(leg_db, self._org_id)
+            await _hr.set_user_context(leg_db, self._user_id)
             try:
                 return await run(self._scoped(leg_db))
             except SearchLegFailedError:

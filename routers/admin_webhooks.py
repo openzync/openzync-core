@@ -1,6 +1,6 @@
 """Admin router for webhook endpoint management.
 
-All endpoints are scoped to the authenticated user's organization.
+All endpoints are scoped to the authenticated user's scope.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ async def list_webhooks(
         default="desc", description="Sort direction (default desc)."
     ),
 ) -> dict:
-    """List all webhook endpoints for the authenticated organization."""
+    """List all webhook endpoints for the authenticated user scope."""
     endpoints = await service.list_endpoints(
         uuid.UUID(user_id), sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir)
     )

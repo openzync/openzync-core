@@ -55,7 +55,7 @@ class FactService:
         session_repo: Repository for session CRUD.
         webhook_service: Optional webhook emitter.
         graph_backend_resolver: Optional async callable resolving the
-            org's graph backend (``None`` when graph is disabled).  The
+            user's graph backend (``None`` when graph is disabled).  The
             resolved backend powers graph edge expiry on supersession —
             see :class:`GraphEdgeSyncService`.  Resolution failures must
             be surfaced as raises here; ``ingest_facts`` downgrades them
@@ -111,7 +111,7 @@ class FactService:
         active facts were replaced.
 
         Args:
-            user_id: The authenticated organization UUID.
+            user_id: The authenticated user UUID.
             project_id: The project UUID.
             created_by: The authenticated user's UUID (attribution).
             facts: List of validated fact triples.
@@ -278,7 +278,7 @@ class FactService:
         """Hard-retract a fact by setting ``invalid_at`` and record its lineage.
 
         Scoped to ``(user_id, project_id)``: a fact from another
-        project (even in the same org) is indistinguishable from a missing
+        project (even in the same user) is indistinguishable from a missing
         one — ``NotFoundError`` either way, so the fact's existence is not
         leaked across project boundaries.
 
@@ -293,7 +293,7 @@ class FactService:
         Args:
             fact_id: The fact to retract.
             user_id: Tenant scope — the fact must belong to this
-                organization (defense-in-depth; RLS is org-scoped).
+                user (defense-in-depth; RLS is user-scoped).
             project_id: Project scope — the fact must belong to this
                 project or ``NotFoundError`` is raised.
             reason: Optional human-readable explanation.
@@ -305,7 +305,7 @@ class FactService:
 
         Raises:
             NotFoundError: If no fact with the given ID exists in the
-                scoped organization and project.
+                scoped user and project.
         """
         if at_time is None:
             at_time = datetime.now(UTC)
@@ -421,7 +421,7 @@ class FactService:
         Args:
             fact_id: The fact whose lineage to fetch.
             user_id: Tenant scope — the fact must belong to this
-                organization (defense-in-depth; RLS is org-scoped).
+                user (defense-in-depth; RLS is user-scoped).
             project_id: Project scope — the fact must belong to this
                 project or ``NotFoundError`` is raised.
             limit: Maximum events (capped at 200 by the repository).
@@ -435,7 +435,7 @@ class FactService:
 
         Raises:
             NotFoundError: If no fact with the given ID exists in the
-                scoped organization and project.
+                scoped user and project.
         """
         fact = await self._fact_repo.get_by_id(
             fact_id, user_id=user_id
@@ -463,7 +463,7 @@ class FactService:
     async def _resolve_graph_sync(
         self, user_id: UUID, project_id: UUID
     ) -> GraphEdgeSyncService | None:
-        """Resolve the org's graph backend and build the edge-sync service.
+        """Resolve the user's graph backend and build the edge-sync service.
 
         Runs lazily, only when an ingest is actually about to supersede.
         A resolution failure (no org config, dispatcher error, external
@@ -473,7 +473,7 @@ class FactService:
         failure must not lose or 500 a fact commit.
 
         Args:
-            user_id: The organization UUID.
+            user_id: The user UUID.
             project_id: The project UUID (log context).
 
         Returns:
@@ -511,7 +511,7 @@ class FactService:
 
         Args:
             job_id: The composite job ID for this ingestion.
-            user_id: The organization UUID string.
+            user_id: The user UUID string.
             project_id: The project UUID string.
             fact_ids: List of fact UUIDs to embed.
         """

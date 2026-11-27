@@ -93,7 +93,7 @@ class PromMetricsQueriesService:
         limit: int,
         project_id: UUID | None,
     ) -> dict:
-        """Daily 5xx rate for the org (Prometheus has no project scope)."""
+        """Daily 5xx rate for the user (Prometheus has no project scope)."""
         # Prometheus has no project scope — project_id is explicitly ignored.
         _ = (project_id, limit)
         promql = (

@@ -92,10 +92,10 @@ class AdminStatsService:
         """
         daily_counts: dict[str, dict[str, int]] = {}
 
-        from core.org_config import get_org_config as _get_org_config
+        from core.platform_config import get_platform_config as _get_platform_config
 
         redis = getattr(request.app.state, "redis", None)
-        user_config = await _get_org_config(
+        user_config = await _get_platform_config(
             user_id, redis=redis, db=self._db
         )
 

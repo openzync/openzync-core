@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from schemas.organization_config import OrgConfigBase
+from schemas.platform_config import PlatformConfigBase
 from services.cache_service import CacheService
 from services.context_service import ContextService
 from services.hybrid_retriever import HybridRetriever
@@ -31,7 +31,7 @@ class TestContextService:
             user_id=self.ORG_ID,
             redis=mock_redis,
             graph_backends=[mock_graph_backend],
-            org_config=OrgConfigBase(context_cache_ttl=300),
+            platform_config=PlatformConfigBase(context_cache_ttl=300),
         )
         # Mock the internal retriever to control its output
         mock_retriever = AsyncMock(spec=HybridRetriever)
@@ -43,7 +43,7 @@ class TestContextService:
             "source_counts": {"episodes": {}, "facts": {}, "entities": {}},
             "total_items": 0,
         }
-        mock_retriever._org_config = None
+        mock_retriever._platform_config = None
         svc._retriever = mock_retriever
         return svc
 
@@ -101,14 +101,14 @@ class TestContextService:
 
     def _build_with_org_config(
         self,
-        org_config: OrgConfigBase | None,
+        platform_config: PlatformConfigBase | None,
     ) -> ContextService:
         """Construct a ContextService with a given (possibly None) org config."""
         svc = ContextService(
             db=AsyncMock(),
             user_id=self.ORG_ID,
             redis=AsyncMock(),
-            org_config=org_config,
+            platform_config=platform_config,
         )
         # Swap in a mocked retriever so construction side effects don't matter.
         svc._retriever = AsyncMock(spec=HybridRetriever)
@@ -122,7 +122,7 @@ class TestContextService:
 
     def test_constructs_with_null_context_cache_ttl(self) -> None:
         """Orgs with a null context_cache_ttl fall back to the default TTL."""
-        svc = self._build_with_org_config(OrgConfigBase(context_cache_ttl=None))
+        svc = self._build_with_org_config(PlatformConfigBase(context_cache_ttl=None))
         assert svc._cache is not None
         assert svc._cache._default_ttl == 300
 
@@ -261,7 +261,7 @@ class TestContextAsOf:
             user_id=self.ORG_ID,
             redis=mock_redis,
             graph_backends=[AsyncMock()],
-            org_config=OrgConfigBase(context_cache_ttl=300),
+            platform_config=PlatformConfigBase(context_cache_ttl=300),
         )
         mock_retriever = AsyncMock(spec=HybridRetriever)
         mock_retriever.hybrid_search.return_value = {
@@ -272,7 +272,7 @@ class TestContextAsOf:
             "source_counts": {"episodes": {}, "facts": {}, "entities": {}},
             "total_items": 0,
         }
-        mock_retriever._org_config = None
+        mock_retriever._platform_config = None
         svc._retriever = mock_retriever
         return svc
 

@@ -3,7 +3,7 @@
 Each row represents a single user's membership in a project with a specific
 role. The combination (project_id, user_id) is unique — a user can only have
 one row per project. New rows start as ``pending`` and become ``active``
-only when the invitee approves (or a superadmin approves for them);
+only when the invitee approves (or a platform admin approves for them);
 existing rows were backfilled to ``active``.
 """
 

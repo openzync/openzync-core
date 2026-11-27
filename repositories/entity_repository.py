@@ -30,7 +30,7 @@ class EntityRepository:
 
     Raises:
         GraphBackendUnavailableError: If *graph_backend* is ``None``.
-            Callers must resolve the per-org backend via
+            Callers must resolve the per-user backend via
             ``workers.backend.resolve_graph_backend()`` or inject the backend
             from the API dependency chain.  Silent Postgres fallback is no
             longer supported.
@@ -45,7 +45,7 @@ class EntityRepository:
         if graph_backend is None:
             raise GraphBackendUnavailableError(
                 "EntityRepository requires a graph_backend. "
-                "Callers must resolve the per-org backend via "
+                "Callers must resolve the per-user backend via "
                 "workers.backend.resolve_graph_backend() "
                 "or inject the backend from the API dependency chain. "
                 "This is a non-negotiable enforcement — "
@@ -80,7 +80,7 @@ class EntityRepository:
         """
         if self._backend is None:
             raise GraphBackendUnavailableError(
-                "Graph backend is not configured for this organization."
+                "Graph backend is not configured for this user."
             )
 
         # Check if entity with this name already exists (for logging only)
@@ -160,7 +160,7 @@ class EntityRepository:
         """
         if self._backend is None:
             raise GraphBackendUnavailableError(
-                "Graph backend is not configured for this organization."
+                "Graph backend is not configured for this user."
             )
 
         try:
@@ -215,7 +215,7 @@ class EntityRepository:
         """
         if self._backend is None:
             raise GraphBackendUnavailableError(
-                "Graph backend is not configured for this organization."
+                "Graph backend is not configured for this user."
             )
 
         try:
@@ -260,7 +260,7 @@ class EntityRepository:
         """
         if self._backend is None:
             raise GraphBackendUnavailableError(
-                "Graph backend is not configured for this organization."
+                "Graph backend is not configured for this user."
             )
 
         # Look up both endpoints by name

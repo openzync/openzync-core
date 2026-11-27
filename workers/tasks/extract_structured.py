@@ -186,13 +186,13 @@ async def process_structured_output(
 
     Args:
         db: Active database session.
-        user_id: Organization UUID string.
+        user_id: User UUID string.
         episode_id: Episode UUID string.
         project_id: Project UUID string.
         session_id: Session UUID string.
         parsed: The raw dict from the LLM (StructuredExtractionOutput
             accepts extra keys so its model_dump() is a dict).
-        schemas: List of active extraction schema dicts from org config.
+        schemas: List of active extraction schema dicts from platform config.
             Entries with no matching schema are skipped; an empty
             ``parsed`` writes no rows but still stamps the bit
             (assessed, nothing matched).

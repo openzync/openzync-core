@@ -69,7 +69,7 @@ class AuditLogRepository:
         """Insert a new audit log entry.
 
         Args:
-            user_id: Organization UUID (nullable for unauthenticated actions).
+            user_id: User UUID (nullable for unauthenticated actions).
             actor_id: Identifier of the acting entity.
             actor_type: ``user``, ``api_key``, or ``system``.
             action: The action performed (e.g. ``session.create``).
@@ -92,9 +92,9 @@ class AuditLogRepository:
             ip_address=ip_address,
         )
         # The audit writer runs on its own session (the ARQ job) with no
-        # tenant context — bind the session to the entry's organization so
-        # the org-scoped row passes the audit_logs policy.  An entry without
-        # an organization is a platform-level row: no tenant-scoped policy
+        # tenant context — bind the session to the entry's user so
+        # the user-scoped row passes the audit_logs policy.  An entry without
+        # a user-less entry is a platform-level row: no tenant-scoped policy
         # admits it, so the writer must have enabled the RLS bypass (the ARQ
         # audit task does).  Without that bypass the insert is refused by
         # the database — loudly, never silently dropped.
@@ -129,11 +129,11 @@ class AuditLogRepository:
         ``status_code`` (``details->>status_code``), ``actor_id``.
 
         Args:
-            user_id: Filter by org.  ``None`` means *platform-wide* —
+            user_id: Filter by user.  ``None`` means *platform-wide* —
                 the caller's own isolation (an RLS-bypass session) decides
                 what is visible.  A concrete UUID restricts the result to
-                that organization, including the exclusion of the
-                platform-level rows that carry no organization.
+                that user, including the exclusion of the
+                platform-level rows that carry no user.
             action: Exact-match filter on action.
             actor_id: Exact-match filter on actor_id.
             actor_type: Exact-match filter on actor_type.
@@ -154,7 +154,7 @@ class AuditLogRepository:
         """
         # The org filter is applied here, not left to the policy: RLS is an
         # *additional* filter, and the audit table also holds platform-level
-        # rows (no organization) that a tenant must never see.  A tenant
+        # rows (no user) that a tenant must never see.  A tenant
         # admin reading the audit trail must not learn another tenant's
         # authentication attempts, their client IPs or their request ids.
         base = select(AuditLog)
@@ -225,14 +225,14 @@ class AuditLogRepository:
     ) -> list[str]:
         """Return distinct action names, alphabetically sorted.
 
-        Applies the same organization condition as :meth:`list` — a
-        concrete UUID restricts the result to that organization (and
-        excludes platform-level rows with no organization); ``None``
+        Applies the same user condition as :meth:`list` — a
+        concrete UUID restricts the result to that user (and
+        excludes platform-level rows with no user); ``None``
         means platform-wide (the caller's own isolation decides what
         is visible).
 
         Args:
-            user_id: Filter by org, or ``None`` for platform-wide.
+            user_id: Filter by user, or ``None`` for platform-wide.
 
         Returns:
             Sorted list of distinct action names.

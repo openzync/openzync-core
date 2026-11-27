@@ -34,10 +34,10 @@ class CustomInstructionRepository:
         """Fetch instructions for a given scope + target.
 
         Args:
-            user_id: The owning organization UUID.
+            user_id: The owning user UUID.
             scope: Instruction scope (``extraction`` or ``user_summary``).
             target_id: Optional target entity UUID.  ``None`` fetches
-                org-level instructions for the scope.
+                platform-level instructions for the scope.
 
         Returns:
             Ordered list of matching ``CustomInstruction`` objects, ordered
@@ -72,10 +72,10 @@ class CustomInstructionRepository:
         as ``ValidationError`` via the unique index (fail-loud, no retry).
 
         Args:
-            user_id: The owning organization UUID.
+            user_id: The owning user UUID.
             scope: Instruction scope.
             target_id: Optional target entity UUID.  ``None`` replaces
-                org-level instructions.
+                platform-level instructions.
             instructions: List of ``{name, text}`` dicts to insert.
 
         Returns:
@@ -138,10 +138,10 @@ class CustomInstructionRepository:
         """Delete all instructions for a scope + target.
 
         Args:
-            user_id: The owning organization UUID.
+            user_id: The owning user UUID.
             scope: Instruction scope.
             target_id: Optional target entity UUID.  ``None`` deletes
-                org-level instructions for the given scope.
+                platform-level instructions for the given scope.
         """
         del_conds = [
             CustomInstruction.user_id == user_id,

@@ -153,7 +153,7 @@ class ExternalServiceError(AppError):
 class LLMConfigurationError(AppError):
     """LLM backend cannot be resolved due to missing or invalid configuration.
 
-    Raised when no LLM backend can be resolved because the per-org config
+    Raised when no LLM backend can be resolved because the per-user config
     is missing required fields (API keys, model names, endpoints, etc.).
     """
 
@@ -488,7 +488,7 @@ def _is_removed_backend_error(exc: ValueError) -> bool:
     Returns:
         ``True`` when the message is the hardcoded removed-``postgres``
         backend text (contains the ``410`` marker) from the graph-backend
-        validator in ``schemas/organization_config.py``.
+        validator in ``schemas/platform_config.py``.
     """
     text = str(exc).lower()
     return "postgres" in text and "410" in text

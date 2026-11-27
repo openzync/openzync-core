@@ -32,7 +32,13 @@ def _stub_permission_gate() -> None:
     stubs the gate while keeping the ``require_user_id`` chain intact.  The
     real gate matrix is covered by ``test_admin_gate_matrix.py``.
     """
-    with patch("dependencies.auth._check_permission", new=AsyncMock()):
+    with (
+        patch("dependencies.auth._check_permission", new=AsyncMock()),
+        # ``routers/projects.py`` calls its directly-imported
+        # ``_check_permission`` inside the list-members handler (profile
+        # visibility), which the ``dependencies.auth`` patch never reaches.
+        patch("routers.projects._check_permission", new=AsyncMock()),
+    ):
         yield
 
 
@@ -725,7 +731,7 @@ class TestProjectsRouter:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.patch(
-                f"/v1/projects/{PROJECT_ID}/members/{USER_ID}?role=superadmin",
+                f"/v1/projects/{PROJECT_ID}/members/{USER_ID}?role=admin",
             )
 
         assert response.status_code == 422

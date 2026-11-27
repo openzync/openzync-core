@@ -1,4 +1,4 @@
-"""Webhook endpoint model — per-organization webhook configuration.
+"""Webhook endpoint model — per-user webhook configuration.
 
 Each row represents a webhook endpoint that receives POST requests for
 subscribed event types.

@@ -25,7 +25,7 @@ from models.base import Base, TimestampMixin
 class ApiKey(TimestampMixin, Base):
     """An API key credential scoped to a project.
 
-    Every API key belongs to exactly one project — there are no org-wide
+    Every API key belongs to exactly one project — there are no user-wide
     keys.  When the parent project is deleted, its keys are cascade-deleted.
 
     Attributes:

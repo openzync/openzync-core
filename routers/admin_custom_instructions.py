@@ -1,7 +1,7 @@
-"""Admin router for organization-level configuration management.
+"""Admin router for custom instructions management.
 
-Provides CRUD for custom instructions, scoped to the authenticated
-user's organization.
+Provides CRUD for extraction custom instructions in the singleton
+platform org.
 
 Prompt templates are disk-only (``services/worker/prompts/manifest.yaml``
 + ``.jinja2`` files, cached at startup) — the ``/prompts*`` API and the
@@ -28,8 +28,8 @@ from schemas.custom_instructions import (
 # ── Router ─────────────────────────────────────────────────────────────────
 
 router = APIRouter(
-    prefix="/admin/org",
-    tags=["Admin - Organizations"],
+    prefix="/admin/custom-instructions",
+    tags=["Admin - Custom Instructions"],
 )
 
 
@@ -48,14 +48,14 @@ async def get_custom_instruction_service(
 
 
 @router.get(
-    "/custom-instructions",
+    "",
     response_model=CustomInstructionsResponse,
 )
 async def list_custom_instructions(
     service=Depends(get_custom_instruction_service),
     user_id: str = Depends(require_permission("configuration:read")),
 ) -> CustomInstructionsResponse:
-    """List all extraction custom instructions for the organization."""
+    """List all extraction custom instructions for the platform."""
     instructions = await service.list_for_scope(
         user_id=uuid.UUID(user_id),
         scope="extraction",
@@ -66,7 +66,7 @@ async def list_custom_instructions(
 
 
 @router.put(
-    "/custom-instructions",
+    "",
     response_model=CustomInstructionsResponse,
     status_code=201,
 )
@@ -76,7 +76,7 @@ async def set_custom_instructions(
     service=Depends(get_custom_instruction_service),
     user_id: str = Depends(require_permission("configuration:write")),
 ) -> CustomInstructionsResponse:
-    """Replace all extraction custom instructions for the organization.
+    """Replace all extraction custom instructions for the platform.
 
     The existing instructions in the ``extraction`` scope are deleted and
     replaced atomically with the provided list.
@@ -94,7 +94,7 @@ async def set_custom_instructions(
 
 
 @router.delete(
-    "/custom-instructions",
+    "",
     status_code=204,
 )
 @audit_action("instruction.delete", "instruction", "Instructions deleted")
@@ -102,7 +102,7 @@ async def clear_custom_instructions(
     service=Depends(get_custom_instruction_service),
     user_id: str = Depends(require_permission("configuration:write")),
 ) -> Response:
-    """Clear all extraction custom instructions for the organization.
+    """Clear all extraction custom instructions for the platform.
 
     All instructions in the ``extraction`` scope are removed.  This is a
     no-op if no instructions exist.

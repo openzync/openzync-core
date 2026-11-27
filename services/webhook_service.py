@@ -147,11 +147,11 @@ class WebhookService:
         user_id: uuid.UUID,
         sort: SortSpec | None = None,
     ) -> list[dict]:
-        """List all webhook endpoints for an organization.
+        """List all webhook endpoints for a user scope.
 
         Default ``created_at/desc``; whitelist ``name``, ``created_at``.
         """
-        # note: no LIMIT — per-org endpoints are operator-created config rows
+        # note: no LIMIT — per-user endpoints are operator-created config rows
         # (single digits); the emit path reads this same set, so a cap here
         # would diverge list from delivery without any real cost saving.
         endpoints = await self._repo.get_by_organization(user_id, sort=sort)
@@ -181,7 +181,7 @@ class WebhookService:
         do not expose it.  Rotate via :meth:`rotate_endpoint_secret`.
 
         Args:
-            user_id: The owning organization's UUID.
+            user_id: The owning user's UUID.
             name: Human-readable endpoint label.
             url: HTTPS endpoint URL that receives POST deliveries.
             events: Subscribed event types; empty/None subscribes to all.
@@ -212,11 +212,11 @@ class WebhookService:
 
         Args:
             endpoint_id: The endpoint whose secret should be rotated.
-            user_id: The owning organization (ownership check).
+            user_id: The owning user (ownership check).
 
         Returns:
             The new signing secret, or ``None`` if the endpoint does not
-            exist or belongs to a different organization.
+            exist or belongs to a different user scope.
         """
         endpoint = await self._repo.get_by_id(endpoint_id)
         if not endpoint or endpoint.user_id != user_id:
@@ -299,7 +299,7 @@ class WebhookService:
         webhook scheduling failure must never fail that work.
 
         Args:
-            user_id: The organization emitting the event.
+            user_id: The user emitting the event.
             event_type: The event type string (e.g. ``session.created``).
             payload: Optional event payload dict.
 

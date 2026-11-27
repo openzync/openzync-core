@@ -1,4 +1,4 @@
-"""Graph backend registry + resolver — selects backend based on per-org config.
+"""Graph backend registry + resolver — selects backend based on per-user config.
 
 The :class:`GraphBackendDispatcher` is an app-level singleton that holds a
 registry of backend **classes** (not instances).  Callers use
@@ -14,15 +14,15 @@ Usage::
     # Per-request (FalkorDB):
     dispatcher = request.app.state.graph_backend_dispatcher
     backend = dispatcher.resolve_and_create(
-        org_config, db, falkordb_client=falkordb
+        platform_config, db, falkordb_client=falkordb
     )
     entity = await backend.create_entity(user_id=..., name="Acme", ...)
 
     # Per-request (SurrealDB):
-    backend = dispatcher.resolve_and_create(org_config, db, surreal=surreal)
+    backend = dispatcher.resolve_and_create(platform_config, db, surreal=surreal)
 
     The default backend is ``"falkordb"`` (set in
-:class:`~schemas.organization_config.OrgConfigBase`); ``"none"``
+:class:`~schemas.platform_config.PlatformConfigBase`); ``"none"``
 disables the graph entirely. ``"postgres"`` was removed in v1.1.0
 and now returns HTTP 410 Gone.
 
@@ -30,7 +30,7 @@ To add a new backend in the future:
 
 1. Create a class implementing :class:`GraphBackend`.
 2. Register it: ``dispatcher.register("my_backend", MyBackend)``.
-3. Set ``org_config.graph_backend = "my_backend"`` for the target org.
+3. Set ``platform_config.graph_backend = "my_backend"`` for the target platform.
 
 No callers change.
 """
@@ -49,14 +49,14 @@ from core.exceptions import GraphBackendUnavailableError
 from packages.graph_backend.interface import GraphBackend
 
 if TYPE_CHECKING:
-    from schemas.organization_config import OrgConfigBase
+    from schemas.platform_config import PlatformConfigBase
 
 logger = logging.getLogger(__name__)
 _resolve_logger = structlog.get_logger(__name__)
 
 
 class GraphBackendDispatcher:
-    """Registry of backend classes + per-org resolution.
+    """Registry of backend classes + per-user resolution.
 
     This is an app-level singleton.  It does **not** hold backend instances
     because backends need a request-scoped ``AsyncSurreal`` connection
@@ -71,10 +71,10 @@ class GraphBackendDispatcher:
         dispatcher.register("falkordb", FalkorGraphBackend)
 
         # Per-request (SurrealDB):
-        backend = dispatcher.resolve_and_create(org_config, db, surreal=surreal)
+        backend = dispatcher.resolve_and_create(platform_config, db, surreal=surreal)
 
         # Per-request (FalkorDB):
-        backend = dispatcher.resolve_and_create(org_config, db, falkordb_client=falkordb)
+        backend = dispatcher.resolve_and_create(platform_config, db, falkordb_client=falkordb)
     """
 
     def __init__(self) -> None:
@@ -100,16 +100,16 @@ class GraphBackendDispatcher:
 
     def resolve_and_create(
         self,
-        org_config: OrgConfigBase | None,
+        platform_config: PlatformConfigBase | None,
         db: AsyncSession,
         surreal: Any = None,
         falkordb_client: Any = None,
     ) -> GraphBackend | None:
-        """Resolve the backend name from ``org_config`` and create an instance.
+        """Resolve the backend name from ``platform_config`` and create an instance.
 
         Steps:
 
-        1. If ``org_config`` is ``None`` or ``org_config.graph_backend``
+        1. If ``platform_config`` is ``None`` or ``platform_config.graph_backend``
            is not set or equals ``"none"`` → returns ``None`` (graph disabled).
         2. Looks up the backend name in the registry.
         3. Creates a new instance with backend-specific kwargs.
@@ -123,11 +123,11 @@ class GraphBackendDispatcher:
           ``max_traversal_depth``.
 
         Args:
-            org_config: The resolved per-org configuration.  May be ``None``
+            platform_config: The resolved platform configuration.  May be ``None``
                 (treated as graph disabled).
             db: Unused — kept for signature compatibility.  Backends take
                 ``surreal`` / ``falkordb_client``, never ``db``.
-            surreal: An optional ``AsyncSurreal`` instance from the per-org
+            surreal: An optional ``AsyncSurreal`` instance from the per-user
                 connection pool.  Passed only to the SurrealDB backend.
                 May be ``None``. Raises ``GraphBackendUnavailableError``
                 when backend is unavailable.
@@ -138,20 +138,20 @@ class GraphBackendDispatcher:
 
         Returns:
             An initialised ``GraphBackend`` instance, or ``None`` if graph
-            features are disabled for this org.
+            features are disabled for this user.
 
         Raises:
             GoneError: If ``graph_backend`` is ``"postgres"`` (removed in v1.1.0).
-            ValueError: If the backend name from ``org_config`` is not
+            ValueError: If the backend name from ``platform_config`` is not
                 registered and is not ``"none"``.
         """
-        backend_name = self._resolve_backend_name(org_config)
+        backend_name = self._resolve_backend_name(platform_config)
         if backend_name is None:
             logger.debug("graph_backend.disabled")
             return None
 
         # Hard reject: postgres removed in v1.1.0 → 410 Gone.  Checked
-        # before the registry lookup so stale org configs get the
+        # before the registry lookup so stale platform configs get the
         # migration message instead of "Unknown graph backend".
         if backend_name == "postgres":
             logger.error(
@@ -170,8 +170,8 @@ class GraphBackendDispatcher:
             raise ValueError(
                 f"Unknown graph backend: '{backend_name}'. "
                 f"Available backends: {list(self._registry.keys())}. "
-                f"Set graph_backend in the per-org configuration "
-                f"via PATCH /admin/org/config."
+                f"Set graph_backend in the platform configuration "
+                f"via PATCH /admin/platform-config."
             )
 
         # Backend-specific kwargs — each backend receives only the
@@ -181,18 +181,18 @@ class GraphBackendDispatcher:
             if surreal is not None:
                 kwargs["surreal"] = surreal
             if (
-                org_config is not None
-                and org_config.graph_max_traversal_depth is not None
+                platform_config is not None
+                and platform_config.graph_max_traversal_depth is not None
             ):
-                kwargs["max_traversal_depth"] = org_config.graph_max_traversal_depth
+                kwargs["max_traversal_depth"] = platform_config.graph_max_traversal_depth
         elif backend_name == "falkordb":
             if falkordb_client is not None:
                 kwargs["client"] = falkordb_client
             if (
-                org_config is not None
-                and org_config.graph_max_traversal_depth is not None
+                platform_config is not None
+                and platform_config.graph_max_traversal_depth is not None
             ):
-                kwargs["max_traversal_depth"] = org_config.graph_max_traversal_depth
+                kwargs["max_traversal_depth"] = platform_config.graph_max_traversal_depth
 
         backend = cls(**kwargs)
         logger.info(
@@ -204,17 +204,17 @@ class GraphBackendDispatcher:
     def create_all_backends(
         self,
         db: AsyncSession,
-        org_config: OrgConfigBase | None = None,
+        platform_config: PlatformConfigBase | None = None,
         surreal: Any = None,
         falkordb_client: Any = None,
     ) -> list[GraphBackend]:
         """Create one instance of every registered backend.
 
         This is the multi-backend equivalent of ``resolve_and_create``.
-        Instead of picking one backend from the org config, it creates
+        Instead of picking one backend from the platform config, it creates
         **all** registered backends.  Each backend receives backend-
         specific kwargs (``surreal`` for SurrealDB, ``client`` for
-        FalkorDB) and any shared kwargs from ``org_config``.
+        FalkorDB) and any shared kwargs from ``platform_config``.
 
         Callers (e.g. ``HybridRetriever``) run these backends in parallel
         and merge results. Raises ``GraphBackendUnavailableError`` when no
@@ -222,9 +222,9 @@ class GraphBackendDispatcher:
 
         Args:
             db: Unused (kept for signature compatibility).
-            org_config: Optional per-org config for backend-specific kwargs
+            platform_config: Optional per-user config for backend-specific kwargs
                 such as ``graph_max_traversal_depth``.
-            surreal: An optional ``AsyncSurreal`` instance from the per-org
+            surreal: An optional ``AsyncSurreal`` instance from the per-user
                 connection pool.  Only passed to the SurrealDB backend.
             falkordb_client: An optional ``FalkorDB`` async client instance
                 from the app-level connection pool.  Only passed to the
@@ -241,19 +241,19 @@ class GraphBackendDispatcher:
                     continue
                 kwargs["surreal"] = surreal
                 if (
-                    org_config is not None
-                    and org_config.graph_max_traversal_depth is not None
+                    platform_config is not None
+                    and platform_config.graph_max_traversal_depth is not None
                 ):
-                    kwargs["max_traversal_depth"] = org_config.graph_max_traversal_depth
+                    kwargs["max_traversal_depth"] = platform_config.graph_max_traversal_depth
             elif backend_name == "falkordb":
                 if falkordb_client is None:
                     continue
                 kwargs["client"] = falkordb_client
                 if (
-                    org_config is not None
-                    and org_config.graph_max_traversal_depth is not None
+                    platform_config is not None
+                    and platform_config.graph_max_traversal_depth is not None
                 ):
-                    kwargs["max_traversal_depth"] = org_config.graph_max_traversal_depth
+                    kwargs["max_traversal_depth"] = platform_config.graph_max_traversal_depth
             instances.append(cls(**kwargs))
 
         logger.info(
@@ -264,34 +264,34 @@ class GraphBackendDispatcher:
 
     # ── Resolution only (no instance) ────────────────────────────────────────────
 
-    def resolve_backend_name(self, org_config: OrgConfigBase | None) -> str | None:
-        """Determine which backend name this org should use.
+    def resolve_backend_name(self, platform_config: PlatformConfigBase | None) -> str | None:
+        """Determine which backend name this user should use.
 
         This is a pure lookup — it does **not** create an instance.
         Useful when the caller only needs to know *which* backend is
         configured without instantiating it.
 
         Args:
-            org_config: The resolved per-org configuration.
+            platform_config: The resolved platform configuration.
 
         Returns:
             The backend name string (e.g. ``"falkordb"``), or ``None`` if
             graph features are disabled.
         """
-        return self._resolve_backend_name(org_config)
+        return self._resolve_backend_name(platform_config)
 
     # ── Internals ───────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _resolve_backend_name(org_config: OrgConfigBase | None) -> str | None:
-        """Extract the backend name from org config.
+    def _resolve_backend_name(platform_config: PlatformConfigBase | None) -> str | None:
+        """Extract the backend name from platform config.
 
         Returns ``None`` when the graph is intentionally disabled
         (config is ``None``, field is empty or ``"none"``).
         """
-        if org_config is None:
+        if platform_config is None:
             return None
-        backend_name = org_config.graph_backend
+        backend_name = platform_config.graph_backend
         if not backend_name or backend_name == "none":
             return None
         return backend_name
@@ -320,12 +320,12 @@ def init_dispatcher() -> GraphBackendDispatcher:
 
 async def resolve_graph_backend_fail_soft(
     request: Request,
-    org_config: OrgConfigBase,
+    platform_config: PlatformConfigBase,
     user_id: UUID,
     db: AsyncSession,
     log_prefix: str,
 ) -> GraphBackend | None:
-    """Resolve the org-configured graph backend, fail-soft to ``None``.
+    """Resolve the platform-configured graph backend, fail-soft to ``None``.
 
     Single home for the dispatcher + SurrealDB-pool + resolve sequence
     previously triplicated across the admin metrics/stats services. A down
@@ -334,8 +334,8 @@ async def resolve_graph_backend_fail_soft(
 
     Args:
         request: FastAPI request (dispatcher + pools live on app state).
-        org_config: Org config (graph backend selection).
-        user_id: Authenticated organization ID (log context + pool key).
+        platform_config: Platform config (graph backend selection).
+        user_id: Authenticated user ID (singleton platform) (log context + pool key).
         db: Request-scoped session passed to ``resolve_and_create``.
         log_prefix: Caller namespace for log events
             (``"admin_metrics"`` / ``"admin_stats"``).
@@ -349,11 +349,11 @@ async def resolve_graph_backend_fail_soft(
         _resolve_logger.warning(f"{log_prefix}.no_graph_dispatcher")
         return None
     surreal = None
-    if org_config.graph_backend == "surrealdb":
+    if platform_config.graph_backend == "surrealdb":
         pool = getattr(request.app.state, "surreal_connection_pool", None)
         if pool is not None:
             try:
-                surreal = await pool.get_or_create(user_id, org_config)
+                surreal = await pool.get_or_create(user_id, platform_config)
             except Exception as exc:
                 _resolve_logger.warning(
                     f"{log_prefix}.surreal_connection_failed",
@@ -362,7 +362,7 @@ async def resolve_graph_backend_fail_soft(
                 return None
     try:
         return dispatcher.resolve_and_create(
-            org_config,
+            platform_config,
             db,
             surreal=surreal,
             falkordb_client=getattr(request.app.state, "falkordb_client", None),

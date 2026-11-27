@@ -15,7 +15,7 @@ ENRICHMENT_STATUS_LABELS: dict[int, str] = {
 
 def build_result(
     query_name: str,
-    org_scoped: bool,
+    user_scoped: bool,
     columns: list[str],
     rows: list,
     params: dict,
@@ -24,7 +24,7 @@ def build_result(
     """Build the standard batch query response dict."""
     resp: dict = {
         "query": query_name,
-        "org_scoped": org_scoped,
+        "user_scoped": user_scoped,
         "columns": columns,
         "rows": rows,
         "total": len(rows),

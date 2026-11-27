@@ -129,18 +129,18 @@ class TestUnknownKeys:
             )
 
     def test_org_base_schema_rejects_unknown_key(self) -> None:
-        """``OrgConfigBase`` unknown key → pydantic error (→ 422)."""
-        from schemas.organization_config import OrgConfigBase
+        """``PlatformConfigBase`` unknown key → pydantic error (→ 422)."""
+        from schemas.platform_config import PlatformConfigBase
 
         with pytest.raises(PydanticValidationError, match="Unknown enrichment keys"):
-            OrgConfigBase(enrichment={"bogus_key": True})  # type: ignore[dict-item]
+            PlatformConfigBase(enrichment={"bogus_key": True})  # type: ignore[dict-item]
 
     def test_org_update_schema_rejects_unknown_key(self) -> None:
-        """``UpdateOrgConfigRequest`` unknown key → pydantic error (→ 422)."""
-        from schemas.organization_config import UpdateOrgConfigRequest
+        """``UpdatePlatformConfigRequest`` unknown key → pydantic error (→ 422)."""
+        from schemas.platform_config import UpdatePlatformConfigRequest
 
         with pytest.raises(PydanticValidationError, match="Unknown enrichment keys"):
-            UpdateOrgConfigRequest(enrichment={"bogus_key": True})  # type: ignore[dict-item]
+            UpdatePlatformConfigRequest(enrichment={"bogus_key": True})  # type: ignore[dict-item]
 
     def test_system_schema_rejects_unknown_key(self) -> None:
         """``SystemConfigUpdate`` unknown key → pydantic error (→ 422).
@@ -182,11 +182,11 @@ class TestNonBoolValues:
 
     @pytest.mark.parametrize("bad", ["false", 0, 1])
     def test_org_base_schema_rejects_non_bool(self, bad: object) -> None:
-        """``OrgConfigBase`` non-bool toggle → pydantic error (→ 422)."""
-        from schemas.organization_config import OrgConfigBase
+        """``PlatformConfigBase`` non-bool toggle → pydantic error (→ 422)."""
+        from schemas.platform_config import PlatformConfigBase
 
         with pytest.raises(PydanticValidationError):
-            OrgConfigBase(enrichment={"facts": bad})  # type: ignore[dict-item]
+            PlatformConfigBase(enrichment={"facts": bad})  # type: ignore[dict-item]
 
     @pytest.mark.parametrize("bad", ["false", 0, 1])
     def test_system_schema_rejects_non_bool(self, bad: object) -> None:
@@ -201,15 +201,15 @@ class TestNonBoolValues:
 
     @pytest.mark.parametrize("bad", ["false", 0, 1])
     def test_org_update_schema_rejects_non_bool(self, bad: object) -> None:
-        """``UpdateOrgConfigRequest`` non-bool toggle → pydantic error.
+        """``UpdatePlatformConfigRequest`` non-bool toggle → pydantic error.
 
         (``None`` stays legal here — it is a staged null-reset, not a
         value; see the org-config null-reset tests.)
         """
-        from schemas.organization_config import UpdateOrgConfigRequest
+        from schemas.platform_config import UpdatePlatformConfigRequest
 
         with pytest.raises(PydanticValidationError):
-            UpdateOrgConfigRequest(enrichment={"facts": bad})  # type: ignore[dict-item]
+            UpdatePlatformConfigRequest(enrichment={"facts": bad})  # type: ignore[dict-item]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -223,7 +223,7 @@ class TestKeySetParity:
     def test_all_key_sets_match_canonical(self) -> None:
         """bits, memory, and org key sets are identical (system is fieldless)."""
         from schemas.memory import ENRICHMENT_KEYS as MEMORY_KEYS
-        from schemas.organization_config import ENRICHMENT_KEYS as ORG_KEYS
+        from schemas.platform_config import ENRICHMENT_KEYS as ORG_KEYS
 
         canonical = set(ENRICHMENT_KEYS)
         assert set(MEMORY_KEYS) == canonical

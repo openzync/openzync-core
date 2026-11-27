@@ -2,11 +2,11 @@
 
 Layering (lowest → highest precedence)::
 
-    system root default < org/user stored override < per-ingest request param
+    system root default < platform/user stored override < per-ingest request param
 
 Every layer is an optional ``dict[str, bool]``; any missing key defaults to
 ``True`` (all-ON).  Callers extract the raw dict from their config object
-(``OrgConfigBase.enrichment``) and pass
+(``PlatformConfigBase.enrichment``) and pass
 it here — this module never touches the DB, Redis, or Pydantic layers.
 
 Disabled steps skip work but still stamp their
@@ -50,7 +50,7 @@ def _as_dict(layer: EnrichmentMap | Any | None) -> EnrichmentMap | None:
     """Unwrap a layer to a plain dict.
 
     Accepts a raw ``dict`` or any object carrying an ``enrichment`` attribute
-    (``OrgConfigBase``).  Anything else is a loud
+    (``PlatformConfigBase``).  Anything else is a loud
     wiring error — never silently treated as all-ON.
     """
     if layer is None:
@@ -85,7 +85,7 @@ def resolve_enrichment(
 
     Args:
         system: System root default enrichment dict (or config object).
-        org: Org/user stored override (or config object).
+        org: Platform/user stored override (or config object).
         request_param: Per-ingest request param (highest precedence).
 
     Returns:
@@ -172,7 +172,10 @@ GATE_DEFAULT_MODEL: str = "OpenZync/enrichment-gating-v1"
 
 
 class EnrichmentGateConfig(TypedDict):
-    """Effective enrichment gate (JSON-serializable ARQ payload)."""
+    """Effective enrichment gate (JSON-serializable ARQ payload).
+
+    Runtime resolved config, distinct from stored Platform overrides schema
+    (``EnrichmentGatePlatformConfig``)."""
 
     enabled: bool
     threshold: float
@@ -180,11 +183,11 @@ class EnrichmentGateConfig(TypedDict):
 
 
 def _as_org_gate_block(org: Any | None) -> dict[str, Any]:
-    """Unwrap the org gate to a plain ``{"enabled", "threshold"}`` dict.
+    """Unwrap the user gate to a plain ``{"enabled", "threshold"}`` dict.
 
     Accepts ``None``, a legacy bool, a raw gate dict, the nested gate
     object (``enabled`` / ``threshold`` attributes), or any object
-    carrying an ``enrichment_gate`` attribute (``OrgConfigBase``).  A
+    carrying an ``enrichment_gate`` attribute (``PlatformConfigBase``).  A
     ``model`` subkey is stripped here — the model is fixed to
     GATE_DEFAULT_MODEL, never parsed from config.  A dict carrying an
     ``enrichment_gate`` key is unwrapped one level (full stored config).
@@ -224,7 +227,7 @@ def resolve_enrichment_gate(
     GATE_DEFAULT_MODEL (fixed, not configurable).
 
     Args:
-        org: Org gate block, ``OrgConfigBase``, raw dict, or legacy bool.
+        org: Org gate block, ``PlatformConfigBase``, raw dict, or legacy bool.
 
     Returns:
         The effective ``{"enabled", "threshold", "model"}`` gate config
@@ -272,15 +275,15 @@ def _assert_schema_key_parity() -> None:
     import time) makes drift loud instead of silent: a renamed/added key
     in one layer would otherwise 422-or-ignore across layers.
     ``schemas/system_config.py`` needs no separate check — it imports
-    the constant from ``schemas/organization_config.py`` structurally.
+    the constant from ``schemas/platform_config.py`` structurally.
     """
     from schemas.memory import ENRICHMENT_KEYS as _MEMORY_KEYS
-    from schemas.organization_config import ENRICHMENT_KEYS as _ORG_KEYS
+    from schemas.platform_config import ENRICHMENT_KEYS as _ORG_KEYS
 
     canonical = set(ENRICHMENT_KEYS)
     for name, keys in (
         ("schemas.memory", _MEMORY_KEYS),
-        ("schemas.organization_config", _ORG_KEYS),
+        ("schemas.platform_config", _ORG_KEYS),
     ):
         if set(keys) != canonical:
             raise ImportError(

@@ -23,7 +23,7 @@ class ObservationQueryService:
 
     Args:
         graph_backend: A resolved ``GraphBackend`` instance for the
-            current org/project.
+            current user/project.
     """
 
     def __init__(self, graph_backend: GraphBackend) -> None:
@@ -46,7 +46,7 @@ class ObservationQueryService:
         (maps to ``content``), ``created_at``.
 
         Args:
-            user_id: Organisational scope for RLS enforcement.
+            user_id: User scope for RLS enforcement.
             project_id: Project scope for isolation.
             subject_entity_id: Optional — only observations about this entity.
             observation_type: Optional — only observations of this type

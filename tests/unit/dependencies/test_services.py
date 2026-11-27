@@ -439,7 +439,7 @@ class TestGetGraphService:
 
     @pytest.mark.asyncio
     async def test_falkordb_per_org_config(self, mock_dispatcher: MagicMock) -> None:
-        """falkordb_url in org_config → creates per-org FalkorDB client."""
+        """falkordb_url in platform_config → creates per-org FalkorDB client."""
         from dependencies.services import get_graph_service
 
         mock_org_config = MagicMock()
@@ -579,13 +579,13 @@ class TestGetGraphBackendForProject:
         request.app.state.surreal_connection_pool = None
         request.app.state.falkordb_client = MagicMock()
 
-        org_config = MagicMock()
-        org_config.graph_backend = "falkordb"
-        org_config.falkordb_url = None
+        platform_config = MagicMock()
+        platform_config.graph_backend = "falkordb"
+        platform_config.falkordb_url = None
 
         db = AsyncMock(spec=AsyncSession)
 
-        result = await get_graph_backend_for_project(request, org_config, db)
+        result = await get_graph_backend_for_project(request, platform_config, db)
 
         dispatcher.resolve_and_create.assert_called_once()
         assert result == "graph_backend_instance"
@@ -606,9 +606,9 @@ class TestGetGraphBackendForProject:
         mock_pool.get_or_create = AsyncMock(return_value=MagicMock())
         request.app.state.surreal_connection_pool = mock_pool
 
-        org_config = MagicMock()
-        org_config.graph_backend = "surrealdb"
-        org_config.falkordb_url = None
+        platform_config = MagicMock()
+        platform_config.graph_backend = "surrealdb"
+        platform_config.falkordb_url = None
 
         db = AsyncMock(spec=AsyncSession)
 
@@ -617,7 +617,7 @@ class TestGetGraphBackendForProject:
             mock_settings.SURREALDB_URL = "ws://surrealdb:8000/rpc"
             mock_get_settings.return_value = mock_settings
 
-            await get_graph_backend_for_project(request, org_config, db)
+            await get_graph_backend_for_project(request, platform_config, db)
 
             mock_pool.get_or_create.assert_awaited_once()
 
@@ -635,9 +635,9 @@ class TestGetGraphBackendForProject:
         request.app.state.graph_backend_dispatcher = dispatcher
         request.app.state.surreal_connection_pool = None
 
-        org_config = MagicMock()
-        org_config.graph_backend = "surrealdb"
-        org_config.falkordb_url = None
+        platform_config = MagicMock()
+        platform_config.graph_backend = "surrealdb"
+        platform_config.falkordb_url = None
 
         db = AsyncMock(spec=AsyncSession)
 
@@ -646,7 +646,7 @@ class TestGetGraphBackendForProject:
         with pytest.raises(
             GraphBackendUnavailableError, match="no connection is available"
         ):
-            await get_graph_backend_for_project(request, org_config, db)
+            await get_graph_backend_for_project(request, platform_config, db)
 
         dispatcher.resolve_and_create.assert_not_called()
 
@@ -665,9 +665,9 @@ class TestGetGraphBackendForProject:
         request.app.state.surreal_connection_pool = None
         request.app.state.falkordb_client = None
 
-        org_config = MagicMock()
-        org_config.graph_backend = "none"
-        org_config.falkordb_url = None
+        platform_config = MagicMock()
+        platform_config.graph_backend = "none"
+        platform_config.falkordb_url = None
 
         db = AsyncMock(spec=AsyncSession)
 
@@ -677,6 +677,6 @@ class TestGetGraphBackendForProject:
             GraphBackendUnavailableError,
             match="No graph backend is configured for user",
         ):
-            await get_graph_backend_for_project(request, org_config, db)
+            await get_graph_backend_for_project(request, platform_config, db)
 
         dispatcher.resolve_and_create.assert_called_once()

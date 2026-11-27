@@ -153,41 +153,41 @@ GRAPH_LATENCY_RANGE_QUERIES: dict[str, str] = {
     "p99": "histogram_quantile(0.99, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000",
 }
 
-# ── Org-filter helpers ────────────────────────────────────────────────────────
+# ── User-filter helpers ────────────────────────────────────────────────────────
 
-# Queue depth is global infra — never org-filtered.
-_ORG_FILTER_EXCLUDED = ("openzync_worker_queue_depth",)
+# Queue depth is global infra — never user-filtered.
+_USER_FILTER_EXCLUDED = ("openzync_worker_queue_depth",)
 
 
-def _is_org_scoped(user_id: str | None) -> bool:
-    """Return True when PromQL should be scoped to an org."""
+def _is_user_scoped(user_id: str | None) -> bool:
+    """Return True when PromQL should be scoped to a user."""
     return bool(user_id) and user_id != "anonymous"
 
 
-def _inject_org_filter(promql: str, user_id: str) -> str:
+def _inject_user_filter(promql: str, user_id: str) -> str:
     """Inject ``{user_id="..."}`` into every openzync_* selector.
 
     Selectors that already have a label set get ``,user_id="..."`` appended
     inside the braces. Bare metrics (``metric[`` or ``metric)``) get a new
-    ``{user_id="..."}`` selector. Metrics in ``_ORG_FILTER_EXCLUDED`` are left
-    untouched — queue depth is global infra, not per-org (cardinality + no
-    org label on that metric).
+    ``{user_id="..."}`` selector. Metrics in ``_USER_FILTER_EXCLUDED`` are left
+    untouched — queue depth is global infra, not per-user (cardinality + no
+    user label on that metric).
 
     This keeps the canonical ``*_QUERIES`` constants global-readable and
     builds filtered copies on the fly — no duplication of query lists.
     """
-    if any(excluded in promql for excluded in _ORG_FILTER_EXCLUDED):
+    if any(excluded in promql for excluded in _USER_FILTER_EXCLUDED):
         return promql
 
-    org_label = f'user_id="{user_id}"'
+    user_label = f'user_id="{user_id}"'
 
     # 1) selectors already with braces: metric{labels} -> metric{labels,user_id="..."}
     def _with_braces(m: re.Match[str]) -> str:
         metric = m.group(1)
         inner = m.group(2).strip()
         if inner:
-            return f"{metric}{{{inner},{org_label}}}"
-        return f"{metric}{{{org_label}}}"
+            return f"{metric}{{{inner},{user_label}}}"
+        return f"{metric}{{{user_label}}}"
 
     promql = re.sub(r"(openzync_[a-z_]+)\{([^}]*)\}", _with_braces, promql)
 
@@ -196,7 +196,7 @@ def _inject_org_filter(promql: str, user_id: str) -> str:
     # (e.g. openzync_...{...} would otherwise backtrack and inject inside).
     promql = re.sub(
         r"(openzync_[a-z_]+)(?=\[|\)|,|\s|$)",
-        lambda m: f"{m.group(1)}{{{org_label}}}",
+        lambda m: f"{m.group(1)}{{{user_label}}}",
         promql,
     )
     return promql
@@ -217,7 +217,7 @@ class MetricsService:
         """Run all PromQL queries and assemble the response.
 
         Args:
-            user_id: Organization to scope Prometheus queries to. When ``None``
+            user_id: User to scope Prometheus queries to. When ``None``
                 or ``"anonymous"`` the original global queries are used
                 (backward compat for health checks). The admin route always
                 passes a real user_id.
@@ -234,27 +234,27 @@ class MetricsService:
         """
         results: dict[str, float] = {}
 
-        # Build org-scoped instant queries (queue stays global — see _inject_org_filter).
+        # Build user-scoped instant queries (queue stays global — see _inject_user_filter).
         all_queries = _all_queries()
-        if _is_org_scoped(user_id):
-            assert user_id is not None  # narrowed by _is_org_scoped
+        if _is_user_scoped(user_id):
+            assert user_id is not None  # narrowed by _is_user_scoped
             effective_all = [
-                (name, _inject_org_filter(promql, user_id))
+                (name, _inject_user_filter(promql, user_id))
                 for name, promql in all_queries
             ]
             effective_retrieval = {
-                k: _inject_org_filter(v, user_id)
+                k: _inject_user_filter(v, user_id)
                 for k, v in RETRIEVAL_RANGE_QUERIES.items()
             }
             effective_error = {
-                k: _inject_org_filter(v, user_id) for k, v in ERROR_RANGE_QUERIES.items()
+                k: _inject_user_filter(v, user_id) for k, v in ERROR_RANGE_QUERIES.items()
             }
             effective_ctx_lat = {
-                k: _inject_org_filter(v, user_id)
+                k: _inject_user_filter(v, user_id)
                 for k, v in CONTEXT_LATENCY_RANGE_QUERIES.items()
             }
             effective_graph_lat = {
-                k: _inject_org_filter(v, user_id)
+                k: _inject_user_filter(v, user_id)
                 for k, v in GRAPH_LATENCY_RANGE_QUERIES.items()
             }
         else:

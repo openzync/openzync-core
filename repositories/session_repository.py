@@ -74,7 +74,7 @@ class SessionRepository:
         but a race is still possible.
 
         Args:
-            user_id: The organization UUID for tenant isolation.
+            user_id: The user UUID for tenant isolation.
             project_id: The project UUID the session belongs to.
             created_by: The UUID of the user who created the session.
             external_id: Caller-defined session identifier.
@@ -99,10 +99,10 @@ class SessionRepository:
     async def get_by_external_id(
         self, user_id: UUID, project_id: UUID, external_id: str
     ) -> Session | None:
-        """Look up a session by ``project_id`` and ``external_id``, scoped to org.
+        """Look up a session by ``project_id`` and ``external_id``, scoped to user.
 
         Args:
-            user_id: The organization UUID for tenant isolation.
+            user_id: The user UUID for tenant isolation.
             project_id: The project UUID.
             external_id: The caller-defined session identifier.
 
@@ -124,10 +124,10 @@ class SessionRepository:
     async def get_by_uuid(
         self, user_id: UUID, session_id: UUID, project_id: UUID | None = None
     ) -> Session | None:
-        """Look up a session by its internal UUID, scoped to org and optionally project.
+        """Look up a session by its internal UUID, scoped to user and optionally project.
 
         Args:
-            user_id: The organization UUID for tenant isolation.
+            user_id: The user UUID for tenant isolation.
             session_id: The session's UUID primary key.
             project_id: Optional project UUID for intra-org isolation. When provided,
                 only sessions belonging to this project are returned.
@@ -161,7 +161,7 @@ class SessionRepository:
         include_closed: bool = False,
         sort: SortSpec | None = None,
     ) -> tuple[list[Session], str | None]:
-        """List sessions for a project with cursor-based pagination, scoped to org.
+        """List sessions for a project with cursor-based pagination, scoped to user.
 
         By default excludes closed sessions (``closed_at IS NOT NULL``).
         Default order ``created_at DESC`` (most-recent-first); cursor
@@ -171,7 +171,7 @@ class SessionRepository:
         stable ordering.
 
         Args:
-            user_id: The organization UUID for tenant isolation.
+            user_id: The user UUID for tenant isolation.
             project_id: The project UUID.
             limit: Maximum results per page (capped at 200).
             cursor: Opaque base64 cursor from a previous page.
@@ -336,7 +336,7 @@ class SessionRepository:
         messages arrive in the same millisecond.
 
         Args:
-            user_id: The organization UUID for tenant isolation.
+            user_id: The user UUID for tenant isolation.
             session_id: The session's UUID.
             limit: Maximum results per page (capped at 500).
             cursor: Opaque base64 cursor from a previous page.
@@ -529,13 +529,13 @@ class SessionRepository:
         session_id: UUID,
         metadata: dict[str, Any],
     ) -> Session | None:
-        """Deep-merge metadata into a session's existing metadata, scoped to org.
+        """Deep-merge metadata into a session's existing metadata, scoped to user.
 
         New keys are added. Existing keys are overridden. Set a key to
         ``None`` to remove it from the stored metadata.
 
         Args:
-            user_id: The organization UUID for tenant isolation.
+            user_id: The user UUID for tenant isolation.
             session_id: The session's UUID.
             metadata: Key-value pairs to merge.
 
@@ -574,13 +574,13 @@ class SessionRepository:
     async def close(
         self, user_id: UUID, session_id: UUID
     ) -> Session | None:
-        """Mark a session as closed by setting ``closed_at = now()``, scoped to org.
+        """Mark a session as closed by setting ``closed_at = now()``, scoped to user.
 
         Idempotent — calling close on an already-closed session returns
         the session as-is.
 
         Args:
-            user_id: The organization UUID for tenant isolation.
+            user_id: The user UUID for tenant isolation.
             session_id: The session's UUID.
 
         Returns:
@@ -609,12 +609,12 @@ class SessionRepository:
     async def soft_delete(
         self, user_id: UUID, session_id: UUID, project_id: UUID | None = None
     ) -> Session | None:
-        """Soft-delete a session, scoped to org and optionally project.
+        """Soft-delete a session, scoped to user and optionally project.
 
         Sets ``is_deleted = True``.
 
         Args:
-            user_id: The organization UUID for tenant isolation.
+            user_id: The user UUID for tenant isolation.
             session_id: The session's UUID.
             project_id: Optional project UUID for intra-org isolation.
 
@@ -735,7 +735,7 @@ class SessionRepository:
         and are project-wide (not session-scoped).
 
         Args:
-            user_id: The organization UUID for tenant isolation.
+            user_id: The user UUID for tenant isolation.
             project_id: The project UUID.
 
         Returns:

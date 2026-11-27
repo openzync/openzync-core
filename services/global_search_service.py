@@ -1,7 +1,7 @@
-"""Global search service — cross-resource search across org-scoped entities.
+"""Global search service — cross-resource search across user-scoped entities.
 
 Fans out to three repository ILIKE legs (projects, users, sessions) scoped
-to the authenticated user's organization and membership, then merges and
+to the authenticated user's scope and membership, then merges and
 sorts — the service keeps merge/sort only, no SQL.
 """
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class GlobalSearchService:
-    """Search across projects, users, and sessions within an organization.
+    """Search across projects, users, and sessions within a user scope.
 
     Queries are scoped by ``user_id`` and (for projects/sessions) by
     ``user_id`` membership, so results only include resources the
@@ -98,7 +98,7 @@ class GlobalSearchService:
         return items
 
     async def _search_users(self, pattern: str, limit: int) -> list[GlobalSearchItem]:
-        """Search users in the same organization."""
+        """Search users in the same scope."""
         rows = await UserRepository(self._db).search_by_pattern(
             self._user_id, pattern, limit
         )

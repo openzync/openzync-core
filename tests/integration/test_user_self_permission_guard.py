@@ -1,9 +1,9 @@
 """User-dictated integration test #2: self-permission guard.
 
-Covers (new superadmin contract — only a platform superadmin may change
+Covers (new admin contract — only a platform admin may change
 ``role``/``permissions``; any other actor gets 403):
     - Member PATCH self ``permissions`` → 403, record unchanged.
-    - Superadmin PATCH other ``permissions`` → 200, full grant stored.
+    - Admin PATCH other ``permissions`` → 200, full grant stored.
     - Org admin PATCH other ``permissions`` → 403.
 
 Real Postgres + Redis via testcontainers; real HTTP via ASGITransport.
@@ -108,7 +108,7 @@ class TestSelfPermissionGuard:
             transport=transport, base_url="http://test"
         ) as super_client:
             super_client.headers.update(superadmin_headers)
-            # Baseline read as superadmin (org admin JWT gets 403).
+            # Baseline read as admin (org admin JWT gets 403).
             before = await super_client.get(f"/v1/users/{member_id}")
             assert before.status_code == 200
             baseline = sorted(before.json()["permissions"])
@@ -143,7 +143,7 @@ class TestSelfPermissionGuard:
         isolated_app: Any,
         isolated_org_and_key: dict,
     ) -> None:
-        """Superadmin PATCH other ``permissions`` → 200, full grant stored."""
+        """Admin PATCH other ``permissions`` → 200, full grant stored."""
         from tests.integration.conftest import superadmin_jwt
 
         member_id = await _seed_member(isolated_app, isolated_org_and_key["user_id"])
@@ -168,11 +168,11 @@ class TestSelfPermissionGuard:
                 json={"permissions": requested},
             )
             assert resp.status_code == 200, (
-                f"superadmin PATCH other must be 200, got {resp.status_code}: {resp.text}"
+                f"admin PATCH other must be 200, got {resp.status_code}: {resp.text}"
             )
             stored = resp.json()["permissions"]
             assert sorted(stored) == sorted(requested)
-            # Capped at the vocabulary — a superadmin is wildcard, no cap.
+            # Capped at the vocabulary — a admin is wildcard, no cap.
             assert set(stored) <= set(ALL_PERMISSIONS)
 
     @pytest.mark.asyncio
@@ -181,7 +181,7 @@ class TestSelfPermissionGuard:
         isolated_app: Any,
         isolated_org_and_key: dict,
     ) -> None:
-        """Org admin (non-superadmin) PATCH other ``permissions`` → 403."""
+        """Org admin (non-admin) PATCH other ``permissions`` → 403."""
         from repositories.auth_repository import AuthRepository
         from utils.password import hash_password
 
@@ -209,7 +209,7 @@ class TestSelfPermissionGuard:
                 json={"permissions": ["project:read", "project:write"]},
             )
             assert resp.status_code == 403, (
-                f"non-superadmin PATCH other must be 403, "
+                f"non-admin PATCH other must be 403, "
                 f"got {resp.status_code}: {resp.text}"
             )
         _ = user_id

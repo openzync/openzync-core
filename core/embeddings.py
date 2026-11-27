@@ -4,7 +4,7 @@ Embeddings are produced out-of-process by a single hardcoded model,
 ``nomic-embed-text:v1.5``, served by the Ollama service's ``/api/embed``
 endpoint (same v1.5 weights as the retired in-process ONNX build, still
 768 dims — which is why no migration was needed). There is no provider
-routing, no per-org backend selection, and no env-var model override:
+routing, no per-user backend selection, and no env-var model override:
 the model tag below is the whole configuration surface. Only the
 server address is configurable, via the system-level
 ``OLLAMA_EMBED_URL`` setting (default ``http://ollama:11434``).

@@ -1,6 +1,6 @@
 """API Key repository — all database access for API key management.
 
-Handles listing, creating, and revoking API keys scoped to an organization.
+Handles listing, creating, and revoking API keys scoped to a user.
 No business logic — pure query construction and execution.
 """
 
@@ -35,7 +35,7 @@ unset or older than this interval.
 
 
 class ApiKeyRepository:
-    """All database access for API keys, scoped to an organization."""
+    """All database access for API keys, scoped to a user."""
 
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
@@ -47,7 +47,7 @@ class ApiKeyRepository:
         project_id: uuid.UUID | None = None,
         sort: SortSpec | None = None,
     ) -> Sequence[ApiKey]:
-        """List API keys for an organization, filtered by project scope.
+        """List API keys for a user, filtered by project scope.
 
         Default ``created_at/desc``; whitelist ``name``, ``created_at``,
         ``last_used_at``.
@@ -92,7 +92,7 @@ class ApiKeyRepository:
         key_id: uuid.UUID,
         project_id: uuid.UUID | None = None,
     ) -> ApiKey | None:
-        """Get a single API key by ID, scoped to the organization and optionally project.
+        """Get a single API key by ID, scoped to the user and optionally project.
 
         Args:
             user_id: Tenant scope.
@@ -126,7 +126,7 @@ class ApiKeyRepository:
         """Create a new API key record.
 
         Args:
-            user_id: Owning organization.
+            user_id: Owning user.
             lookup_hash: Unsalted SHA-256 of the raw key (for fast lookup).
             key_hash: Salted SHA-256 hash of the raw key (for verification).
             salt: Hex-encoded 16-byte salt.
@@ -134,7 +134,7 @@ class ApiKeyRepository:
             name: Human-readable label.
             permissions: Permission strings (defaults to
                 ``["project:read", "project:write"]``).
-            project_id: Optional project scope. ``None`` means org-wide key.
+            project_id: Optional project scope. ``None`` means user-wide key.
             created_by: Optional UUID of the user creating this key.
                 Populated from the JWT session when created via the dashboard.
 

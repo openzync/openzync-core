@@ -1,9 +1,10 @@
 """Endpoint contract for ``GET /v1/admin/llm-usage``.
 
-GROUP 3: 401 unauthenticated, 403 without ``members:read``, 422 on
-over-limit params and bad ``sort_by``; worker/model/project/date-range
-filters reach the service; the summary equals the rows' sums;
-``sort_by=total_tokens`` is accepted (422 regression guard).
+Member-visible (``require_user``): 401 unauthenticated, 200 for any
+authenticated member, 422 on over-limit params and bad ``sort_by``;
+worker/model/project/date-range filters reach the service; the summary
+equals the rows' sums; ``sort_by=total_tokens`` is accepted (422
+regression guard).
 
 Service-layer functions are mocked — no DB, no network.
 """
@@ -105,23 +106,18 @@ class TestAuth:
             resp = await client.get("/v1/admin/llm-usage")
         assert resp.status_code == 401
 
-    async def test_member_without_permission_returns_403(self) -> None:
+    async def test_member_without_permission_returns_200(self) -> None:
         app = _make_app(authenticated=True)
+        list_mock, summary_mock = _mock_service([])
         with (
-            patch(
-                "dependencies.auth.get_user_role",
-                new=AsyncMock(return_value="member"),
-            ),
-            patch(
-                "dependencies.auth.get_effective_permissions",
-                new=AsyncMock(return_value=frozenset()),
-            ),
+            patch("routers.admin_llm_usage.list_usage", list_mock),
+            patch("routers.admin_llm_usage.summarize_usage", summary_mock),
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 resp = await client.get("/v1/admin/llm-usage")
-        assert resp.status_code == 403
+        assert resp.status_code == 200
 
 
 class TestValidation:

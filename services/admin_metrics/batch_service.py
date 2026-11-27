@@ -30,7 +30,7 @@ from services.admin_metrics.prom_queries_service import PromMetricsQueriesServic
 
 if TYPE_CHECKING:
     from packages.graph_backend.interface import GraphBackend
-    from schemas.organization_config import OrgConfigBase
+    from schemas.platform_config import PlatformConfigBase
 
 logger = structlog.get_logger(__name__)
 
@@ -161,7 +161,7 @@ class AdminMetricsBatchService:
     async def run_batch(
         self,
         request: Request,
-        org_config: OrgConfigBase,
+        platform_config: PlatformConfigBase,
         user_id: UUID,
         start: datetime,
         end: datetime,
@@ -173,13 +173,13 @@ class AdminMetricsBatchService:
 
         Returns:
             ``{"results": {name: query-dict}, "errors": [...], "meta": {...}}``
-            where each ``results`` value has ``query/org_scoped/columns/rows/
+            where each ``results`` value has ``query/user_scoped/columns/rows/
             total/parameters`` and each ``errors`` entry has
             ``query/code/message``.
         """
         started = time.perf_counter()
         backend = await resolve_graph_backend_fail_soft(
-            request, org_config, user_id, self._db, "admin_metrics"
+            request, platform_config, user_id, self._db, "admin_metrics"
         )
 
         db_calls: dict[str, Callable[[DbMetricsQueriesService], Awaitable[dict]]] = {

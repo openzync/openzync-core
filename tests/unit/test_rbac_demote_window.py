@@ -30,12 +30,9 @@ class TestRBACDemoteWindow:
         """Demoting the final admin raises ValidationError (422)."""
         svc = _make_service(last_admin=True)
         with pytest.raises(ValidationError, match="last admin"):
-            await svc.update_user(
-                
-                user_id=UUID("00000000-0000-0000-0000-000000000012"),
-                update_fields={"role": "member"},
-                actor_user_id=UUID("00000000-0000-0000-0000-000000000013"),
-                is_superadmin=True,
+            await svc.update_member_role(
+                UUID("00000000-0000-0000-0000-000000000012"),
+                "member",
             )
 
     @pytest.mark.asyncio
@@ -57,15 +54,12 @@ class TestRBACDemoteWindow:
             "created_at": "2026-01-01T00:00:00+00:00",
             "updated_at": "2026-01-01T00:00:00+00:00",
         }
-        # Should not raise; UserResponse validation may fail on mock —
-        # the guard (no ValidationError for demote) is what we assert.
+        # Should not raise — the guard (no ValidationError for demote)
+        # is what we assert.
         try:
-            await svc.update_user(
-                
-                user_id=UUID("00000000-0000-0000-0000-000000000012"),
-                update_fields={"role": "member"},
-                actor_user_id=UUID("00000000-0000-0000-0000-000000000013"),
-                is_superadmin=True,
+            await svc.update_member_role(
+                UUID("00000000-0000-0000-0000-000000000012"),
+                "member",
             )
         except ValidationError as exc:
             pytest.fail(f"demote should be allowed: {exc}")

@@ -36,6 +36,7 @@ from tests.integration.conftest import (  # noqa: F401  (fixtures are re-exporte
     engine,
     isolated_app,
     redis_client,
+    superadmin_jwt,
 )
 
 if TYPE_CHECKING:
@@ -95,15 +96,29 @@ async def auth_client_org_c(
 
 
 @pytest_asyncio.fixture(loop_scope="function")
+async def superadmin_client(
+    isolated_app: Any,
+) -> AsyncGenerator[AsyncClient, None]:
+    """HTTP client authed as the platform admin — seeds ``/v1/users`` rows.
+
+    User management is platform-admin-gated; the per-tenant member JWTs
+    below get 403 there, so all user seeding goes through this client.
+    """
+    transport = asgi_transport(isolated_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.headers["Authorization"] = f"Bearer {await superadmin_jwt(isolated_app)}"
+        yield client
+
+
+@pytest_asyncio.fixture(loop_scope="function")
 async def jwt_client_org_a(
     isolated_app: Any, tenants: dict[str, dict[str, Any]]
 ) -> AsyncGenerator[AsyncClient, None]:
-    """HTTP client authenticated as org A's admin (JWT, wildcard permissions).
+    """HTTP client authenticated as org A's member (JWT, default grant set).
 
-    Org user management (``POST/GET/PATCH/DELETE /v1/users*``) requires
-    ``members:*`` — project-scoped API keys carry project-only
-    permissions, so user seeding and user-endpoint assertions go through
-    the bootstrap admin JWT.
+    Member JWTs carry every permission except ``members:*`` — they drive
+    project-scoped calls and the admin-gated-403 assertions.  User seeding
+    goes through ``superadmin_client`` instead.
     """
     transport = asgi_transport(isolated_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -115,7 +130,7 @@ async def jwt_client_org_a(
 async def jwt_client_org_b(
     isolated_app: Any, tenants: dict[str, dict[str, Any]]
 ) -> AsyncGenerator[AsyncClient, None]:
-    """HTTP client authenticated as org B's admin (JWT, wildcard permissions)."""
+    """HTTP client authenticated as org B's member (JWT, default grant set)."""
     transport = asgi_transport(isolated_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         client.headers["Authorization"] = f"Bearer {tenants['b']['jwt']}"
@@ -126,7 +141,7 @@ async def jwt_client_org_b(
 async def jwt_client_org_c(
     isolated_app: Any, tenants: dict[str, dict[str, Any]]
 ) -> AsyncGenerator[AsyncClient, None]:
-    """HTTP client authenticated as org C's admin (JWT, wildcard permissions)."""
+    """HTTP client authenticated as org C's member (JWT, default grant set)."""
     transport = asgi_transport(isolated_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         client.headers["Authorization"] = f"Bearer {tenants['c']['jwt']}"

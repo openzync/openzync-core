@@ -26,7 +26,7 @@ Bitmask:
     marked complete either.
 
 Fail-closed: corrupt input, a missing PII policy, redaction failures,
-and org-config fetch failures all propagate (no bit, no commit) so
+and platform-config fetch failures all propagate (no bit, no commit) so
 ``@with_retry`` retries. Missing extractor libraries (``ImportError``)
 fail fast via ``is_retryable`` — a deployment problem retries cannot
 heal. Nothing is ever stored unredacted.
@@ -281,9 +281,9 @@ async def _redact_extracted_text(
     from core.exceptions import PIIUnavailableError, ValidationError
 
     try:
-        from core.org_config import get_org_config
+        from core.platform_config import get_platform_config
 
-        org_cfg = await get_org_config(
+        org_cfg = await get_platform_config(
             UUID(user_id),
             redis=None,
             db=db,  # type: ignore[arg-type]
@@ -489,8 +489,8 @@ async def extract_blob_text(
                 return
 
             # ── Build the global blob client ────────────────────────────
-            # ⚠️ BREAKING: per-org blob storage was removed — one global
-            # backend from Settings (fail-fast at startup, never per-org).
+            # ⚠️ BREAKING: per-user blob storage was removed — one global
+            # backend from Settings (fail-fast at startup, never per-user).
             blob_config = BlobStorageConfig.from_settings(get_settings())
             storage = BlobStorage(blob_config)
 

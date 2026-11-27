@@ -3,7 +3,7 @@
 Sub-package layout (one responsibility per module)::
 
     registration.py  singleton-org signup (no org creation)
-    org_join.py      singleton-org join + email verification
+    member_signup.py      singleton-org member signup + email verification
     password.py      change / forgot / reset + strength check
     passwordless.py  email-OTP login
     session.py       login + MFA verify/enable/disable
@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 from repositories.auth_repository import AuthRepository
 from repositories.instance_settings_repository import InstanceSettingsRepository
-from services.auth.org_join import OrgJoinMixin
+from services.auth.member_signup import MemberSignupMixin
 from services.auth.password import PasswordMixin
 from services.auth.passwordless import PasswordlessMixin
 from services.auth.profile import ProfileMixin
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 class AuthService(
     RegistrationMixin,
-    OrgJoinMixin,
+    MemberSignupMixin,
     PasswordMixin,
     PasswordlessMixin,
     SessionMixin,

@@ -45,9 +45,9 @@ class PIIRedactionMixin:
         """
         trace_id = structlog.contextvars.get_contextvars().get("request_id", "unknown")
         try:
-            from core.org_config import get_org_config
+            from core.platform_config import get_platform_config
 
-            org_cfg = await get_org_config(user_id, redis=self._redis, db=self._db)
+            org_cfg = await get_platform_config(user_id, redis=self._redis, db=self._db)
         except Exception as exc:
             logger.error(
                 "pii.fail_closed",
@@ -94,10 +94,10 @@ class PIIRedactionMixin:
         Detections and content are never logged — only org/trace identifiers.
 
         Args:
-            pii_service: The org-configured PII service (shared).
+            pii_service: The platform-configured PII service (shared).
             mask_service: The mask-mode fallback for block downgrades (shared).
             content: The raw message content.
-            user_id: The organization UUID (log context only).
+            user_id: The user UUID (log context only).
             trace_id: The request trace ID (log context only).
 
         Returns:
@@ -139,7 +139,7 @@ class PIIRedactionMixin:
         ``PIIUnavailableError`` and nothing is persisted.
 
         Args:
-            user_id: The organization UUID.
+            user_id: The user UUID.
             episode_dicts: Mutable per-message dicts (``content`` redacted
                 in place).
             job_id: Ingest job ID (trace fallback).

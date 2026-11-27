@@ -463,7 +463,7 @@ class PIIRedactor:
 class PIIService:
     """Main entry point for PII detection and redaction in the ingestion flow.
 
-    Parses the PII config from an org's ``quotas`` dict and delegates to
+    Parses the PII config from an user's ``quotas`` dict and delegates to
     :class:`PIIDetector` and :class:`PIIRedactor`.
 
     Typical usage::

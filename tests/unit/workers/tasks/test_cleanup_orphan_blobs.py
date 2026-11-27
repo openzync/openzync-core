@@ -413,9 +413,9 @@ class TestCleanupOrphanBlobs:
 
         assert result == {
             "status": "skipped",
-            "reason": "No organizations found",
-            "orgs_processed": 0,
-            "orgs_failed": 0,
+            "reason": "No users found",
+            "users_processed": 0,
+            "users_failed": 0,
             "blobs_cleaned": 0,
         }
         # 1 bypass_rls + 1 org-discovery execute.
@@ -450,7 +450,7 @@ class TestCleanupOrphanBlobs:
                 "repositories.episode_blob_repository.EpisodeBlobRepository"
             ) as mock_repo_cls,
             patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
-            patch("core.org_config.get_org_config") as mock_cfg,
+            patch("core.platform_config.get_platform_config") as mock_cfg,
         ):
             mock_repo = AsyncMock()
             mock_repo.get_orphaned_blobs.side_effect = [blobs_1, blobs_2]
@@ -472,8 +472,8 @@ class TestCleanupOrphanBlobs:
             result = await cleanup_orphan_blobs(ctx=self._ctx(db))
 
         assert result["status"] == "partial"
-        assert result["orgs_processed"] == 2
-        assert result["orgs_failed"] == 1
+        assert result["users_processed"] == 2
+        assert result["users_failed"] == 1
         assert result["blobs_cleaned"] == len(blobs_1)
         assert mock_repo.get_orphaned_blobs.call_count == 2
         db.commit.assert_called_once()
@@ -487,7 +487,7 @@ class TestCleanupOrphanBlobs:
     async def test_discovery_all_orgs_fail_raises(self) -> None:
         """Every org failing in discovery mode raises RuntimeError.
 
-        Covers the ``All {n} orgs failed`` arm (line ~243): when every
+        Covers the ``All {n} users failed`` arm (line ~243): when every
         discovered org raises, the run must fail loudly rather than
         report a misleading ``partial`` summary.
 
@@ -530,7 +530,7 @@ class TestCleanupOrphanBlobs:
 
             from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 
-            with pytest.raises(RuntimeError, match="All 2 orgs failed"):
+            with pytest.raises(RuntimeError, match="All 2 users failed"):
                 await cleanup_orphan_blobs(ctx=self._ctx(db))
 
         # Both orgs were attempted on every attempt (2 orgs × 2 retries).
@@ -568,7 +568,7 @@ class TestCleanupOrphanBlobs:
                 "repositories.episode_blob_repository.EpisodeBlobRepository"
             ) as mock_repo_cls,
             patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
-            patch("core.org_config.get_org_config") as mock_cfg,
+            patch("core.platform_config.get_platform_config") as mock_cfg,
         ):
             mock_repo = AsyncMock()
             mock_repo.get_orphaned_blobs.side_effect = [blobs_1, blobs_2]
@@ -587,8 +587,8 @@ class TestCleanupOrphanBlobs:
             result = await cleanup_orphan_blobs(ctx=self._ctx(db))
 
         assert result["status"] == "completed"
-        assert result["orgs_processed"] == 2
-        assert result["orgs_failed"] == 0
+        assert result["users_processed"] == 2
+        assert result["users_failed"] == 0
         assert result["blobs_cleaned"] == 3
         assert set(self._bound_user_ids(db)) == {str(org_1), str(org_2)}
 
@@ -628,7 +628,7 @@ class TestCleanupOrphanBlobs:
                 "repositories.episode_blob_repository.EpisodeBlobRepository"
             ) as mock_repo_cls,
             patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
-            patch("core.org_config.get_org_config") as mock_cfg,
+            patch("core.platform_config.get_platform_config") as mock_cfg,
         ):
             mock_repo = AsyncMock()
             mock_repo.get_orphaned_blobs.side_effect = [
@@ -653,8 +653,8 @@ class TestCleanupOrphanBlobs:
             result = await cleanup_orphan_blobs(ctx=self._ctx(db))
 
         assert result["status"] == "partial"
-        assert result["orgs_processed"] == 2
-        assert result["orgs_failed"] == 1
+        assert result["users_processed"] == 2
+        assert result["users_failed"] == 1
         assert result["blobs_cleaned"] == len(blobs_1)
         assert mock_repo.get_orphaned_blobs.call_count == 2
         db.rollback.assert_awaited_once()

@@ -1,7 +1,7 @@
 """Project pin model — per-user dashboard pin for a project.
 
 Pins are a user preference, not membership: a user may pin at most
-``MAX_PINS`` (3) projects per organization. Rows are deleted when the user,
+``MAX_PINS`` (3) projects per user. Rows are deleted when the user,
 project, or organization is deleted (CASCADE on all three FKs).
 """
 
@@ -17,7 +17,7 @@ from models.base import Base, TimestampMixin
 
 
 class ProjectPin(TimestampMixin, Base):
-    """A user's pin on a project within an organization.
+    """A user's pin on a project within a user scope.
 
     Attributes:
         id: UUID primary key, generated server-side via gen_random_uuid().

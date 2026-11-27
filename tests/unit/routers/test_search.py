@@ -40,17 +40,17 @@ class TestSearchRouter:
     def _setup_app(self) -> None:
         """Set up the FastAPI app with all dependency overrides."""
         from dependencies.db import get_db
-        from dependencies.org_config import get_org_config
+        from dependencies.platform_config import get_platform_config
         from dependencies.project_auth import require_project_membership
         from routers.search import router
-        from schemas.organization_config import OrgConfigBase
+        from schemas.platform_config import PlatformConfigBase
 
         # Mock graph_backend_dispatcher
         self.dispatcher_mock = MagicMock()
         self.dispatcher_mock.create_all_backends.return_value = []
 
         self.db_mock = AsyncMock()
-        self.org_config_mock = OrgConfigBase(graph_backend="none")
+        self.org_config_mock = PlatformConfigBase(graph_backend="none")
 
         self.app = FastAPI()
         self.app.include_router(router)
@@ -62,7 +62,7 @@ class TestSearchRouter:
 
         self.app.dependency_overrides[get_db] = lambda: self.db_mock
         self.app.dependency_overrides[require_project_membership] = lambda: None
-        self.app.dependency_overrides[get_org_config] = lambda: self.org_config_mock
+        self.app.dependency_overrides[get_platform_config] = lambda: self.org_config_mock
 
         @self.app.middleware("http")
         async def _mock_auth(request: Request, call_next):

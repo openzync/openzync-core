@@ -54,8 +54,8 @@ class TestSessionCrud:
     ) -> str:
         """Create a user via the API (JWT admin session) and return the user ID.
 
-        ``POST /v1/users`` is superadmin-gated — the request goes through
-        a fresh superadmin-authenticated client.
+        ``POST /v1/users`` is admin-gated — the request goes through
+        a fresh admin-authenticated client.
         """
         from tests.integration.conftest import asgi_transport, superadmin_jwt
 
@@ -378,7 +378,7 @@ class TestSessionCrud:
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            # POST /v1/users is superadmin-gated.
+            # POST /v1/users is admin-gated.
             from tests.integration.conftest import superadmin_jwt
 
             cli.headers["Authorization"] = (

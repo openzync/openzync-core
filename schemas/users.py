@@ -38,7 +38,7 @@ class CreateUserRequest(BaseModel):
 
     Attributes:
         external_id: Caller-defined unique user identifier. Must be unique
-            within the organization.
+            within the user's scope.
         name: Optional human-readable display name.
         email: Optional email address (validated to contain ``@``).
         metadata: Arbitrary JSON metadata for the user. Deep-merged on update.
@@ -48,7 +48,7 @@ class CreateUserRequest(BaseModel):
 
     external_id: str = Field(
         ...,
-        description="Caller-defined unique user identifier. Must be unique within the organization.",
+        description="Caller-defined unique user identifier. Must be unique within the user's scope.",
         min_length=1,
         max_length=255,
         examples=["user_abc123", "alice@example.com", "usr_8f3a2c"],

@@ -52,7 +52,7 @@ class AuditLogService:
         """Record an audit log entry.
 
         Args:
-            user_id: Organization UUID — required kwarg (None for
+            user_id: User UUID — required kwarg (None for
                 unauthenticated actions).
             actor_id: Identifier of the acting entity.
             actor_type: ``user``, ``api_key``, or ``system``.
@@ -109,11 +109,11 @@ class AuditLogService:
         ``status_code``, ``actor_id``.
 
         Args:
-            user_id: Filter by organization.  ``None`` means
+            user_id: Filter by user.  ``None`` means
                 *platform-wide* — the caller's own isolation decides what is
                 visible (an RLS-bypass session sees every row, including the
-                platform-level rows that carry no organization).  A concrete
-                UUID restricts the result to that organization.
+                platform-level rows that carry no user).  A concrete
+                UUID restricts the result to that user.
             action: Exact-match filter on action.
             actor_id: Exact-match filter on actor.
             actor_type: Exact-match filter on actor type.
@@ -147,13 +147,13 @@ class AuditLogService:
         )
 
     async def list_distinct_actions(self, user_id: UUID | None) -> list[str]:
-        """Return distinct action names for the organization, sorted A–Z.
+        """Return distinct action names for the user, sorted A–Z.
 
         Same org scoping as :meth:`query_logs` — a concrete UUID
-        restricts to that organization, ``None`` is platform-wide.
+        restricts to that user, ``None`` is platform-wide.
 
         Args:
-            user_id: Filter by organization, or ``None`` for platform-wide.
+            user_id: Filter by user, or ``None`` for platform-wide.
 
         Returns:
             Alphabetically sorted distinct action names.

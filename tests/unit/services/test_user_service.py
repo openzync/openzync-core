@@ -121,7 +121,7 @@ class TestUserService:
             email="alice@example.com",
             metadata={"source": "onboarding"},
             role="member",
-            permissions=["project:read", "project:write"],
+            permissions=["configuration:read", "configuration:write", "project:manage", "project:read", "project:write"],
         )
 
     @pytest.mark.asyncio
@@ -239,7 +239,7 @@ class TestUserService:
             name="Alice",
             email="alice@example.com",
             metadata=None,
-            permissions=["project:read", "project:write"],
+            permissions=["configuration:read", "configuration:write", "project:manage", "project:read", "project:write"],
         )
 
     @pytest.mark.asyncio
@@ -538,10 +538,12 @@ class TestUserServiceRoleGuards:
     """Role-change / self-delete guards on ``update_user`` and ``delete_user``.
 
     Observed contract:
-    - Changing your own role → ``ValidationError``.
+    - Any ``role`` key in ``update_user`` → ``ValidationError``
+      (role changes are disabled — grant permissions instead).
     - Deleting your own account → ``ValidationError``.
-    - Demoting/deleting the LAST active admin → ``ValidationError``.
-    - A successful role change invalidates the target's cached RBAC role.
+    - Deleting the LAST active admin → ``ValidationError``.
+    - A successful demotion via ``update_member_role`` invalidates the
+      target's cached RBAC role.
     """
 
     ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -589,10 +591,10 @@ class TestUserServiceRoleGuards:
                 user_id=self.ADMIN_ID,
                 update_fields={"role": "member"},
                 actor_user_id=self.ADMIN_ID,  # same user
-                is_superadmin=True,
+                is_admin=True,
             )
 
-        assert str(exc.value) == "You cannot change your own role."
+        assert str(exc.value) == "Role changes are disabled — grant permissions instead."
         mock_repo.update.assert_not_awaited()
         mock_repo.count_active_admins.assert_not_awaited()
 
@@ -607,7 +609,7 @@ class TestUserServiceRoleGuards:
                 user_id=self.MEMBER_ID,
                 update_fields={"role": "admin"},
                 actor_user_id=self.MEMBER_ID,
-                is_superadmin=True,
+                is_admin=True,
             )
         mock_repo.update.assert_not_awaited()
 
@@ -615,10 +617,8 @@ class TestUserServiceRoleGuards:
 
     @pytest.mark.asyncio
     async def test_demoting_last_admin_rejected(self) -> None:
-        """Demoting the org's last admin → ValidationError."""
+        """Demoting an admin via ``update_user`` → ValidationError (disabled)."""
         service, mock_repo, _ = self._make_service()
-        mock_repo.get_by_uuid.return_value = MagicMock(role="admin")
-        mock_repo.count_active_admins.return_value = 1  # last admin
 
         with pytest.raises(ValidationError) as exc:
             await service.update_user(
@@ -626,33 +626,31 @@ class TestUserServiceRoleGuards:
                 user_id=self.ADMIN_ID,
                 update_fields={"role": "member"},
                 actor_user_id=self.OTHER_ADMIN_ID,
-                is_superadmin=True,
+                is_admin=True,
             )
 
-        assert "last admin" in str(exc.value)
-        mock_repo.count_active_admins.assert_awaited_once_with(self.ADMIN_ID)
+        assert str(exc.value) == "Role changes are disabled — grant permissions instead."
+        mock_repo.count_active_admins.assert_not_awaited()
         mock_repo.update.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_demotion_allowed_when_more_than_one_admin(self) -> None:
-        """Demoting an admin when another active admin exists → proceeds."""
+    async def test_demotion_via_update_user_rejected_even_with_two_admins(self) -> None:
+        """Demotion via ``update_user`` is rejected even with 2+ admins (disabled)."""
         service, mock_repo, _ = self._make_service()
-        mock_repo.get_by_uuid.return_value = MagicMock(role="admin")
         mock_repo.count_active_admins.return_value = 2
-        mock_repo.update.return_value = self._make_user(role="member")
 
-        result = await service.update_user(
-            
-            user_id=self.ADMIN_ID,
-            update_fields={"role": "member"},
-            actor_user_id=self.OTHER_ADMIN_ID,
-            is_superadmin=True,
-        )
+        with pytest.raises(ValidationError) as exc:
+            await service.update_user(
+                
+                user_id=self.ADMIN_ID,
+                update_fields={"role": "member"},
+                actor_user_id=self.OTHER_ADMIN_ID,
+                is_admin=True,
+            )
 
-        assert isinstance(result, UserResponse)
-        assert result.role == "member"
-        mock_repo.count_active_admins.assert_awaited_once_with(self.ADMIN_ID)
-        mock_repo.update.assert_awaited_once()
+        assert str(exc.value) == "Role changes are disabled — grant permissions instead."
+        mock_repo.count_active_admins.assert_not_awaited()
+        mock_repo.update.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_deleting_last_admin_rejected(self) -> None:
@@ -701,27 +699,31 @@ class TestUserServiceRoleGuards:
         )
 
         assert result is None
-        mock_repo.count_active_admins.assert_awaited_once_with(self.ADMIN_ID)
+        mock_repo.count_active_admins.assert_awaited_once_with()
         mock_repo.soft_delete.assert_awaited_once()
 
     # ── Role-cache invalidation ───────────────────────────────────────────
 
     @pytest.mark.asyncio
     async def test_role_change_invalidates_cached_role(self) -> None:
-        """A successful role change invalidates the target's RBAC cache key."""
+        """A successful demotion via ``update_member_role`` invalidates RBAC caches."""
         service, mock_repo, _mock_redis = self._make_service(with_redis=True)
-        mock_repo.get_by_uuid.return_value = self._make_user(role="member")
-        mock_repo.update.return_value = self._make_user(role="admin")
+        mock_repo.get_by_uuid.return_value = self._make_user(role="admin")
+        mock_repo.count_active_admins.return_value = 2
+        mock_repo.update.return_value = self._make_user(role="member")
 
-        with patch(
-            "services.user_service.invalidate_role", new=AsyncMock(),
-        ) as mock_invalidate:
-            await service.update_user(
+        with (
+            patch(
+                "services.user_service.invalidate_role", new=AsyncMock(),
+            ) as mock_invalidate,
+            patch(
+                "services.user_service.invalidate_permissions", new=AsyncMock(),
+            ),
+        ):
+            await service.update_member_role(
                 
                 user_id=self.MEMBER_ID,
-                update_fields={"role": "admin"},
-                actor_user_id=self.ADMIN_ID,
-                is_superadmin=True,
+                role="member",
             )
 
         mock_invalidate.assert_awaited_once_with(_mock_redis, self.MEMBER_ID)
@@ -750,11 +752,11 @@ class TestUserServicePermissionSeeding:
     """Permission seeding + cache invalidation on the unified RBAC model.
 
     Observed contract:
-    - ``create_user`` with role ``member`` → member defaults
-      (``project:read``, ``project:write``).
+    - ``create_user`` with role ``member`` → member defaults (all
+      non-``members:*`` permissions, canonical order).
     - ``create_user`` with role ``admin`` → ``[]`` (wildcard via role).
-    - A role change keeps the stored grants (role alone never touches the
-      permission array) and invalidates the cached permission set.
+    - A ``role`` key in ``update_user`` is rejected (disabled) — grants
+      untouched, caches untouched.
     - A permissions update replaces the set and invalidates the cache.
     """
 
@@ -797,7 +799,7 @@ class TestUserServicePermissionSeeding:
         service, mock_repo, _ = self._make_service()
         mock_repo.exists_by_external_id.return_value = False
         mock_repo.create.return_value = self._make_user(
-            role="member", permissions=["project:read", "project:write"],
+            role="member", permissions=["configuration:read", "configuration:write", "project:manage", "project:read", "project:write"],
         )
 
         await service.create_user(
@@ -811,44 +813,33 @@ class TestUserServicePermissionSeeding:
             email=None,
             metadata=None,
             role="member",
-            permissions=["project:read", "project:write"],
+            permissions=["configuration:read", "configuration:write", "project:manage", "project:read", "project:write"],
         )
 
     @pytest.mark.asyncio
-    async def test_create_admin_seeds_empty_permissions(self) -> None:
-        """``create_user`` with role admin seeds ``[]`` (wildcard via role)."""
+    async def test_create_admin_rejected_admin_frozen(self) -> None:
+        """``create_user`` with role admin → ValidationError (frozen)."""
         service, mock_repo, _ = self._make_service()
         mock_repo.exists_by_external_id.return_value = False
-        mock_repo.create.return_value = self._make_user(role="admin")
 
-        await service.create_user(
-            user_id=self.ORG_ID,
-            external_id="user_x",
-            role="admin",
-        )
+        with pytest.raises(ValidationError, match="Admin creation is frozen"):
+            await service.create_user(
+                user_id=self.ORG_ID,
+                external_id="user_x",
+                role="admin",
+            )
 
-        mock_repo.create.assert_awaited_once_with(
-            external_id="user_x",
-            name=None,
-            email=None,
-            metadata=None,
-            role="admin",
-            permissions=[],
-        )
+        mock_repo.create.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_role_change_keeps_grants_and_invalidates_permissions_cache(
+    async def test_role_change_via_update_user_rejected_grants_untouched(
         self,
     ) -> None:
-        """A role change alone never touches the permission array, but the
-        cached permission set is invalidated (admin = wildcard changes the
-        effective set)."""
+        """A ``role`` key in ``update_user`` is rejected — grants and caches
+        untouched (demotions go through ``update_member_role``)."""
         service, mock_repo, mock_redis = self._make_service(with_redis=True)
         mock_repo.get_by_uuid.return_value = self._make_user(
-            role="member", permissions=["project:read", "project:write"],
-        )
-        mock_repo.update.return_value = self._make_user(
-            role="admin", permissions=["project:read", "project:write"],
+            role="member", permissions=["project:read"],
         )
 
         with (
@@ -859,22 +850,18 @@ class TestUserServicePermissionSeeding:
                 "services.user_service.invalidate_permissions", new=AsyncMock(),
             ) as mock_invalidate_perms,
         ):
-            await service.update_user(
-                
-                user_id=self.MEMBER_ID,
-                update_fields={"role": "admin"},
-                actor_user_id=self.ADMIN_ID,
-                is_superadmin=True,
-            )
+            with pytest.raises(ValidationError, match="Role changes are disabled"):
+                await service.update_user(
+                    
+                    user_id=self.MEMBER_ID,
+                    update_fields={"role": "admin"},
+                    actor_user_id=self.ADMIN_ID,
+                    is_admin=True,
+                )
 
-        # The repo receives ONLY the role change — grants survive untouched.
-        mock_repo.update.assert_awaited_once_with(
-            
-            user_id=self.MEMBER_ID,
-            update_fields={"role": "admin"},
-        )
-        mock_invalidate_role.assert_awaited_once_with(mock_redis, self.MEMBER_ID)
-        mock_invalidate_perms.assert_awaited_once_with(mock_redis, self.MEMBER_ID)
+        mock_repo.update.assert_not_awaited()
+        mock_invalidate_role.assert_not_awaited()
+        mock_invalidate_perms.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_permissions_update_replaces_set_and_invalidates_cache(
@@ -895,7 +882,7 @@ class TestUserServicePermissionSeeding:
                 user_id=self.MEMBER_ID,
                 update_fields={"permissions": ["configuration:read"]},
                 actor_user_id=self.ADMIN_ID,
-                is_superadmin=True,
+                is_admin=True,
             )
 
         mock_repo.update.assert_awaited_once_with(
@@ -924,7 +911,7 @@ class TestUserServicePermissionSeeding:
                 },
                 actor_user_id=self.ADMIN_ID,
                 actor_permissions=frozenset({"project:read"}),
-                is_superadmin=True,
+                is_admin=True,
             )
 
         mock_repo.update.assert_awaited_once_with(
@@ -934,8 +921,8 @@ class TestUserServicePermissionSeeding:
         )
 
 
-class TestUserServiceSuperadminSurface:
-    """update_member_role — the platform superadmin cross-org role change."""
+class TestUserServiceAdminSurface:
+    """update_member_role — the platform admin cross-org role change."""
 
     ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
     USER_ID = UUID("00000000-0000-0000-0000-000000000010")
@@ -955,22 +942,26 @@ class TestUserServiceSuperadminSurface:
         return user
 
     @pytest.mark.asyncio
-    async def test_update_member_role_persists_and_returns_user(self) -> None:
-        """update_member_role delegates to repo.update with the role field."""
+    async def test_update_member_role_demote_persists_and_returns_user(self) -> None:
+        """update_member_role demotion persists via repo.update (admin frozen)."""
         service, mock_repo = self._make_service()
-        mock_repo.update.return_value = self._make_user()
+        mock_repo.get_by_uuid.return_value = self._make_user()
+        mock_repo.count_active_admins.return_value = 2
+        demoted = self._make_user()
+        demoted.role = "member"
+        mock_repo.update.return_value = demoted
 
         user = await service.update_member_role(
             
             user_id=self.USER_ID,
-            role="admin",
+            role="member",
         )
 
-        assert user.role == "admin"
+        assert user.role == "member"
         mock_repo.update.assert_awaited_once_with(
             
             user_id=self.USER_ID,
-            update_fields={"role": "admin"},
+            update_fields={"role": "member"},
         )
 
     @pytest.mark.asyncio
@@ -1011,17 +1002,19 @@ class TestUserServiceSuperadminSurface:
 
 
 @pytest.mark.unit
-class TestUserServiceSuperadminImmortalGuard:
-    """Superadmin immortal guard — Option A tenant-API blocks.
+class TestUserServiceAdminImmortalGuard:
+    """Admin guard — delete/update_user boundaries.
 
     Guards (observed contract in ``services/user_service.py``):
 
-    - ``delete_user``: self-delete (422) → superadmin (422) → last-admin (422)
-    - ``update_user``: self-role (422) → superadmin demote (422) → last-admin demote (422)
+    - ``delete_user``: self-delete (422) → root (422) → last-admin (422);
+      deleting a non-last admin proceeds.
+    - ``update_user``: any ``role`` key (422 — disabled, grant permissions
+      instead).
     """
 
     ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
-    SUPERADMIN_ID = UUID("00000000-0000-0000-0000-000000000020")
+    TARGET_ADMIN_ID = UUID("00000000-0000-0000-0000-000000000020")
     ADMIN_ID = UUID("00000000-0000-0000-0000-000000000010")
     OTHER_ADMIN_ID = UUID("00000000-0000-0000-0000-000000000011")
     MEMBER_ID = UUID("00000000-0000-0000-0000-000000000012")
@@ -1041,7 +1034,7 @@ class TestUserServiceSuperadminImmortalGuard:
     ) -> MagicMock:
         """Build a User ORM mock with the fields ``_user_to_dict`` reads."""
         user = MagicMock()
-        user.id = user_id or self.SUPERADMIN_ID
+        user.id = user_id or self.TARGET_ADMIN_ID
         user.user_id = self.ORG_ID
         user.external_id = "user_x"
         user.name = "A User"
@@ -1056,88 +1049,85 @@ class TestUserServiceSuperadminImmortalGuard:
         return user
 
     @pytest.mark.asyncio
-    async def test_delete_superadmin_blocked_returns_validation_error(self) -> None:
-        """Deleting a superadmin via the tenant API → ValidationError."""
+    async def test_delete_non_last_admin_allowed(self) -> None:
+        """Deleting a non-last admin proceeds (only the last admin is guarded)."""
         service, mock_repo, _ = self._make_service()
         mock_repo.get_by_uuid.return_value = self._make_user(
-            role="superadmin", user_id=self.SUPERADMIN_ID,
+            role="admin", user_id=self.TARGET_ADMIN_ID,
+        )
+        mock_repo.count_active_admins.return_value = 2
+        mock_repo.soft_delete.return_value = self._make_user(
+            role="admin", user_id=self.TARGET_ADMIN_ID,
         )
 
-        with pytest.raises(ValidationError) as exc:
-            await service.delete_user(
-                
-                user_id=self.SUPERADMIN_ID,
-                actor_user_id=self.ADMIN_ID,
-            )
+        result = await service.delete_user(
+            
+            user_id=self.TARGET_ADMIN_ID,
+            actor_user_id=self.ADMIN_ID,
+        )
 
-        assert "Superadmin accounts cannot be deleted" in str(exc.value)
-        mock_repo.soft_delete.assert_not_awaited()
-        mock_repo.count_active_admins.assert_not_awaited()
+        assert result is None
+        mock_repo.count_active_admins.assert_awaited_once_with()
+        mock_repo.soft_delete.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_update_superadmin_demote_blocked(self) -> None:
-        """Demoting a superadmin (superadmin → member) via tenant API → ValidationError."""
+    async def test_update_admin_demote_blocked(self) -> None:
+        """Demoting an admin via ``update_user`` → ValidationError (disabled)."""
         service, mock_repo, _ = self._make_service()
         mock_repo.get_by_uuid.return_value = self._make_user(
-            role="superadmin", user_id=self.SUPERADMIN_ID,
+            role="admin", user_id=self.TARGET_ADMIN_ID,
         )
 
         with pytest.raises(ValidationError) as exc:
             await service.update_user(
                 
-                user_id=self.SUPERADMIN_ID,
+                user_id=self.TARGET_ADMIN_ID,
                 update_fields={"role": "member"},
                 actor_user_id=self.ADMIN_ID,
-                is_superadmin=True,
+                is_admin=True,
             )
 
-        assert "Superadmin role cannot be changed" in str(exc.value)
+        assert str(exc.value) == "Role changes are disabled — grant permissions instead."
         mock_repo.update.assert_not_awaited()
         mock_repo.count_active_admins.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_update_superadmin_same_role_allowed(self) -> None:
-        """Patching a superadmin with the same role (superadmin → superadmin) is not blocked."""
+    async def test_update_admin_same_role_rejected(self) -> None:
+        """Patching an admin with the same role is rejected (disabled)."""
         service, mock_repo, _ = self._make_service()
         mock_repo.get_by_uuid.return_value = self._make_user(
-            role="superadmin", user_id=self.SUPERADMIN_ID,
-        )
-        mock_repo.update.return_value = self._make_user(
-            role="superadmin", user_id=self.SUPERADMIN_ID,
+            role="admin", user_id=self.TARGET_ADMIN_ID,
         )
 
-        result = await service.update_user(
-            
-            user_id=self.SUPERADMIN_ID,
-            update_fields={"role": "superadmin"},
-            actor_user_id=self.ADMIN_ID,
-            is_superadmin=True,
-        )
+        with pytest.raises(ValidationError) as exc:
+            await service.update_user(
+                
+                user_id=self.TARGET_ADMIN_ID,
+                update_fields={"role": "admin"},
+                actor_user_id=self.ADMIN_ID,
+                is_admin=True,
+            )
 
-        assert isinstance(result, UserResponse)
-        assert result.role == "superadmin"
-        mock_repo.update.assert_awaited_once_with(
-            
-            user_id=self.SUPERADMIN_ID,
-            update_fields={"role": "superadmin"},
-        )
+        assert str(exc.value) == "Role changes are disabled — grant permissions instead."
+        mock_repo.update.assert_not_awaited()
+        mock_repo.count_active_admins.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_delete_admin_still_blocks_last_admin(self) -> None:
         """Regression: deleting the last admin is still blocked (last-admin guard intact)."""
         service, mock_repo, _ = self._make_service()
         mock_repo.get_by_uuid.return_value = self._make_user(
-            role="admin", user_id=self.ADMIN_ID,
+            role="admin", user_id=self.TARGET_ADMIN_ID,
         )
         mock_repo.count_active_admins.return_value = 1
 
         with pytest.raises(ValidationError) as exc:
             await service.delete_user(
                 
-                user_id=self.ADMIN_ID,
+                user_id=self.TARGET_ADMIN_ID,
                 actor_user_id=self.OTHER_ADMIN_ID,
             )
 
         assert "last admin" in str(exc.value).lower()
         mock_repo.soft_delete.assert_not_awaited()
-        mock_repo.count_active_admins.assert_awaited_once_with(self.ADMIN_ID)
+        mock_repo.count_active_admins.assert_awaited_once_with()

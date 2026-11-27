@@ -52,11 +52,11 @@ async def process_entities_output(
         entity_repo: Entity repository for upsert operations.
         episode_repo: Optional episode repository for setting enrichment bits.
             If None, bits are not set (caller manages this).
-        user_id: Organization UUID string.
+        user_id: User UUID string.
         episode_id: Episode UUID string.
         project_id: Project UUID string.
         parsed: The validated EntityExtractionOutput from the LLM.
-        entity_types: List of allowed entity type strings from org config.
+        entity_types: List of allowed entity type strings from platform config.
 
     Returns:
         A dict mapping entity names to their UUID strings, for use by

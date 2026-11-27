@@ -1,6 +1,6 @@
 """Entity merge dedup worker — ARQ task for weekly scheduled entity deduplication.
 
-Detects and merges duplicate entities within an organization's knowledge graph
+Detects and merges duplicate entities within an user's knowledge graph
 using exact name matching and backend fuzzy string similarity.
 
 Pipeline:
@@ -68,18 +68,18 @@ async def merge_duplicate_entities(
     ctx: dict,
     user_id: str | None = None,
 ) -> dict:
-    """Merge duplicate entities for an organization.
+    """Merge duplicate entities for a user.
 
     Can be called:
-    - Without ``user_id`` (scheduled weekly run): processes all eligible orgs.
-    - With ``user_id`` (manual trigger): processes a single org.
+    - Without ``user_id`` (scheduled weekly run): processes all eligible users.
+    - With ``user_id`` (manual trigger): processes a single user.
 
     Args:
         ctx: ARQ worker context (passed to ``resolve_graph_backend``).
-        user_id: Optional org UUID to process (processes all if ``None``).
+        user_id: Optional user UUID to process (processes all if ``None``).
 
     Returns:
-        Dict with ``status``, ``orgs_processed``, ``orgs_failed``,
+        Dict with ``status``, ``users_processed``, ``users_failed``,
         ``clusters_merged``, ``entities_merged``,
         ``relationships_rewired``.
     """
@@ -106,73 +106,73 @@ async def merge_duplicate_entities(
     try:
         async with _session_factory() as db:
             try:
-                # Determine which orgs to process
+                # Determine which users to process
                 if user_id:
-                    org_ids = [uuid.UUID(user_id)]
+                    user_ids = [uuid.UUID(user_id)]
                 else:
                     # Platform-wide sweep: the organization list is not
                     # tenant-scoped, so the scan runs under the RLS bypass.
                     # The bypass is transaction-scoped on purpose — end the
-                    # transaction right after so the per-org work below runs
+                    # transaction right after so the per-user work below runs
                     # under the tenant context and not under the bypass.
                     async with rls.rls_bypass(db):
-                        org_ids = await _find_eligible_orgs(db)
+                        user_ids = await _find_eligible_users(db)
                     await db.rollback()
 
-                if not org_ids:
-                    logger.info("merge_duplicates.no_eligible_orgs")
+                if not user_ids:
+                    logger.info("merge_duplicates.no_eligible_users")
                     return {
                         "status": "skipped",
-                        "reason": "No eligible orgs found",
+                        "reason": "No eligible users found",
                     }
 
-                org_errors: list[str] = []
+                user_errors: list[str] = []
                 total_clusters = 0
                 total_merged = 0
                 total_rewired = 0
 
-                for current_org_id in org_ids:
-                    # Bind the session to the org being processed before any
-                    # org-scoped query — under enforced RLS an unbound session
+                for current_user_id in user_ids:
+                    # Bind the session to the user being processed before any
+                    # user-scoped query — under enforced RLS an unbound session
                     # sees no rows.
-                    await rls.set_tenant_context(db, current_org_id)
+                    await rls.set_user_context(db, current_user_id)
                     try:
-                        clusters = await _process_org(
-                            ctx, db, current_org_id,
+                        clusters = await _process_user(
+                            ctx, db, current_user_id,
                         )
                         total_clusters += clusters["clusters"]
                         total_merged += clusters["entities_merged"]
                         total_rewired += clusters["relationships_rewired"]
                     except Exception as exc:
                         logger.error(
-                            "merge_duplicates.org_failed",
-                            user_id=str(current_org_id),
+                            "merge_duplicates.user_failed",
+                            user_id=str(current_user_id),
                             error=str(exc),
                         )
-                        org_errors.append(str(current_org_id))
-                        # Drop the failed org's transaction so the next org
+                        user_errors.append(str(current_user_id))
+                        # Drop the failed user's transaction so the next user
                         # starts on a clean session (an aborted transaction
                         # would reject every following statement).
                         await db.rollback()
 
-                if org_errors and len(org_errors) == len(org_ids):
+                if user_errors and len(user_errors) == len(user_ids):
                     raise RuntimeError(
-                        f"All {len(org_ids)} orgs failed: {', '.join(org_errors)}"
+                        f"All {len(user_ids)} users failed: {', '.join(user_errors)}"
                     )
 
                 logger.info(
                     "merge_duplicates.completed",
-                    orgs_processed=len(org_ids),
-                    orgs_failed=len(org_errors),
+                    users_processed=len(user_ids),
+                    users_failed=len(user_errors),
                     clusters_merged=total_clusters,
                     entities_merged=total_merged,
                     relationships_rewired=total_rewired,
                 )
 
                 return {
-                    "status": "completed" if not org_errors else "partial",
-                    "orgs_processed": len(org_ids),
-                    "orgs_failed": len(org_errors),
+                    "status": "completed" if not user_errors else "partial",
+                    "users_processed": len(user_ids),
+                    "users_failed": len(user_errors),
                     "clusters_merged": total_clusters,
                     "entities_merged": total_merged,
                     "relationships_rewired": total_rewired,
@@ -188,11 +188,11 @@ async def merge_duplicate_entities(
 # ── Private helpers ────────────────────────────────────────────────────────────
 
 
-async def _find_eligible_orgs(db: AsyncSession) -> list[uuid.UUID]:
-    """Return all organization IDs for duplicate-entity processing.
+async def _find_eligible_users(db: AsyncSession) -> list[uuid.UUID]:
+    """Return all user IDs for duplicate-entity processing.
 
-    Returns ALL orgs — per-org backend resolution and entity-count
-    filtering happens in ``_process_org`` / ``_process_project`` via
+    Returns ALL users — per-user backend resolution and entity-count
+    filtering happens in ``_process_user`` / ``_process_project`` via
     ``backend.get_all_entities()``.  Direct ``GraphEntity`` ORM queries
     are incorrect for non-Postgres backends and silently return zero
     results when entities live in SurrealDB or FalkorDB.
@@ -201,26 +201,26 @@ async def _find_eligible_orgs(db: AsyncSession) -> list[uuid.UUID]:
         db: Database session.
 
     Returns:
-        List of all organization UUIDs.
+        List of all user UUIDs.
     """
     result = await db.execute(select(Organization.id))
     return [r[0] for r in result.all()]
 
 
-async def _process_org(
+async def _process_user(
     ctx: dict,
     db: AsyncSession,
     user_id: uuid.UUID,
 ) -> dict[str, int]:
-    """Run dedup logic for a single organization.
+    """Run dedup logic for a single user.
 
-    Resolves the per-org graph backend, discovers projects with graph
+    Resolves the per-user graph backend, discovers projects with graph
     data, and processes each project independently.
 
     Args:
         ctx: ARQ worker context (passed to ``resolve_graph_backend``).
         db: Database session.
-        user_id: Organization UUID.
+        user_id: User UUID.
 
     Returns:
         Dict with ``clusters``, ``entities_merged``,
@@ -234,7 +234,7 @@ async def _process_org(
         )
         return {"clusters": 0, "entities_merged": 0, "relationships_rewired": 0}
 
-    # Discover projects for this org
+    # Discover projects for this user
     result = await db.execute(
         select(Project.id).where(
             Project.user_id == user_id,
@@ -271,13 +271,13 @@ async def _process_org(
     if cluster_errors and len(cluster_errors) == len(project_ids):
         raise RuntimeError(
             f"All {len(project_ids)} projects failed to merge duplicates "
-            f"for org {user_id}: {', '.join(cluster_errors)}"
+            f"for user {user_id}: {', '.join(cluster_errors)}"
         )
 
     await db.commit()
 
     logger.info(
-        "merge_duplicates.org_completed",
+        "merge_duplicates.user_completed",
         user_id=str(user_id),
         clusters=total_clusters,
         projects_failed=len(cluster_errors),
@@ -303,8 +303,8 @@ async def _process_project(
 
     Args:
         db: Database session (for audit log).
-        backend: Graph backend for this org.
-        user_id: Organization UUID.
+        backend: Graph backend for this user.
+        user_id: User UUID.
         project_id: Project UUID.
 
     Returns:
@@ -365,8 +365,8 @@ async def _find_duplicate_clusters(
     All data comes from ``backend.get_all_entities()`` — no raw SQL.
 
     Args:
-        backend: Graph backend for this org.
-        user_id: Organization UUID.
+        backend: Graph backend for this user.
+        user_id: User UUID.
         project_id: Project UUID.
 
     Returns:
@@ -449,8 +449,8 @@ async def _merge_cluster(
 
     Args:
         db: Database session (for audit log).
-        backend: Graph backend for this org.
-        user_id: Organization UUID.
+        backend: Graph backend for this user.
+        user_id: User UUID.
         project_id: Project UUID.
         cluster: List of entity dicts in this cluster (at least 2).
 

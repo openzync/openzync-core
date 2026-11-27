@@ -52,13 +52,6 @@ def test_admin_stats_router_has_no_db_access() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _stub_permission_gate():
-    """Stub the permission gate (same approach as test_admin_metrics.py)."""
-    with patch("dependencies.auth._check_permission", new=AsyncMock()):
-        yield
-
-
-@pytest.fixture(autouse=True)
 def _reset_prom_client_singleton():
     admin_metrics._prom_client = None  # noqa: SLF001
     yield
@@ -147,7 +140,11 @@ async def test_targets_shape() -> None:
     mock_prom = AsyncMock()
     mock_prom.get.return_value = mock_response
     transport = ASGITransport(app=app)
-    with patch("routers.admin_metrics._get_prom_client", return_value=mock_prom):
+    with (
+        # ``/metrics/targets`` stays members:read-gated (unlike summary/batch).
+        patch("dependencies.auth._check_permission", new=AsyncMock()),
+        patch("routers.admin_metrics._get_prom_client", return_value=mock_prom),
+    ):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/metrics/targets")
     assert resp.status_code == 200
@@ -178,7 +175,7 @@ async def test_batch_days7_partial_envelope() -> None:
     assert set(body) == {"results", "errors", "meta"}
     assert body["meta"]["days"] == 7
     assert isinstance(body["meta"]["partial"], bool)
-    assert body["results"]["episodes_per_day"]["org_scoped"] is True
+    assert body["results"]["episodes_per_day"]["user_scoped"] is True
 
 
 @pytest.mark.asyncio

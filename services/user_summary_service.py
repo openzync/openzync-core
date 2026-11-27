@@ -71,7 +71,7 @@ class UserSummaryService:
         already exists (rate limited).
 
         Args:
-            user_id: Organization UUID (scoping key).
+            user_id: User UUID (scoping key).
             user_id: User UUID (scoping key).
 
         Returns:
@@ -102,7 +102,7 @@ class UserSummaryService:
         immediately with a ``processing`` status.
 
         Args:
-            user_id: Organization UUID (tenant scope).
+            user_id: User UUID (tenant scope).
             user_id: User UUID to generate a summary for.
 
         Returns:
@@ -141,7 +141,7 @@ class UserSummaryService:
         """Fetch the currently stored summary for a user.
 
         Args:
-            user_id: Organization UUID (tenant scope).
+            user_id: User UUID (tenant scope).
             user_id: User UUID to fetch the summary for.
 
         Returns:
@@ -171,7 +171,7 @@ class UserSummaryService:
         """Fetch custom instructions scoped to ``user_summary`` for this user.
 
         Args:
-            user_id: Organization UUID (tenant scope).
+            user_id: User UUID (tenant scope).
             user_id: User UUID (target of the instructions).
 
         Returns:
@@ -197,7 +197,7 @@ class UserSummaryService:
         transaction.
 
         Args:
-            user_id: Organization UUID (tenant scope).
+            user_id: User UUID (tenant scope).
             user_id: User UUID (target of the instructions).
             instructions: List of ``{"name": ..., "text": ...}`` dicts.
                 Each name must be unique within this scope + target.
@@ -231,7 +231,7 @@ class UserSummaryService:
         """Delete all custom instructions for this scope + target.
 
         Args:
-            user_id: Organization UUID (tenant scope).
+            user_id: User UUID (tenant scope).
             user_id: User UUID (target of the instructions).
         """
         await self._ci_repo.delete_by_scope(

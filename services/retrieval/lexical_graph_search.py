@@ -20,7 +20,7 @@ class LexicalGraphSearchMixin:
     """BM25 keyword legs plus graph-BFS traversal (composed into the retriever)."""
 
     _db: AsyncSession
-    _org_id: UUID
+    _user_id: UUID
     _graph_backends: list[Any]
 
     # ── BM25 Search ────────────────────────────────────────────────────────────
@@ -51,7 +51,7 @@ class LexicalGraphSearchMixin:
         return await _hr.EpisodeRepository(self._db).search_by_bm25(
             query=query,
             project_id=project_id,
-            user_id=self._org_id,
+            user_id=self._user_id,
             limit=limit,
         )
 
@@ -84,7 +84,7 @@ class LexicalGraphSearchMixin:
         return await _hr.FactRepository(self._db).search_by_bm25(
             query=query,
             project_id=project_id,
-            user_id=self._org_id,
+            user_id=self._user_id,
             limit=limit,
             effective_at=query_time,
         )
@@ -136,7 +136,7 @@ class LexicalGraphSearchMixin:
         async def _safe_retrieve(backend: Any) -> list[dict[str, Any]]:
             try:
                 result: list[dict[str, Any]] = await backend.retrieve_graph(
-                    user_id=self._org_id,
+                    user_id=self._user_id,
                     project_id=project_id,
                     query=query,
                     as_of=query_time,
@@ -145,7 +145,7 @@ class LexicalGraphSearchMixin:
                 logger.warning(
                     "hybrid_retriever.graph_backend_failed",
                     extra={
-                        "user_id": str(self._org_id),
+                        "user_id": str(self._user_id),
                         "backend": type(backend).__name__,
                     },
                     exc_info=True,
@@ -165,14 +165,14 @@ class LexicalGraphSearchMixin:
                 if not isinstance(item, dict):
                     logger.warning(
                         "hybrid_retriever.graph_item_malformed",
-                        extra={"user_id": str(self._org_id)},
+                        extra={"user_id": str(self._user_id)},
                     )
                     continue
                 item_id = item.get("id")
                 if not item_id:
                     logger.warning(
                         "hybrid_retriever.graph_item_missing_id",
-                        extra={"user_id": str(self._org_id)},
+                        extra={"user_id": str(self._user_id)},
                     )
                     continue
                 item_id = str(item_id)

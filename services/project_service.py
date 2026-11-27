@@ -26,7 +26,7 @@ from schemas.users import UserResponse
 logger = logging.getLogger(__name__)
 
 MAX_PINS = 3
-"""Maximum pinned projects per user per organization."""
+"""Maximum pinned projects per user."""
 
 
 class ProjectService:
@@ -67,9 +67,9 @@ class ProjectService:
 
         Raises:
             ValidationError: If a project with the same name already exists
-                in this organisation.
+                in this user scope.
         """
-        # Check for duplicate names within the org
+        # Check for duplicate names within the user scope
         existing = await self._repo.get_by_name(
             user_id=user_id,
             name=payload.name,
@@ -78,7 +78,7 @@ class ProjectService:
             raise ValidationError(
                 message=(
                     f"A project named '{payload.name}' already exists "
-                    "in this organisation"
+                    "in this user scope"
                 ),
                 detail={"name": payload.name},
             )
@@ -160,11 +160,11 @@ class ProjectService:
         sort: SortSpec | None = None,
         include_archived: bool = False,
     ) -> list[ProjectResponse]:
-        """List projects in an organisation.
+        """List projects in a user scope.
 
         When ``user_id`` is provided, only projects where the user is a
         member are returned.  When ``user_id`` is ``None`` (API key auth),
-        all projects in the org are returned with
+        all projects in the user scope are returned with
         ``is_pinned=False``.  Each entry carries ``is_pinned`` for the
         requesting user; ``pinned_only=True`` returns just their pins,
         most recently pinned first.
