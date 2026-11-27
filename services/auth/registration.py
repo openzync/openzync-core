@@ -18,7 +18,7 @@ from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 
-from core.rbac import ALL_PERMISSIONS
+from core.rbac import MEMBER_DEFAULT_PERMISSIONS
 from core.rls import set_user_context
 from repositories.instance_settings_repository import InstanceSettingsRepository
 from schemas.auth import (
@@ -122,7 +122,7 @@ class RegistrationMixin:
                 password_hash=pw_hash,
                 name=payload.email.split("@")[0],
                 role="member",
-                permissions=list(ALL_PERMISSIONS),
+                permissions=list(MEMBER_DEFAULT_PERMISSIONS),
                 # Approval gate is atomic: inactive at creation, never a
                 # live-then-deactivate window where the user could log in.
                 is_active=mode != "approval",

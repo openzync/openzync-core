@@ -711,16 +711,3 @@ def require_admin_or_self():
         return caller_id
 
     return _admin_or_self_checker
-
-
-# ── Deprecated aliases (remove next release) ─────────────────────────────────
-_ensure_superadmin = _ensure_admin
-"""Deprecated alias of :func:`_ensure_admin`."""
-
-require_superadmin = require_admin
-"""Deprecated alias of :func:`require_admin`."""
-
-
-def require_superadmin_or_self():
-    """Deprecated alias of :func:`require_admin_or_self`."""
-    return require_admin_or_self()

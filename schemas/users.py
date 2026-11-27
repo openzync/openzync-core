@@ -42,8 +42,8 @@ class CreateUserRequest(BaseModel):
         name: Optional human-readable display name.
         email: Optional email address (validated to contain ``@``).
         metadata: Arbitrary JSON metadata for the user. Deep-merged on update.
-        role: Dashboard role — ``admin`` or ``member``.  Only meaningful
-            for dashboard users (JWT login); default ``member``.
+        role: Dashboard role — always ``member`` (``admin`` promotion is
+            frozen; the schema rejects ``admin`` with 422). Default ``member``.
     """
 
     external_id: str = Field(
@@ -70,9 +70,11 @@ class CreateUserRequest(BaseModel):
         description="Arbitrary JSON metadata for the user. Deep-merged on update.",
         examples=[{"plan": "pro", "region": "us-east", "onboarded_at": "2026-01-15"}],
     )
-    role: Literal["admin", "member"] = Field(
+    # ⚠️ BREAKING: ``admin`` rejected at schema — promotion is frozen,
+    # grant permissions instead. POST /v1/users {role: "admin"} → 422.
+    role: Literal["member"] = Field(
         default="member",
-        description="Dashboard role — 'admin' or 'member'. Defaults to 'member'.",
+        description="Dashboard role — always 'member'. 'admin' is rejected with 422.",
         examples=["member"],
     )
     permissions: list[str] = Field(
@@ -120,10 +122,9 @@ class UpdateUserRequest(BaseModel):
         metadata: Metadata keys to merge into existing metadata.
             Set a key to ``null`` to remove it. Does **not** replace the
             full metadata dict.
-        role: New dashboard role — ``admin`` or ``member``.  Absent = no
-            change.  Cannot be used on your own account or to demote the
-            last admin.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(
         default=None,
@@ -142,11 +143,9 @@ class UpdateUserRequest(BaseModel):
             "Set a key to null to remove it. Does NOT replace the full metadata dict."
         ),
     )
-    role: Literal["admin", "member"] | None = Field(
-        default=None,
-        description="New dashboard role — 'admin' or 'member'. Absent = no change.",
-        examples=["admin"],
-    )
+    # ⚠️ BREAKING: ``role`` field removed — role changes are disabled
+    # (the service raises 422 for any ``role`` key); grant ``permissions``
+    # instead.
     permissions: list[str] | None = Field(
         default=None,
         description=(

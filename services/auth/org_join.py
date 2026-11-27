@@ -14,7 +14,7 @@ from core.exceptions import (
 )
 from core.rls import set_user_context
 from core.rbac import (
-    ALL_PERMISSIONS,
+    MEMBER_DEFAULT_PERMISSIONS,
 )
 from repositories.instance_settings_repository import InstanceSettingsRepository
 from schemas.auth import (
@@ -75,8 +75,8 @@ class OrgJoinMixin:
         # No tenant context on this public path — authz is the
         # registration_mode gate above; persistence uses a
         # transaction-local bypass inside create_dashboard_user.
-        # Join mints ``member`` with the full permission vocabulary —
-        # joined users never self-promote (only root promotes to admin).
+        # Join mints ``member`` with the member defaults, no members:* —
+        # admin grants explicitly.
         existing = await self._repo.find_user_by_email(payload.email)
         if existing is not None:
             logger.warning(
@@ -95,7 +95,7 @@ class OrgJoinMixin:
                 password_hash=pw_hash,
                 name=payload.email.split("@")[0],  # default name from email
                 role="member",
-                permissions=list(ALL_PERMISSIONS),
+                permissions=list(MEMBER_DEFAULT_PERMISSIONS),
             )
             await set_user_context(self._repo.session, user.id)
             if mode == "approval":

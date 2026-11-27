@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING
 
 from core.config import get_settings
 from core.exceptions import ConflictError, ExternalServiceError, NotFoundError
-from core.rbac import ALL_PERMISSIONS
+from core.rbac import MEMBER_DEFAULT_PERMISSIONS
 from core.rls import rls_bypass
 from repositories.user_repository import UserRepository  # noqa: TC001
 from schemas.auth import (
@@ -234,7 +234,7 @@ class InviteService:
                 name=payload.name,
                 email=payload.email,
                 role="member",
-                permissions=list(ALL_PERMISSIONS),
+                permissions=list(MEMBER_DEFAULT_PERMISSIONS),
                 password_hash=None,
                 invite_token_hash=token_hash,
             )

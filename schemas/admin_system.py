@@ -61,13 +61,16 @@ class SystemOrgMembersResponse(BaseModel):
 class UpdateMemberRoleRequest(BaseModel):
     """Request body for ``PATCH /admin/system/orgs/{user_id}/members/{user_id}/role``.
 
-    Only the two tenant roles are assignable — anything else fails with
-    422 at the schema boundary.
+    Only demotion is assignable — promotion is frozen, grant
+    ``permissions`` instead.  Anything else fails with 422 at the
+    schema boundary.
     """
 
-    role: Literal["admin", "member"] = Field(
+    # ⚠️ BREAKING: ``role`` narrowed to ``Literal["member"]`` — the
+    # ``admin`` value is gone, promotion raises 422 even for root.
+    role: Literal["member"] = Field(
         ...,
-        description="New role for the member — ``admin`` or ``member``.",
+        description="New role for the member — only ``member`` (demotion).",
     )
 
 

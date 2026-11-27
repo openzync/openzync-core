@@ -39,10 +39,10 @@ Revises: 0079
 Rollback note (lossy): the downgrade only re-expands the CHECK to admit
 ``superadmin`` again — it does NOT restore which rows were ``superadmin``
 (the mapping is not invertible).  A demoted ex-admin stays ``member``
-with full permissions (still valid under the old constraint).  To restore
-a platform admin after a rollback, have root promote via
-``PATCH /admin/system/users/{user_id}/role``.  Run
-``alembic downgrade -1`` with the same ``OZ_DATABASE_URL`` used for the
+with full permissions (still valid under the old constraint).  To
+re-establish a platform admin after a rollback, use a direct DB/data
+fix — the promotion endpoint stays frozen and cannot promote.
+Run ``alembic downgrade -1`` with the same ``OZ_DATABASE_URL`` used for the
 upgrade.
 """
 

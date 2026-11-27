@@ -182,9 +182,11 @@ async def update_user(
     - Set a metadata key to ``null`` to remove it.
     - Send ``name: null`` or ``email: null`` to clear those fields.
     - At least one field must be provided.
-    - ``role``/``permissions`` may only be changed by an admin (403
-      otherwise — the service enforces this via ``is_admin``); you
-      cannot change your own role.
+    - ``role`` never changes via this endpoint — any ``role`` key is
+      rejected with 422 at the schema boundary (``extra="forbid"``).
+    - ``permissions`` may only be changed by an admin (403 otherwise —
+      the service enforces this via ``is_admin``); you cannot change
+      your own permissions.
     - The root user's role cannot be changed via this endpoint (422).
 
     Uses ``model_dump(exclude_unset=True)`` so that ``None`` means
@@ -193,7 +195,7 @@ async def update_user(
     update_fields = body.model_dump(exclude_unset=True)
     if not update_fields:
         raise ValidationError(
-            "At least one field (name, email, metadata, role, permissions) "
+            "At least one field (name, email, metadata, permissions) "
             "must be provided for update",
         )
     # note: reuses the canonical DB-verified gate so the flag cannot drift

@@ -66,8 +66,8 @@ ALL_PERMISSIONS: frozenset[str] = frozenset(
 """The full permission vocabulary shared by users and API keys.
 
 An empty permission array is a wildcard — the ``admin`` role grants
-everything.  ``member`` roles carry an explicit subset (seeded to the
-full vocabulary for new users).
+everything.  ``member`` roles carry an explicit subset (seeded to
+MEMBER_DEFAULT_PERMISSIONS (no members:*) for new users).
 """
 
 MEMBER_DEFAULT_PERMISSIONS: tuple[str, ...] = tuple(

@@ -7,7 +7,8 @@ RLS-bypass session ``get_db_admin``.
 ⚠️ BREAKING: role collapse — the ``superadmin`` role is gone.  Only the
 platform root (``external_id='root'``) holds ``admin`` with full powers;
 former ``superadmin`` rows are now ``admin``, former ``admin`` rows are
-now permission-scoped ``member``.  Only root may promote to ``admin``.
+now permission-scoped ``member``.  Nobody may promote — not even root;
+grant permissions instead.
 
 ⚠️ BREAKING: multi-org approval endpoints are removed (single platform
 org): ``GET /admin/system/orgs``, ``POST .../approve``,
@@ -156,7 +157,7 @@ def _to_registration_response(row: object) -> InstanceSettingsResponse:
     description=(
         "Returns the platform registration mode, setup-wizard state, and "
         "default backends.  Secrets are never returned.  Requires the "
-        "platform super-admin role."
+        "admin role."
     ),
 )
 async def get_instance_registration(
@@ -218,14 +219,15 @@ async def update_instance_registration(
 @router.patch(
     "/users/{user_id}/role",
     response_model=MemberRoleResponse,
-    summary="Change a member's role",
+    summary="Demote a member (promotion disabled)",
     description=(
-        "Promotes a member to admin or demotes an admin to member. "
-        "Requires the admin role.  Promotion to admin is root-only "
-        "(422 otherwise); an admin may edit a member's permissions via "
-        "PATCH /v1/users/{user_id}.  The root user's role is frozen. "
-        # ⚠️ BREAKING: role collapse — ``superadmin`` is gone; only root
-        # (``external_id='root'``) may promote to ``admin``.
+        "Demotes an admin to member.  Role promotion is disabled (422) — "
+        "the ``admin`` role is frozen, even for root; grant permissions "
+        "via ``PATCH /v1/users/{user_id}`` instead.  Requires the admin "
+        "role.  The root user's role is frozen. "
+        # ⚠️ BREAKING: admin promotion removed — ``role`` accepts only
+        # ``member`` (schema 422 otherwise); the service raises 422 for
+        # ``admin``, even from root.
     ),
 )
 @audit_action("org.member.role_changed", "user", "Member role changed by admin")
@@ -235,11 +237,11 @@ async def update_member_role(
     _admin_id: str = Depends(require_admin),  # noqa: B008
     service: UserService = Depends(get_admin_user_service),  # noqa: B008
 ) -> MemberRoleResponse:
-    """Set a member's role.
+    """Set a member's role (demotion only — promotion is frozen).
 
     Args:
         user_id: The member's user UUID.
-        body: The new role (``admin`` or ``member``).
+        body: The new role (only ``member``).
         service: Admin UserService (bypass session).
         _admin_id: Admin's user ID (admin-gated).
 
@@ -248,15 +250,13 @@ async def update_member_role(
 
     Raises:
         HTTPException: 404 if the user does not exist.
-        HTTPException: 422 if the target is root, the actor is not root
-            for a promotion, or the last admin would be demoted.
+        HTTPException: 422 if the target is root, ``admin`` is requested
+            (frozen, even for root), or the last admin would be demoted.
     """
     try:
         user = await service.update_member_role(
-
             user_id=user_id,
             role=body.role,
-            actor_user_id=UUID(_admin_id),
         )
     except NotFoundError:
         raise HTTPException(

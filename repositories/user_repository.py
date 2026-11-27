@@ -552,6 +552,7 @@ class UserRepository:
             user_id: The internal OpenZync user UUID.
             update_fields: Dict of fields to update. Valid keys: ``name``,
                 ``email``, ``metadata``, ``role``, ``permissions``.
+                API layer forbids role; only create/demote pass member.
 
         Returns:
             The updated User, or ``None`` if not found.
@@ -570,6 +571,11 @@ class UserRepository:
         if "email" in update_fields:
             user.email = update_fields["email"]
         if "role" in update_fields:
+            if update_fields["role"] not in ("member",):
+                raise ValidationError(
+                    "Role change is not allowed via this path "
+                    f"(got {update_fields['role']!r})."
+                )
             user.role = update_fields["role"]
         if "permissions" in update_fields:
             user.permissions = update_fields["permissions"]

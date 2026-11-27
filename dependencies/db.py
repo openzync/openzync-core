@@ -202,13 +202,3 @@ async def get_db_admin(
             raise
         finally:
             await release_tenant_context(session)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Re-export for convenience
-# ═══════════════════════════════════════════════════════════════════════════════
-
-__all__: list[str] = ["get_db", "get_db_admin", "get_db_superadmin"]
-
-get_db_superadmin = get_db_admin
-"""Deprecated alias of :func:`get_db_admin` (remove next release)."""
