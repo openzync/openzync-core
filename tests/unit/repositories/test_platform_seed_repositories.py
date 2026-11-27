@@ -2,7 +2,7 @@
 
 Pins the idempotency contract: ``ensure_platform_org`` is a repeatable
 ``ON CONFLICT DO NOTHING`` under an RLS bypass, and
-``create_platform_root`` writes the exact root row (root / superadmin /
+``create_platform_root`` writes the exact root row (root / admin /
 verified / no forced rotation) and reports the winner via rowcount.
 """
 
@@ -94,7 +94,7 @@ class TestPlatformRootRepository:
     async def test_create_platform_root_row_shape(
         self, mock_db: AsyncMock
     ) -> None:
-        """Winner insert carries root/superadmin/verified/no-rotation."""
+        """Winner insert carries root/admin/verified/no-rotation."""
         result = MagicMock()
         result.rowcount = 1
         mock_db.execute.return_value = result
@@ -106,7 +106,7 @@ class TestPlatformRootRepository:
         assert created is True
         params = _insert_params(mock_db)
         assert params["external_id"] == "root"
-        assert params["role"] == "superadmin"
+        assert params["role"] == "admin"
         assert params["is_email_verified"] is True
         assert params["must_change_password"] is False
         assert params["password_hash"] == "hashed"

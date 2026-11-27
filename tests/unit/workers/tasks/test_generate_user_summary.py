@@ -90,7 +90,7 @@ class TestGenerateUserSummary:
                 return_value="Summarize this user.",
             ),
             patch("core.llm.resolve_backend", return_value=mock_llm),
-            patch("core.org_config.get_org_config") as mock_cfg,
+            patch("core.platform_config.get_platform_config") as mock_cfg,
             patch("repositories.user_repository.UserRepository") as mock_repo_cls,
             patch("asyncio.sleep", AsyncMock()),
         ):
@@ -150,7 +150,7 @@ class TestGenerateUserSummary:
                 return_value="No history.",
             ),
             patch("core.llm.resolve_backend", return_value=mock_llm),
-            patch("core.org_config.get_org_config") as mock_cfg,
+            patch("core.platform_config.get_platform_config") as mock_cfg,
             patch("repositories.user_repository.UserRepository") as mock_repo_cls,
         ):
             mock_cfg.return_value = MagicMock(to_llm_config_dict=lambda: {})
@@ -182,7 +182,7 @@ class TestGenerateUserSummary:
                 return_value="Prompt.",
             ),
             patch("core.llm.resolve_backend", side_effect=Exception("LLM timeout")),
-            patch("core.org_config.get_org_config"),
+            patch("core.platform_config.get_platform_config"),
         ):
             db = self._make_db()
             from workers.tasks.generate_user_summary import generate_user_summary
@@ -234,7 +234,7 @@ class TestGenerateUserSummary:
                 return_value="Prompt.",
             ),
             patch("core.llm.resolve_backend", return_value=mock_llm),
-            patch("core.org_config.get_org_config") as mock_cfg,
+            patch("core.platform_config.get_platform_config") as mock_cfg,
             patch("repositories.user_repository.UserRepository") as mock_repo_cls,
         ):
             mock_cfg.return_value = MagicMock(to_llm_config_dict=lambda: {})
@@ -272,7 +272,7 @@ class TestGenerateUserSummary:
             ),
             patch("core.llm.resolve_backend", return_value=mock_llm),
             patch(
-                "core.org_config.get_org_config",
+                "core.platform_config.get_platform_config",
                 side_effect=Exception("Config fetch failed"),
             ),
             patch("repositories.user_repository.UserRepository") as mock_repo_cls,

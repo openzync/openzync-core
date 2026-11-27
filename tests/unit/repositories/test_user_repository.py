@@ -540,7 +540,7 @@ class TestUserRepository:
         mock_result.scalar.return_value = 7
         mock_db.execute.return_value = mock_result
 
-        count = await repo.count_active(user_id=self.ORG_ID)
+        count = await repo.count_active()
 
         assert count == 7
 
@@ -552,7 +552,7 @@ class TestUserRepository:
         mock_result.scalar.return_value = 0
         mock_db.execute.return_value = mock_result
 
-        count = await repo.count_active(user_id=self.ORG_ID)
+        count = await repo.count_active()
 
         assert count == 0
 

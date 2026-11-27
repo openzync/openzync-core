@@ -117,7 +117,7 @@ class TestFalkorDBResolution:
         mock_cls.assert_called_once_with(client=mock_client)
 
     def test_falkordb_receives_max_traversal_depth(self) -> None:
-        """FalkorDB backend receives max_traversal_depth from org_config."""
+        """FalkorDB backend receives max_traversal_depth from platform_config."""
         from core.graph_backend import GraphBackendDispatcher
 
         disp = GraphBackendDispatcher()
@@ -267,7 +267,7 @@ class TestDispatcherErrorHandling:
         assert len(backends) == 1
 
     def test_resolve_and_create_passes_depth_when_available(self) -> None:
-        """max_traversal_depth is passed when set in org_config for falkordb."""
+        """max_traversal_depth is passed when set in platform_config for falkordb."""
         from core.graph_backend import GraphBackendDispatcher
 
         disp = GraphBackendDispatcher()
@@ -281,7 +281,7 @@ class TestDispatcherErrorHandling:
         mock_cls.assert_called_once_with(client=mock_client, max_traversal_depth=3)
 
     def test_resolve_and_create_no_depth_when_none(self) -> None:
-        """max_traversal_depth is omitted when org_config has it as None."""
+        """max_traversal_depth is omitted when platform_config has it as None."""
         from core.graph_backend import GraphBackendDispatcher
 
         disp = GraphBackendDispatcher()

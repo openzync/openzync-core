@@ -12,7 +12,7 @@ and auth gating.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
@@ -23,21 +23,6 @@ from routers.admin_stats import _get_admin_stats_service, router
 from schemas.admin_stats import OrgStatsResponse, UsageStatsResponse
 
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
-
-
-@pytest.fixture(autouse=True)
-def _stub_permission_gate() -> None:
-    """Stub the permission gate for every test in this file.
-
-    The router gates with ``require_permission("members:read")`` — a
-    closure created at router import time that cannot be keyed in
-    ``dependency_overrides``.  Patching ``dependencies.auth._check_permission``
-    (the shared decision function) stubs the gate while keeping the
-    ``require_user_id`` chain intact.  The real gate matrix is covered by
-    ``test_admin_gate_matrix.py``.
-    """
-    with patch("dependencies.auth._check_permission", new=AsyncMock()):
-        yield
 
 
 def _stats_response() -> OrgStatsResponse:

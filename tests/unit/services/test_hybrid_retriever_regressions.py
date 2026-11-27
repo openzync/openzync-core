@@ -131,8 +131,8 @@ class TestSessionFactoryParity:
 
 
 def patch_set_tenant() -> Any:
-    """Patch ``set_tenant_context`` in the retriever namespace."""
-    return patch("services.hybrid_retriever.set_tenant_context", new=AsyncMock())
+    """Patch ``set_user_context`` in the retriever namespace."""
+    return patch("services.hybrid_retriever.set_user_context", new=AsyncMock())
 
 
 def patch_release_tenant() -> Any:

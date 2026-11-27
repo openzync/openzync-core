@@ -7,7 +7,7 @@ Covers:
 - ``core.rbac.get_effective_permissions`` / ``invalidate_permissions``:
   cache-aside permission lookup, fail-closed to an empty set on Redis/DB
   read errors, cache-write failure does NOT downgrade a DB-verified set.
-- ``dependencies.auth.require_permission``: JWT admin/superadmin wildcard,
+- ``dependencies.auth.require_permission``: JWT admin/admin wildcard,
   member with/without the permission, API-key path, Redis-missing 503.
 
 All infra (Redis, DB) is mocked at the boundary — no real I/O.
@@ -442,16 +442,16 @@ class TestRequirePermission:
         mock_get_role.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_jwt_superadmin_role_passes_any_permission(
+    async def test_jwt_admin_role_passes_members_write(
         self, db_session: AsyncMock,
     ) -> None:
-        """JWT user with the superadmin role → wildcard, passes."""
+        """JWT user with the admin role → wildcard, passes."""
         from dependencies.auth import require_permission
 
         checker = require_permission("members:write")
         request = _jwt_request()
         with patch(
-            "dependencies.auth.get_user_role", new=AsyncMock(return_value="superadmin")
+            "dependencies.auth.get_user_role", new=AsyncMock(return_value="admin")
         ):
             result = await checker(request, ORG_ID_STR, db_session)
         assert result == ORG_ID_STR

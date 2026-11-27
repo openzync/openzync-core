@@ -170,8 +170,14 @@ class TestAuthService:
             email="admin@acme.com",
             password_hash=ANY,
             name="admin",
-            role="admin",
-            permissions=[],  # admin = wildcard via role
+            role="member",
+            permissions=[  # open signup mints a member with member defaults
+                "configuration:read",
+                "configuration:write",
+                "project:manage",
+                "project:read",
+                "project:write",
+            ],
             is_active=True,
         )
         mock_otp.generate_and_send.assert_awaited_once_with(
@@ -1027,7 +1033,7 @@ class TestAuthService:
         """
         root = self._make_mock_user(email="root")
         root.must_change_password = True
-        root.role = "superadmin"
+        root.role = "admin"
         mock_repo.find_user_by_email.return_value = root
 
         payload = LoginRequest(  # noqa: S106 — test fixture credential
@@ -1050,7 +1056,7 @@ class TestAuthService:
         assert result.access_token == "at"  # noqa: S105 — test fixture
         mock_issue.assert_awaited_once_with(
             user_id=root.id,
-            role="superadmin",  # root's role claim comes from the DB row
+            role="admin",  # root's role claim comes from the DB row
         )
 
     def test_login_schema_accepts_root_and_rejects_malformed(self) -> None:

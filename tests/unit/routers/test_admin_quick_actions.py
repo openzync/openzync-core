@@ -18,24 +18,10 @@ from dependencies.auth import (
 )
 from dependencies.services import get_quick_actions_service
 from routers.admin_quick_actions import router
+from services.quick_actions_service import QuickAction
 
 USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
-
-
-@pytest.fixture(autouse=True)
-def _stub_permission_gate() -> None:
-    """Stub the permission gate for every test in this file.
-
-    The router gates with ``require_permission("members:read")`` — a
-    closure created at router import time that cannot be keyed in
-    ``dependency_overrides``.  Patching ``dependencies.auth._check_permission``
-    (the shared decision function) stubs the gate while keeping the
-    ``require_user_id`` chain intact.  The real gate matrix is covered by
-    ``test_admin_gate_matrix.py``.
-    """
-    with patch("dependencies.auth._check_permission", new=AsyncMock()):
-        yield
 
 
 def _create_app() -> tuple[FastAPI, dict[str, AsyncMock]]:
@@ -71,18 +57,18 @@ async def test_list_quick_actions_success() -> None:
     transport = ASGITransport(app=app)
 
     mocks["quick_actions_service"].get_actions.return_value = [
-        {
-            "label": "Create your first project",
-            "href": "/projects",
-            "icon": "folder-kanban",
-            "description": "Projects organize sessions, memory, and graph data",
-        },
-        {
-            "label": "Configure LLM Provider",
-            "href": "/settings/org-config/llm",
-            "icon": "brain-circuit",
-            "description": "Set up your LLM provider to start using sessions",
-        },
+        QuickAction(
+            label="Create your first project",
+            href="/projects",
+            icon="folder-kanban",
+            description="Projects organize sessions, memory, and graph data",
+        ),
+        QuickAction(
+            label="Configure LLM Provider",
+            href="/settings/platform-config/llm",
+            icon="brain-circuit",
+            description="Set up your LLM provider to start using sessions",
+        ),
     ]
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -121,12 +107,12 @@ async def test_list_quick_actions_single_action() -> None:
     transport = ASGITransport(app=app)
 
     mocks["quick_actions_service"].get_actions.return_value = [
-        {
-            "label": "View Projects",
-            "href": "/projects",
-            "icon": "folder-kanban",
+        QuickAction(
+            label="View Projects",
+            href="/projects",
+            icon="folder-kanban",
             # description is intentionally omitted
-        },
+        ),
     ]
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:

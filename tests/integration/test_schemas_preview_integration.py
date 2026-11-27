@@ -101,7 +101,7 @@ def stub_llm(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
 
     async def _fake_resolve_backend(
         provider: str | None = None,
-        org_config: dict | None = None,
+        platform_config: dict | None = None,
         mode: str | None = None,
         sink: Any = None,
     ) -> _FakeChatBackend:

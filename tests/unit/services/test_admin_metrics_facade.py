@@ -48,15 +48,15 @@ async def test_facade_run_batch_delegates() -> None:
     batch_mock.run_batch.return_value = {"results": {}, "errors": [], "meta": {}}
     facade._batch = batch_mock  # noqa: SLF001
 
-    request, org_config, start, end = MagicMock(), MagicMock(), MagicMock(), MagicMock()
+    request, platform_config, start, end = MagicMock(), MagicMock(), MagicMock(), MagicMock()
     project_id = UUID("00000000-0000-0000-0000-000000000003")
     result = await facade.run_batch(
-        request, org_config, ORG_ID, start, end, 20, project_id, True
+        request, platform_config, ORG_ID, start, end, 20, project_id, True
     )
 
     assert result == {"results": {}, "errors": [], "meta": {}}
     batch_mock.run_batch.assert_awaited_once_with(
-        request, org_config, ORG_ID, start, end, 20, project_id, True
+        request, platform_config, ORG_ID, start, end, 20, project_id, True
     )
 
 

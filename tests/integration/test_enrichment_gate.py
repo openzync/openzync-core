@@ -412,7 +412,7 @@ class TestGateBrokenModelFailOpen:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# (11) PATCH /admin/system/config enable-path (real HTTP, superadmin JWT)
+# (11) PATCH /admin/system/config enable-path (real HTTP, admin JWT)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -427,7 +427,7 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest_asyncio.fixture(loop_scope="function")
 async def _superadmin_client(isolated_app: Any) -> Any:
-    """HTTP client authed as the platform superadmin (setup → login)."""
+    """HTTP client authed as the platform admin (setup → login)."""
     transport = asgi_transport(isolated_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         setup = await client.post(
@@ -493,7 +493,7 @@ class TestSystemConfigGateEnablePath:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# (12) GET /admin/org/config with legacy dict-shaped stored gate → coerced bool
+# (12) GET /admin/platform-config with legacy dict-shaped stored gate → coerced bool
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -528,7 +528,7 @@ class TestLegacyOrgConfigRegression:
         object — the GET never 500s/422s on the old shape."""
         await _plant_legacy_gate(engine, isolated_org_and_key["user_id"], raw)
 
-        resp = await isolated_admin_client.get("/admin/org/config")
+        resp = await isolated_admin_client.get("/admin/platform-config")
         assert resp.status_code == 200, resp.text
         stored = resp.json()["stored"]
         assert stored["enrichment_gate"] == {

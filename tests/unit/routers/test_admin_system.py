@@ -1,6 +1,6 @@
 """Unit tests for routers/admin_system — the members listing endpoint.
 
-The superadmin gate (require_superadmin) is exercised through the REAL
+The admin gate (require_admin) is exercised through the REAL
 dependency chain with a platform-org JWT harness and a patched role
 lookup; the repository layer is mocked at the router boundary.
 
@@ -23,33 +23,33 @@ from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 
 from core.config import PLATFORM_ORG_ID
-from dependencies.db import get_db, get_db_superadmin
-from dependencies.services import get_superadmin_user_service
+from dependencies.db import get_db, get_db_admin
+from dependencies.services import get_admin_user_service
 from routers.admin_system import router
 
-SUPERADMIN_USER_ID = UUID("00000000-0000-0000-0000-0000000000bb")
+ADMIN_USER_ID = UUID("00000000-0000-0000-0000-0000000000bb")
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 MEMBER_A = UUID("00000000-0000-0000-0000-000000000002")
 MEMBER_B = UUID("00000000-0000-0000-0000-000000000003")
 
 
 def _make_app() -> FastAPI:
-    """Build the app with the real superadmin gate + a bypass-session mock."""
+    """Build the app with the real admin gate + a bypass-session mock."""
     app = FastAPI()
     app.state.redis = AsyncMock()
     # The bypass session is a plain AsyncMock — the repository classes are
     # patched per-test so no real query runs against it.
-    app.dependency_overrides[get_db_superadmin] = lambda: AsyncMock()
-    # require_superadmin's role lookup needs a session too.
+    app.dependency_overrides[get_db_admin] = lambda: AsyncMock()
+    # require_admin's role lookup needs a session too.
     app.dependency_overrides[get_db] = lambda: AsyncMock()
     app.include_router(router)
 
     @app.middleware("http")
     async def _superadmin_jwt(request: Request, call_next):
         request.state.user_id = str(PLATFORM_ORG_ID)
-        request.state.user_id = str(SUPERADMIN_USER_ID)
+        request.state.user_id = str(ADMIN_USER_ID)
         request.state.auth_type = "jwt"
-        request.state.role = "superadmin"
+        request.state.role = "admin"
         request.state.api_key_scopes = []
         return await call_next(request)
 
@@ -87,7 +87,7 @@ async def test_get_platform_config_200_flat() -> None:
         ),
         patch(
             "dependencies.auth.get_user_role",
-            new=AsyncMock(return_value="superadmin"),
+            new=AsyncMock(return_value="admin"),
         ),
     ):
         transport = ASGITransport(app=app)
@@ -119,7 +119,7 @@ async def test_update_platform_config_200_flat_persists() -> None:
         ) as mock_update,
         patch(
             "dependencies.auth.get_user_role",
-            new=AsyncMock(return_value="superadmin"),
+            new=AsyncMock(return_value="admin"),
         ),
     ):
         transport = ASGITransport(app=app)
@@ -158,36 +158,36 @@ async def test_update_platform_config_200_flat_persists() -> None:
 
 @pytest.mark.asyncio
 async def test_update_member_role_200_persists() -> None:
-    """PATCH role → 200; the new role is persisted via UserService."""
+    """PATCH role → 200; the demotion is persisted via UserService."""
     app = _make_app()
     service = AsyncMock()
     service.update_member_role.return_value = MagicMock(
         id=MEMBER_B,
-        role="admin",
+        role="member",
     )
     service.update_member_role.return_value.id = MEMBER_B
-    app.dependency_overrides[get_superadmin_user_service] = lambda: service
+    app.dependency_overrides[get_admin_user_service] = lambda: service
 
     with patch(
         "dependencies.auth.get_user_role",
-        new=AsyncMock(return_value="superadmin"),
+        new=AsyncMock(return_value="admin"),
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.patch(
                 f"/admin/system/users/{MEMBER_B}/role",
-                json={"role": "admin"},
+                json={"role": "member"},
             )
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["id"] == str(MEMBER_B)
     assert body["user_id"] == str(MEMBER_B)
-    assert body["role"] == "admin"
+    assert body["role"] == "member"
 
     service.update_member_role.assert_awaited_once_with(
         user_id=MEMBER_B,
-        role="admin",
+        role="member",
     )
 
 
@@ -198,7 +198,7 @@ async def test_update_member_role_invalid_role_422() -> None:
 
     with patch(
         "dependencies.auth.get_user_role",
-        new=AsyncMock(return_value="superadmin"),
+        new=AsyncMock(return_value="admin"),
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -220,11 +220,11 @@ async def test_update_member_role_missing_user_404() -> None:
     service.update_member_role.side_effect = NotFoundError(
         f"User {MEMBER_B} not found."
     )
-    app.dependency_overrides[get_superadmin_user_service] = lambda: service
+    app.dependency_overrides[get_admin_user_service] = lambda: service
 
     with patch(
         "dependencies.auth.get_user_role",
-        new=AsyncMock(return_value="superadmin"),
+        new=AsyncMock(return_value="admin"),
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:

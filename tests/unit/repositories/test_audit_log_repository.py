@@ -272,7 +272,7 @@ class TestAuditLogRepository:
     ) -> None:
         """``None`` means platform-wide — no organization filter is applied.
 
-        The superadmin path reads the whole audit trail; the RLS-bypass
+        The admin path reads the whole audit trail; the RLS-bypass
         session it runs on decides what is visible.  A tenant-scoped
         ``user_id IS NULL`` filter would silently hide every
         platform-level row from the platform admin.

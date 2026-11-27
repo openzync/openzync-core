@@ -73,12 +73,18 @@ class TestQuickActionsService:
         user_repo = AsyncMock()
         user_repo.count_active = AsyncMock(return_value=user_count)
 
+        # Privilege-gated links (Invite/Audit) need an admin caller.
+        caller = MagicMock()
+        caller.role = "admin"
+        caller.permissions = []
+        user_repo.get_by_uuid = AsyncMock(return_value=caller)
+
         # Canonical per-user config (flat users.config_override shape,
-        # cache-first) — service reads OrgConfigBase.llm_backend.
+        # cache-first) — service reads PlatformConfigBase.llm_backend.
         mock_cfg = MagicMock()
         mock_cfg.llm_backend = llm_backend
         monkeypatch.setattr(
-            "services.quick_actions_service.get_org_config",
+            "services.quick_actions_service.get_platform_config",
             AsyncMock(return_value=mock_cfg),
         )
 
@@ -101,7 +107,7 @@ class TestQuickActionsService:
 
         actions = await service.get_actions(ORG_ID)
 
-        labels = [a["label"] for a in actions]
+        labels = [a.label for a in actions]
         assert "Create your first project" in labels
         assert "Configure LLM Provider" in labels
         assert "Invite Team Members" in labels
@@ -121,7 +127,7 @@ class TestQuickActionsService:
 
         actions = await service.get_actions(ORG_ID)
 
-        labels = [a["label"] for a in actions]
+        labels = [a.label for a in actions]
         assert "View Projects" in labels
         assert "Configure LLM Provider" not in labels
         assert "Invite Team Members" not in labels
@@ -129,8 +135,8 @@ class TestQuickActionsService:
         assert "View Audit Log" in labels
 
         # Find the "View Projects" action and check description
-        view_proj = next(a for a in actions if a["label"] == "View Projects")
-        assert "5 active projects" in view_proj["description"]
+        view_proj = next(a for a in actions if a.label == "View Projects")
+        assert "5 active projects" in view_proj.description
 
     async def test_single_project_uses_singular_form(
         self, monkeypatch: pytest.MonkeyPatch
@@ -144,9 +150,9 @@ class TestQuickActionsService:
         )
 
         actions = await service.get_actions(ORG_ID)
-        view_proj = next(a for a in actions if a["label"] == "View Projects")
-        assert "1 active project" in view_proj["description"]
-        assert "projects" not in view_proj["description"]
+        view_proj = next(a for a in actions if a.label == "View Projects")
+        assert "1 active project" in view_proj.description
+        assert "projects" not in view_proj.description
 
     async def test_no_llm_config_shows_configure_llm(
         self, monkeypatch: pytest.MonkeyPatch
@@ -160,7 +166,7 @@ class TestQuickActionsService:
         )
 
         actions = await service.get_actions(ORG_ID)
-        labels = [a["label"] for a in actions]
+        labels = [a.label for a in actions]
         assert "Configure LLM Provider" in labels
 
     async def test_single_user_shows_invite(
@@ -175,7 +181,7 @@ class TestQuickActionsService:
         )
 
         actions = await service.get_actions(ORG_ID)
-        labels = [a["label"] for a in actions]
+        labels = [a.label for a in actions]
         assert "Invite Team Members" in labels
 
     async def test_get_actions_runs_sequentially_on_single_session(self) -> None:
@@ -210,7 +216,7 @@ class TestQuickActionsService:
         )
 
         actions = await service.get_actions(ORG_ID)
-        labels = [a["label"] for a in actions]
+        labels = [a.label for a in actions]
 
         assert labels == [
             "View Projects",
@@ -231,6 +237,6 @@ class TestQuickActionsService:
         )
 
         actions = await service.get_actions(ORG_ID)
-        labels = [a["label"] for a in actions]
+        labels = [a.label for a in actions]
         assert "View Analytics" in labels
         assert "View Audit Log" in labels

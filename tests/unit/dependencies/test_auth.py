@@ -74,7 +74,7 @@ class TestRequirePermission:
     """require_permission: permission-based gate for JWT users and API keys.
 
     Contract (observed against the live server):
-    - JWT admin/superadmin role → wildcard, any permission passes.
+    - JWT admin/admin role → wildcard, any permission passes.
     - JWT member WITH the permission → passes.
     - JWT member WITHOUT → 403.
     - API key with the permission → passes.
@@ -115,8 +115,8 @@ class TestRequirePermission:
         assert result == self.ORG_ID_STR
 
     @pytest.mark.asyncio
-    async def test_jwt_superadmin_role_allows_any_permission(self) -> None:
-        """JWT + superadmin role → wildcard: passes."""
+    async def test_jwt_admin_role_allows_members_write(self) -> None:
+        """JWT + admin role → wildcard: passes for ``members:write`` too."""
         from dependencies.auth import require_permission
 
         checker = require_permission("members:write")
@@ -124,7 +124,7 @@ class TestRequirePermission:
 
         with patch(
             "dependencies.auth.get_user_role",
-            new=AsyncMock(return_value="superadmin"),
+            new=AsyncMock(return_value="admin"),
         ):
             result = await checker(request, self.ORG_ID_STR, db=MagicMock())
         assert result == self.ORG_ID_STR
@@ -531,18 +531,16 @@ class TestGetDashboardUser:
         assert result == self.USER_ID_STR
 
 
-class TestRequireSuperadmin:
-    """require_superadmin: platform org + DB-verified superadmin role."""
+class TestRequireAdmin:
+    """require_admin: JWT + DB-verified admin role (no org check)."""
 
-    PLATFORM_ORG_ID_STR = "00000000-0000-0000-0000-0000000000aa"
-    SUPERADMIN_USER_ID_STR = "00000000-0000-0000-0000-0000000000bb"
-    TENANT_ORG_ID_STR = "00000000-0000-0000-0000-000000000001"
+    ADMIN_USER_ID_STR = "00000000-0000-0000-0000-0000000000bb"
 
-    def _superadmin_request(self, user_id: str) -> MagicMock:
-        """JWT request in the given org, with Redis configured."""
+    def _admin_request(self) -> MagicMock:
+        """JWT request with Redis configured on app state."""
         request = MagicMock(spec=Request)
         request.state.auth_type = "jwt"
-        request.state.user_id = self.SUPERADMIN_USER_ID_STR
+        request.state.user_id = self.ADMIN_USER_ID_STR
         request.url.path = "/admin/system/config"
         request.method = "GET"
         redis = MagicMock()
@@ -550,54 +548,50 @@ class TestRequireSuperadmin:
         return request
 
     @pytest.mark.asyncio
-    async def test_platform_org_superadmin_role_passes(self) -> None:
-        """Platform org + DB-verified superadmin → returns user_id."""
-        from dependencies.auth import require_superadmin
+    async def test_admin_role_passes(self) -> None:
+        """DB-verified admin → returns user_id."""
+        from dependencies.auth import require_admin
 
-        request = self._superadmin_request(self.PLATFORM_ORG_ID_STR)
-        with (
-            patch(
-                "dependencies.auth.get_must_change_password",
-                new=AsyncMock(return_value=False),
-            ),
-            patch(
-                "dependencies.auth.get_user_role",
-                new=AsyncMock(return_value="superadmin"),
-            ),
-        ):
-            result = await require_superadmin(
-                request,
-                self.SUPERADMIN_USER_ID_STR,
-                AsyncMock(),
-            )
-        assert result == self.SUPERADMIN_USER_ID_STR
-
-    @pytest.mark.asyncio
-    async def test_tenant_org_denied_403(self) -> None:
-        """A JWT in a tenant org is never a superadmin — 403."""
-        from dependencies.auth import require_superadmin
-
-        request = self._superadmin_request(self.TENANT_ORG_ID_STR)
+        request = self._admin_request()
         with (
             patch(
                 "dependencies.auth.get_user_role",
                 new=AsyncMock(return_value="admin"),
             ),
+        ):
+            result = await require_admin(
+                request,
+                self.ADMIN_USER_ID_STR,
+                AsyncMock(),
+            )
+        assert result == self.ADMIN_USER_ID_STR
+
+    @pytest.mark.asyncio
+    async def test_legacy_superadmin_string_denied_403(self) -> None:
+        """Role collapse: the legacy ``superadmin`` string is not wildcard — 403."""
+        from dependencies.auth import require_admin
+
+        request = self._admin_request()
+        with (
+            patch(
+                "dependencies.auth.get_user_role",
+                new=AsyncMock(return_value="superadmin"),
+            ),
             pytest.raises(HTTPException) as exc,
         ):
-            await require_superadmin(
+            await require_admin(
                 request,
-                self.SUPERADMIN_USER_ID_STR,
+                self.ADMIN_USER_ID_STR,
                 AsyncMock(),
             )
         assert exc.value.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_member_role_in_platform_org_denied_403(self) -> None:
-        """Platform org but non-superadmin role → 403 (fail-closed)."""
-        from dependencies.auth import require_superadmin
+    async def test_member_role_denied_403(self) -> None:
+        """Non-admin role → 403 (fail-closed)."""
+        from dependencies.auth import require_admin
 
-        request = self._superadmin_request(self.PLATFORM_ORG_ID_STR)
+        request = self._admin_request()
         with (
             patch(
                 "dependencies.auth.get_user_role",
@@ -605,9 +599,9 @@ class TestRequireSuperadmin:
             ),
             pytest.raises(HTTPException) as exc,
         ):
-            await require_superadmin(
+            await require_admin(
                 request,
-                self.SUPERADMIN_USER_ID_STR,
+                self.ADMIN_USER_ID_STR,
                 AsyncMock(),
             )
         assert exc.value.status_code == 403

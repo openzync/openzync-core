@@ -220,7 +220,7 @@ class TestMergeDuplicateEntities:
             db = self._make_db()
             from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
 
-            with pytest.raises(RuntimeError, match="All .* orgs failed"):
+            with pytest.raises(RuntimeError, match="All .* users failed"):
                 await merge_duplicate_entities(ctx=self._ctx(db))
 
     @pytest.mark.asyncio

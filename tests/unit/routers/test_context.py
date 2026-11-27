@@ -14,10 +14,10 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from dependencies.db import get_db
-from dependencies.org_config import get_org_config
+from dependencies.platform_config import get_platform_config
 from dependencies.project_auth import require_project_membership
 from routers.context import router
-from schemas.organization_config import OrgConfigBase
+from schemas.platform_config import PlatformConfigBase
 
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -61,8 +61,8 @@ def _create_app() -> FastAPI:
     # Lifespan provides the session factory; the router reads it for ContextService
     app.state.db_session_factory = MagicMock()
 
-    mock_org_config = OrgConfigBase(graph_backend="falkordb")
-    app.dependency_overrides[get_org_config] = lambda: mock_org_config
+    mock_org_config = PlatformConfigBase(graph_backend="falkordb")
+    app.dependency_overrides[get_platform_config] = lambda: mock_org_config
     app.dependency_overrides[get_db] = lambda: AsyncMock()
     app.dependency_overrides[require_project_membership] = lambda: None
 

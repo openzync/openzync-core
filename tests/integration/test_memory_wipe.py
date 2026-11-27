@@ -57,7 +57,7 @@ class TestMemoryWipe:
             external_id: User external identifier.
             session_id: Session external identifier.
             message_count: Number of messages to ingest.
-            isolated_superadmin_client: Superadmin client for ``POST /v1/users``.
+            isolated_superadmin_client: Admin client for ``POST /v1/users``.
 
         Returns:
             The created user's UUID string.

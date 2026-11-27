@@ -41,7 +41,7 @@ def _ok(name: str) -> dict:
     """Minimal per-query result shaped like ``shared.build_result``."""
     return {
         "query": name,
-        "org_scoped": True,
+        "user_scoped": True,
         "columns": ["date", "count"],
         "rows": [["2026-08-18", 1]],
         "total": 1,

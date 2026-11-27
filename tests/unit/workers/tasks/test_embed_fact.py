@@ -90,7 +90,7 @@ class TestEmbedFact:
         such configuration any more, so the guarantee is that ``user_id`` is
         accepted by the task but never used to resolve a provider.
         """
-        with patch("core.org_config.get_org_config") as mock_get_cfg:
+        with patch("core.platform_config.get_platform_config") as mock_get_cfg:
             db = self._make_db()
 
             from workers.tasks.embed_fact import embed_fact

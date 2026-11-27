@@ -140,7 +140,7 @@ class TestEmbedEpisode:
         """
         with (
             patch("workers.tasks.base.with_retry", lambda **kw: lambda f: f),
-            patch("core.org_config.get_org_config") as mock_get_cfg,
+            patch("core.platform_config.get_platform_config") as mock_get_cfg,
             patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
         ):
             episode = MagicMock()

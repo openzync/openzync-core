@@ -46,7 +46,7 @@ class TestOrganizationRepository:
         mock_result.one_or_none.return_value = mock_row
         mock_db.execute.return_value = mock_result
 
-        config = await repo.get_config(user_id=self.ORG_ID)
+        config = await repo.get_config(org_id=self.ORG_ID)
 
         assert config == {"llm": {"model": "gpt-4"}, "features": {"flag": True}}
 
@@ -60,7 +60,7 @@ class TestOrganizationRepository:
         mock_result.one_or_none.return_value = mock_row
         mock_db.execute.return_value = mock_result
 
-        config = await repo.get_config(user_id=self.ORG_ID)
+        config = await repo.get_config(org_id=self.ORG_ID)
 
         assert config == {}
 
@@ -72,7 +72,7 @@ class TestOrganizationRepository:
         mock_result.one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        config = await repo.get_config(user_id=self.ORG_ID)
+        config = await repo.get_config(org_id=self.ORG_ID)
 
         assert config == {}
 
@@ -88,7 +88,7 @@ class TestOrganizationRepository:
         mock_result.one_or_none.return_value = mock_row
         mock_db.execute.return_value = mock_result
 
-        pii = await repo.get_pii_config(user_id=self.ORG_ID)
+        pii = await repo.get_pii_config(org_id=self.ORG_ID)
 
         assert pii == {"enabled": True, "entities": ["email"]}
 
@@ -102,7 +102,7 @@ class TestOrganizationRepository:
         mock_result.one_or_none.return_value = mock_row
         mock_db.execute.return_value = mock_result
 
-        pii = await repo.get_pii_config(user_id=self.ORG_ID)
+        pii = await repo.get_pii_config(org_id=self.ORG_ID)
 
         assert pii == {}
 
@@ -114,7 +114,7 @@ class TestOrganizationRepository:
         mock_result.one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        pii = await repo.get_pii_config(user_id=self.ORG_ID)
+        pii = await repo.get_pii_config(org_id=self.ORG_ID)
 
         assert pii == {}
 
@@ -130,7 +130,7 @@ class TestOrganizationRepository:
         result.one_or_none.return_value = row
         mock_db.execute.return_value = result
 
-        quota = await repo.get_quota(user_id=self.ORG_ID, quota_name="max_users")
+        quota = await repo.get_quota(org_id=self.ORG_ID, quota_name="max_users")
 
         assert quota == 100
 
@@ -144,7 +144,7 @@ class TestOrganizationRepository:
         result.one_or_none.return_value = row
         mock_db.execute.return_value = result
 
-        quota = await repo.get_quota(user_id=self.ORG_ID, quota_name="nonexistent")
+        quota = await repo.get_quota(org_id=self.ORG_ID, quota_name="nonexistent")
 
         assert quota is None
 
@@ -156,6 +156,6 @@ class TestOrganizationRepository:
         result.one_or_none.return_value = None
         mock_db.execute.return_value = result
 
-        quota = await repo.get_quota(user_id=self.ORG_ID, quota_name="max_users")
+        quota = await repo.get_quota(org_id=self.ORG_ID, quota_name="max_users")
 
         assert quota is None

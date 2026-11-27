@@ -42,18 +42,18 @@ def _make_app() -> tuple[FastAPI, AsyncMock]:
     service_mock = AsyncMock()
     from dependencies.db import get_db
 
-    from dependencies.services import get_superadmin_invite_service
+    from dependencies.services import get_admin_invite_service
 
-    from dependencies.auth import require_superadmin
+    from dependencies.auth import require_admin
 
     app.dependency_overrides[get_db] = lambda: AsyncMock()
     app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
     app.dependency_overrides[get_dashboard_user] = lambda: str(USER_ID)
     # note: gate stubbed per-app (not via global patch) so the 403 tests
-    # below keep the real ``require_superadmin`` wiring.
-    app.dependency_overrides[require_superadmin] = lambda: str(USER_ID)
+    # below keep the real ``require_admin`` wiring.
+    app.dependency_overrides[require_admin] = lambda: str(USER_ID)
     app.dependency_overrides[get_invite_service] = lambda: service_mock
-    app.dependency_overrides[get_superadmin_invite_service] = lambda: service_mock
+    app.dependency_overrides[get_admin_invite_service] = lambda: service_mock
     app.include_router(router)
     return app, service_mock
 
@@ -65,14 +65,14 @@ def _make_member_app() -> FastAPI:
 
     from dependencies.db import get_db
 
-    from dependencies.db import get_db_superadmin
+    from dependencies.db import get_db_admin
 
     app.dependency_overrides[get_db] = lambda: AsyncMock()
-    app.dependency_overrides[get_db_superadmin] = lambda: AsyncMock()
+    app.dependency_overrides[get_db_admin] = lambda: AsyncMock()
     app.dependency_overrides[get_invite_service] = lambda: AsyncMock()
-    from dependencies.services import get_superadmin_invite_service
+    from dependencies.services import get_admin_invite_service
 
-    app.dependency_overrides[get_superadmin_invite_service] = lambda: AsyncMock()
+    app.dependency_overrides[get_admin_invite_service] = lambda: AsyncMock()
 
     @app.middleware("http")
     async def _mock_auth(request, call_next):

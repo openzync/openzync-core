@@ -32,7 +32,7 @@ def _make_request(*, dispatcher=None, surreal_pool=None, falkordb=None):
     return SimpleNamespace(app=SimpleNamespace(state=state))
 
 
-def _org_config(backend: str = "falkordb") -> SimpleNamespace:
+def _platform_config(backend: str = "falkordb") -> SimpleNamespace:
     return SimpleNamespace(graph_backend=backend, graph_max_traversal_depth=None)
 
 
@@ -56,7 +56,7 @@ async def test_fail_soft_returns_backend_on_success() -> None:
     request = _make_request(dispatcher=dispatcher)
 
     result = await resolve_graph_backend_fail_soft(
-        request, _org_config(), USER_ID, AsyncMock(), "admin_metrics"
+        request, _platform_config(), USER_ID, AsyncMock(), "admin_metrics"
     )
 
     assert result is backend
@@ -68,7 +68,7 @@ async def test_fail_soft_no_dispatcher_returns_none() -> None:
     """Missing dispatcher degrades to ``None`` instead of raising."""
     request = _make_request(dispatcher=None)
     result = await resolve_graph_backend_fail_soft(
-        request, _org_config(), USER_ID, AsyncMock(), "admin_metrics"
+        request, _platform_config(), USER_ID, AsyncMock(), "admin_metrics"
     )
     assert result is None
 
@@ -82,7 +82,7 @@ async def test_fail_soft_surreal_pool_failure_returns_none() -> None:
     request = _make_request(dispatcher=dispatcher, surreal_pool=pool)
 
     result = await resolve_graph_backend_fail_soft(
-        request, _org_config("surrealdb"), USER_ID, AsyncMock(), "admin_stats"
+        request, _platform_config("surrealdb"), USER_ID, AsyncMock(), "admin_stats"
     )
 
     assert result is None
@@ -100,7 +100,7 @@ async def test_fail_soft_unknown_backend_returns_none() -> None:
         dispatcher.resolve_and_create.side_effect = exc
         request = _make_request(dispatcher=dispatcher)
         result = await resolve_graph_backend_fail_soft(
-            request, _org_config(), USER_ID, AsyncMock(), "admin_metrics"
+            request, _platform_config(), USER_ID, AsyncMock(), "admin_metrics"
         )
         assert result is None
 
@@ -112,7 +112,7 @@ async def test_fail_soft_unexpected_error_returns_none() -> None:
     dispatcher.resolve_and_create.side_effect = RuntimeError("boom")
     request = _make_request(dispatcher=dispatcher)
     result = await resolve_graph_backend_fail_soft(
-        request, _org_config(), USER_ID, AsyncMock(), "admin_stats"
+        request, _platform_config(), USER_ID, AsyncMock(), "admin_stats"
     )
     assert result is None
 
@@ -135,7 +135,7 @@ async def test_metrics_service_calls_shared_resolver() -> None:
     service = metrics_mod.AdminMetricsService(db=AsyncMock(), prom=AsyncMock())
     seen: list[str] = []
 
-    async def _spy(request, org_config, user_id, db, log_prefix):  # noqa: ANN001, ANN202
+    async def _spy(request, platform_config, user_id, db, log_prefix):  # noqa: ANN001, ANN202
         seen.append(log_prefix)
         return None
 
@@ -165,7 +165,7 @@ async def test_metrics_service_calls_shared_resolver() -> None:
         mp.setattr(metrics_mod, "resolve_graph_backend_fail_soft", _spy)
         result = await service.get_summary(
             _make_request(dispatcher=None),
-            _org_config(),
+            _platform_config(),
             USER_ID,
             MagicMock(),
             MagicMock(),
@@ -182,7 +182,7 @@ async def test_stats_service_calls_shared_resolver() -> None:
     service = stats_mod.AdminStatsService(db=AsyncMock())
     seen: list[str] = []
 
-    async def _spy(request, org_config, user_id, db, log_prefix):  # noqa: ANN001, ANN202
+    async def _spy(request, platform_config, user_id, db, log_prefix):  # noqa: ANN001, ANN202
         seen.append(log_prefix)
         return None
 
@@ -201,8 +201,8 @@ async def test_stats_service_calls_shared_resolver() -> None:
     ):
         mp.setattr(stats_mod, "resolve_graph_backend_fail_soft", _spy)
         mp.setattr(
-            "core.org_config.get_org_config",
-            AsyncMock(return_value=_org_config()),
+            "core.platform_config.get_platform_config",
+            AsyncMock(return_value=_platform_config()),
         )
         await service.get_usage_stats(
             _make_request(dispatcher=None),

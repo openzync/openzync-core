@@ -1,6 +1,6 @@
 """Unit tests for the admin org config router.
 
-Tests ``/admin/org/config`` CRUD endpoints and the ``/defaults`` endpoint.
+Tests ``/admin/platform-config`` CRUD endpoints and the ``/defaults`` endpoint.
 """
 
 from __future__ import annotations
@@ -18,12 +18,12 @@ from dependencies.auth import (
     require_user_id,
 )
 from dependencies.db import get_db
-from routers.admin_org_config import _get_config_service, router
-from schemas.organization_config import (
-    OrgConfigBase,
-    OrgConfigResponse,
+from routers.admin_platform_config import _get_config_service, router
+from schemas.platform_config import (
+    PlatformConfigBase,
+    PlatformConfigResponse,
 )
-from services.org_config_service import OrgConfigService
+from services.platform_config_service import PlatformConfigService
 
 USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -75,15 +75,15 @@ def _create_app() -> tuple[FastAPI, AsyncMock]:
 
 @pytest.mark.asyncio
 async def test_get_defaults_success() -> None:
-    """GET /admin/org/config/defaults returns 200 with defaults YAML."""
+    """GET /admin/platform-config/defaults returns 200 with defaults YAML."""
     app, _ = _create_app()
     transport = ASGITransport(app=app)
 
     fake_yaml_content = "llm_backend: ollama\nllm_model: llama3\n"
 
     with (
-        patch("routers.admin_org_config.DEFAULTS_PATH") as mock_path,
-        patch("routers.admin_org_config.yaml.safe_load", return_value={
+        patch("routers.admin_platform_config.DEFAULTS_PATH") as mock_path,
+        patch("routers.admin_platform_config.yaml.safe_load", return_value={
             "llm_backend": "ollama",
             "llm_model": "llama3",
         }),
@@ -92,7 +92,7 @@ async def test_get_defaults_success() -> None:
         mock_path.open.return_value.__enter__.return_value = fake_yaml_content
 
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/admin/org/config/defaults")
+            resp = await client.get("/admin/platform-config/defaults")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -102,15 +102,15 @@ async def test_get_defaults_success() -> None:
 
 @pytest.mark.asyncio
 async def test_get_defaults_500_file_not_found() -> None:
-    """GET /admin/org/config/defaults returns 500 when YAML file is missing."""
+    """GET /admin/platform-config/defaults returns 500 when YAML file is missing."""
     app, _ = _create_app()
     transport = ASGITransport(app=app)
 
-    with patch("routers.admin_org_config.DEFAULTS_PATH") as mock_path:
+    with patch("routers.admin_platform_config.DEFAULTS_PATH") as mock_path:
         mock_path.is_file.return_value = False
 
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/admin/org/config/defaults")
+            resp = await client.get("/admin/platform-config/defaults")
 
     assert resp.status_code == 500
     assert "not found" in resp.json()["detail"].lower()
@@ -120,14 +120,14 @@ async def test_get_defaults_500_file_not_found() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_org_config_success() -> None:
-    """GET /admin/org/config returns 200 with stored config."""
+async def test_get_platform_config_success() -> None:
+    """GET /admin/platform-config returns 200 with stored config."""
     app, _ = _create_app()
     transport = ASGITransport(app=app)
 
-    mock_service = AsyncMock(spec=OrgConfigService)
-    mock_service.get_config_response.return_value = OrgConfigResponse(
-        stored=OrgConfigBase(
+    mock_service = AsyncMock(spec=PlatformConfigService)
+    mock_service.get_config_response.return_value = PlatformConfigResponse(
+        stored=PlatformConfigBase(
             llm_backend="ollama",
             llm_model="llama3",
         ),
@@ -137,7 +137,7 @@ async def test_get_org_config_success() -> None:
     app.dependency_overrides[_get_config_service] = lambda: mock_service
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/admin/org/config")
+        resp = await client.get("/admin/platform-config")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -148,14 +148,14 @@ async def test_get_org_config_success() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_org_config_with_system_managed_fields() -> None:
-    """GET /admin/org/config returns system_managed_fields when system vars set."""
+async def test_get_platform_config_with_system_managed_fields() -> None:
+    """GET /admin/platform-config returns system_managed_fields when system vars set."""
     app, _ = _create_app()
     transport = ASGITransport(app=app)
 
-    mock_service = AsyncMock(spec=OrgConfigService)
-    mock_service.get_config_response.return_value = OrgConfigResponse(
-        stored=OrgConfigBase(llm_backend="ollama"),
+    mock_service = AsyncMock(spec=PlatformConfigService)
+    mock_service.get_config_response.return_value = PlatformConfigResponse(
+        stored=PlatformConfigBase(llm_backend="ollama"),
         system_managed_fields=[
             "surrealdb_url", "surrealdb_user", "surrealdb_pass",
         ],
@@ -167,9 +167,9 @@ async def test_get_org_config_with_system_managed_fields() -> None:
 
     app.dependency_overrides[_get_config_service] = lambda: mock_service
 
-    with patch("routers.admin_org_config._get_system_managed_fields", return_value=system_fields):
+    with patch("routers.admin_platform_config._get_system_managed_fields", return_value=system_fields):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/admin/org/config")
+            resp = await client.get("/admin/platform-config")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -181,13 +181,13 @@ async def test_get_org_config_with_system_managed_fields() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_org_config_success() -> None:
-    """PATCH /admin/org/config returns 200 with updated config."""
+async def test_update_platform_config_success() -> None:
+    """PATCH /admin/platform-config returns 200 with updated config."""
     app, _ = _create_app()
     transport = ASGITransport(app=app)
 
-    mock_service = AsyncMock(spec=OrgConfigService)
-    mock_service.update_config.return_value = OrgConfigBase(
+    mock_service = AsyncMock(spec=PlatformConfigService)
+    mock_service.update_config.return_value = PlatformConfigBase(
         llm_backend="openai",
         llm_model="gpt-4",
     )
@@ -196,7 +196,7 @@ async def test_update_org_config_success() -> None:
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.patch(
-            "/admin/org/config",
+            "/admin/platform-config",
             json={"llm_backend": "openai", "llm_model": "gpt-4"},
         )
 
@@ -208,13 +208,13 @@ async def test_update_org_config_success() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_org_config_partial() -> None:
-    """PATCH /admin/org/config with partial fields works."""
+async def test_update_platform_config_partial() -> None:
+    """PATCH /admin/platform-config with partial fields works."""
     app, _ = _create_app()
     transport = ASGITransport(app=app)
 
-    mock_service = AsyncMock(spec=OrgConfigService)
-    mock_service.update_config.return_value = OrgConfigBase(
+    mock_service = AsyncMock(spec=PlatformConfigService)
+    mock_service.update_config.return_value = PlatformConfigBase(
         llm_backend="openai",
     )
 
@@ -222,7 +222,7 @@ async def test_update_org_config_partial() -> None:
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.patch(
-            "/admin/org/config",
+            "/admin/platform-config",
             json={"llm_backend": "openai"},
         )
 
@@ -231,17 +231,17 @@ async def test_update_org_config_partial() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_org_config_422_invalid_field() -> None:
-    """PATCH /admin/org/config returns 422 for invalid field values."""
+async def test_update_platform_config_422_invalid_field() -> None:
+    """PATCH /admin/platform-config returns 422 for invalid field values."""
     app, _ = _create_app()
     transport = ASGITransport(app=app)
 
-    mock_service = AsyncMock(spec=OrgConfigService)
+    mock_service = AsyncMock(spec=PlatformConfigService)
     app.dependency_overrides[_get_config_service] = lambda: mock_service
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.patch(
-            "/admin/org/config",
+            "/admin/platform-config",
             json={"llm_temperature": 99.0},  # Out of 0.0–2.0 range
         )
 
@@ -253,12 +253,12 @@ async def test_update_org_config_422_invalid_field() -> None:
 
 @pytest.mark.asyncio
 async def test_replace_org_config_success() -> None:
-    """PUT /admin/org/config returns 200 with replaced config."""
+    """PUT /admin/platform-config returns 200 with replaced config."""
     app, _ = _create_app()
     transport = ASGITransport(app=app)
 
-    mock_service = AsyncMock(spec=OrgConfigService)
-    mock_service.update_config.return_value = OrgConfigBase(
+    mock_service = AsyncMock(spec=PlatformConfigService)
+    mock_service.update_config.return_value = PlatformConfigBase(
         llm_backend="anthropic",
         llm_model="claude-3-opus",
     )
@@ -267,7 +267,7 @@ async def test_replace_org_config_success() -> None:
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/admin/org/config",
+            "/admin/platform-config",
             json={
                 "llm_backend": "anthropic",
                 "llm_model": "claude-3-opus",
@@ -285,7 +285,7 @@ async def test_replace_org_config_success() -> None:
 
 @pytest.mark.asyncio
 async def test_get_config_401_unauthenticated() -> None:
-    """GET /admin/org/config returns 401 when unauthenticated."""
+    """GET /admin/platform-config returns 401 when unauthenticated."""
     app = FastAPI()
     # Set up app state so get_db and _get_config_service resolve successfully.
     # require_user_id will raise 401 naturally because no middleware sets user_id.
@@ -295,14 +295,14 @@ async def test_get_config_401_unauthenticated() -> None:
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/admin/org/config")
+        resp = await client.get("/admin/platform-config")
 
     assert resp.status_code == 401
 
 
 @pytest.mark.asyncio
 async def test_patch_config_requires_scope() -> None:
-    """PATCH /admin/org/config returns 403 without configuration:write."""
+    """PATCH /admin/platform-config returns 403 without configuration:write."""
     app = FastAPI()
     # require_permission("configuration:write") resolves get_db even for API
     # keys — the dependency is resolved eagerly by FastAPI before the
@@ -328,7 +328,7 @@ async def test_patch_config_requires_scope() -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.patch(
-            "/admin/org/config",
+            "/admin/platform-config",
             json={"llm_backend": "openai"},
         )
 

@@ -29,11 +29,11 @@ def _mock_enrichment_config(request: pytest.FixtureRequest) -> object:
     """Stub enrichment resolvers for ingest-path unit tests only.
 
     ``IngestMixin._resolve_enrichments`` does fresh lazy
-    ``from core.{system_config,org_config} import get_*_config`` per call,
+    ``from core.{system_config,platform_config} import get_*_config`` per call,
     so patching the source-module attributes covers every ingest test
     without touching ``mock_db`` (which must stay a plain repo-level seam).
     Defaults are all-ON (``SystemConfigResponse()`` /
-    ``OrgConfigBase()``) — the production default for a fresh platform.
+    ``PlatformConfigBase()``) — the production default for a fresh platform.
 
     Scoped to the four ingest-path modules: a global patch would shadow
     the real resolvers for suites that test them directly
@@ -43,7 +43,7 @@ def _mock_enrichment_config(request: pytest.FixtureRequest) -> object:
     """
     from unittest.mock import AsyncMock, patch
 
-    from schemas.organization_config import OrgConfigBase
+    from schemas.platform_config import PlatformConfigBase
     from schemas.system_config import SystemConfigResponse
 
     module = getattr(request.node, "module", None)
@@ -64,8 +64,8 @@ def _mock_enrichment_config(request: pytest.FixtureRequest) -> object:
             new=AsyncMock(return_value=SystemConfigResponse()),
         ),
         patch(
-            "core.org_config.get_org_config",
-            new=AsyncMock(return_value=OrgConfigBase()),
+            "core.platform_config.get_platform_config",
+            new=AsyncMock(return_value=PlatformConfigBase()),
         ),
     ):
         yield

@@ -52,4 +52,4 @@ class TestCustomInstructionModel:
         )
         assert "CustomInstruction" in repr(inst)
         assert "test" in repr(inst)
-        assert "org-level" in repr(inst)
+        assert "platform-level" in repr(inst)

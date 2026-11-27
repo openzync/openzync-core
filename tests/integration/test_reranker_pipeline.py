@@ -24,7 +24,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.reranker.sentence_transformers import _MODEL_CACHE, _MODEL_LOCKS
-from schemas.organization_config import OrgConfigBase
+from schemas.platform_config import PlatformConfigBase
 from services.context_service import ContextService
 from services.hybrid_retriever import HybridRetriever
 
@@ -111,7 +111,7 @@ def _build_mocked_retriever(
     user_id_val: UUID,
     sample: dict[str, Any],
     *,
-    org_config: OrgConfigBase | None = None,
+    platform_config: PlatformConfigBase | None = None,
     reranker: Any = None,
 ) -> HybridRetriever:
     """Construct a ``HybridRetriever`` with all search legs mocked.
@@ -124,7 +124,7 @@ def _build_mocked_retriever(
         db: A mock async session.
         user_id_val: Organisation UUID (for tenant isolation).
         sample: The controlled search results to return.
-        org_config: Optional org-level configuration.
+        platform_config: Optional org-level configuration.
         reranker: An optional re-ranker instance (real or mock).
 
     Returns:
@@ -135,7 +135,7 @@ def _build_mocked_retriever(
         user_id=user_id_val,
         redis=None,
         graph_backends=[],
-        org_config=org_config,
+        platform_config=platform_config,
         reranker=reranker,
     )
 
@@ -176,12 +176,12 @@ class TestRerankerDisabled:
         The RRF merge runs on the mocked search legs; the output should
         contain only the RRF-fused score, not a cross-encoder score.
         """
-        org_config = OrgConfigBase(reranker_backend=None)
+        platform_config = PlatformConfigBase(reranker_backend=None)
         retriever = _build_mocked_retriever(
             mock_db_session,
             ORG_ID,
             sample_search_results,
-            org_config=org_config,
+            platform_config=platform_config,
             reranker=None,
         )
 
@@ -222,7 +222,7 @@ class TestRerankerDisabled:
             mock_db_session,
             ORG_ID,
             sample_search_results,
-            org_config=OrgConfigBase(reranker_backend=None),
+            platform_config=PlatformConfigBase(reranker_backend=None),
             reranker=None,
         )
 
@@ -294,7 +294,7 @@ class TestRerankerEnabled:
             mock_db_session,
             ORG_ID,
             sample_search_results,
-            org_config=OrgConfigBase(reranker_backend="sentence_transformers"),
+            platform_config=PlatformConfigBase(reranker_backend="sentence_transformers"),
             reranker=mock_reranker,
         )
 
@@ -324,7 +324,7 @@ class TestRerankerEnabled:
             mock_db_session,
             ORG_ID,
             sample_search_results,
-            org_config=OrgConfigBase(reranker_backend="sentence_transformers"),
+            platform_config=PlatformConfigBase(reranker_backend="sentence_transformers"),
             reranker=mock_reranker,
         )
 
@@ -369,7 +369,7 @@ class TestRerankerEnabled:
             mock_db_session,
             ORG_ID,
             sample_search_results,
-            org_config=OrgConfigBase(
+            platform_config=PlatformConfigBase(
                 reranker_backend="sentence_transformers",
                 reranker_top_n=1,
             ),
@@ -414,7 +414,7 @@ class TestRerankerFailure:
             mock_db_session,
             ORG_ID,
             sample_search_results,
-            org_config=OrgConfigBase(reranker_backend="sentence_transformers"),
+            platform_config=PlatformConfigBase(reranker_backend="sentence_transformers"),
             reranker=failing_reranker,
         )
 
@@ -442,7 +442,7 @@ class TestRerankerFailure:
             mock_db_session,
             ORG_ID,
             sample_search_results,
-            org_config=OrgConfigBase(reranker_backend="sentence_transformers"),
+            platform_config=PlatformConfigBase(reranker_backend="sentence_transformers"),
             reranker=failing_reranker,
         )
 
@@ -519,7 +519,7 @@ class TestContextAssemblyWithReranker:
             "fact_bm25": [],
         }
 
-        org_config = OrgConfigBase(
+        platform_config = PlatformConfigBase(
             reranker_backend="sentence_transformers",
             reranker_top_n=5,
         )
@@ -528,7 +528,7 @@ class TestContextAssemblyWithReranker:
             mock_db_session,
             ORG_ID,
             sample,
-            org_config=org_config,
+            platform_config=platform_config,
             reranker=mock_reranker,
         )
 
@@ -539,7 +539,7 @@ class TestContextAssemblyWithReranker:
             user_id=ORG_ID,
             redis=None,
             graph_backends=[],
-            org_config=org_config,
+            platform_config=platform_config,
         )
         # Replace the internal retriever with our pre-configured one
         service._retriever = retriever
@@ -593,7 +593,7 @@ class TestContextAssemblyWithReranker:
             mock_db_session,
             ORG_ID,
             sample,
-            org_config=OrgConfigBase(reranker_backend=None),
+            platform_config=PlatformConfigBase(reranker_backend=None),
             reranker=None,
         )
 
@@ -602,7 +602,7 @@ class TestContextAssemblyWithReranker:
             user_id=ORG_ID,
             redis=None,
             graph_backends=[],
-            org_config=OrgConfigBase(reranker_backend=None),
+            platform_config=PlatformConfigBase(reranker_backend=None),
         )
         service._retriever = retriever
 
@@ -647,7 +647,7 @@ class TestContextAssemblyWithReranker:
             mock_db_session,
             ORG_ID,
             sample,
-            org_config=OrgConfigBase(reranker_backend="sentence_transformers"),
+            platform_config=PlatformConfigBase(reranker_backend="sentence_transformers"),
             reranker=failing_reranker,
         )
 
@@ -656,7 +656,7 @@ class TestContextAssemblyWithReranker:
             user_id=ORG_ID,
             redis=None,
             graph_backends=[],
-            org_config=OrgConfigBase(reranker_backend="sentence_transformers"),
+            platform_config=PlatformConfigBase(reranker_backend="sentence_transformers"),
         )
         service._retriever = retriever
 
@@ -703,7 +703,7 @@ class TestRRFMergeWithRerankerConfig:
         }
 
         # With reranker_top_k=50 and only 30 results, all 30 should be in the pool
-        org_config = OrgConfigBase(
+        platform_config = PlatformConfigBase(
             reranker_backend="sentence_transformers",
             reranker_top_k=50,
         )
@@ -715,7 +715,7 @@ class TestRRFMergeWithRerankerConfig:
             mock_db_session,
             ORG_ID,
             sample,
-            org_config=org_config,
+            platform_config=platform_config,
             reranker=mock_reranker,
         )
 

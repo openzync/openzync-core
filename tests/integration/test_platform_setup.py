@@ -70,7 +70,7 @@ async def test_setup_full_flow(
         assert org.name == "Platform"
         root = await UserRepository(session).get_platform_root()
         assert root is not None
-        assert root.role == "superadmin"
+        assert root.role == "admin"
 
     with patch("routers.health.is_model_loaded", return_value=True):
         ready = await anon_client.get("/ready")
@@ -91,7 +91,7 @@ async def test_setup_full_flow(
     )
     assert me.status_code == 200
     me_body = me.json()
-    assert me_body["role"] == "superadmin"
+    assert me_body["role"] == "admin"
     assert me_body["is_email_verified"] is True
     assert me_body["must_change_password"] is False
 

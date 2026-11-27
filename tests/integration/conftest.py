@@ -285,7 +285,7 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
     """Bootstrap a full tenant under the current API contract.
 
     The org bootstrap (``POST /admin/organizations``) is now gated behind
-    the platform ``superadmin`` role, so it is no longer usable as a
+    the platform ``admin`` role, so it is no longer usable as a
     public tenant-bootstrap path.  A working tenant is therefore created
     directly through the DB (test infra — there is no public "create org"
     endpoint that runs before auth exists):
@@ -609,10 +609,10 @@ async def isolated_admin_client(
 
 
 async def superadmin_jwt(isolated_app: Any) -> str:
-    """Run platform setup and log in as root; return the superadmin JWT.
+    """Run platform setup and log in as root; return the admin JWT.
 
     User management (``/v1/users*``) and permission grants are
-    platform-superadmin-gated — the bootstrap org admin JWT (``admin``
+    platform-admin-gated — the bootstrap org admin JWT (``admin``
     role) gets 403 there.  Tests that create users or grant permissions
     must authenticate with this token instead.
 
@@ -639,10 +639,10 @@ async def superadmin_jwt(isolated_app: Any) -> str:
 async def isolated_superadmin_client(
     isolated_app: Any,
 ) -> AsyncGenerator[AsyncClient, None]:
-    """HTTP client authed as the platform superadmin (setup → root login).
+    """HTTP client authed as the platform admin (setup → root login).
 
     Use for ``/v1/users*`` CRUD and permission-grant calls — the org
-    admin JWT gets 403 on those endpoints under the superadmin gate.
+    admin JWT gets 403 on those endpoints under the admin gate.
     """
     transport = asgi_transport(isolated_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
