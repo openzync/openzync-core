@@ -162,8 +162,12 @@ class TestProjectRepository:
                 created_by=user_id,
             )
             # Add user as member to both
-            await repo.add_member(project_id=p1.id, user_id=user_id, role="owner")
-            await repo.add_member(project_id=p2.id, user_id=user_id, role="member")
+            await repo.add_member(
+                project_id=p1.id, user_id=user_id, role="owner", status="active"
+            )
+            await repo.add_member(
+                project_id=p2.id, user_id=user_id, role="member", status="active"
+            )
 
             projects = await repo.list(
                 
@@ -190,8 +194,12 @@ class TestProjectRepository:
                 name="Archived Project",
                 created_by=user_id,
             )
-            await repo.add_member(project_id=p1.id, user_id=user_id, role="owner")
-            await repo.add_member(project_id=p2.id, user_id=user_id, role="owner")
+            await repo.add_member(
+                project_id=p1.id, user_id=user_id, role="owner", status="active"
+            )
+            await repo.add_member(
+                project_id=p2.id, user_id=user_id, role="owner", status="active"
+            )
             await repo.archive(user_id, p2.id)
 
             projects = await repo.list(
@@ -373,7 +381,10 @@ class TestProjectRepository:
                 created_by=user_id,
             )
             await repo.add_member(
-                project_id=project.id, user_id=user_id, role="owner"
+                project_id=project.id,
+                user_id=user_id,
+                role="owner",
+                status="active",
             )
 
             member = await repo.get_member(project.id, user_id)
@@ -457,7 +468,10 @@ class TestProjectRepository:
                 created_by=user_id,
             )
             await repo.add_member(
-                project_id=project.id, user_id=user_id, role="owner"
+                project_id=project.id,
+                user_id=user_id,
+                role="owner",
+                status="active",
             )
 
             count = await repo.count_members(project.id)

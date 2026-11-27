@@ -2,6 +2,7 @@
 
 Provides:
     GET /v1/admin/audit-logs — Paginated, filterable audit log listing.
+    GET /v1/admin/audit-logs/actions — Distinct action names for filter dropdowns.
 
 All endpoints require a JWT dashboard session with the org ``admin`` role:
 the log is org-wide (IPs, actor IDs, resource IDs, and — with response-body
@@ -103,12 +104,17 @@ async def list_audit_logs(
         sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )
 
+    # One batch for the page — missing users/keys fall back per row,
+    # never failing the list.
+    display_names = await service.resolve_actor_display_names(entries)
+
     items = [
         AuditLogResponse(
             id=e.id,
 
             actor_id=e.actor_id,
             actor_type=e.actor_type,
+            actor_display_name=display_names.get(e.id),
             action=e.action,
             resource_type=e.resource_type,
             resource_id=e.resource_id,
@@ -129,3 +135,34 @@ async def list_audit_logs(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get(
+    "/actions",
+    response_model=list[str],
+    summary="List distinct audit log actions",
+    description=(
+        "Returns distinct audit log action names for the authenticated "
+        "organization, sorted alphabetically — for filter dropdowns."
+    ),
+)
+async def list_audit_log_actions(
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(require_permission("members:read")),
+) -> list[str]:
+    """Get distinct audit log action names for the admin dashboard.
+
+    Permission-gated (``require_permission("members:read")``): same
+    org scope as the list endpoint.
+
+    Args:
+        db: Database session.
+        user_id: Authenticated organization ID (admin-gated).
+
+    Returns:
+        Alphabetically sorted distinct action names.
+    """
+    from uuid import UUID
+
+    service = AuditLogService(db)
+    return await service.list_distinct_actions(user_id=UUID(user_id))

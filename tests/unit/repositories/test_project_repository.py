@@ -466,9 +466,8 @@ class TestProjectRepository:
         self, repo: ProjectRepository, mock_db: AsyncMock
     ) -> None:
         """count_members returns the member count."""
-        members = [self._mock_member(), self._mock_member(user_id=uuid4())]
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = members
+        mock_result.scalar_one.return_value = 2
         mock_db.execute.return_value = mock_result
 
         count = await repo.count_members(project_id=self.PROJECT_ID)
@@ -480,7 +479,7 @@ class TestProjectRepository:
     ) -> None:
         """count_members returns 0 when no members."""
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = []
+        mock_result.scalar_one.return_value = 0
         mock_db.execute.return_value = mock_result
 
         count = await repo.count_members(project_id=self.PROJECT_ID)

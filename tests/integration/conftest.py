@@ -608,6 +608,48 @@ async def isolated_admin_client(
         yield client
 
 
+async def superadmin_jwt(isolated_app: Any) -> str:
+    """Run platform setup and log in as root; return the superadmin JWT.
+
+    User management (``/v1/users*``) and permission grants are
+    platform-superadmin-gated — the bootstrap org admin JWT (``admin``
+    role) gets 403 there.  Tests that create users or grant permissions
+    must authenticate with this token instead.
+
+    Idempotent within a test: a second call finds the platform already
+    set up (403) and proceeds straight to login.
+    """
+    transport = asgi_transport(isolated_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        setup = await client.post(
+            "/v1/auth/setup", json={"password": "StrongPass1"}  # noqa: S106
+        )
+        assert setup.status_code in (201, 403), f"platform setup failed: {setup.text}"
+        login = await client.post(
+            "/v1/auth/login",
+            json={"email": "root", "password": "StrongPass1"},  # noqa: S106
+        )
+        assert login.status_code == 200, f"root login failed: {login.text}"
+        token = login.json().get("access_token")
+        assert token, "root login issued no access token"
+        return str(token)
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def isolated_superadmin_client(
+    isolated_app: Any,
+) -> AsyncGenerator[AsyncClient, None]:
+    """HTTP client authed as the platform superadmin (setup → root login).
+
+    Use for ``/v1/users*`` CRUD and permission-grant calls — the org
+    admin JWT gets 403 on those endpoints under the superadmin gate.
+    """
+    transport = asgi_transport(isolated_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.headers["Authorization"] = f"Bearer {await superadmin_jwt(isolated_app)}"
+        yield client
+
+
 @pytest_asyncio.fixture(loop_scope="function")
 def isolated_project_id(isolated_org_and_key: dict) -> UUID:
     """Project ID from the bootstrap org — for constructing project-scoped URLs.

@@ -167,18 +167,23 @@ async def get_superadmin_user_service(
 
 
 async def get_session_service(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     webhook: WebhookService = Depends(get_webhook_service),
 ) -> SessionService:
     """Dependency that yields an initialised SessionService.
 
     The service is constructed once per request using a DB session from
-    the application's async engine.
+    the application's async engine.  A lazy per-user graph-backend
+    resolver is wired so ``get_messages`` can check entity-link
+    presence for ``is_enrichment_skipped``; link lookup degrades to
+    unknown (flag stays ``False``) when the backend is unavailable.
     """
     return SessionService(
         repo=SessionRepository(db),
         blob_repo=EpisodeBlobRepository(db),
         webhook_service=webhook,
+        graph_backend_resolver=_make_graph_backend_resolver(request, db),
     )
 
 
@@ -284,6 +289,32 @@ async def get_invite_service(
 
     Returns:
         An initialised ``InviteService``.
+    """
+    email_config = EmailConfig.from_settings(get_settings())
+    return InviteService(
+        repo=UserRepository(db),
+        auth_service=auth_service,
+        email_service=EmailService(email_config),
+    )
+
+
+async def get_superadmin_invite_service(
+    db: AsyncSession = Depends(get_db_superadmin),  # noqa: B008
+    auth_service: AuthService = Depends(get_auth_service),  # noqa: B008
+) -> InviteService:
+    """Dependency that yields an InviteService on the RLS-bypass session.
+
+    Superadmin-scoped analogue of :func:`get_invite_service` for the
+    admin invite endpoints — the pending row belongs to the invitee, so
+    the tenant session rejects the INSERT (RLS 500).  The pre-auth
+    accept/info flow stays on :func:`get_invite_service`.
+
+    Args:
+        db: RLS-bypass async DB session from dependency injection.
+        auth_service: Fully wired auth service (token issuance).
+
+    Returns:
+        An initialised ``InviteService`` on the bypass session.
     """
     email_config = EmailConfig.from_settings(get_settings())
     return InviteService(

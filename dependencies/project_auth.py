@@ -108,9 +108,9 @@ async def require_project_membership(
         )
 
     repo = ProjectRepository(db)
-    project = await repo.get_by_id(
-        user_id=UUID(user_id),
+    project = await repo.get_accessible_project(
         project_id=project_id,
+        user_id=UUID(user_id),
     )
     if project is None:
         raise HTTPException(
@@ -118,7 +118,9 @@ async def require_project_membership(
             detail="Project not found",
         )
 
-    member = await repo.get_member(
+    # note: active-only — pending invitees hold no access until they approve.
+    # Bypassed read keeps the exact (project_id, user_id, active) filter.
+    member = await repo.get_active_member(
         project_id=project_id,
         user_id=UUID(user_id),
     )

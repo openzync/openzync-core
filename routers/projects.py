@@ -10,24 +10,44 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Path,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import audit_action
 from core.exceptions import AuthenticationError
-from dependencies.auth import require_permission, require_user_id
+from dependencies.auth import (
+    _check_permission,
+    _ensure_superadmin,
+    require_permission,
+    require_user_id,
+)
 from dependencies.db import get_db
 from dependencies.project_auth import require_project_membership
+from dependencies.services import get_invite_service
+from repositories.instance_settings_repository import InstanceSettingsRepository
 from repositories.project_pin_repository import ProjectPinRepository
 from repositories.project_repository import ProjectRepository
+from repositories.user_repository import UserRepository
 from schemas.projects import (
     AddMemberRequest,
     CreateProjectRequest,
+    MemberApprovalRequest,
     ProjectMemberResponse,
     ProjectResponse,
     UpdateProjectRequest,
 )
 from schemas.sorting import ProjectMemberSortBy, ProjectSortBy, SortDir, SortSpec
+from services.invite_service import InviteService
+from services.project_membership_service import ProjectMembershipService
 from services.project_service import ProjectService
 
 router = APIRouter(prefix="/v1/projects", tags=["projects"])
@@ -39,6 +59,24 @@ router = APIRouter(prefix="/v1/projects", tags=["projects"])
 async def _get_project_service(db: AsyncSession = Depends(get_db)) -> ProjectService:
     """Factory for request-scoped ProjectService."""
     return ProjectService(repo=ProjectRepository(db), pin_repo=ProjectPinRepository(db))
+
+
+async def _get_membership_service(
+    db: AsyncSession = Depends(get_db),
+    invite_service: InviteService = Depends(get_invite_service),
+) -> ProjectMembershipService:
+    """Factory for request-scoped ProjectMembershipService.
+
+    Shares the request session across repos (FastAPI caches ``get_db``
+    per request), so the invite-row insert and the membership insert
+    commit atomically via ``get_db``.
+    """
+    return ProjectMembershipService(
+        repo=ProjectRepository(db),
+        user_repo=UserRepository(db),
+        settings_repo=InstanceSettingsRepository(db),
+        invite_service=invite_service,
+    )
 
 
 # ── Create ──────────────────────────────────────────────────────────────────
@@ -306,15 +344,27 @@ async def unpin_project(
 async def add_member(
     payload: AddMemberRequest,
     project_id: UUID = Path(...),
-    service: ProjectService = Depends(_get_project_service),
+    service: ProjectMembershipService = Depends(_get_membership_service),
+    user_id: str = Depends(require_user_id),
 ) -> ProjectMemberResponse:
-    """Add a user to a project.
+    """Invite a user to a project by email (always ``pending``).
+
+    # ⚠️ BREAKING: the request body is now ``{email, role}`` — ``user_id``
+    was removed. PATCH/DELETE member endpoints remain ``user_id``-keyed.
+
+    # ⚠️ BREAKING: invites no longer activate immediately — every path
+    creates a ``pending`` membership (201) the invitee must approve via
+    ``POST .../members/approve``. Unknown emails follow the platform
+    registration mode: ``open`` creates a pending invite, ``invite_only``
+    rejects with 403, ``approval`` rejects with 422.
 
     Requires owner role.
     """
-    return await service.add_member(
+    return await service.add_by_email(
         project_id=project_id,
-        payload=payload,
+        email=payload.email,
+        role=payload.role,
+        invited_by=UUID(user_id),
     )
 
 
@@ -327,6 +377,7 @@ async def add_member(
     ],
 )
 async def list_members(
+    request: Request,
     project_id: UUID = Path(...),
     sort_by: ProjectMemberSortBy | None = Query(
         default=None,
@@ -337,14 +388,104 @@ async def list_members(
         description="Sort direction (default asc).",
     ),
     service: ProjectService = Depends(_get_project_service),
+    user_id: str = Depends(require_user_id),
+    db: AsyncSession = Depends(get_db),
 ) -> list[ProjectMemberResponse]:
-    """List all members of a project.
+    """List all members of a project (``pending`` invites included).
 
-    Requires membership.
+    Requires membership. Managers (``project:manage``) get populated
+    ``user`` profiles; other readers get IDs-only (``user`` null except
+    self per the users RLS policy).
     """
+    try:
+        await _check_permission(request, user_id, db, "project:manage")
+        can_see_profiles = True
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_403_FORBIDDEN:
+            raise
+        can_see_profiles = False
     return await service.list_members(
-        project_id=project_id, sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir)
+        project_id=project_id,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
+        can_see_profiles=can_see_profiles,
     )
+
+
+async def _resolve_is_superadmin(
+    request: Request, user_id: str, db: AsyncSession
+) -> bool:
+    """Return whether the caller is a DB-verified platform superadmin.
+
+    Only 403 (non-superadmin) is absorbed; anything else fails closed.
+    """
+    try:
+        await _ensure_superadmin(request, user_id, db)
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_403_FORBIDDEN:
+            raise
+        return False
+    return True
+
+
+@router.post(
+    "/{project_id}/members/approve",
+    response_model=ProjectMemberResponse,
+)
+@audit_action("project.member.approve", "project_member", "Member invite approved")
+async def approve_member(
+    request: Request,
+    project_id: UUID = Path(...),
+    payload: MemberApprovalRequest | None = None,
+    service: ProjectMembershipService = Depends(_get_membership_service),
+    user_id: str = Depends(require_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> ProjectMemberResponse:
+    """Approve a pending invite, activating the membership.
+
+    Only the invitee (``user_id`` omitted or equal to the caller) or a
+    platform superadmin may approve. No project-membership gate here — a
+    pending invitee is not an active member yet.
+
+    Already-active memberships reject with 422 ``already_member``.
+    """
+    target = payload.user_id if payload and payload.user_id is not None else UUID(user_id)
+    is_superadmin = await _resolve_is_superadmin(request, user_id, db)
+    return await service.approve(
+        project_id=project_id,
+        user_id=target,
+        actor=UUID(user_id),
+        is_superadmin=is_superadmin,
+    )
+
+
+@router.post(
+    "/{project_id}/members/reject",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+@audit_action("project.member.reject", "project_member", "Member invite rejected")
+async def reject_member(
+    request: Request,
+    project_id: UUID = Path(...),
+    payload: MemberApprovalRequest | None = None,
+    service: ProjectMembershipService = Depends(_get_membership_service),
+    user_id: str = Depends(require_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Reject a pending invite, deleting the membership row.
+
+    Only the invitee (``user_id`` omitted or equal to the caller) or a
+    platform superadmin may reject. Active memberships reject with 422 —
+    remove them via ``DELETE`` instead.
+    """
+    target = payload.user_id if payload and payload.user_id is not None else UUID(user_id)
+    is_superadmin = await _resolve_is_superadmin(request, user_id, db)
+    await service.reject(
+        project_id=project_id,
+        user_id=target,
+        actor=UUID(user_id),
+        is_superadmin=is_superadmin,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete(
@@ -361,9 +502,10 @@ async def remove_member(
     user_id: UUID = Path(...),
     service: ProjectService = Depends(_get_project_service),
 ) -> Response:
-    """Remove a user from a project.
+    """Remove a user from a project, or revoke their pending invite.
 
-    Requires owner role.  Cannot remove the last owner.
+    Requires owner role.  Cannot remove the last active owner.
+    Pending invites revoke unconditionally.
     """
     # note: explicit empty Response — implicit None makes FastAPI serialize
     # a JSON `null` body on the 204, which uvicorn rejects and rolls back

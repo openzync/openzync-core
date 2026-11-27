@@ -22,12 +22,14 @@ from core.cursor import (
 )
 from core.exceptions import CursorExpiredError
 from core.sorting import SortSpec, resolve_order_by
+from models.dialog_classification import DialogClassification
 from models.episode import Episode
 from models.fact import Fact
 from models.graph_observation import GraphObservation
 from models.project import Project
 from models.project_member import ProjectMember
 from models.session import Session
+from models.structured_extraction import StructuredExtraction
 from repositories.project_repository import archived_project_ids
 from workers.tasks.base import ENRICHMENT_ALL
 
@@ -430,6 +432,51 @@ class SessionRepository:
             )
 
         return messages, next_cursor
+
+    # ── Enrichment Presence ───────────────────────────────────────────────
+
+    async def get_episodes_with_llm_rows(
+        self, episode_ids: list[UUID]
+    ) -> set[UUID]:
+        """Return episode IDs having at least one LLM-produced row.
+
+        One ``IN`` query per LLM table — ``dialog_classifications``
+        (by ``episode_id``), ``facts`` (by ``source_episode_id``), and
+        ``structured_extractions`` (by ``episode_id``).  Entity links
+        live in the graph backend, not Postgres, so they are checked
+        separately by the caller.  Used by
+        ``SessionService.get_messages`` to derive
+        ``MessageResponse.is_enrichment_skipped``.
+
+        Args:
+            episode_ids: The page's episode UUIDs.
+
+        Returns:
+            The subset of ``episode_ids`` with ≥1 row in any of the
+            three tables.  Empty when ``episode_ids`` is empty (no
+            empty ``IN`` query is issued).
+        """
+        if not episode_ids:
+            return set()
+        present: set[UUID] = set()
+        for stmt in (
+            select(DialogClassification.episode_id).where(
+                DialogClassification.episode_id.in_(episode_ids)
+            ),
+            select(Fact.source_episode_id).where(
+                Fact.source_episode_id.in_(episode_ids)
+            ),
+            select(StructuredExtraction.episode_id).where(
+                StructuredExtraction.episode_id.in_(episode_ids)
+            ),
+        ):
+            result = await self._db.execute(stmt)
+            present.update(
+                episode_id
+                for episode_id in result.scalars().all()
+                if episode_id is not None
+            )
+        return present
 
     # ── Next Sequence Number ────────────────────────────────────────────────
 

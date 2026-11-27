@@ -2,7 +2,9 @@
 
 Each row represents a single user's membership in a project with a specific
 role. The combination (project_id, user_id) is unique — a user can only have
-one role per project.
+one row per project. New rows start as ``pending`` and become ``active``
+only when the invitee approves (or a superadmin approves for them);
+existing rows were backfilled to ``active``.
 """
 
 from __future__ import annotations
@@ -32,6 +34,8 @@ class ProjectMember(TimestampMixin, Base):
         user_id: Foreign key to the user.
         role: Access level — ``owner`` (manage project settings and members)
             or ``member`` (read/write access to project data).
+        status: ``pending`` until the invitee approves, then ``active``.
+            Only ``active`` rows grant project access.
     """
 
     __tablename__ = "project_members"
@@ -56,6 +60,12 @@ class ProjectMember(TimestampMixin, Base):
         default="member",
         server_default="member",
     )
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="active",
+        server_default="active",
+    )
     user: Mapped[User | None] = relationship(
         lazy="raise",
         # note: read-only eager target for list_members' LEFT JOIN
@@ -76,11 +86,15 @@ class ProjectMember(TimestampMixin, Base):
             "role IN ('owner', 'member')",
             name="ck_project_members_role",
         ),
+        CheckConstraint(
+            "status IN ('pending', 'active')",
+            name="ck_project_members_status",
+        ),
     )
 
     def __repr__(self) -> str:
-        """Return a debug-friendly repr with project, user, and role."""
+        """Return a debug-friendly repr with project, user, role, status."""
         return (
             f"<ProjectMember project={self.project_id} "
-            f"user={self.user_id} role={self.role!r}>"
+            f"user={self.user_id} role={self.role!r} status={self.status!r}>"
         )

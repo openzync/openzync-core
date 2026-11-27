@@ -272,11 +272,18 @@ async def get_session_facts(
         default="desc",
         description="Sort direction (default desc).",
     ),
+    episode_id: UUID | None = Query(
+        default=None,
+        description="Optional episode UUID — when given, only facts "
+        "extracted from that episode (exact match on source_episode_id) "
+        "are returned.",
+    ),
 ) -> PaginatedResponse[FactResponse]:
     """Get paginated facts for a session.
 
     Returns facts extracted from messages in this session, ordered by
     creation time (newest first).  Only non-invalidated facts are included.
+    Pass ``episode_id`` to scope the read to a single episode.
     """
     # Verify the session exists before fetching facts.
     # NotFoundError propagates to global exception handler → 404.
@@ -285,6 +292,7 @@ async def get_session_facts(
     facts, next_cursor = await fact_service.list_facts_by_session(
         user_id=user_id,
         session_id=session_id,
+        episode_id=episode_id,
         limit=limit,
         cursor=cursor,
         sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),

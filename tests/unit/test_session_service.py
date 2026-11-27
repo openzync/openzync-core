@@ -8,12 +8,25 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from core.enrichment_bits import (
+    ENRICHMENT_CLASSIFICATION,
+    ENRICHMENT_ENTITIES,
+    ENRICHMENT_ENTITY_LINKS,
+    ENRICHMENT_FACTS,
+    ENRICHMENT_STRUCTURED_EXTRACTION,
+)
 from core.events import EventType
-from core.exceptions import ConflictError, NotFoundError, ValidationError
+from core.exceptions import (
+    ConflictError,
+    ExternalServiceError,
+    GraphBackendUnavailableError,
+    NotFoundError,
+    ValidationError,
+)
 from core.sorting import SortSpec
 from repositories.episode_blob_repository import EpisodeBlobRepository
 from repositories.session_repository import SessionRepository
-from services.session_service import SessionService
+from services.session_service import SKIPPED_LLM_BITS_MASK, SessionService
 from services.webhook_service import WebhookService
 
 
@@ -533,3 +546,129 @@ class TestSessionService:
                 "project_id": str(mock_session.project_id),
             },
         )
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # _find_skipped_episodes rule matrix (mocked repos/graph) — A1
+    # SKIPPED_LLM_BITS_MASK exactness — A3
+    # ═════════════════════════════════════════════════════════════════════════
+
+    def _make_episode_with_bits(self, bits: int) -> AsyncMock:
+        """Create a mock episode carrying a raw ``enrichment_status`` bitmask."""
+        ep = self._make_mock_episode()
+        ep.enrichment_status = bits
+        return ep
+
+    @staticmethod
+    def _graph_resolver_with(entities: list | None) -> AsyncMock:
+        """Return a resolver whose backend reports ``entities`` for the page."""
+        backend = AsyncMock()
+        backend.get_entities_for_episodes = AsyncMock(return_value=entities or [])
+        return AsyncMock(return_value=backend)
+
+    @pytest.mark.asyncio
+    async def test_skipped_llm_bits_mask_is_exactly_bits_0_2_3_4_5(self) -> None:
+        """A3: the mask covers exactly the five LLM-section bits."""
+        assert SKIPPED_LLM_BITS_MASK == (
+            ENRICHMENT_ENTITIES
+            | ENRICHMENT_FACTS
+            | ENRICHMENT_ENTITY_LINKS
+            | ENRICHMENT_CLASSIFICATION
+            | ENRICHMENT_STRUCTURED_EXTRACTION
+        )
+        assert SKIPPED_LLM_BITS_MASK == (
+            (1 << 0) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5)
+        )
+
+    @pytest.mark.asyncio
+    async def test_find_skipped_stamped_bits_no_rows_flags(self) -> None:
+        """Stamped bits + zero LLM rows → flagged."""
+        service, mock_repo = self._make_service()
+        ep = self._make_episode_with_bits(SKIPPED_LLM_BITS_MASK)
+        mock_repo.get_episodes_with_llm_rows = AsyncMock(return_value=set())
+        service._graph_resolver = self._graph_resolver_with([])
+
+        assert await service._find_skipped_episodes(
+            self.ORG_ID, self.PROJECT_ID, [ep]
+        ) == {ep.id}
+        mock_repo.get_episodes_with_llm_rows.assert_awaited_once_with([ep.id])
+
+    @pytest.mark.asyncio
+    async def test_find_skipped_earned_bits_with_rows_not_flagged(self) -> None:
+        """Full bits + LLM rows present → earned, never flagged (no graph call)."""
+        service, mock_repo = self._make_service()
+        ep = self._make_episode_with_bits(SKIPPED_LLM_BITS_MASK)
+        mock_repo.get_episodes_with_llm_rows = AsyncMock(return_value={ep.id})
+        resolver = self._graph_resolver_with([])
+        service._graph_resolver = resolver
+
+        assert await service._find_skipped_episodes(
+            self.ORG_ID, self.PROJECT_ID, [ep]
+        ) == set()
+        resolver.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_find_skipped_partial_bits_never_flagged_no_queries(self) -> None:
+        """In-flight (partial bits) → never a candidate; no presence queries run."""
+        service, mock_repo = self._make_service()
+        ep = self._make_episode_with_bits(ENRICHMENT_ENTITIES)
+        mock_repo.get_episodes_with_llm_rows = AsyncMock(return_value=set())
+        service._graph_resolver = self._graph_resolver_with([])
+
+        assert await service._find_skipped_episodes(
+            self.ORG_ID, self.PROJECT_ID, [ep]
+        ) == set()
+        mock_repo.get_episodes_with_llm_rows.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_find_skipped_graph_unavailable_fail_closed(self) -> None:
+        """No resolver (unknown link state) → fail closed, never flagged."""
+        service, mock_repo = self._make_service()
+        ep = self._make_episode_with_bits(SKIPPED_LLM_BITS_MASK)
+        mock_repo.get_episodes_with_llm_rows = AsyncMock(return_value=set())
+        service._graph_resolver = None
+
+        assert await service._find_skipped_episodes(
+            self.ORG_ID, self.PROJECT_ID, [ep]
+        ) == set()
+
+    @pytest.mark.asyncio
+    async def test_find_skipped_graph_resolver_error_fail_closed(self) -> None:
+        """Resolver raising GraphBackendUnavailableError → fail closed."""
+        service, mock_repo = self._make_service()
+        ep = self._make_episode_with_bits(SKIPPED_LLM_BITS_MASK)
+        mock_repo.get_episodes_with_llm_rows = AsyncMock(return_value=set())
+        service._graph_resolver = AsyncMock(
+            side_effect=GraphBackendUnavailableError("backend down")
+        )
+
+        assert await service._find_skipped_episodes(
+            self.ORG_ID, self.PROJECT_ID, [ep]
+        ) == set()
+
+    @pytest.mark.asyncio
+    async def test_find_skipped_graph_lookup_error_fail_closed(self) -> None:
+        """Backend raising ExternalServiceError → fail closed."""
+        service, mock_repo = self._make_service()
+        ep = self._make_episode_with_bits(SKIPPED_LLM_BITS_MASK)
+        mock_repo.get_episodes_with_llm_rows = AsyncMock(return_value=set())
+        backend = AsyncMock()
+        backend.get_entities_for_episodes = AsyncMock(
+            side_effect=ExternalServiceError("graph down")
+        )
+        service._graph_resolver = AsyncMock(return_value=backend)
+
+        assert await service._find_skipped_episodes(
+            self.ORG_ID, self.PROJECT_ID, [ep]
+        ) == set()
+
+    @pytest.mark.asyncio
+    async def test_find_skipped_empty_page_issues_no_queries(self) -> None:
+        """Empty page → no presence queries issued at all."""
+        service, mock_repo = self._make_service()
+        mock_repo.get_episodes_with_llm_rows = AsyncMock(return_value=set())
+        service._graph_resolver = self._graph_resolver_with([])
+
+        assert await service._find_skipped_episodes(
+            self.ORG_ID, self.PROJECT_ID, []
+        ) == set()
+        mock_repo.get_episodes_with_llm_rows.assert_not_awaited()

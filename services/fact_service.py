@@ -568,6 +568,7 @@ class FactService:
         self,
         user_id: UUID,
         session_id: UUID,
+        episode_id: UUID | None = None,
         limit: int = 50,
         cursor: str | None = None,
         sort: SortSpec | None = None,
@@ -577,6 +578,8 @@ class FactService:
         Args:
             user_id: Tenant scope.
             session_id: The session to fetch facts for.
+            episode_id: Optional episode UUID — when given, only facts
+                whose ``source_episode_id`` exactly matches are returned.
             limit: Max results per page (1–200).
             cursor: Opaque base64 cursor from a previous page.
             sort: Validated sort spec (forwarded opaque to the repository).
@@ -587,6 +590,7 @@ class FactService:
         return await self._fact_repo.list_by_session(
             user_id=user_id,
             session_id=session_id,
+            episode_id=episode_id,
             limit=limit,
             cursor=cursor,
             sort=sort,

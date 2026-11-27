@@ -14,7 +14,7 @@ import pytest
 from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 
-from schemas.projects import ProjectResponse
+from schemas.projects import ProjectMemberResponse, ProjectResponse
 
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -465,22 +465,71 @@ class TestProjectsRouter:
         assert response.content == b""
         mock_instance.archive_project.assert_awaited_once()
 
-    @patch("routers.projects.ProjectService")
-    async def test_add_member_success(self, mock_project_service: AsyncMock) -> None:
+    async def test_add_member_success(self) -> None:
         """POST /v1/projects/{id}/members → 201 with ProjectMemberResponse."""
         mock_instance = AsyncMock()
-        mock_project_service.return_value = mock_instance
-        mock_instance.add_member.return_value = _make_member_response()
+        mock_instance.add_by_email.return_value = ProjectMemberResponse.model_validate(
+            _make_member_response()
+        )
 
         from dependencies.auth import require_user_id
         from dependencies.db import get_db
-        from routers.projects import _get_project_service, router
+        from routers.projects import (
+            _get_membership_service,
+            require_project_membership,
+            router,
+        )
 
         app = FastAPI()
         app.include_router(router)
         app.dependency_overrides[get_db] = lambda: AsyncMock()
-        app.dependency_overrides[_get_project_service] = lambda: mock_instance
+        app.dependency_overrides[_get_membership_service] = lambda: mock_instance
         app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
+        app.dependency_overrides[require_project_membership] = lambda: None
+
+        @app.middleware("http")
+        async def _mock_auth(request: Request, call_next):
+            request.state.user_id = str(ORG_ID)
+            request.state.user_id = str(USER_ID)
+            request.state.auth_type = "jwt"
+            response = await call_next(request)
+            return response
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/v1/projects/{PROJECT_ID}/members",
+                json={"email": "new@example.com", "role": "member"},
+            )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["user_id"] == str(USER_ID)
+        assert data["role"] == "member"
+        mock_instance.add_by_email.assert_awaited_once()
+        assert (
+            mock_instance.add_by_email.await_args.kwargs["email"]
+            == "new@example.com"
+        )
+
+    async def test_add_member_422_old_user_id_shape(self) -> None:
+        """POST /v1/projects/{id}/members with the removed user_id body → 422."""
+        mock_instance = AsyncMock()
+
+        from dependencies.auth import require_user_id
+        from dependencies.db import get_db
+        from routers.projects import (
+            _get_membership_service,
+            require_project_membership,
+            router,
+        )
+
+        app = FastAPI()
+        app.include_router(router)
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
+        app.dependency_overrides[_get_membership_service] = lambda: mock_instance
+        app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
+        app.dependency_overrides[require_project_membership] = lambda: None
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -497,27 +546,27 @@ class TestProjectsRouter:
                 json={"user_id": str(USER_ID), "role": "member"},
             )
 
-        assert response.status_code == 201
-        data = response.json()
-        assert data["user_id"] == str(USER_ID)
-        assert data["role"] == "member"
-        mock_instance.add_member.assert_awaited_once()
+        assert response.status_code == 422
+        mock_instance.add_by_email.assert_not_awaited()
 
-    @patch("routers.projects.ProjectService")
-    async def test_add_member_422_invalid_role(self, mock_project_service: AsyncMock) -> None:
+    async def test_add_member_422_invalid_role(self) -> None:
         """POST /v1/projects/{id}/members with invalid role → 422."""
         mock_instance = AsyncMock()
-        mock_project_service.return_value = mock_instance
 
         from dependencies.auth import require_user_id
         from dependencies.db import get_db
-        from routers.projects import _get_project_service, router
+        from routers.projects import (
+            _get_membership_service,
+            require_project_membership,
+            router,
+        )
 
         app = FastAPI()
         app.include_router(router)
         app.dependency_overrides[get_db] = lambda: AsyncMock()
-        app.dependency_overrides[_get_project_service] = lambda: mock_instance
+        app.dependency_overrides[_get_membership_service] = lambda: mock_instance
         app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
+        app.dependency_overrides[require_project_membership] = lambda: None
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -531,10 +580,11 @@ class TestProjectsRouter:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
                 f"/v1/projects/{PROJECT_ID}/members",
-                json={"user_id": str(USER_ID), "role": "admin"},
+                json={"email": "new@example.com", "role": "admin"},
             )
 
         assert response.status_code == 422
+        mock_instance.add_by_email.assert_not_awaited()
 
     @patch("routers.projects.ProjectService")
     async def test_list_members_success(self, mock_project_service: AsyncMock) -> None:

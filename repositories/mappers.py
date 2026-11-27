@@ -79,7 +79,16 @@ def episode_to_dict(episode: Episode) -> dict[str, Any]:
     """Convert an Episode ORM model to a flat dict for MessageResponse.
 
     Handles the ``metadata_`` → ``metadata`` field-name mapping for
-    episode messages.
+    episode messages.  ``enrichment_status`` is copied raw off the row —
+    no extra query.
+
+    Args:
+        episode: The Episode ORM instance.
+
+    Returns:
+        Flat dict with ``id``, ``role``, ``content``, ``metadata``,
+        ``token_count``, ``sequence_number``, ``enrichment_status``,
+        and ``created_at`` keys.
     """
     return {
         "id": episode.id,
@@ -88,5 +97,6 @@ def episode_to_dict(episode: Episode) -> dict[str, Any]:
         "metadata": episode.metadata_ if episode.metadata_ is not None else {},
         "token_count": episode.token_count or 0,
         "sequence_number": episode.sequence_number,
+        "enrichment_status": episode.enrichment_status or 0,
         "created_at": episode.created_at,
     }

@@ -10,17 +10,18 @@ to control behaviour.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 
+from models.audit_log import AuditLog
 from routers.audit_log import router
 
 USER_ID = UUID("00000000-0000-0000-0000-000000000001")
-USER_ID = UUID("00000000-0000-0000-0000-000000000002")
+ORG_ID = USER_ID
 LOG_ID = UUID("00000000-0000-0000-0000-000000000003")
 NOW = datetime.now(UTC)
 
@@ -42,19 +43,20 @@ def _stub_permission_gate() -> None:
 
 def _stub_audit_log_entry(
     overrides: dict | None = None,
-) -> MagicMock:
-    """Return a MagicMock that looks like an AuditLog ORM object."""
-    entry = MagicMock()
-    entry.id = LOG_ID
-    entry.user_id = USER_ID
-    entry.actor_id = str(USER_ID)
-    entry.actor_type = "user"
-    entry.action = "session.create"
-    entry.resource_type = "session"
-    entry.resource_id = str(uuid4())
-    entry.details = {"display_name": "Session created", "status_code": 200, "method": "POST", "path": "/v1/sessions"}
-    entry.ip_address = "127.0.0.1"
-    entry.created_at = NOW
+) -> AuditLog:
+    """Return a real AuditLog entity (no DB — constructed in memory)."""
+    entry = AuditLog(
+        id=LOG_ID,
+        user_id=ORG_ID,
+        actor_id=str(ORG_ID),
+        actor_type="user",
+        action="session.create",
+        resource_type="session",
+        resource_id=str(uuid4()),
+        details={"display_name": "Session created", "status_code": 200, "method": "POST", "path": "/v1/sessions"},
+        ip_address="127.0.0.1",
+        created_at=NOW,
+    )
     if overrides:
         for k, v in overrides.items():
             setattr(entry, k, v)
@@ -91,6 +93,7 @@ def mock_audit_service() -> AsyncMock:
     with patch("routers.audit_log.AuditLogService") as mock_cls:
         instance = mock_cls.return_value
         instance.query_logs = AsyncMock()
+        instance.resolve_actor_display_names = AsyncMock(return_value={})
         yield instance
 
 

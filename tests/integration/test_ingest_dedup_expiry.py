@@ -125,18 +125,25 @@ class TestDedupTtl:
         session_id = f"dedup_ttl_session_{uuid.uuid4().hex[:8]}"
 
         # note: project-scoped API keys carry only project:* vocabulary,
-        # so user/session setup goes through the admin JWT (members:write).
+        # so user setup goes through the superadmin JWT (users are superadmin-gated).
         transport = asgi_transport(isolated_app)
         async with AsyncClient(
             transport=transport, base_url="http://test"
         ) as admin_client:
+            from tests.integration.conftest import superadmin_jwt
+
+            # Users are superadmin-gated; sessions stay on the org JWT
+            # (superadmin holds no project membership).
             admin_client.headers["Authorization"] = (
-                f"Bearer {isolated_org_and_key['jwt']}"
+                f"Bearer {await superadmin_jwt(isolated_app)}"
             )
             user_resp = await admin_client.post(
                 "/v1/users", json={"external_id": external_id}
             )
             assert user_resp.status_code == 201, user_resp.text
+            admin_client.headers["Authorization"] = (
+                f"Bearer {isolated_org_and_key['jwt']}"
+            )
             session_resp = await admin_client.post(
                 f"/v1/projects/{isolated_project_id}/sessions",
                 json={"external_id": session_id},

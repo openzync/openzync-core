@@ -146,6 +146,9 @@ class MessageResponse(BaseModel):
 
     Messages are ordered by ``sequence_number`` within a session for
     deterministic ordering (not by ``created_at``, which can have ties).
+    ``enrichment_status`` is the raw per-episode enrichment bitmask read
+    straight off the episode row (e.g. bit 0 = fact extraction,
+    bit 3 = entity links) — no extra query is issued to populate it.
     """
 
     id: UUID = Field(..., description="Internal episode UUID.")
@@ -163,6 +166,18 @@ class MessageResponse(BaseModel):
     )
     sequence_number: int = Field(
         ..., description="Zero-indexed position within the session."
+    )
+    enrichment_status: int = Field(
+        default=0,
+        description="Raw per-episode enrichment bitmask off the episode row "
+        "(e.g. bit 0 = fact extraction, bit 3 = entity links).",
+    )
+    is_enrichment_skipped: bool = Field(
+        default=False,
+        description="True when all LLM enrichment bits are set on the "
+        "episode row yet no LLM-produced rows exist for the episode "
+        "(no classification, facts, structured extractions, or entity "
+        "links) — i.e. enrichment was mark-skipped, not run.",
     )
     created_at: datetime = Field(
         ..., description="Message creation timestamp (UTC)."

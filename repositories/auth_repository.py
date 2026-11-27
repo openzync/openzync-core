@@ -121,6 +121,11 @@ class AuthRepository:
 
         Returns:
             The newly created User.
+
+        Public (pre-auth) path — no tenant context exists yet, so the
+        INSERT runs under a transaction-local RLS bypass.  Callers stay
+        bare: find-then-create must not share an outer bypass (the
+        find's reset would kill it before the INSERT).
         """
         user = User(
             external_id=email,
@@ -133,9 +138,10 @@ class AuthRepository:
             is_active=is_active,
             metadata_={},
         )
-        self._db.add(user)
-        await self._db.flush()
-        await self._db.refresh(user)
+        async with rls.rls_bypass(self._db):
+            self._db.add(user)
+            await self._db.flush()
+            await self._db.refresh(user)
         return user
 
     # ── Refresh tokens ─────────────────────────────────────────────────────

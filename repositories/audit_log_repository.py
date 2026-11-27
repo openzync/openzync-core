@@ -14,7 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import rls
 from core.sorting import SortSpec, resolve_order_by
+from models.api_key import ApiKey
 from models.audit_log import AuditLog
+from models.user import User
 
 AUDIT_LOG_SORTABLE_COLUMNS = {
     "created_at": AuditLog.created_at,
@@ -217,3 +219,55 @@ class AuditLogRepository:
         entries = list(result.scalars().all())
 
         return entries, total
+
+    async def list_distinct_actions(
+        self, user_id: UUID | None
+    ) -> list[str]:
+        """Return distinct action names, alphabetically sorted.
+
+        Applies the same organization condition as :meth:`list` — a
+        concrete UUID restricts the result to that organization (and
+        excludes platform-level rows with no organization); ``None``
+        means platform-wide (the caller's own isolation decides what
+        is visible).
+
+        Args:
+            user_id: Filter by org, or ``None`` for platform-wide.
+
+        Returns:
+            Sorted list of distinct action names.
+        """
+        query = select(AuditLog.action).distinct()
+        if user_id is not None:
+            query = query.where(AuditLog.user_id == user_id)
+        query = query.order_by(AuditLog.action.asc())
+        result = await self._db.execute(query)
+        return [row[0] for row in result.all()]
+
+    async def get_users_by_ids(self, ids: list[UUID]) -> list[User]:
+        """Fetch users for actor display-name resolution in one batch.
+
+        Args:
+            ids: User UUIDs parsed from the page's ``actor_id`` values.
+
+        Returns:
+            Matching User ORM objects (missing IDs are simply absent).
+        """
+        if not ids:
+            return []
+        result = await self._db.execute(select(User).where(User.id.in_(ids)))
+        return list(result.scalars().all())
+
+    async def get_api_keys_by_ids(self, ids: list[UUID]) -> list[ApiKey]:
+        """Fetch API keys for actor display-name resolution in one batch.
+
+        Args:
+            ids: API key UUIDs parsed from the page's ``actor_id`` values.
+
+        Returns:
+            Matching ApiKey ORM objects (missing IDs are simply absent).
+        """
+        if not ids:
+            return []
+        result = await self._db.execute(select(ApiKey).where(ApiKey.id.in_(ids)))
+        return list(result.scalars().all())

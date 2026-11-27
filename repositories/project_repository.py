@@ -9,10 +9,11 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import contains_eager
 
+from core import rls
 from core.sorting import SortSpec, resolve_order_by
 from models.project import Project
 from models.project_member import ProjectMember
@@ -129,6 +130,46 @@ class ProjectRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def get_accessible_project(
+        self, project_id: UUID, user_id: UUID
+    ) -> Project | None:
+        """Return a non-archived project the user owns or actively belongs to.
+
+        Single membership-scoped query under a transaction-scoped RLS
+        bypass (creator-only RLS would otherwise 404 members): matches
+        ``Project.id`` + not archived + (owner ``Project.user_id`` OR
+        EXISTS active membership for the exact ``(project_id, user_id)``
+        pair). Pending invitees see nothing.
+
+        Args:
+            project_id: The project's UUID primary key.
+            user_id: The requesting user's UUID.
+
+        Returns:
+            The Project if accessible and not archived, ``None`` otherwise.
+        """
+        member_exists = (
+            select(1)
+            .where(
+                ProjectMember.project_id == Project.id,
+                ProjectMember.user_id == user_id,
+                ProjectMember.status == "active",
+            )
+            .exists()
+        )
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(Project).where(
+                    Project.id == project_id,
+                    Project.is_archived.is_(False),
+                    or_(
+                        Project.user_id == user_id,
+                        member_exists,
+                    ),
+                )
+            )
+            return result.scalar_one_or_none()
 
     async def get_by_name(self, user_id: UUID, name: str) -> Project | None:
         """Look up a project by name within an organisation.
@@ -269,13 +310,17 @@ class ProjectRepository:
         if user_id is not None:
             # Membership narrows the list — ownership alone must not:
             # members who did not create the project still see it.
+            # Active-only: pending invitees must never list.
             query = query.join(
                 ProjectMember, Project.id == ProjectMember.project_id
-            ).where(ProjectMember.user_id == user_id)
+            ).where(
+                ProjectMember.user_id == user_id,
+                ProjectMember.status == "active",
+            )
         if not include_archived:
             query = query.where(Project.is_archived.is_(False))
 
-        result = await self._db.execute(
+        stmt = (
             query.order_by(
                 *resolve_order_by(
                     PROJECT_SORTABLE_COLUMNS,
@@ -289,6 +334,14 @@ class ProjectRepository:
             .limit(effective_limit)
             .offset(offset)
         )
+        # Creator-only RLS hides member rows — bypass is transaction-scoped
+        # (SET LOCAL) with the exact membership filter kept above.
+        # API-key path (user_id=None) is unchanged.
+        if user_id is not None:
+            async with rls.rls_bypass(self._db):
+                result = await self._db.execute(stmt)
+        else:
+            result = await self._db.execute(stmt)
         return list(result.scalars().all())
 
     async def list_all(
@@ -333,20 +386,44 @@ class ProjectRepository:
             description: New project description.
 
         Returns:
-            The updated Project, or ``None`` if not found.
+            The updated Project, or ``None`` if not found or not
+            accessible (non-archived, owned or actively joined).
         """
-        project = await self.get_by_id(user_id, project_id)
-        if project is None:
-            return None
+        # note: read + mutate + flush share one bypass block — calling
+        # get_accessible_project() here would nest bypass blocks and its
+        # finally would reset the GUC before flush.
+        member_exists = (
+            select(1)
+            .where(
+                ProjectMember.project_id == Project.id,
+                ProjectMember.user_id == user_id,
+                ProjectMember.status == "active",
+            )
+            .exists()
+        )
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(Project).where(
+                    Project.id == project_id,
+                    Project.is_archived.is_(False),
+                    or_(
+                        Project.user_id == user_id,
+                        member_exists,
+                    ),
+                )
+            )
+            project = result.scalar_one_or_none()
+            if project is None:
+                return None
 
-        if name is not None:
-            project.name = name
-        if description is not None:
-            project.description = description
+            if name is not None:
+                project.name = name
+            if description is not None:
+                project.description = description
 
-        await self._db.flush()
-        await self._db.refresh(project)
-        return project
+            await self._db.flush()
+            await self._db.refresh(project)
+            return project
 
     async def archive(self, user_id: UUID, project_id: UUID) -> Project | None:
         """Soft-delete (archive) a project.
@@ -359,16 +436,40 @@ class ProjectRepository:
             project_id: The project's UUID.
 
         Returns:
-            The archived Project, or ``None`` if not found.
+            The archived Project, or ``None`` if not found or not
+            accessible (non-archived, owned or actively joined).
         """
-        project = await self.get_by_id(user_id, project_id)
-        if project is None:
-            return None
+        # note: read + mutate + flush share one bypass block — calling
+        # get_accessible_project() here would nest bypass blocks and its
+        # finally would reset the GUC before flush.
+        member_exists = (
+            select(1)
+            .where(
+                ProjectMember.project_id == Project.id,
+                ProjectMember.user_id == user_id,
+                ProjectMember.status == "active",
+            )
+            .exists()
+        )
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(Project).where(
+                    Project.id == project_id,
+                    Project.is_archived.is_(False),
+                    or_(
+                        Project.user_id == user_id,
+                        member_exists,
+                    ),
+                )
+            )
+            project = result.scalar_one_or_none()
+            if project is None:
+                return None
 
-        project.is_archived = True
-        await self._db.flush()
-        await self._db.refresh(project)
-        return project
+            project.is_archived = True
+            await self._db.flush()
+            await self._db.refresh(project)
+            return project
 
     async def unarchive(
         self, user_id: UUID, project_id: UUID
@@ -376,29 +477,48 @@ class ProjectRepository:
         """Restore an archived project (set ``is_archived=False``).
 
         Uses a direct select including archived rows — ``get_by_id``
-        404s archived projects so it cannot be used here.
+        and ``get_accessible_project`` 404 archived projects so neither
+        can be used here. Access mirrors ``get_accessible_project``
+        (owner OR active membership) minus the archived filter, under a
+        transaction-scoped RLS bypass.
 
         Args:
             user_id: Tenant scope.
             project_id: The project's UUID.
 
         Returns:
-            The unarchived Project, or ``None`` if not found.
+            The unarchived Project, or ``None`` if not found or not
+            accessible.
         """
-        result = await self._db.execute(
-            select(Project).where(
-                Project.id == project_id,
-                Project.user_id == user_id,
+        # note: read + mutate + flush share one bypass block — a nested
+        # get_accessible_project() call would reset the GUC before flush.
+        member_exists = (
+            select(1)
+            .where(
+                ProjectMember.project_id == Project.id,
+                ProjectMember.user_id == user_id,
+                ProjectMember.status == "active",
             )
+            .exists()
         )
-        project = result.scalar_one_or_none()
-        if project is None:
-            return None
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(Project).where(
+                    Project.id == project_id,
+                    or_(
+                        Project.user_id == user_id,
+                        member_exists,
+                    ),
+                )
+            )
+            project = result.scalar_one_or_none()
+            if project is None:
+                return None
 
-        project.is_archived = False
-        await self._db.flush()
-        await self._db.refresh(project)
-        return project
+            project.is_archived = False
+            await self._db.flush()
+            await self._db.refresh(project)
+            return project
 
     async def count_active(self, user_id: UUID) -> int:
         """Count non-archived projects for the given organization.
@@ -424,6 +544,7 @@ class ProjectRepository:
         project_id: UUID,
         user_id: UUID,
         role: str = "member",
+        status: str = "pending",
     ) -> ProjectMember:
         """Add a user to a project with the given role.
 
@@ -431,6 +552,8 @@ class ProjectRepository:
             project_id: The project's UUID.
             user_id: The user's UUID.
             role: One of ``"owner"`` or ``"member"``.
+            status: ``"pending"`` for invites (invitee approves later),
+                ``"active"`` for the project creator path only.
 
         Returns:
             The newly created ProjectMember.
@@ -443,6 +566,7 @@ class ProjectRepository:
             project_id=project_id,
             user_id=user_id,
             role=role,
+            status=status,
         )
         self._db.add(member)
         await self._db.flush()
@@ -452,6 +576,10 @@ class ProjectRepository:
     async def remove_member(self, project_id: UUID, user_id: UUID) -> bool:
         """Remove a user from a project.
 
+        Runs under a transaction-scoped RLS bypass so the invitee-self
+        reject flow can delete a row RLS would otherwise hide — still
+        scoped to the exact ``(project_id, user_id)`` pair.
+
         Args:
             project_id: The project's UUID.
             user_id: The user's UUID.
@@ -459,41 +587,149 @@ class ProjectRepository:
         Returns:
             ``True`` if the membership was removed, ``False`` if it did not exist.
         """
-        result = await self._db.execute(
-            select(ProjectMember).where(
-                ProjectMember.project_id == project_id,
-                ProjectMember.user_id == user_id,
+        # note: read + delete share one bypass block — a nested
+        # get_membership_any() call would reset the GUC in its finally.
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(ProjectMember).where(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.user_id == user_id,
+                )
             )
-        )
-        member = result.scalar_one_or_none()
-        if member is None:
-            return False
-        await self._db.delete(member)
-        await self._db.flush()
-        return True
+            member = result.scalar_one_or_none()
+            if member is None:
+                return False
+            await self._db.delete(member)
+            await self._db.flush()
+            return True
 
     async def get_member(self, project_id: UUID, user_id: UUID) -> ProjectMember | None:
-        """Check if a user is a member of a project and return their membership.
+        """Return the user's ACTIVE membership, or ``None``.
+
+        Pending invitees are not members yet — gates (auth, pins, role
+        changes) must use this. Use :meth:`get_membership_any` for
+        approve/reject/duplicate checks.
 
         Args:
             project_id: The project's UUID.
             user_id: The user's UUID.
 
         Returns:
-            The ProjectMember if found, ``None`` otherwise.
+            The active ProjectMember if found, ``None`` otherwise.
         """
+        return await self.get_active_member(project_id, user_id)
+
+    async def get_active_member(
+        self, project_id: UUID, user_id: UUID
+    ) -> ProjectMember | None:
+        """Return the user's active membership, or ``None``.
+
+        Runs under a transaction-scoped RLS bypass so member reads see
+        the exact ``(project_id, user_id, status active)`` row RLS would
+        otherwise hide.
+        """
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(ProjectMember).where(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.user_id == user_id,
+                    ProjectMember.status == "active",
+                )
+            )
+            return result.scalar_one_or_none()
+
+    async def get_membership_any(
+        self, project_id: UUID, user_id: UUID
+    ) -> ProjectMember | None:
+        """Return the membership row regardless of status, or ``None``.
+
+        Runs under a transaction-scoped RLS bypass so invitee-self
+        approve/reject can see a pending row RLS would otherwise hide —
+        still scoped to the exact ``(project_id, user_id)`` pair.
+        """
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(ProjectMember).where(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.user_id == user_id,
+                )
+            )
+            return result.scalar_one_or_none()
+
+    async def get_pending_member(
+        self, project_id: UUID, user_id: UUID
+    ) -> ProjectMember | None:
+        """Return the user's pending membership, or ``None``."""
         result = await self._db.execute(
             select(ProjectMember).where(
                 ProjectMember.project_id == project_id,
                 ProjectMember.user_id == user_id,
+                ProjectMember.status == "pending",
             )
         )
         return result.scalar_one_or_none()
+
+    async def update_member_status(
+        self, project_id: UUID, user_id: UUID, status: str
+    ) -> ProjectMember | None:
+        """Set a membership's status (``pending``/``active``).
+
+        Read + write share one transaction-scoped RLS bypass block so the
+        invitee-self approve flow sees and activates the row atomically —
+        still scoped to the exact ``(project_id, user_id)`` pair.
+
+        Returns:
+            The updated ProjectMember, or ``None`` if not found.
+        """
+        # note: inlined pair-filter select — calling get_membership_any()
+        # here would nest bypass blocks and its finally would reset the GUC.
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(ProjectMember).where(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.user_id == user_id,
+                )
+            )
+            member = result.scalar_one_or_none()
+            if member is None:
+                return None
+            member.status = status
+            await self._db.flush()
+            await self._db.refresh(member)
+            return member
+
+    async def list_pending_for_user(
+        self, user_id: UUID
+    ) -> list[tuple[ProjectMember, str]]:
+        """List the user's pending memberships with project names.
+
+        Runs under a transaction-scoped RLS bypass so invitee-self reads
+        see invites from orgs RLS would otherwise hide — still scoped to
+        the exact ``user_id`` with ``status == pending`` and non-archived
+        projects only.
+
+        Returns:
+            ``[(member, project_name), ...]`` ordered by ``created_at``.
+        """
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(ProjectMember, Project.name)
+                .join(Project, ProjectMember.project_id == Project.id)
+                .where(
+                    ProjectMember.user_id == user_id,
+                    ProjectMember.status == "pending",
+                    Project.is_archived.is_(False),
+                )
+                .order_by(ProjectMember.created_at.asc())
+            )
+            return [(row[0], row[1]) for row in result.all()]
 
     async def list_members(
         self,
         project_id: UUID,
         sort: SortSpec | None = None,
+        *,
+        include_profiles: bool = False,
     ) -> list[ProjectMember]:
         """List all members of a project with users eagerly loaded.
 
@@ -508,13 +744,19 @@ class ProjectRepository:
         Args:
             project_id: The project's UUID.
             sort: Validated sort spec.
+            include_profiles: When ``True``, run the join inside
+                :func:`core.rls.rls_bypass` so co-member user rows resolve
+                despite the self-only users RLS policy. The query stays
+                scoped to this project's memberships, so only co-members
+                are exposed. When ``False`` the current RLS behavior
+                applies (``user`` is ``None`` except self).
 
         Returns:
             A list of ProjectMember ORM instances with ``user`` populated.
         """
         spec = sort if sort is not None else SortSpec()
         req_sort, req_dir = spec.effective("created_at", "asc")
-        result = await self._db.execute(
+        stmt = (
             select(ProjectMember)
             .outerjoin(User, ProjectMember.user_id == User.id)
             .options(contains_eager(ProjectMember.user))
@@ -530,6 +772,11 @@ class ProjectRepository:
                 )
             )
         )
+        if include_profiles:
+            async with rls.rls_bypass(self._db):
+                result = await self._db.execute(stmt)
+        else:
+            result = await self._db.execute(stmt)
         return list(result.scalars().all())
 
     async def update_member_role(
@@ -548,36 +795,46 @@ class ProjectRepository:
         Returns:
             The updated ProjectMember, or ``None`` if not found.
         """
-        result = await self._db.execute(
-            select(ProjectMember).where(
-                ProjectMember.project_id == project_id,
-                ProjectMember.user_id == user_id,
+        # note: inlined pair-filter select — calling get_membership_any()
+        # here would nest bypass blocks and its finally would reset the GUC.
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(ProjectMember).where(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.user_id == user_id,
+                )
             )
-        )
-        member = result.scalar_one_or_none()
-        if member is None:
-            return None
+            member = result.scalar_one_or_none()
+            if member is None:
+                return None
 
-        member.role = role
-        await self._db.flush()
-        await self._db.refresh(member)
-        return member
+            member.role = role
+            await self._db.flush()
+            await self._db.refresh(member)
+            return member
 
     async def count_members(self, project_id: UUID) -> int:
-        """Count the number of members in a project.
+        """Count the ACTIVE members in a project (pending excluded).
+
+        Runs under a transaction-scoped RLS bypass so the count is
+        viewer-independent — co-membership rows RLS would hide from a
+        non-creator member are still counted. Still scoped to the exact
+        ``project_id`` with ``status == active``.
 
         Args:
             project_id: The project's UUID.
 
         Returns:
-            Member count.
+            Active member count.
         """
-        result = await self._db.execute(
-            select(ProjectMember).where(
-                ProjectMember.project_id == project_id,
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(func.count()).select_from(ProjectMember).where(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.status == "active",
+                )
             )
-        )
-        return len(result.scalars().all())
+            return result.scalar_one()
 
     async def count_members_for_projects(
         self, project_ids: list[UUID]
@@ -595,12 +852,43 @@ class ProjectRepository:
         if not project_ids:
             return {}
 
-        result = await self._db.execute(
-            select(
-                ProjectMember.project_id,
-                func.count(ProjectMember.id).label("count"),
+        # note: bypass so batch counts are viewer-independent — RLS hides
+        # co-membership rows from non-creators, which made member_count
+        # vary by viewer. Filters kept exact: project_ids list + active.
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(
+                    ProjectMember.project_id,
+                    func.count(ProjectMember.id).label("count"),
+                )
+                .where(
+                    ProjectMember.project_id.in_(project_ids),
+                    ProjectMember.status == "active",
+                )
+                .group_by(ProjectMember.project_id)
             )
-            .where(ProjectMember.project_id.in_(project_ids))
-            .group_by(ProjectMember.project_id)
-        )
-        return {row[0]: row[1] for row in result.all()}
+            return {row[0]: row[1] for row in result.all()}
+
+    async def count_owners(self, project_id: UUID) -> int:
+        """Count ACTIVE owners of a project (last-owner guard).
+
+        Runs under a transaction-scoped RLS bypass so a non-creator
+        manager sees the true owner count, not the RLS-filtered one.
+        Filters kept exact: ``project_id`` + ``role == owner`` +
+        ``status == active``.
+
+        Args:
+            project_id: The project's UUID.
+
+        Returns:
+            Active owner count.
+        """
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(func.count()).select_from(ProjectMember).where(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.role == "owner",
+                    ProjectMember.status == "active",
+                )
+            )
+            return result.scalar_one()

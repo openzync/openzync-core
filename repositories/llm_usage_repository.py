@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,6 +43,15 @@ class UsageSummary:
     reasoning_tokens: int = 0
     total_tokens: int = 0
     avg_duration_ms: float = 0.0
+
+
+@dataclass(frozen=True)
+class DailyUsageBucket:
+    """One sparse UTC-day aggregate over the filtered window."""
+
+    day: datetime
+    total_tokens: int = 0
+    calls: int = 0
 
 
 class LLMUsageRepository:
@@ -185,6 +194,79 @@ class LLMUsageRepository:
         )
         result = await self._db.execute(query)
         return list(result.scalars().all()), total
+
+    async def list_daily_buckets(
+        self,
+        user_id: UUID,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        project_id: UUID | None = None,
+        worker: str | None = None,
+        model: str | None = None,
+        limit: int = 365,
+        offset: int = 0,
+    ) -> tuple[list[DailyUsageBucket], int]:
+        """Aggregate metering rows into sparse UTC-day buckets, newest first.
+
+        Same WHERE filters as :meth:`list_paginated`, grouped server-side
+        by UTC day. Sparse only — days without calls produce no bucket.
+
+        Args:
+            user_id: Owning org (RLS also scopes the session).
+            start: Include rows created at/after this instant.
+            end: Include rows created before this instant (exclusive).
+            project_id: Exact-match filter on project scope.
+            worker: Exact-match filter on worker label.
+            model: Exact-match filter on model identifier.
+            limit: Max day buckets per page.
+            offset: Pagination offset over day buckets.
+
+        Returns:
+            Tuple of (buckets, day_count).
+        """
+        day = func.date_trunc(
+            "day", LLMUsage.created_at.op("AT TIME ZONE")("UTC")
+        ).label("date")
+        conditions = [LLMUsage.user_id == user_id]
+        if start is not None:
+            conditions.append(LLMUsage.created_at >= start)
+        if end is not None:
+            conditions.append(LLMUsage.created_at < end)
+        if project_id is not None:
+            conditions.append(LLMUsage.project_id == project_id)
+        if worker is not None:
+            conditions.append(LLMUsage.worker == worker)
+        if model is not None:
+            conditions.append(LLMUsage.model == model)
+
+        total_result = await self._db.execute(
+            select(func.count(func.distinct(day))).where(*conditions)
+        )
+        total: int = total_result.scalar() or 0
+
+        query = (
+            select(
+                day,
+                func.coalesce(func.sum(LLMUsage.total_tokens), 0).label("total_tokens"),
+                func.count(LLMUsage.id).label("calls"),
+            )
+            .where(*conditions)
+            .group_by(text("date"))
+            .order_by(text("date DESC"))
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self._db.execute(query)
+        buckets = [
+            DailyUsageBucket(
+                day=row.date,
+                total_tokens=int(row.total_tokens or 0),
+                calls=row.calls or 0,
+            )
+            for row in result
+        ]
+        return buckets, total
 
     async def get_summary(
         self,

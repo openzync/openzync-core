@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from schemas.users import UserResponse
 
@@ -22,6 +22,13 @@ ProjectRole = Literal["owner", "member"]
 
 - ``owner`` — can manage project settings and members.
 - ``member`` — read/write access to project data.
+"""
+
+MemberStatus = Literal["pending", "active"]
+"""Valid project membership statuses.
+
+- ``pending`` — invite created, awaiting invitee (self) or superadmin approval.
+- ``active`` — full member; the only status that grants project access.
 """
 
 
@@ -98,20 +105,30 @@ class UpdateProjectRequest(BaseModel):
 class AddMemberRequest(BaseModel):
     """Request body for ``POST /v1/projects/{project_id}/members``.
 
+    # ⚠️ BREAKING: ``user_id`` was removed — members are now added by
+    email only. PATCH/DELETE member endpoints remain ``user_id``-keyed.
+
     Attributes:
-        user_id: The UUID of the user to add to the project.
+        email: Email address of the user to add. Stripped and lowercased
+            by :meth:`normalize_email`.
         role: Project role — ``owner`` or ``member``. Defaults to
             ``"member"`` if omitted.
     """
 
-    user_id: UUID = Field(
+    email: EmailStr = Field(
         ...,
-        description="UUID of the user to add to the project.",
+        description="Email address of the user to add to the project.",
     )
     role: ProjectRole = Field(
         default="member",
         description="Project role. 'owner' or 'member' (default: 'member').",
     )
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        """Strip whitespace and lowercase so lookups are canonical."""
+        return v.strip().lower()
 
 
 # ── Response schemas ───────────────────────────────────────────────────────────
@@ -215,6 +232,7 @@ class ProjectMemberResponse(BaseModel):
         id: Membership record UUID.
         user_id: UUID of the user.
         role: Project role — ``"owner"`` or ``"member"``.
+        status: ``"pending"`` (awaiting invitee approval) or ``"active"``.
         created_at: Membership creation timestamp (UTC).
         user: Nested user details, or ``None`` when the user row is
             missing (deleted). Soft-deleted users still resolve.
@@ -223,6 +241,10 @@ class ProjectMemberResponse(BaseModel):
     id: UUID = Field(..., description="Membership record UUID.")
     user_id: UUID = Field(..., description="UUID of the user.")
     role: ProjectRole = Field(..., description="Project role: 'owner' or 'member'.")
+    status: MemberStatus = Field(
+        default="active",
+        description="Membership status: 'pending' or 'active'.",
+    )
     created_at: datetime = Field(
         ..., description="Membership creation timestamp (UTC)."
     )
@@ -230,5 +252,46 @@ class ProjectMemberResponse(BaseModel):
         default=None,
         description="Nested user details, or null when the user row is missing.",
     )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MemberApprovalRequest(BaseModel):
+    """Request body for ``POST /v1/projects/{project_id}/members/approve|reject``.
+
+    Attributes:
+        user_id: The invitee to approve/reject. Omitted (or ``None``)
+            means the caller approves their own invite.
+    """
+
+    user_id: UUID | None = Field(
+        default=None,
+        description="Invitee UUID; defaults to the caller when omitted.",
+    )
+
+
+class ProjectApprovalResponse(BaseModel):
+    """A pending invite awaiting the caller's approval.
+
+    Returned from ``GET /v1/me/project-approvals``.
+
+    Attributes:
+        id: Membership record UUID.
+        project_id: UUID of the project extending the invite.
+        project_name: Human-readable project name.
+        role: Project role the invite grants.
+        status: Always ``"pending"`` on this endpoint.
+        created_at: Invite creation timestamp (UTC).
+    """
+
+    id: UUID = Field(..., description="Membership record UUID.")
+    project_id: UUID = Field(..., description="UUID of the inviting project.")
+    project_name: str = Field(..., description="Human-readable project name.")
+    role: ProjectRole = Field(..., description="Project role the invite grants.")
+    status: MemberStatus = Field(
+        default="pending",
+        description="Always 'pending' on this endpoint.",
+    )
+    created_at: datetime = Field(..., description="Invite creation timestamp (UTC).")
 
     model_config = ConfigDict(from_attributes=True)

@@ -27,7 +27,11 @@ Provides the following auth dependencies:
 7. ``require_superadmin`` — Requires a JWT dashboard session AND the
    platform ``superadmin`` role.
 
-8. ``get_actor_permissions`` — Returns the principal's grantable permission
+8. ``require_superadmin_or_self`` — Dependency factory.  The caller may
+   always act on their own user record; otherwise a DB-verified
+   superadmin role is required (JWT-only, fail-closed).
+
+9. ``get_actor_permissions`` — Returns the principal's grantable permission
    set (``None`` for admin/superadmin wildcard).  Routers pass it to
    services to cap permission grants; raises 503 when Redis is down.
 
@@ -658,3 +662,49 @@ async def require_superadmin(
     """
     await _ensure_superadmin(request, user_id, db)
     return user_id
+
+
+def require_superadmin_or_self():
+    """Dependency factory requiring superadmin, or acting on oneself.
+
+    JWT-only via :func:`get_dashboard_user` (API keys raise 401).  The
+    caller may always act on their own user record
+    (``str(user_id) == caller_id``); otherwise a DB-verified
+    ``superadmin`` role is required via :func:`_ensure_superadmin`
+    (fail-closed — the JWT ``role`` claim is never trusted).  Intended
+    for user-management endpoints (``GET/PATCH /v1/users/{user_id}``)
+    where self-read/self-edit is allowed but cross-user access is a
+    superadmin operation.
+
+    Returns:
+        A dependency callable that returns the caller's ``user_id``.
+    """
+
+    async def _superadmin_or_self_checker(
+        request: Request,
+        user_id: UUID = Path(...),  # noqa: B008
+        caller_id: str = Depends(get_dashboard_user),  # noqa: B008
+        db: AsyncSession = Depends(get_db),  # noqa: B008
+    ) -> str:
+        """Inner dependency that performs the self-or-superadmin check.
+
+        Args:
+            request: The incoming HTTP request.
+            user_id: The target user's UUID (path param).
+            caller_id: The authenticated dashboard user's ID.
+            db: Request-scoped async DB session (role lookup).
+
+        Returns:
+            The caller's ``user_id`` if the caller is the target user or
+            a DB-verified superadmin.
+
+        Raises:
+            HTTPException: 401 for non-JWT auth, 403 for a non-superadmin
+                acting on another user, 503 if Redis is not configured.
+        """
+        if str(user_id) == caller_id:
+            return caller_id
+        await _ensure_superadmin(request, caller_id, db)
+        return caller_id
+
+    return _superadmin_or_self_checker

@@ -143,7 +143,8 @@ async def get_db_superadmin(
     commit, so the bypass survives a mid-request commit and cannot
     outlive the transaction.
 
-    Use ONLY in ``routers/admin_system.py``.
+    Use in the superadmin-gated routers (``routers/admin_system.py``,
+    ``routers/users.py`` member writes, ``routers/admin_invites.py``).
 
     Yields:
         An :class:`AsyncSession` with RLS bypassed for the platform admin.

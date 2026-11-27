@@ -31,6 +31,9 @@ class TestUserService:
     def _make_service(self) -> tuple[UserService, AsyncMock]:
         """Create ``UserService`` with mocked repository."""
         mock_repo = AsyncMock()
+        # note: create/update paths run under ``rls_bypass(session)`` —
+        # an AsyncMock session keeps ``await db.execute(...)`` awaitable.
+        mock_repo.session = AsyncMock()
         service = UserService(repo=mock_repo)
         return service, mock_repo
 
@@ -39,6 +42,7 @@ class TestUserService:
     ) -> tuple[UserService, AsyncMock, AsyncMock]:
         """Create ``UserService`` with mocked repository and webhook service."""
         mock_repo = AsyncMock()
+        mock_repo.session = AsyncMock()
         mock_webhook = AsyncMock()
         service = UserService(repo=mock_repo, webhook_service=mock_webhook)
         return service, mock_repo, mock_webhook
@@ -550,6 +554,7 @@ class TestUserServiceRoleGuards:
     ) -> tuple[UserService, AsyncMock, AsyncMock | None]:
         """Build a ``UserService`` with mocked repo and optional Redis."""
         mock_repo = AsyncMock()
+        mock_repo.session = AsyncMock()
         mock_redis = AsyncMock() if with_redis else None
         service = UserService(repo=mock_repo, redis=mock_redis)
         return service, mock_repo, mock_redis
@@ -584,6 +589,7 @@ class TestUserServiceRoleGuards:
                 user_id=self.ADMIN_ID,
                 update_fields={"role": "member"},
                 actor_user_id=self.ADMIN_ID,  # same user
+                is_superadmin=True,
             )
 
         assert str(exc.value) == "You cannot change your own role."
@@ -601,6 +607,7 @@ class TestUserServiceRoleGuards:
                 user_id=self.MEMBER_ID,
                 update_fields={"role": "admin"},
                 actor_user_id=self.MEMBER_ID,
+                is_superadmin=True,
             )
         mock_repo.update.assert_not_awaited()
 
@@ -619,6 +626,7 @@ class TestUserServiceRoleGuards:
                 user_id=self.ADMIN_ID,
                 update_fields={"role": "member"},
                 actor_user_id=self.OTHER_ADMIN_ID,
+                is_superadmin=True,
             )
 
         assert "last admin" in str(exc.value)
@@ -638,6 +646,7 @@ class TestUserServiceRoleGuards:
             user_id=self.ADMIN_ID,
             update_fields={"role": "member"},
             actor_user_id=self.OTHER_ADMIN_ID,
+            is_superadmin=True,
         )
 
         assert isinstance(result, UserResponse)
@@ -712,6 +721,7 @@ class TestUserServiceRoleGuards:
                 user_id=self.MEMBER_ID,
                 update_fields={"role": "admin"},
                 actor_user_id=self.ADMIN_ID,
+                is_superadmin=True,
             )
 
         mock_invalidate.assert_awaited_once_with(_mock_redis, self.MEMBER_ID)
@@ -757,6 +767,7 @@ class TestUserServicePermissionSeeding:
     ) -> tuple[UserService, AsyncMock, AsyncMock | None]:
         """Build a ``UserService`` with mocked repo and optional Redis."""
         mock_repo = AsyncMock()
+        mock_repo.session = AsyncMock()
         mock_redis = AsyncMock() if with_redis else None
         service = UserService(repo=mock_repo, redis=mock_redis)
         return service, mock_repo, mock_redis
@@ -853,6 +864,7 @@ class TestUserServicePermissionSeeding:
                 user_id=self.MEMBER_ID,
                 update_fields={"role": "admin"},
                 actor_user_id=self.ADMIN_ID,
+                is_superadmin=True,
             )
 
         # The repo receives ONLY the role change — grants survive untouched.
@@ -883,6 +895,7 @@ class TestUserServicePermissionSeeding:
                 user_id=self.MEMBER_ID,
                 update_fields={"permissions": ["configuration:read"]},
                 actor_user_id=self.ADMIN_ID,
+                is_superadmin=True,
             )
 
         mock_repo.update.assert_awaited_once_with(
@@ -911,6 +924,7 @@ class TestUserServicePermissionSeeding:
                 },
                 actor_user_id=self.ADMIN_ID,
                 actor_permissions=frozenset({"project:read"}),
+                is_superadmin=True,
             )
 
         mock_repo.update.assert_awaited_once_with(
@@ -929,6 +943,7 @@ class TestUserServiceSuperadminSurface:
     def _make_service(self) -> tuple[UserService, AsyncMock]:
         """Create ``UserService`` with mocked repository and redis."""
         mock_repo = AsyncMock()
+        mock_repo.session = AsyncMock()
         service = UserService(repo=mock_repo, redis=AsyncMock())
         return service, mock_repo
 
@@ -1016,6 +1031,7 @@ class TestUserServiceSuperadminImmortalGuard:
     ) -> tuple[UserService, AsyncMock, AsyncMock | None]:
         """Build ``UserService`` with mocked repo and optional Redis."""
         mock_repo = AsyncMock()
+        mock_repo.session = AsyncMock()
         mock_redis = AsyncMock() if with_redis else None
         service = UserService(repo=mock_repo, redis=mock_redis)
         return service, mock_repo, mock_redis
@@ -1072,6 +1088,7 @@ class TestUserServiceSuperadminImmortalGuard:
                 user_id=self.SUPERADMIN_ID,
                 update_fields={"role": "member"},
                 actor_user_id=self.ADMIN_ID,
+                is_superadmin=True,
             )
 
         assert "Superadmin role cannot be changed" in str(exc.value)
@@ -1094,6 +1111,7 @@ class TestUserServiceSuperadminImmortalGuard:
             user_id=self.SUPERADMIN_ID,
             update_fields={"role": "superadmin"},
             actor_user_id=self.ADMIN_ID,
+            is_superadmin=True,
         )
 
         assert isinstance(result, UserResponse)

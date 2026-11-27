@@ -57,7 +57,7 @@ ENDPOINT_ID = UUID('00000000-0000-0000-0000-000000000004')
 SCHEMA_ID = UUID('00000000-0000-0000-0000-000000000005')
 SUPERADMIN_USER_ID = UUID('00000000-0000-0000-0000-0000000000bb')
 ALL_ROUTERS = [audit_log.router, admin_org_config.router, admin_webhooks.router, admin_organizations.router, admin_stats.router, admin_metrics.router, admin_quick_actions.router, admin_schemas.router, admin_invites.router, admin_system.router, users.router]
-ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [('GET', '/v1/admin/audit-logs', {}, {}), ('GET', '/admin/org/config', {}, {}), ('PATCH', '/admin/org/config', {}, {}), ('PUT', '/admin/org/config', {}, {}), ('POST', '/admin/org/config/test', {}, {}), ('GET', '/v1/admin/webhooks', {}, {}), ('GET', '/v1/admin/webhooks/{endpoint_id}', {'endpoint_id': str(ENDPOINT_ID)}, {}), ('POST', '/v1/admin/webhooks', {}, {}), ('PATCH', '/v1/admin/webhooks/{endpoint_id}', {'endpoint_id': str(ENDPOINT_ID)}, {}), ('DELETE', '/v1/admin/webhooks/{endpoint_id}', {'endpoint_id': str(ENDPOINT_ID)}, {}), ('GET', '/admin/org/custom-instructions', {}, {}), ('PUT', '/admin/org/custom-instructions', {}, {}), ('DELETE', '/admin/org/custom-instructions', {}, {}), ('GET', '/v1/admin/stats', {}, {}), ('GET', '/v1/admin/stats/usage', {}, {}), ('GET', '/metrics/summary', {}, {}), ('GET', '/metrics/batch', {}, {'days': '7'}), ('GET', '/metrics/targets', {}, {}), ('GET', '/v1/admin/quick-actions', {}, {}), ('POST', '/v1/admin/schemas', {}, {}), ('GET', '/v1/admin/schemas', {}, {}), ('GET', '/v1/admin/schemas/templates', {}, {}), ('POST', '/v1/admin/schemas/preview', {}, {}), ('GET', '/v1/admin/schemas/{schema_id}', {'schema_id': str(SCHEMA_ID)}, {}), ('PUT', '/v1/admin/schemas/{schema_id}', {'schema_id': str(SCHEMA_ID)}, {}), ('DELETE', '/v1/admin/schemas/{schema_id}', {'schema_id': str(SCHEMA_ID)}, {}), ('POST', '/v1/users', {}, {}), ('GET', '/v1/users', {}, {}), ('GET', '/v1/users/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('PATCH', '/v1/users/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('DELETE', '/v1/users/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('POST', '/v1/users/{user_id}/summary', {'user_id': str(OTHER_USER_ID)}, {}), ('PUT', '/v1/users/{user_id}/summary-instructions', {'user_id': str(OTHER_USER_ID)}, {}), ('DELETE', '/v1/users/{user_id}/summary-instructions', {'user_id': str(OTHER_USER_ID)}, {}), ('POST', '/v1/admin/users/invite', {}, {}), ('DELETE', '/v1/admin/users/invites/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('GET', '/v1/users/{user_id}/summary', {'user_id': str(OTHER_USER_ID)}, {}), ('GET', '/v1/users/{user_id}/summary-instructions', {'user_id': str(OTHER_USER_ID)}, {}), ('GET', '/admin/system/config', {}, {}), ('PATCH', '/admin/system/config', {}, {}), ('GET', '/admin/system/registration', {}, {}), ('PATCH', '/admin/system/registration', {}, {}), ('PATCH', '/admin/system/users/{user_id}/role', {'user_id': str(OTHER_USER_ID)}, {})]
+ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [('GET', '/v1/admin/audit-logs', {}, {}), ('GET', '/v1/admin/audit-logs/actions', {}, {}), ('GET', '/admin/org/config', {}, {}), ('PATCH', '/admin/org/config', {}, {}), ('PUT', '/admin/org/config', {}, {}), ('POST', '/admin/org/config/test', {}, {}), ('GET', '/v1/admin/webhooks', {}, {}), ('GET', '/v1/admin/webhooks/{endpoint_id}', {'endpoint_id': str(ENDPOINT_ID)}, {}), ('POST', '/v1/admin/webhooks', {}, {}), ('PATCH', '/v1/admin/webhooks/{endpoint_id}', {'endpoint_id': str(ENDPOINT_ID)}, {}), ('DELETE', '/v1/admin/webhooks/{endpoint_id}', {'endpoint_id': str(ENDPOINT_ID)}, {}), ('GET', '/admin/org/custom-instructions', {}, {}), ('PUT', '/admin/org/custom-instructions', {}, {}), ('DELETE', '/admin/org/custom-instructions', {}, {}), ('GET', '/v1/admin/stats', {}, {}), ('GET', '/v1/admin/stats/usage', {}, {}), ('GET', '/metrics/summary', {}, {}), ('GET', '/metrics/batch', {}, {'days': '7'}), ('GET', '/metrics/targets', {}, {}), ('GET', '/v1/admin/quick-actions', {}, {}), ('POST', '/v1/admin/schemas', {}, {}), ('GET', '/v1/admin/schemas', {}, {}), ('GET', '/v1/admin/schemas/templates', {}, {}), ('POST', '/v1/admin/schemas/preview', {}, {}), ('GET', '/v1/admin/schemas/{schema_id}', {'schema_id': str(SCHEMA_ID)}, {}), ('PUT', '/v1/admin/schemas/{schema_id}', {'schema_id': str(SCHEMA_ID)}, {}), ('DELETE', '/v1/admin/schemas/{schema_id}', {'schema_id': str(SCHEMA_ID)}, {}), ('POST', '/v1/users', {}, {}), ('GET', '/v1/users', {}, {}), ('GET', '/v1/users/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('PATCH', '/v1/users/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('DELETE', '/v1/users/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('POST', '/v1/users/{user_id}/summary', {'user_id': str(OTHER_USER_ID)}, {}), ('PUT', '/v1/users/{user_id}/summary-instructions', {'user_id': str(OTHER_USER_ID)}, {}), ('DELETE', '/v1/users/{user_id}/summary-instructions', {'user_id': str(OTHER_USER_ID)}, {}), ('POST', '/v1/admin/users/invite', {}, {}), ('DELETE', '/v1/admin/users/invites/{user_id}', {'user_id': str(OTHER_USER_ID)}, {}), ('GET', '/v1/users/{user_id}/summary', {'user_id': str(OTHER_USER_ID)}, {}), ('GET', '/v1/users/{user_id}/summary-instructions', {'user_id': str(OTHER_USER_ID)}, {}), ('GET', '/admin/system/config', {}, {}), ('PATCH', '/admin/system/config', {}, {}), ('GET', '/admin/system/registration', {}, {}), ('PATCH', '/admin/system/registration', {}, {}), ('PATCH', '/admin/system/users/{user_id}/role', {'user_id': str(OTHER_USER_ID)}, {})]
 _MUTATING_METHODS = frozenset({'POST', 'PATCH', 'PUT'})
 
 def _make_app(*, authenticated: bool, auth_user_id: str | None=None, auth_role: str='member') -> FastAPI:
@@ -77,6 +77,8 @@ def _make_app(*, authenticated: bool, auth_user_id: str | None=None, auth_role: 
     app.state.redis = AsyncMock()
     app.state.db_session_factory = None
     app.dependency_overrides[get_db] = lambda: AsyncMock()
+    from dependencies.db import get_db_superadmin
+    app.dependency_overrides[get_db_superadmin] = lambda: AsyncMock()
     app.dependency_overrides[get_user_summary_service] = lambda: AsyncMock()
     from dependencies.services import get_invite_service
     app.dependency_overrides[get_invite_service] = lambda: AsyncMock()
@@ -181,14 +183,16 @@ def _admin_gate_on_route(route) -> bool:
     """True if the route declares a permission-gate dependency.
 
     Detects ``require_permission("...")`` / ``require_permission_or_self("...")``
-    closures (named ``_permission_checker`` / ``_permission_or_self_checker``)
-    and ``require_superadmin`` directly on the route.
+    closures (named ``_permission_checker`` / ``_permission_or_self_checker``),
+    ``require_superadmin`` directly on the route, and the
+    ``require_superadmin_or_self()`` factory closure (named
+    ``_superadmin_or_self_checker`` — the users self-read/self-write gate).
     """
     for dep in route.dependant.dependencies:
         call = dep.call
         if call in (require_superadmin,):
             return True
-        if getattr(call, '__name__', '') in ('_permission_checker', '_permission_or_self_checker'):
+        if getattr(call, '__name__', '') in ('_permission_checker', '_permission_or_self_checker', '_superadmin_or_self_checker'):
             return True
     return False
 

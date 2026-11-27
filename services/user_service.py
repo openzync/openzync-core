@@ -17,12 +17,18 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from core.events import EventType
-from core.exceptions import ConflictError, NotFoundError, ValidationError
+from core.exceptions import (
+    AuthorizationError,
+    ConflictError,
+    NotFoundError,
+    ValidationError,
+)
 from core.rbac import (
     MEMBER_DEFAULT_PERMISSIONS,
     invalidate_permissions,
     invalidate_role,
 )
+from core.rls import rls_bypass
 from core.sorting import SortSpec
 from models.user import User
 from repositories.user_repository import UserRepository
@@ -137,24 +143,27 @@ class UserService:
             ConflictError: A user with this ``external_id`` already exists
                 in the organization.
         """
-        exists = await self._repo.exists_by_external_id(
-            external_id
-        )
-        if exists:
-            raise ConflictError(
-                f"User with external_id '{external_id}' already exists "
-                f"in organization {user_id}"
+        # Same bypass safety as the invite flow — exists/create must see
+        # past RLS even when the session already carries a superadmin bypass.
+        async with rls_bypass(self._repo.session):
+            exists = await self._repo.exists_by_external_id(
+                external_id
             )
+            if exists:
+                raise ConflictError(
+                    f"User with external_id '{external_id}' already exists "
+                    f"in organization {user_id}"
+                )
 
-        user = await self._repo.create(
+            user = await self._repo.create(
 
-            external_id=external_id,
-            name=name,
-            email=email,
-            metadata=metadata,
-            role=role,
-            permissions=self._permissions_for_role(role),
-        )
+                external_id=external_id,
+                name=name,
+                email=email,
+                metadata=metadata,
+                role=role,
+                permissions=self._permissions_for_role(role),
+            )
 
         if self._webhook_service:
             await self._webhook_service.emit(
@@ -311,6 +320,7 @@ class UserService:
         *,
         actor_user_id: UUID,
         actor_permissions: frozenset[str] | None = None,
+        is_superadmin: bool = False,
     ) -> UserResponse:
         """Update user fields using the new sentinel-safe pattern.
 
@@ -318,6 +328,12 @@ class UserService:
         ``model_dump(exclude_unset=True)``. A key in ``update_fields``
         with value ``None`` means "set to null" (clear the field).
         An absent key means "do not update".
+
+        ``role``/``permissions`` may only be changed by a platform
+        superadmin (``is_superadmin=True``, resolved DB-side by the
+        router) — any other actor attempting them gets a 403, including
+        self-updates to non-privileged fields' requests.  Non-privileged
+        self-updates (name/email/metadata) remain allowed.
 
         When ``role`` is being changed:
         - You cannot change your own role.
@@ -344,15 +360,23 @@ class UserService:
             actor_permissions: The actor's grantable permission set,
                 resolved by the ``get_actor_permissions`` router dependency.
                 ``None`` = wildcard (admin/superadmin), no cap applied.
+            is_superadmin: Whether the actor is a DB-verified platform
+                superadmin.  Required to change ``role``/``permissions``.
 
         Returns:
             The updated :class:`UserResponse`.
 
         Raises:
+            AuthorizationError: If a non-superadmin attempts to change
+                ``role`` or ``permissions`` (→ 403).
             ValidationError: If the actor changes their own role, demotes
                 the last admin, or attempts to change a superadmin's role.
             NotFoundError: No user with this UUID in this organization.
         """
+        if ("role" in update_fields or "permissions" in update_fields) and not is_superadmin:
+            raise AuthorizationError(
+                "Only a platform superadmin may change role or permissions."
+            )
         if "role" in update_fields:
             target = await self._repo.get_by_uuid(user_id)
             if target is None:

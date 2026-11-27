@@ -16,7 +16,6 @@ from core.sorting import SortSpec
 from repositories.project_pin_repository import ProjectPinRepository
 from repositories.project_repository import ProjectRepository
 from schemas.projects import (
-    AddMemberRequest,
     CreateProjectRequest,
     ProjectMemberResponse,
     ProjectResponse,
@@ -92,12 +91,14 @@ class ProjectService:
             metadata_=payload.metadata,
         )
 
-        # Add creator as owner (skipped for API-key requests with no user context)
+        # Add creator as active owner (skipped for API-key requests with
+        # no user context) — the creator path bypasses invite approval.
         if user_id is not None:
             await self._repo.add_member(
                 project_id=project.id,
                 user_id=user_id,
                 role="owner",
+                status="active",
             )
 
         logger.info(
@@ -132,7 +133,7 @@ class ProjectService:
         Raises:
             NotFoundError: If the project does not exist.
         """
-        project = await self._repo.get_by_id(user_id, project_id)
+        project = await self._repo.get_accessible_project(project_id, user_id)
         if project is None:
             raise NotFoundError(
                 message=f"Project {project_id} not found",
@@ -277,7 +278,7 @@ class ProjectService:
                 )
 
         project = await self._repo.update(
-
+            user_id=user_id,
             project_id=project_id,
             name=payload.name,
             description=payload.description,
@@ -399,7 +400,7 @@ class ProjectService:
                 or the user is not a member.
             ValidationError: If the user already has ``MAX_PINS`` pins.
         """
-        project = await self._repo.get_by_id(user_id, project_id)
+        project = await self._repo.get_accessible_project(project_id, user_id)
         if project is None:
             raise NotFoundError(
                 message=f"Project {project_id} not found",
@@ -460,64 +461,22 @@ class ProjectService:
 
     # ── Members ─────────────────────────────────────────────────────────────
 
-    async def add_member(
-        self,
-        project_id: UUID,
-        payload: AddMemberRequest,
-    ) -> ProjectMemberResponse:
-        """Add a user to a project with the specified role.
-
-        Raises:
-            ValidationError: If the user is already a member.
-        """
-        existing = await self._repo.get_member(
-            project_id=project_id,
-            user_id=payload.user_id,
-        )
-        if existing is not None:
-            raise ValidationError(
-                message=f"User {payload.user_id} is already a member of this project",
-                detail={"user_id": str(payload.user_id)},
-            )
-
-        member = await self._repo.add_member(
-            project_id=project_id,
-            user_id=payload.user_id,
-            role=payload.role,
-        )
-
-        logger.info(
-            "project_service.member_added",
-            extra={
-                "project_id": str(project_id),
-                "user_id": str(payload.user_id),
-                "role": payload.role,
-            },
-        )
-
-        return ProjectMemberResponse(
-            id=member.id,
-            project_id=member.project_id,
-            user_id=member.user_id,
-            role=member.role,
-            created_at=member.created_at,
-        )
-
     async def remove_member(
         self,
         project_id: UUID,
         user_id: UUID,
     ) -> None:
-        """Remove a user from a project.
+        """Remove a user from a project, or revoke their pending invite.
 
-        Prevents removing the last owner from a project.
+        Pending rows revoke unconditionally (a pending owner holds no
+        effective ownership). Prevents removing the last active owner.
 
         Raises:
             ValidationError: If removing the last owner.
             NotFoundError: If the membership does not exist.
         """
         # Check if this is the last owner being removed
-        member = await self._repo.get_member(project_id, user_id)
+        member = await self._repo.get_membership_any(project_id, user_id)
         if member is None:
             raise NotFoundError(
                 message=(
@@ -525,6 +484,22 @@ class ProjectService:
                 ),
                 detail={"user_id": str(user_id), "project_id": str(project_id)},
             )
+
+        if member.status == "pending":
+            removed = await self._repo.remove_member(project_id, user_id)
+            if not removed:
+                raise NotFoundError(
+                    message=f"Membership not found for user {user_id}",
+                    detail={"user_id": str(user_id)},
+                )
+            logger.info(
+                "project_membership.member_revoked",
+                extra={
+                    "project_id": str(project_id),
+                    "user_id": str(user_id),
+                },
+            )
+            return
 
         if member.role == "owner":
             owner_count = await self._count_owners(project_id)
@@ -553,8 +528,13 @@ class ProjectService:
         self,
         project_id: UUID,
         sort: SortSpec | None = None,
+        *,
+        can_see_profiles: bool = False,
     ) -> list[ProjectMemberResponse]:
         """List all members of a project with nested user details.
+
+        Returns every row regardless of ``status`` (``pending`` invites
+        included); only ``active`` rows grant access.
 
         Default ``created_at/asc``; whitelist ``created_at``, ``role``,
         ``name``, ``email``.
@@ -562,18 +542,24 @@ class ProjectService:
         Args:
             project_id: The project's UUID.
             sort: Validated sort spec (forwarded opaque to the repository).
+            can_see_profiles: When ``True``, co-member user rows resolve
+                (managers); otherwise ``user`` stays ``None`` except self
+                per the users RLS policy.
 
         Returns:
             Memberships with ``user`` populated, or ``None`` when the
             user row is missing.
         """
-        members = await self._repo.list_members(project_id, sort=sort)
+        members = await self._repo.list_members(
+            project_id, sort=sort, include_profiles=can_see_profiles
+        )
         return [
             ProjectMemberResponse(
                 id=m.id,
                 project_id=m.project_id,
                 user_id=m.user_id,
                 role=m.role,
+                status=m.status,
                 created_at=m.created_at,
                 user=self._to_user_response(m.user) if m.user is not None else None,
             )
@@ -651,12 +637,15 @@ class ProjectService:
             project_id=updated.project_id,
             user_id=updated.user_id,
             role=updated.role,
+            status=updated.status,
             created_at=updated.created_at,
         )
 
     # ── Helpers ─────────────────────────────────────────────────────────────
 
     async def _count_owners(self, project_id: UUID) -> int:
-        """Count how many owners a project has."""
-        members = await self._repo.list_members(project_id)
-        return sum(1 for m in members if m.role == "owner")
+        """Count how many ACTIVE owners a project has."""
+        # note: dedicated bypassed query — list_members() is RLS-filtered
+        # (non-bypassed read hides co-members), which made the last-owner
+        # guard undercount for non-creator managers.
+        return await self._repo.count_owners(project_id)
