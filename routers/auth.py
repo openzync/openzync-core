@@ -111,7 +111,7 @@ def _token_fingerprint(raw: str) -> str:
 
 
 _REFRESH_COOKIE_NAME = "refresh_token"
-_REFRESH_COOKIE_PATH = "/v1/auth/refresh"
+_REFRESH_COOKIE_PATH = "/v1/auth"
 
 
 def _set_refresh_cookie(response: Response, token: str) -> None:
@@ -575,7 +575,6 @@ async def mfa_verify(
     # Full login is only successful once the MFA OTP verifies — clear the
     # password-attempt counters accumulated at the login step.
     await throttle.record_login_success(payload.email, _client_ip(request))
-    result = await service.mfa_verify(payload)
     _set_refresh_cookie(response, result.refresh_token)
     return result
 
@@ -722,10 +721,12 @@ async def logout(
         Confirmation message.
     """
     raw_token = payload.refresh_token or request.cookies.get("refresh_token")
+    await throttle.check_sensitive_attempt(
+        "logout",
+        _token_fingerprint(raw_token) if raw_token else "none",
+        _client_ip(request),
+    )
     if raw_token is not None:
-        await throttle.check_sensitive_attempt(
-            "logout", _token_fingerprint(raw_token), _client_ip(request)
-        )
         await service.logout(raw_token)
     _clear_refresh_cookie(response)
     return LogoutResponse(message="Logged out.")
