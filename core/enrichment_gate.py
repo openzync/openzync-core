@@ -53,8 +53,9 @@ _SCORE_TTL_S: float = 600.0
 _GATE_CACHE: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
 """Lazy-loaded ``(tokenizer, model)`` pairs, keyed by Hub model name."""
 
-_GATE_LOCKS: dict[str, asyncio.Lock] = {}
-"""Per-model-name asyncio locks to prevent concurrent model loading."""
+_GATE_LOCK: asyncio.Lock = asyncio.Lock()
+"""Single global lock for model loading — at most 2 cached pairs, so one
+lock is simpler than a per-model dict and cannot leak lock objects."""
 
 _SCORE_CACHE: OrderedDict[tuple[str, str], tuple[float, float]] = OrderedDict()
 """``(model, sha256(text))`` → ``(score, monotonic expiry)``; failures never cached."""
@@ -178,8 +179,7 @@ async def _ensure_model(model_name: str) -> tuple[Any, Any] | None:
     if model_name in _GATE_CACHE:
         _GATE_CACHE.move_to_end(model_name)
         return _GATE_CACHE[model_name]
-    _GATE_LOCKS.setdefault(model_name, asyncio.Lock())
-    async with _GATE_LOCKS[model_name]:
+    async with _GATE_LOCK:
         if model_name in _GATE_CACHE:
             _GATE_CACHE.move_to_end(model_name)
             return _GATE_CACHE[model_name]
@@ -265,8 +265,14 @@ async def _score_inner(text: str, model: str = DEFAULT_MODEL) -> tuple[float, bo
         return 0.0, True
     final = _sigmoid(logit)
     now = time.monotonic()
+    # Lazy expiry only: evict at most 10 stale entries per call — a full
+    # scan on every score would be O(n) per request against 2048 entries.
+    evicted = 0
     for stale in [k for k, (_, exp) in _SCORE_CACHE.items() if exp <= now]:
         del _SCORE_CACHE[stale]
+        evicted += 1
+        if evicted >= 10:
+            break
     _SCORE_CACHE[key] = (final, now + _SCORE_TTL_S)
     while len(_SCORE_CACHE) > _MAX_SCORE_ENTRIES:
         _SCORE_CACHE.popitem(last=False)

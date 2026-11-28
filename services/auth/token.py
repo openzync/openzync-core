@@ -110,6 +110,28 @@ class TokenMixin:
 
         return new_tokens
 
+    async def logout(self, raw_token: str | None) -> None:
+        """Revoke the presented refresh token and its rotation family.
+
+        Single-session logout: the cookie normally holds the rotation
+        leaf, so this kills the current session.  Presenting a stale
+        (already-rotated) token also kills its successors — the same
+        family kill as the reuse path in :meth:`refresh`, minus the
+        raise.  Idempotent: unknown or missing tokens are a no-op, and
+        the router always clears the cookie regardless.
+
+        Args:
+            raw_token: Opaque refresh token from the body or cookie;
+                ``None`` means there is nothing to revoke.
+        """
+        if not raw_token:
+            return
+        token_hash = self._hash_refresh_token(raw_token)
+        if await self._repo.revoke_refresh_token_if_current(token_hash):
+            await self._repo.commit()
+            return
+        await self._revoke_family(token_hash)
+
     async def _revoke_family(self, token_hash: str) -> None:
         """Revoke the entire rotation family of a reused refresh token.
 

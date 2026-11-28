@@ -269,12 +269,30 @@ class TokenResponse(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    """Request body for ``POST /v1/auth/refresh``."""
+    """Request body for ``POST /v1/auth/refresh``.
 
-    refresh_token: str = Field(
-        ...,
+    # ⚠️ BREAKING: ``refresh_token`` is now optional — when omitted the
+    # router falls back to the ``refresh_token`` httpOnly cookie, so
+    # browser clients never touch the token in JS-accessible state.
+    """
+
+    refresh_token: str | None = Field(
+        default=None,
         min_length=1,
-        description="The refresh token obtained from login.",
+        description=(
+            "The refresh token from login. Optional when the "
+            "``refresh_token`` httpOnly cookie is present."
+        ),
+    )
+
+
+class LogoutResponse(BaseModel):
+    """Response body for ``POST /v1/auth/logout``."""
+
+    message: str = Field(
+        ...,
+        description="Human-readable confirmation message.",
+        examples=["Logged out."],
     )
 
 

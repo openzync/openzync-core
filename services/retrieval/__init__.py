@@ -108,11 +108,10 @@ class HybridRetriever(
         - Graph entities (BFS from entities matching the query)
 
         The query is embedded exactly once and the resulting vector is
-        shared by both vector legs (episodes and facts). Legs run
-        concurrently via ``asyncio.gather`` when a sibling-session
-        factory is available — one AsyncSession allows a single
-        in-flight operation, so without a factory the legs run
-        sequentially on the shared session. A single leg failing no
+        shared by both vector legs (episodes and facts). Legs always run
+        concurrently via ``asyncio.gather`` — one AsyncSession allows a
+        single in-flight operation, so a sibling-session factory is
+        required and each leg runs on its own RLS-bound session. A single leg failing no
         longer fails the search: the leg contributes no results, the
         failure is logged with leg context, and the response carries
         ``degraded=True`` plus the ``failed_legs`` names. Only when all
@@ -147,7 +146,9 @@ class HybridRetriever(
             - ``failed_legs``: Names of the legs that failed (empty when none).
 
         Raises:
-            SearchLegFailedError: Only when *all* retrieval legs fail.
+            SearchLegFailedError: When no ``session_factory`` is configured
+                (concurrent legs require sibling sessions), or only when
+                *all* retrieval legs fail.
                 Single-leg failures degrade to partial results instead.
         """
         _search_start = time.monotonic()
@@ -162,6 +163,13 @@ class HybridRetriever(
         # An embedding failure degrades (not raises): both vector legs
         # contribute nothing while BM25/graph legs still run. Only when
         # every leg fails does hybrid_search raise (checked below).
+        # A sibling-session factory is required: a single AsyncSession
+        # allows one in-flight operation, so legs cannot share ``self._db``.
+        if self._session_factory is None:
+            raise SearchLegFailedError(
+                leg_name="all",
+                original_error="HybridRetriever requires a session_factory.",
+            )
         failed_legs: list[str] = []
         retrieval_limit = (
             max(limit, self._rerank_top_k) if self._reranker is not None else limit
@@ -207,60 +215,37 @@ class HybridRetriever(
                 )
                 return []
 
-        if self._session_factory is None:
-            episode_vector_results = await _safe_leg(
+        (
+            episode_vector_results,
+            fact_vector_results,
+            episode_bm25_results,
+            fact_bm25_results,
+            entity_results,
+        ) = await asyncio.gather(
+            _safe_leg(
                 "episode_vector",
-                self._leg_episode_vector(query_embedding, project_id, retrieval_limit),
-            )
-            fact_vector_results = await _safe_leg(
+                self._leg_episode_vector(
+                    query_embedding, project_id, retrieval_limit
+                ),
+            ),
+            _safe_leg(
                 "fact_vector",
                 self._leg_fact_vector(
                     query_embedding, project_id, retrieval_limit, query_time
                 ),
-            )
-            episode_bm25_results = await _safe_leg(
+            ),
+            _safe_leg(
                 "episode_bm25",
                 self._leg_episode_bm25(query, project_id, retrieval_limit),
-            )
-            fact_bm25_results = await _safe_leg(
+            ),
+            _safe_leg(
                 "fact_bm25",
                 self._leg_fact_bm25(query, project_id, retrieval_limit, query_time),
-            )
-            entity_results = await _safe_leg(
+            ),
+            _safe_leg(
                 "graph_bfs", self._leg_graph_bfs(query, project_id, query_time)
-            )
-        else:
-            (
-                episode_vector_results,
-                fact_vector_results,
-                episode_bm25_results,
-                fact_bm25_results,
-                entity_results,
-            ) = await asyncio.gather(
-                _safe_leg(
-                    "episode_vector",
-                    self._leg_episode_vector(
-                        query_embedding, project_id, retrieval_limit
-                    ),
-                ),
-                _safe_leg(
-                    "fact_vector",
-                    self._leg_fact_vector(
-                        query_embedding, project_id, retrieval_limit, query_time
-                    ),
-                ),
-                _safe_leg(
-                    "episode_bm25",
-                    self._leg_episode_bm25(query, project_id, retrieval_limit),
-                ),
-                _safe_leg(
-                    "fact_bm25",
-                    self._leg_fact_bm25(query, project_id, retrieval_limit, query_time),
-                ),
-                _safe_leg(
-                    "graph_bfs", self._leg_graph_bfs(query, project_id, query_time)
-                ),
-            )
+            ),
+        )
 
         if all(
             leg in failed_legs

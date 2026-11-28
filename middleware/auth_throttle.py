@@ -24,6 +24,18 @@ return count
 """
 
 
+# Decr-if-positive in one script: concurrent successes cannot
+# double-decrement into the negative. Returns the post-decr value, or -1
+# when the key is missing/zero (caller treats both as "floor, no-op").
+_DECR_IF_POSITIVE_LUA: str = """
+local current = tonumber(redis.call('GET', KEYS[1]) or 0)
+if current > 0 then
+  return redis.call('DECR', KEYS[1])
+end
+return -1
+"""
+
+
 class AuthThrottle:
     """Rate-limits authentication attempts per-email and per-IP.
 
@@ -149,14 +161,30 @@ class AuthThrottle:
     async def _decrement_if_positive(self, key: str) -> None:
         """Decrement a Redis counter only when it is above zero.
 
-        read-then-decr is not atomic — a concurrent success can
-        double-decrement into a small negative.  Negatives only widen the
-        attempt budget (never re-lock a user), so the race is benign; use
-        a Lua script if the counter must never go negative.
+        Atomic Lua decr-if-positive — concurrent successes cannot
+        double-decrement into the negative. Falls back to read-then-decr
+        when the client has no EVAL support (fakeredis in unit tests).
+
+        Args:
+            key: The Redis counter key.
         """
-        current = await self._redis.get(key)
-        if current is not None and int(current) > 0:
-            await self._redis.decr(key)
+        import logging
+
+        from redis.exceptions import ResponseError
+
+        try:
+            await self._redis.eval(_DECR_IF_POSITIVE_LUA, 1, key)
+        except ResponseError:
+            # No EVAL support (fakeredis in unit tests) — best-effort
+            # read-then-decr. Other Redis errors (connection, timeout)
+            # propagate — throttling fails closed, never open.
+            logging.getLogger(__name__).debug(
+                "auth_throttle.lua_unavailable_using_get_decr",
+                extra={"key": key},
+            )
+            current = await self._redis.get(key)
+            if current is not None and int(current) > 0:
+                await self._redis.decr(key)
 
     @staticmethod
     def _normalize_email(email: str) -> str:

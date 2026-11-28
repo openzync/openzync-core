@@ -50,7 +50,7 @@ from core.exceptions import (
     ValidationError,
 )
 from core.sorting import SortSpec
-from packages.graph_backend.interface import GraphBackend
+from packages.graph_backend.interface import GraphBackend, bfs_dedupe_sort
 
 SURREAL_NODE_SORTABLE = {
     "name": "name",
@@ -1351,23 +1351,12 @@ class SurrealGraphBackend(GraphBackend):
                 return []
 
             # Step 2: BFS traverse from each matched entity
-            seen: set[str] = set()
-            results: list[dict] = []
+            related_by_id: dict[str, list[dict]] = {}
 
             for entity in matched_entities:
                 entity_id_str = entity.get("id", "")
-                if not entity_id_str or entity_id_str in seen:
+                if not entity_id_str:
                     continue
-                seen.add(entity_id_str)
-
-                # Add the matched entity itself with distance 0
-                results.append({
-                    "id": entity_id_str,
-                    "name": entity.get("name", ""),
-                    "type": entity.get("type", ""),
-                    "summary": entity.get("summary", ""),
-                    "distance": 0,
-                })
 
                 # BFS up to max_depth
                 try:
@@ -1379,7 +1368,7 @@ class SurrealGraphBackend(GraphBackend):
                     traverse_kwargs: dict[str, Any] = (
                         {"as_of": as_of} if as_of is not None else {}
                     )
-                    related = await self.traverse(
+                    related_by_id[entity_id_str] = await self.traverse(
                         user_id=user_id,
                         project_id=project_id,
                         start_node_id=eid,
@@ -1396,22 +1385,7 @@ class SurrealGraphBackend(GraphBackend):
                         f"SurrealDB traverse failed for entity {entity_id_str} during retrieve_graph."
                     ) from exc
 
-                for node in related:
-                    node_id = node.get("id", "")
-                    depth = node.get("depth", 1)
-                    if node_id and node_id not in seen:
-                        seen.add(node_id)
-                        results.append({
-                            "id": node_id,
-                            "name": node.get("name", ""),
-                            "type": node.get("type", ""),
-                            "summary": node.get("summary", ""),
-                            "distance": depth,
-                        })
-
-            # Sort by distance (closest first), limit to max_results
-            results.sort(key=lambda x: x.get("distance", 99))
-            return results[:max_results]
+            return bfs_dedupe_sort(matched_entities, related_by_id, max_results)
 
         except GraphBackendUnavailableError:
             raise  # Already translated — propagate as-is

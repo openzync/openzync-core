@@ -32,16 +32,21 @@ class TestHybridRetriever:
         return {"id": item_id, "score": score, **extra}
 
     def _make_service(self) -> tuple[HybridRetriever, AsyncMock]:
-        """Create a HybridRetriever with mocked DB session and single-embed leg.
+        """Create a HybridRetriever with mocked DB session and sibling factory.
 
-        The merged retriever embeds the query exactly once in
-        ``hybrid_search`` and shares the vector across both vector legs, so
-        orchestration tests stub ``_embed_query`` instead of hitting the
-        real LLM backend.
+        The merged retriever requires a ``session_factory`` (strict
+        contract: ``hybrid_search`` raises without one), so the factory
+        yields the same ``mock_db`` — rollbacks land on ``mock_db`` and
+        existing rollback assertions keep working. Leg stubs are applied
+        per-test at class level (scoped copies don't see instance stubs).
         """
         mock_db = AsyncMock()
-        service = HybridRetriever(db=mock_db, user_id=self.ORG_ID)
-        service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = mock_db
+        factory = MagicMock(return_value=ctx)
+        service = HybridRetriever(
+            db=mock_db, user_id=self.ORG_ID, session_factory=factory
+        )
         return service, mock_db
 
     # ── _rrf_merge — static method, pure logic, no mocking needed ────────────
@@ -133,13 +138,28 @@ class TestHybridRetriever:
         mock_bm25_facts = [self._make_item("bf1", 0.75, content="bf1")]
         mock_entity = [self._make_item("e1", 1.0, distance=0.5)]
 
-        service._vector_search_episodes = AsyncMock(return_value=mock_vector_eps)
-        service._vector_search_facts = AsyncMock(return_value=mock_vector_facts)
-        service._bm25_search_episodes = AsyncMock(return_value=mock_bm25_eps)
-        service._bm25_search_facts = AsyncMock(return_value=mock_bm25_facts)
-        service._graph_bfs_search = AsyncMock(return_value=mock_entity)
-
-        result = await service.hybrid_search(query, self.PROJECT_ID, limit=limit)
+        m_embed = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        m_ve = AsyncMock(return_value=mock_vector_eps)
+        m_vf = AsyncMock(return_value=mock_vector_facts)
+        m_be = AsyncMock(return_value=mock_bm25_eps)
+        m_bf = AsyncMock(return_value=mock_bm25_facts)
+        m_g = AsyncMock(return_value=mock_entity)
+        with (
+            patch(
+                "services.hybrid_retriever.set_user_context", new=AsyncMock()
+            ),
+            patch(
+                "services.hybrid_retriever.release_tenant_context",
+                new=AsyncMock(),
+            ),
+            patch.object(HybridRetriever, "_embed_query", new=m_embed),
+            patch.object(HybridRetriever, "_vector_search_episodes", new=m_ve),
+            patch.object(HybridRetriever, "_vector_search_facts", new=m_vf),
+            patch.object(HybridRetriever, "_bm25_search_episodes", new=m_be),
+            patch.object(HybridRetriever, "_bm25_search_facts", new=m_bf),
+            patch.object(HybridRetriever, "_graph_bfs_search", new=m_g),
+        ):
+            result = await service.hybrid_search(query, self.PROJECT_ID, limit=limit)
 
         assert "episodes" in result
         assert "facts" in result
@@ -147,35 +167,50 @@ class TestHybridRetriever:
         assert "source_counts" in result
         assert result["total_items"] >= 0
         # All five leg mocks were called
-        service._vector_search_episodes.assert_awaited_once()
-        service._vector_search_facts.assert_awaited_once()
-        service._bm25_search_episodes.assert_awaited_once()
-        service._bm25_search_facts.assert_awaited_once()
-        service._graph_bfs_search.assert_awaited_once()
+        m_ve.assert_awaited_once()
+        m_vf.assert_awaited_once()
+        m_be.assert_awaited_once()
+        m_bf.assert_awaited_once()
+        m_g.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_hybrid_search_embeds_query_exactly_once(self) -> None:
         """Single-embed: the query is embedded ONCE and shared by both vector legs."""
         service, _mock_db = self._make_service()
 
-        service._vector_search_episodes = AsyncMock(return_value=[])
-        service._vector_search_facts = AsyncMock(return_value=[])
-        service._bm25_search_episodes = AsyncMock(return_value=[])
-        service._bm25_search_facts = AsyncMock(return_value=[])
-        service._graph_bfs_search = AsyncMock(return_value=[])
-
-        result = await service.hybrid_search("test query", self.PROJECT_ID, limit=20)
+        m_embed = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        m_ve = AsyncMock(return_value=[])
+        m_vf = AsyncMock(return_value=[])
+        m_be = AsyncMock(return_value=[])
+        m_bf = AsyncMock(return_value=[])
+        m_g = AsyncMock(return_value=[])
+        with (
+            patch(
+                "services.hybrid_retriever.set_user_context", new=AsyncMock()
+            ),
+            patch(
+                "services.hybrid_retriever.release_tenant_context",
+                new=AsyncMock(),
+            ),
+            patch.object(HybridRetriever, "_embed_query", new=m_embed),
+            patch.object(HybridRetriever, "_vector_search_episodes", new=m_ve),
+            patch.object(HybridRetriever, "_vector_search_facts", new=m_vf),
+            patch.object(HybridRetriever, "_bm25_search_episodes", new=m_be),
+            patch.object(HybridRetriever, "_bm25_search_facts", new=m_bf),
+            patch.object(HybridRetriever, "_graph_bfs_search", new=m_g),
+        ):
+            result = await service.hybrid_search("test query", self.PROJECT_ID, limit=20)
 
         # Exactly one embed call for the whole search — both vector legs
         # receive the same precomputed vector.
-        service._embed_query.assert_awaited_once_with("test query", self.PROJECT_ID)
-        embedding = service._embed_query.return_value
-        service._vector_search_episodes.assert_awaited_once_with(
+        m_embed.assert_awaited_once_with("test query", self.PROJECT_ID)
+        embedding = m_embed.return_value
+        m_ve.assert_awaited_once_with(
             embedding,
             self.PROJECT_ID,
             20,
         )
-        service._vector_search_facts.assert_awaited_once_with(
+        m_vf.assert_awaited_once_with(
             embedding,
             self.PROJECT_ID,
             20,
@@ -187,23 +222,38 @@ class TestHybridRetriever:
         service, mock_db = self._make_service()
 
         # Failing leg returns nothing; every other leg returns data.
-        service._vector_search_episodes = AsyncMock(
+        m_embed = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        m_ve = AsyncMock(
             side_effect=RuntimeError("pgvector down"),
         )
-        service._vector_search_facts = AsyncMock(
+        m_vf = AsyncMock(
             return_value=[self._make_item("vf1", 0.85)]
         )
-        service._bm25_search_episodes = AsyncMock(
+        m_be = AsyncMock(
             return_value=[self._make_item("b1", 0.8)]
         )
-        service._bm25_search_facts = AsyncMock(
+        m_bf = AsyncMock(
             return_value=[self._make_item("bf1", 0.75)]
         )
-        service._graph_bfs_search = AsyncMock(
+        m_g = AsyncMock(
             return_value=[self._make_item("e1", 1.0, distance=0.5)]
         )
-
-        result = await service.hybrid_search("query", self.PROJECT_ID)
+        with (
+            patch(
+                "services.hybrid_retriever.set_user_context", new=AsyncMock()
+            ),
+            patch(
+                "services.hybrid_retriever.release_tenant_context",
+                new=AsyncMock(),
+            ),
+            patch.object(HybridRetriever, "_embed_query", new=m_embed),
+            patch.object(HybridRetriever, "_vector_search_episodes", new=m_ve),
+            patch.object(HybridRetriever, "_vector_search_facts", new=m_vf),
+            patch.object(HybridRetriever, "_bm25_search_episodes", new=m_be),
+            patch.object(HybridRetriever, "_bm25_search_facts", new=m_bf),
+            patch.object(HybridRetriever, "_graph_bfs_search", new=m_g),
+        ):
+            result = await service.hybrid_search("query", self.PROJECT_ID)
 
         assert result["degraded"] is True
         assert "episode_vector" in result["failed_legs"]
@@ -218,21 +268,36 @@ class TestHybridRetriever:
         """Single fact-vector failure degrades — surviving legs still merge."""
         service, mock_db = self._make_service()
 
-        service._vector_search_episodes = AsyncMock(
+        m_embed = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        m_ve = AsyncMock(
             return_value=[self._make_item("v1", 0.9)]
         )
-        service._vector_search_facts = AsyncMock(
+        m_vf = AsyncMock(
             side_effect=RuntimeError("pgvector down on facts"),
         )
-        service._bm25_search_episodes = AsyncMock(
+        m_be = AsyncMock(
             return_value=[self._make_item("b1", 0.8)]
         )
-        service._bm25_search_facts = AsyncMock(
+        m_bf = AsyncMock(
             return_value=[self._make_item("bf1", 0.75)]
         )
-        service._graph_bfs_search = AsyncMock(return_value=[])
-
-        result = await service.hybrid_search("query", self.PROJECT_ID)
+        m_g = AsyncMock(return_value=[])
+        with (
+            patch(
+                "services.hybrid_retriever.set_user_context", new=AsyncMock()
+            ),
+            patch(
+                "services.hybrid_retriever.release_tenant_context",
+                new=AsyncMock(),
+            ),
+            patch.object(HybridRetriever, "_embed_query", new=m_embed),
+            patch.object(HybridRetriever, "_vector_search_episodes", new=m_ve),
+            patch.object(HybridRetriever, "_vector_search_facts", new=m_vf),
+            patch.object(HybridRetriever, "_bm25_search_episodes", new=m_be),
+            patch.object(HybridRetriever, "_bm25_search_facts", new=m_bf),
+            patch.object(HybridRetriever, "_graph_bfs_search", new=m_g),
+        ):
+            result = await service.hybrid_search("query", self.PROJECT_ID)
 
         assert result["degraded"] is True
         assert "fact_vector" in result["failed_legs"]
@@ -244,17 +309,32 @@ class TestHybridRetriever:
         """Single episode-BM25 failure degrades — vector legs still merge."""
         service, mock_db = self._make_service()
 
-        service._vector_search_episodes = AsyncMock(
+        m_embed = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        m_ve = AsyncMock(
             return_value=[self._make_item("v1", 0.9)]
         )
-        service._vector_search_facts = AsyncMock(return_value=[])
-        service._bm25_search_episodes = AsyncMock(
+        m_vf = AsyncMock(return_value=[])
+        m_be = AsyncMock(
             side_effect=RuntimeError("tsquery parse error"),
         )
-        service._bm25_search_facts = AsyncMock(return_value=[])
-        service._graph_bfs_search = AsyncMock(return_value=[])
-
-        result = await service.hybrid_search("query", self.PROJECT_ID)
+        m_bf = AsyncMock(return_value=[])
+        m_g = AsyncMock(return_value=[])
+        with (
+            patch(
+                "services.hybrid_retriever.set_user_context", new=AsyncMock()
+            ),
+            patch(
+                "services.hybrid_retriever.release_tenant_context",
+                new=AsyncMock(),
+            ),
+            patch.object(HybridRetriever, "_embed_query", new=m_embed),
+            patch.object(HybridRetriever, "_vector_search_episodes", new=m_ve),
+            patch.object(HybridRetriever, "_vector_search_facts", new=m_vf),
+            patch.object(HybridRetriever, "_bm25_search_episodes", new=m_be),
+            patch.object(HybridRetriever, "_bm25_search_facts", new=m_bf),
+            patch.object(HybridRetriever, "_graph_bfs_search", new=m_g),
+        ):
+            result = await service.hybrid_search("query", self.PROJECT_ID)
 
         assert result["degraded"] is True
         assert "episode_bm25" in result["failed_legs"]
@@ -267,17 +347,32 @@ class TestHybridRetriever:
         """Single fact-BM25 failure degrades — vector fact legs still merge."""
         service, mock_db = self._make_service()
 
-        service._vector_search_episodes = AsyncMock(return_value=[])
-        service._vector_search_facts = AsyncMock(
+        m_embed = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        m_ve = AsyncMock(return_value=[])
+        m_vf = AsyncMock(
             return_value=[self._make_item("vf1", 0.85)]
         )
-        service._bm25_search_episodes = AsyncMock(return_value=[])
-        service._bm25_search_facts = AsyncMock(
+        m_be = AsyncMock(return_value=[])
+        m_bf = AsyncMock(
             side_effect=RuntimeError("tsquery parse error on facts"),
         )
-        service._graph_bfs_search = AsyncMock(return_value=[])
-
-        result = await service.hybrid_search("query", self.PROJECT_ID)
+        m_g = AsyncMock(return_value=[])
+        with (
+            patch(
+                "services.hybrid_retriever.set_user_context", new=AsyncMock()
+            ),
+            patch(
+                "services.hybrid_retriever.release_tenant_context",
+                new=AsyncMock(),
+            ),
+            patch.object(HybridRetriever, "_embed_query", new=m_embed),
+            patch.object(HybridRetriever, "_vector_search_episodes", new=m_ve),
+            patch.object(HybridRetriever, "_vector_search_facts", new=m_vf),
+            patch.object(HybridRetriever, "_bm25_search_episodes", new=m_be),
+            patch.object(HybridRetriever, "_bm25_search_facts", new=m_bf),
+            patch.object(HybridRetriever, "_graph_bfs_search", new=m_g),
+        ):
+            result = await service.hybrid_search("query", self.PROJECT_ID)
 
         assert result["degraded"] is True
         assert "fact_bm25" in result["failed_legs"]
@@ -297,26 +392,41 @@ class TestHybridRetriever:
         """
         service, mock_db = self._make_service()
 
-        service._vector_search_episodes = AsyncMock(
+        m_embed = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        m_ve = AsyncMock(
             return_value=[self._make_item("v1", 0.9)]
         )
-        service._vector_search_facts = AsyncMock(return_value=[])
-        service._bm25_search_episodes = AsyncMock(return_value=[])
-        service._bm25_search_facts = AsyncMock(return_value=[])
-        service._graph_bfs_search = AsyncMock(
+        m_vf = AsyncMock(return_value=[])
+        m_be = AsyncMock(return_value=[])
+        m_bf = AsyncMock(return_value=[])
+        m_g = AsyncMock(
             side_effect=SearchLegFailedError(
                 leg_name="graph_bfs",
                 original_error="Already a SearchLegFailedError from downstream",
             ),
         )
-
-        result = await service.hybrid_search("query", self.PROJECT_ID)
+        with (
+            patch(
+                "services.hybrid_retriever.set_user_context", new=AsyncMock()
+            ),
+            patch(
+                "services.hybrid_retriever.release_tenant_context",
+                new=AsyncMock(),
+            ),
+            patch.object(HybridRetriever, "_embed_query", new=m_embed),
+            patch.object(HybridRetriever, "_vector_search_episodes", new=m_ve),
+            patch.object(HybridRetriever, "_vector_search_facts", new=m_vf),
+            patch.object(HybridRetriever, "_bm25_search_episodes", new=m_be),
+            patch.object(HybridRetriever, "_bm25_search_facts", new=m_bf),
+            patch.object(HybridRetriever, "_graph_bfs_search", new=m_g),
+        ):
+            result = await service.hybrid_search("query", self.PROJECT_ID)
 
         assert result["degraded"] is True
         assert "graph_bfs" in result["failed_legs"]
         assert result["episodes"]
-        # Direct passthrough — not wrapped by the generic handler.
-        mock_db.rollback.assert_not_called()
+        # Factory path: the sibling session rolls back on passthrough.
+        mock_db.rollback.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_hybrid_search_graph_bfs_leg_failure(self) -> None:
@@ -324,17 +434,32 @@ class TestHybridRetriever:
         service, mock_db = self._make_service()
 
         # Mock earlier legs to succeed
-        service._vector_search_episodes = AsyncMock(
+        m_embed = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        m_ve = AsyncMock(
             return_value=[self._make_item("v1", 0.9)]
         )
-        service._vector_search_facts = AsyncMock(return_value=[])
-        service._bm25_search_episodes = AsyncMock(return_value=[])
-        service._bm25_search_facts = AsyncMock(return_value=[])
-        service._graph_bfs_search = AsyncMock(
+        m_vf = AsyncMock(return_value=[])
+        m_be = AsyncMock(return_value=[])
+        m_bf = AsyncMock(return_value=[])
+        m_g = AsyncMock(
             side_effect=RuntimeError("graph backend timeout"),
         )
-
-        result = await service.hybrid_search("query", self.PROJECT_ID)
+        with (
+            patch(
+                "services.hybrid_retriever.set_user_context", new=AsyncMock()
+            ),
+            patch(
+                "services.hybrid_retriever.release_tenant_context",
+                new=AsyncMock(),
+            ),
+            patch.object(HybridRetriever, "_embed_query", new=m_embed),
+            patch.object(HybridRetriever, "_vector_search_episodes", new=m_ve),
+            patch.object(HybridRetriever, "_vector_search_facts", new=m_vf),
+            patch.object(HybridRetriever, "_bm25_search_episodes", new=m_be),
+            patch.object(HybridRetriever, "_bm25_search_facts", new=m_bf),
+            patch.object(HybridRetriever, "_graph_bfs_search", new=m_g),
+        ):
+            result = await service.hybrid_search("query", self.PROJECT_ID)
 
         assert result["degraded"] is True
         assert "graph_bfs" in result["failed_legs"]
@@ -351,33 +476,47 @@ class TestHybridRetriever:
         graph legs still execute and merge.
         """
         service, mock_db = self._make_service()
-        service._embed_query = AsyncMock(
+        m_embed = AsyncMock(
             side_effect=SearchLegFailedError(
                 leg_name="embedding",
                 original_error="embedding API timeout",
             ),
         )
-        service._vector_search_episodes = AsyncMock()
-        service._vector_search_facts = AsyncMock()
-        service._bm25_search_episodes = AsyncMock(
+        m_ve = AsyncMock()
+        m_vf = AsyncMock()
+        m_be = AsyncMock(
             return_value=[self._make_item("b1", 0.8)]
         )
-        service._bm25_search_facts = AsyncMock(return_value=[])
-        service._graph_bfs_search = AsyncMock(return_value=[])
-
-        result = await service.hybrid_search("query", self.PROJECT_ID)
+        m_bf = AsyncMock(return_value=[])
+        m_g = AsyncMock(return_value=[])
+        with (
+            patch(
+                "services.hybrid_retriever.set_user_context", new=AsyncMock()
+            ),
+            patch(
+                "services.hybrid_retriever.release_tenant_context",
+                new=AsyncMock(),
+            ),
+            patch.object(HybridRetriever, "_embed_query", new=m_embed),
+            patch.object(HybridRetriever, "_vector_search_episodes", new=m_ve),
+            patch.object(HybridRetriever, "_vector_search_facts", new=m_vf),
+            patch.object(HybridRetriever, "_bm25_search_episodes", new=m_be),
+            patch.object(HybridRetriever, "_bm25_search_facts", new=m_bf),
+            patch.object(HybridRetriever, "_graph_bfs_search", new=m_g),
+        ):
+            result = await service.hybrid_search("query", self.PROJECT_ID)
 
         assert result["degraded"] is True
         assert "episode_vector" in result["failed_legs"]
         assert "fact_vector" in result["failed_legs"]
         # Keyword legs still ran and merged — no silent empty return.
         assert result["episodes"]
-        service._bm25_search_episodes.assert_awaited_once()
-        service._bm25_search_facts.assert_awaited_once()
-        service._graph_bfs_search.assert_awaited_once()
+        m_be.assert_awaited_once()
+        m_bf.assert_awaited_once()
+        m_g.assert_awaited_once()
         # Vector legs never execute without an embedding to search with.
-        service._vector_search_episodes.assert_not_awaited()
-        service._vector_search_facts.assert_not_awaited()
+        m_ve.assert_not_awaited()
+        m_vf.assert_not_awaited()
         mock_db.rollback.assert_not_called()
 
     @pytest.mark.asyncio
@@ -390,27 +529,41 @@ class TestHybridRetriever:
         degrades to the BM25/graph subset instead of raising.
         """
         service, _mock_db = self._make_service()
-        service._embed_query = AsyncMock(
+        m_embed = AsyncMock(
             side_effect=SearchLegFailedError(
                 leg_name="embedding",
                 original_error="dimension mismatch",
             ),
         )
-        service._vector_search_episodes = AsyncMock(
+        m_ve = AsyncMock(
             return_value=[self._make_item("v1", 0.9)]
         )
-        service._vector_search_facts = AsyncMock(
+        m_vf = AsyncMock(
             return_value=[self._make_item("vf1", 0.85)]
         )
-        service._bm25_search_episodes = AsyncMock(
+        m_be = AsyncMock(
             return_value=[self._make_item("b1", 0.8)]
         )
-        service._bm25_search_facts = AsyncMock(
+        m_bf = AsyncMock(
             return_value=[self._make_item("bf1", 0.75)]
         )
-        service._graph_bfs_search = AsyncMock(return_value=[self._make_item("e1", 1.0)])
-
-        result = await service.hybrid_search("query", self.PROJECT_ID)
+        m_g = AsyncMock(return_value=[self._make_item("e1", 1.0)])
+        with (
+            patch(
+                "services.hybrid_retriever.set_user_context", new=AsyncMock()
+            ),
+            patch(
+                "services.hybrid_retriever.release_tenant_context",
+                new=AsyncMock(),
+            ),
+            patch.object(HybridRetriever, "_embed_query", new=m_embed),
+            patch.object(HybridRetriever, "_vector_search_episodes", new=m_ve),
+            patch.object(HybridRetriever, "_vector_search_facts", new=m_vf),
+            patch.object(HybridRetriever, "_bm25_search_episodes", new=m_be),
+            patch.object(HybridRetriever, "_bm25_search_facts", new=m_bf),
+            patch.object(HybridRetriever, "_graph_bfs_search", new=m_g),
+        ):
+            result = await service.hybrid_search("query", self.PROJECT_ID)
 
         assert result["degraded"] is True
         assert "episode_vector" in result["failed_legs"]
@@ -432,21 +585,36 @@ class TestHybridRetriever:
         """
         service, mock_db = self._make_service()
 
-        service._vector_search_episodes = AsyncMock(
+        m_embed = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        m_ve = AsyncMock(
             side_effect=RuntimeError("pgvector down"),
         )
-        service._vector_search_facts = AsyncMock(
+        m_vf = AsyncMock(
             return_value=[self._make_item("vf1", 0.85)]
         )
-        service._bm25_search_episodes = AsyncMock(
+        m_be = AsyncMock(
             return_value=[self._make_item("b1", 0.8)]
         )
-        service._bm25_search_facts = AsyncMock(
+        m_bf = AsyncMock(
             return_value=[self._make_item("bf1", 0.75)]
         )
-        service._graph_bfs_search = AsyncMock(return_value=[self._make_item("e1", 1.0)])
-
-        result = await service.hybrid_search("query", self.PROJECT_ID)
+        m_g = AsyncMock(return_value=[self._make_item("e1", 1.0)])
+        with (
+            patch(
+                "services.hybrid_retriever.set_user_context", new=AsyncMock()
+            ),
+            patch(
+                "services.hybrid_retriever.release_tenant_context",
+                new=AsyncMock(),
+            ),
+            patch.object(HybridRetriever, "_embed_query", new=m_embed),
+            patch.object(HybridRetriever, "_vector_search_episodes", new=m_ve),
+            patch.object(HybridRetriever, "_vector_search_facts", new=m_vf),
+            patch.object(HybridRetriever, "_bm25_search_episodes", new=m_be),
+            patch.object(HybridRetriever, "_bm25_search_facts", new=m_bf),
+            patch.object(HybridRetriever, "_graph_bfs_search", new=m_g),
+        ):
+            result = await service.hybrid_search("query", self.PROJECT_ID)
 
         assert result["degraded"] is True
         assert "episode_vector" in result["failed_legs"]
@@ -459,24 +627,39 @@ class TestHybridRetriever:
         """All five legs failing raises ``SearchLegFailedError`` (leg=all)."""
         service, _mock_db = self._make_service()
 
-        service._vector_search_episodes = AsyncMock(
+        m_embed = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        m_ve = AsyncMock(
             side_effect=RuntimeError("pgvector down"),
         )
-        service._vector_search_facts = AsyncMock(
+        m_vf = AsyncMock(
             side_effect=RuntimeError("pgvector down"),
         )
-        service._bm25_search_episodes = AsyncMock(
+        m_be = AsyncMock(
             side_effect=RuntimeError("tsquery down"),
         )
-        service._bm25_search_facts = AsyncMock(
+        m_bf = AsyncMock(
             side_effect=RuntimeError("tsquery down"),
         )
-        service._graph_bfs_search = AsyncMock(
+        m_g = AsyncMock(
             side_effect=RuntimeError("graph down"),
         )
-
-        with pytest.raises(SearchLegFailedError) as exc_info:
-            await service.hybrid_search("query", self.PROJECT_ID)
+        with (
+            patch(
+                "services.hybrid_retriever.set_user_context", new=AsyncMock()
+            ),
+            patch(
+                "services.hybrid_retriever.release_tenant_context",
+                new=AsyncMock(),
+            ),
+            patch.object(HybridRetriever, "_embed_query", new=m_embed),
+            patch.object(HybridRetriever, "_vector_search_episodes", new=m_ve),
+            patch.object(HybridRetriever, "_vector_search_facts", new=m_vf),
+            patch.object(HybridRetriever, "_bm25_search_episodes", new=m_be),
+            patch.object(HybridRetriever, "_bm25_search_facts", new=m_bf),
+            patch.object(HybridRetriever, "_graph_bfs_search", new=m_g),
+        ):
+            with pytest.raises(SearchLegFailedError) as exc_info:
+                await service.hybrid_search("query", self.PROJECT_ID)
 
         assert exc_info.value.detail.get("leg") == "all"
 
@@ -485,13 +668,28 @@ class TestHybridRetriever:
         """Empty query string does not cause errors — legs handle it."""
         service, _mock_db = self._make_service()
 
-        service._vector_search_episodes = AsyncMock(return_value=[])
-        service._vector_search_facts = AsyncMock(return_value=[])
-        service._bm25_search_episodes = AsyncMock(return_value=[])
-        service._bm25_search_facts = AsyncMock(return_value=[])
-        service._graph_bfs_search = AsyncMock(return_value=[])
-
-        result = await service.hybrid_search("", self.PROJECT_ID, limit=20)
+        m_embed = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        m_ve = AsyncMock(return_value=[])
+        m_vf = AsyncMock(return_value=[])
+        m_be = AsyncMock(return_value=[])
+        m_bf = AsyncMock(return_value=[])
+        m_g = AsyncMock(return_value=[])
+        with (
+            patch(
+                "services.hybrid_retriever.set_user_context", new=AsyncMock()
+            ),
+            patch(
+                "services.hybrid_retriever.release_tenant_context",
+                new=AsyncMock(),
+            ),
+            patch.object(HybridRetriever, "_embed_query", new=m_embed),
+            patch.object(HybridRetriever, "_vector_search_episodes", new=m_ve),
+            patch.object(HybridRetriever, "_vector_search_facts", new=m_vf),
+            patch.object(HybridRetriever, "_bm25_search_episodes", new=m_be),
+            patch.object(HybridRetriever, "_bm25_search_facts", new=m_bf),
+            patch.object(HybridRetriever, "_graph_bfs_search", new=m_g),
+        ):
+            result = await service.hybrid_search("", self.PROJECT_ID, limit=20)
 
         assert result["episodes"] == []
         assert result["facts"] == []
@@ -503,13 +701,28 @@ class TestHybridRetriever:
         """All five legs return empty results — total_items=0 and empty lists."""
         service, _mock_db = self._make_service()
 
-        service._vector_search_episodes = AsyncMock(return_value=[])
-        service._vector_search_facts = AsyncMock(return_value=[])
-        service._bm25_search_episodes = AsyncMock(return_value=[])
-        service._bm25_search_facts = AsyncMock(return_value=[])
-        service._graph_bfs_search = AsyncMock(return_value=[])
-
-        result = await service.hybrid_search("test query", self.PROJECT_ID, limit=20)
+        m_embed = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        m_ve = AsyncMock(return_value=[])
+        m_vf = AsyncMock(return_value=[])
+        m_be = AsyncMock(return_value=[])
+        m_bf = AsyncMock(return_value=[])
+        m_g = AsyncMock(return_value=[])
+        with (
+            patch(
+                "services.hybrid_retriever.set_user_context", new=AsyncMock()
+            ),
+            patch(
+                "services.hybrid_retriever.release_tenant_context",
+                new=AsyncMock(),
+            ),
+            patch.object(HybridRetriever, "_embed_query", new=m_embed),
+            patch.object(HybridRetriever, "_vector_search_episodes", new=m_ve),
+            patch.object(HybridRetriever, "_vector_search_facts", new=m_vf),
+            patch.object(HybridRetriever, "_bm25_search_episodes", new=m_be),
+            patch.object(HybridRetriever, "_bm25_search_facts", new=m_bf),
+            patch.object(HybridRetriever, "_graph_bfs_search", new=m_g),
+        ):
+            result = await service.hybrid_search("test query", self.PROJECT_ID, limit=20)
 
         assert result["episodes"] == []
         assert result["facts"] == []
@@ -529,20 +742,38 @@ class TestHybridRetriever:
         mock_reranker.backend_name = "test"
 
         mock_db = AsyncMock()
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = mock_db
+        factory = MagicMock(return_value=ctx)
         service = HybridRetriever(
             db=mock_db,
             user_id=self.ORG_ID,
             reranker=mock_reranker,
+            session_factory=factory,
         )
-        service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        m_embed = AsyncMock(return_value=[0.1, 0.2, 0.3])
 
-        service._vector_search_episodes = AsyncMock(return_value=[])
-        service._vector_search_facts = AsyncMock(return_value=[])
-        service._bm25_search_episodes = AsyncMock(return_value=[])
-        service._bm25_search_facts = AsyncMock(return_value=[])
-        service._graph_bfs_search = AsyncMock(return_value=[])
-
-        result = await service.hybrid_search("query", self.PROJECT_ID)
+        m_ve = AsyncMock(return_value=[])
+        m_vf = AsyncMock(return_value=[])
+        m_be = AsyncMock(return_value=[])
+        m_bf = AsyncMock(return_value=[])
+        m_g = AsyncMock(return_value=[])
+        with (
+            patch(
+                "services.hybrid_retriever.set_user_context", new=AsyncMock()
+            ),
+            patch(
+                "services.hybrid_retriever.release_tenant_context",
+                new=AsyncMock(),
+            ),
+            patch.object(HybridRetriever, "_embed_query", new=m_embed),
+            patch.object(HybridRetriever, "_vector_search_episodes", new=m_ve),
+            patch.object(HybridRetriever, "_vector_search_facts", new=m_vf),
+            patch.object(HybridRetriever, "_bm25_search_episodes", new=m_be),
+            patch.object(HybridRetriever, "_bm25_search_facts", new=m_bf),
+            patch.object(HybridRetriever, "_graph_bfs_search", new=m_g),
+        ):
+            result = await service.hybrid_search("query", self.PROJECT_ID)
 
         # Reranker was called for both episodes and facts
         assert mock_reranker.rerank.await_count == 2
@@ -562,44 +793,63 @@ class TestHybridRetriever:
         mock_org_config.to_llm_config_dict.return_value = None
 
         mock_db = AsyncMock()
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = mock_db
+        factory = MagicMock(return_value=ctx)
         service = HybridRetriever(
             db=mock_db,
             user_id=self.ORG_ID,
             reranker=mock_reranker,
             platform_config=mock_org_config,
+            session_factory=factory,
         )
-        service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        m_embed = AsyncMock(return_value=[0.1, 0.2, 0.3])
 
-        service._vector_search_episodes = AsyncMock(return_value=[])
-        service._vector_search_facts = AsyncMock(return_value=[])
-        service._bm25_search_episodes = AsyncMock(return_value=[])
-        service._bm25_search_facts = AsyncMock(return_value=[])
-        service._graph_bfs_search = AsyncMock(return_value=[])
+        m_ve = AsyncMock(return_value=[])
+        m_vf = AsyncMock(return_value=[])
+        m_be = AsyncMock(return_value=[])
+        m_bf = AsyncMock(return_value=[])
+        m_g = AsyncMock(return_value=[])
 
         limit = 5
-        await service.hybrid_search("query", self.PROJECT_ID, limit=limit)
+        with (
+            patch(
+                "services.hybrid_retriever.set_user_context", new=AsyncMock()
+            ),
+            patch(
+                "services.hybrid_retriever.release_tenant_context",
+                new=AsyncMock(),
+            ),
+            patch.object(HybridRetriever, "_embed_query", new=m_embed),
+            patch.object(HybridRetriever, "_vector_search_episodes", new=m_ve),
+            patch.object(HybridRetriever, "_vector_search_facts", new=m_vf),
+            patch.object(HybridRetriever, "_bm25_search_episodes", new=m_be),
+            patch.object(HybridRetriever, "_bm25_search_facts", new=m_bf),
+            patch.object(HybridRetriever, "_graph_bfs_search", new=m_g),
+        ):
+            await service.hybrid_search("query", self.PROJECT_ID, limit=limit)
 
         # With reranker_top_k=75 and limit=5, retrieval_limit = max(5, 75) = 75
         expected_limit = 75
         # Single-embed: both vector legs receive the SAME precomputed vector
         # (the ``_embed_query`` stub's return value), not the query string.
         embedding = [0.1, 0.2, 0.3]
-        service._vector_search_episodes.assert_awaited_once_with(
+        m_ve.assert_awaited_once_with(
             embedding,
             self.PROJECT_ID,
             expected_limit,
         )
-        service._vector_search_facts.assert_awaited_once_with(
+        m_vf.assert_awaited_once_with(
             embedding,
             self.PROJECT_ID,
             expected_limit,
         )
-        service._bm25_search_episodes.assert_awaited_once_with(
+        m_be.assert_awaited_once_with(
             "query",
             self.PROJECT_ID,
             expected_limit,
         )
-        service._bm25_search_facts.assert_awaited_once_with(
+        m_bf.assert_awaited_once_with(
             "query",
             self.PROJECT_ID,
             expected_limit,
@@ -613,22 +863,40 @@ class TestHybridRetriever:
         mock_reranker.backend_name = "test"
 
         mock_db = AsyncMock()
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = mock_db
+        factory = MagicMock(return_value=ctx)
         service = HybridRetriever(
             db=mock_db,
             user_id=self.ORG_ID,
             reranker=mock_reranker,
+            session_factory=factory,
         )
-        service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        m_embed = AsyncMock(return_value=[0.1, 0.2, 0.3])
 
-        service._vector_search_episodes = AsyncMock(
+        m_ve = AsyncMock(
             return_value=[self._make_item("a", 0.9)]
         )
-        service._vector_search_facts = AsyncMock(return_value=[])
-        service._bm25_search_episodes = AsyncMock(return_value=[])
-        service._bm25_search_facts = AsyncMock(return_value=[])
-        service._graph_bfs_search = AsyncMock(return_value=[])
-
-        result = await service.hybrid_search("query", self.PROJECT_ID)
+        m_vf = AsyncMock(return_value=[])
+        m_be = AsyncMock(return_value=[])
+        m_bf = AsyncMock(return_value=[])
+        m_g = AsyncMock(return_value=[])
+        with (
+            patch(
+                "services.hybrid_retriever.set_user_context", new=AsyncMock()
+            ),
+            patch(
+                "services.hybrid_retriever.release_tenant_context",
+                new=AsyncMock(),
+            ),
+            patch.object(HybridRetriever, "_embed_query", new=m_embed),
+            patch.object(HybridRetriever, "_vector_search_episodes", new=m_ve),
+            patch.object(HybridRetriever, "_vector_search_facts", new=m_vf),
+            patch.object(HybridRetriever, "_bm25_search_episodes", new=m_be),
+            patch.object(HybridRetriever, "_bm25_search_facts", new=m_bf),
+            patch.object(HybridRetriever, "_graph_bfs_search", new=m_g),
+        ):
+            result = await service.hybrid_search("query", self.PROJECT_ID)
 
         assert result["degraded"] is True
         assert "reranker" in result["failed_legs"]
@@ -643,22 +911,40 @@ class TestHybridRetriever:
         mock_reranker.backend_name = "test"
 
         mock_db = AsyncMock()
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = mock_db
+        factory = MagicMock(return_value=ctx)
         service = HybridRetriever(
             db=mock_db,
             user_id=self.ORG_ID,
             reranker=mock_reranker,
+            session_factory=factory,
         )
-        service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        m_embed = AsyncMock(return_value=[0.1, 0.2, 0.3])
 
-        service._vector_search_episodes = AsyncMock(
+        m_ve = AsyncMock(
             return_value=[self._make_item("a", 0.9)]
         )
-        service._vector_search_facts = AsyncMock(return_value=[])
-        service._bm25_search_episodes = AsyncMock(return_value=[])
-        service._bm25_search_facts = AsyncMock(return_value=[])
-        service._graph_bfs_search = AsyncMock(return_value=[])
-
-        result = await service.hybrid_search("query", self.PROJECT_ID)
+        m_vf = AsyncMock(return_value=[])
+        m_be = AsyncMock(return_value=[])
+        m_bf = AsyncMock(return_value=[])
+        m_g = AsyncMock(return_value=[])
+        with (
+            patch(
+                "services.hybrid_retriever.set_user_context", new=AsyncMock()
+            ),
+            patch(
+                "services.hybrid_retriever.release_tenant_context",
+                new=AsyncMock(),
+            ),
+            patch.object(HybridRetriever, "_embed_query", new=m_embed),
+            patch.object(HybridRetriever, "_vector_search_episodes", new=m_ve),
+            patch.object(HybridRetriever, "_vector_search_facts", new=m_vf),
+            patch.object(HybridRetriever, "_bm25_search_episodes", new=m_be),
+            patch.object(HybridRetriever, "_bm25_search_facts", new=m_bf),
+            patch.object(HybridRetriever, "_graph_bfs_search", new=m_g),
+        ):
+            result = await service.hybrid_search("query", self.PROJECT_ID)
 
         assert result["degraded"] is True
         # The rerank failure is recorded by leg name, not raised.

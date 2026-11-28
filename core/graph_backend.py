@@ -308,13 +308,23 @@ def init_dispatcher() -> GraphBackendDispatcher:
         app.state.graph_backend_dispatcher = init_dispatcher()
 
     To add a new backend, import its class and register it here.
+    The SurrealDB backend is optional (``surrealdb`` extra): when the
+    package is not installed the import is skipped and selecting
+    ``graph_backend="surrealdb"`` fails loud at resolve time.
     """
     from packages.graph_backend.falkordb import FalkorGraphBackend
-    from packages.graph_backend.surrealdb import SurrealGraphBackend
 
     dispatcher = GraphBackendDispatcher()
-    dispatcher.register("surrealdb", SurrealGraphBackend)
     dispatcher.register("falkordb", FalkorGraphBackend)
+    try:
+        from packages.graph_backend.surrealdb import SurrealGraphBackend
+    except ImportError:
+        logger.warning(
+            "graph_backend.surrealdb_extra_missing",
+            extra={"hint": "pip install openzync[surreal]"},
+        )
+    else:
+        dispatcher.register("surrealdb", SurrealGraphBackend)
     return dispatcher
 
 
