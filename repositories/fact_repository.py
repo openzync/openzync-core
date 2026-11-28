@@ -151,69 +151,6 @@ class FactRepository:
         await self._db.refresh(fact)
         return fact
 
-    async def create_or_skip(
-        self,
-        user_id: UUID,
-
-        project_id: UUID,
-        content: str,
-        subject: str | None = None,
-        predicate: str | None = None,
-        obj: str | None = None,
-        confidence: float = 1.0,
-        source_episode_id: UUID | None = None,
-        valid_from: datetime | None = None,
-        subject_entity_id: UUID | None = None,
-        object_entity_id: UUID | None = None,
-        subject_type: str = "literal",
-        object_type: str = "literal",
-    ) -> Fact | None:
-        """Insert a fact, skipping silently if the triple already exists
-        for this episode (exclusion constraint ``uq_facts_temporal_excl``).
-
-        Uses PostgreSQL ``INSERT ... ON CONFLICT DO NOTHING`` with
-        ``RETURNING`` — returns ``None`` when the conflict fires so the
-        caller can log a duplicate skip without crashing the transaction.
-
-        Args:
-            Same as :meth:`create` plus ``project_id``.
-
-        Returns:
-            The newly created :class:`Fact` instance, or ``None`` if a
-            duplicate was skipped.
-        """
-        from sqlalchemy import func
-        from sqlalchemy.dialects.postgresql import insert as pg_insert
-
-        stmt = (
-            pg_insert(Fact)
-            .values(
-                id=func.gen_random_uuid(),
-                user_id=user_id,
-
-                project_id=project_id,
-                content=content,
-                subject=subject,
-                predicate=predicate,
-                object=obj,
-                subject_type=subject_type,
-                object_type=object_type,
-                confidence=confidence,
-                source_episode_id=source_episode_id,
-                valid_from=valid_from or datetime.now(),
-                subject_entity_id=subject_entity_id,
-                object_entity_id=object_entity_id,
-            embedding=None,
-            )
-            .on_conflict_do_nothing(
-                constraint="uq_facts_temporal_excl",
-            )
-            .returning(Fact)
-        )
-        result = await self._db.execute(stmt)
-        await self._db.flush()
-        return result.scalar_one_or_none()
-
     # ── Get by ID ────────────────────────────────────────────────────────────
 
     async def get_by_id(
@@ -961,73 +898,6 @@ class FactRepository:
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_facts_in_range(
-        self,
-        project_id: UUID,
-        start: datetime,
-        end: datetime,
-        *,
-        user_id: UUID | None = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> list[Fact]:
-        """Return facts whose valid range overlaps ``[start, end)``.
-
-        Btree-backed query (NOT GiST ``&&``)::
-
-            WHERE project_id = :project_id
-              AND (invalid_at IS NULL OR invalid_at > :start)
-              AND (valid_from IS NULL OR valid_from < :end)
-              AND (valid_to IS NULL OR valid_to > :start)
-            ORDER BY valid_from ASC
-            LIMIT :limit OFFSET :offset
-
-        The effective-at ``invalid_at`` bound uses ``:t = start`` so facts
-        superseded inside the range are still returned (they were valid
-        during part of it) while hard-retracted facts stay excluded.
-
-        The GiST range-overlap index is intentionally deferred — add it
-        only if profiling proves the btree plan is too slow at scale.
-
-        Args:
-            project_id: Project scope.
-            start: Start of the query range (inclusive per ``'[)'``
-                semantics).
-            end: End of the query range (exclusive per ``'[)'`` semantics).
-            user_id: Optional tenant filter for defense-in-depth.
-            limit: Maximum number of results to return (capped at 200).
-            offset: Number of results to skip (for pagination).
-
-        Returns:
-            A list of ``Fact`` ORM instances whose valid range overlaps
-            the query range.
-        """
-        from sqlalchemy import select
-
-        effective_limit = min(limit, 200)
-
-        stmt = (
-            select(Fact)
-            .where(Fact.project_id == project_id)
-            .where(
-                or_(Fact.invalid_at.is_(None), Fact.invalid_at > start),
-            )
-            .where(
-                (Fact.valid_from.is_(None)) | (Fact.valid_from < end),
-            )
-            .where(
-                (Fact.valid_to.is_(None)) | (Fact.valid_to > start),
-            )
-            .order_by(Fact.valid_from.asc().nullsfirst())
-            .limit(effective_limit)
-            .offset(offset)
-        )
-        if user_id is not None:
-            stmt = stmt.where(Fact.user_id == user_id)
-
-        result = await self._db.execute(stmt)
-        return list(result.scalars().all())
-
     # ── Predicate Aggregates (behavioral patterns) ───────────────────────────
 
     async def get_fact_predicate_counts(
@@ -1280,65 +1150,6 @@ class FactRepository:
         return facts, next_cursor
 
     # ── Vector Search ─────────────────────────────────────────────────────────
-
-    async def search_by_vector(
-        self, embedding: list[float], project_id: UUID, user_id: UUID, limit: int = 50
-    ) -> list[dict[str, Any]]:
-        """Search facts by vector similarity (pgvector cosine distance).
-
-        Uses the ``<=>`` operator on the ``embedding`` column. The score is
-        inverted (``1 - distance``) so higher = more similar. Only returns
-        facts that have a non-null embedding.
-
-        Args:
-            embedding: The query embedding vector.
-            project_id: Scope results to this project.
-            user_id: Tenant scope for multi-tenant isolation.
-            limit: Maximum results (capped at 200).
-
-        Returns:
-            A list of dicts with keys ``id``, ``content``, ``subject``,
-            ``predicate``, ``object``, ``confidence``, and ``score``.
-        """
-        effective_limit = min(limit, 200)
-
-        now = datetime.now(UTC)
-        result = await self._db.execute(
-            text(
-                """
-                SELECT id, content, subject, predicate, "object", confidence,
-                       1 - (embedding <=> :embedding) AS score
-                FROM facts
-                WHERE project_id = :project_id
-                  AND user_id = :user_id
-                  AND embedding IS NOT NULL
-                  AND (invalid_at IS NULL OR invalid_at > :effective_at)
-                  AND (valid_from IS NULL OR valid_from <= :effective_at)
-                  AND (valid_to IS NULL OR valid_to > :effective_at)
-                ORDER BY embedding <=> :embedding
-                LIMIT :limit
-                """
-            ),
-            {
-                "embedding": embedding,
-                "project_id": project_id,
-                "user_id": user_id,
-                "limit": effective_limit,
-                "effective_at": now,
-            },
-        )
-        return [
-            {
-                "id": str(r[0]),
-                "content": r[1],
-                "subject": r[2],
-                "predicate": r[3],
-                "object": r[4],
-                "confidence": float(r[5]) if r[5] is not None else 0.0,
-                "score": float(r[6]),
-            }
-            for r in result.fetchall()
-        ]
 
     # ── BM25 Full-Text Search ─────────────────────────────────────────────────
 

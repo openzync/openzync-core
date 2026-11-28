@@ -311,43 +311,6 @@ class TestWebhookService:
         after = webhook_decrypt_skips_total.labels(reason="legacy_vault")._value.get()
         assert after == before + 1
 
-    # ── rotate_endpoint_secret ───────────────────────────────────────────────
-
-    @pytest.mark.asyncio
-    async def test_rotate_endpoint_secret_returns_new_secret(self) -> None:
-        """``rotate_endpoint_secret`` persists and returns a fresh secret."""
-        service, mock_repo = self._make_service()
-        mock_repo.get_by_id.return_value = self._make_endpoint(
-            signing_secret="whsec_old",  # noqa: S106
-        )
-
-        new_secret = await service.rotate_endpoint_secret(
-            self.ENDPOINT_ID, self.ORG_ID,
-        )
-
-        assert isinstance(new_secret, str)
-        assert len(new_secret) >= 32
-        assert new_secret != "whsec_old"  # noqa: S105
-        stored = mock_repo.update.await_args.kwargs["signing_secret"]
-        assert stored.startswith("v1:webhook-secret:")
-        assert (
-            crypto.decrypt("webhook-secret", str(self.ENDPOINT_ID), stored)
-            == new_secret
-        )
-
-    @pytest.mark.asyncio
-    async def test_rotate_endpoint_secret_wrong_org_returns_none(self) -> None:
-        """``rotate_endpoint_secret`` returns None for a different org."""
-        service, mock_repo = self._make_service()
-        mock_repo.get_by_id.return_value = self._make_endpoint()
-
-        result = await service.rotate_endpoint_secret(
-            self.ENDPOINT_ID, self.WRONG_ORG_ID,
-        )
-        assert result is None
-        mock_repo.update.assert_not_awaited()
-
-    # ── update_endpoint ─────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
     async def test_update_endpoint_ownership_check(self) -> None:
@@ -375,34 +338,6 @@ class TestWebhookService:
         assert result is not None
         assert result["name"] == "Updated"
 
-    # ── toggle_endpoint ─────────────────────────────────────────────────────
-
-    @pytest.mark.asyncio
-    async def test_toggle_endpoint_activates(self) -> None:
-        """``toggle_endpoint`` enables an endpoint."""
-        service, mock_repo = self._make_service()
-        mock_repo.get_by_id.return_value = self._make_endpoint(is_active=False)
-        updated_ep = self._make_endpoint(is_active=True)
-        mock_repo.update.return_value = updated_ep
-
-        result = await service.toggle_endpoint(
-            self.ENDPOINT_ID, self.ORG_ID, is_active=True,
-        )
-        assert result is not None
-        assert result["is_active"] is True
-
-    @pytest.mark.asyncio
-    async def test_toggle_endpoint_wrong_org(self) -> None:
-        """``toggle_endpoint`` returns None for wrong org."""
-        service, mock_repo = self._make_service()
-        mock_repo.get_by_id.return_value = self._make_endpoint()
-
-        result = await service.toggle_endpoint(
-            self.ENDPOINT_ID, self.WRONG_ORG_ID, is_active=False,
-        )
-        assert result is None
-
-    # ── delete_endpoint ─────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
     async def test_delete_endpoint_success(self) -> None:

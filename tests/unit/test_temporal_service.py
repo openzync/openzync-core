@@ -248,57 +248,6 @@ class TestTemporalValidationService:
 
     # ── validate_batch ────────────────────────────────────────────────────
 
-    async def test_batch_no_overlap(
-        self, service: TemporalValidationService, mock_repo: AsyncMock
-    ) -> None:
-        """No overlapping triples in batch → empty warnings."""
-        facts = [
-            {"subject": "A", "predicate": "knows", "object": "B",
-             "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
-             "valid_to": datetime(2024, 6, 30, tzinfo=UTC)},
-            {"subject": "C", "predicate": "knows", "object": "D",
-             "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
-             "valid_to": datetime(2024, 6, 30, tzinfo=UTC)},
-        ]
-        warnings = await service.validate_batch(facts)
-        assert warnings == []
-
-    async def test_batch_self_overlap_detected(
-        self, service: TemporalValidationService, mock_repo: AsyncMock
-    ) -> None:
-        """Same triple, overlapping ranges in batch → warning."""
-        facts = [
-            {"subject": "A", "predicate": "knows", "object": "B",
-             "source_episode_id": "00000000-0000-0000-0000-000000000010",
-             "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
-             "valid_to": datetime(2024, 6, 30, tzinfo=UTC)},
-            {"subject": "A", "predicate": "knows", "object": "B",
-             "source_episode_id": "00000000-0000-0000-0000-000000000010",
-             "valid_from": datetime(2024, 3, 1, tzinfo=UTC),
-             "valid_to": datetime(2024, 9, 30, tzinfo=UTC)},
-        ]
-        warnings = await service.validate_batch(facts)
-        assert len(warnings) == 1
-        assert warnings[0]["code"] == "batch_overlap"
-
-    async def test_batch_different_episodes_no_overlap(
-        self, service: TemporalValidationService, mock_repo: AsyncMock
-    ) -> None:
-        """Same triple, different source_episode_id → no batch warning
-        (cross-episode dedup is handled by project-level scan)."""
-        facts = [
-            {"subject": "A", "predicate": "knows", "object": "B",
-             "source_episode_id": "00000000-0000-0000-0000-000000000010",
-             "valid_from": datetime(2024, 1, 1, tzinfo=UTC)},
-            {"subject": "A", "predicate": "knows", "object": "B",
-             "source_episode_id": "00000000-0000-0000-0000-000000000011",
-             "valid_from": datetime(2024, 1, 1, tzinfo=UTC)},
-        ]
-        warnings = await service.validate_batch(facts)
-        assert warnings == []
-
-    # ── _ranges_overlap helper ─────────────────────────────────────────────
-
     def test_ranges_overlap_both_null(self, service) -> None:
         """Both ranges fully open (NULL,NULL) → overlap."""
         assert service._ranges_overlap(None, None, None, None)

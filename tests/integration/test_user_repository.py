@@ -115,18 +115,7 @@ class TestUserRepository:
             assert deleted is not None
             assert deleted.is_deleted is True
 
-    async def test_hard_delete(self, engine) -> None:
-        """Hard delete removes the row permanently."""
-        async with AsyncSession(engine) as db:
-            repo = UserRepository(db)
-            user = await self._seed_user(repo)
 
-            result = await repo.hard_delete(user.id)
-            assert result is True
-
-            # Verify gone
-            found = await repo.get_by_uuid(user.id)
-            assert found is None
 
     async def test_list_pagination(self, engine) -> None:
         """List returns paginated results with cursor."""

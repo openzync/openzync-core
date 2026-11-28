@@ -557,7 +557,6 @@ class TestProjectService:
         mock_repo.get_accessible_project.return_value = self._make_pinnable_project()
         mock_repo.get_member.return_value = self._make_mock_member()
         mock_pin_repo.is_pinned.return_value = False
-        mock_pin_repo.count_for_user.return_value = MAX_PINS
         mock_pin_repo.pin_if_under_limit.return_value = None
 
         with pytest.raises(ValidationError) as exc_info:

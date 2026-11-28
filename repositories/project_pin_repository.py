@@ -52,23 +52,6 @@ class ProjectPinRepository:
         )
         return set(result.scalars().all())
 
-    async def count_for_user(self, user_id: UUID) -> int:
-        """Count how many projects a user has pinned in an org.
-
-        Args:
-
-            user_id: The user whose pins to count.
-
-        Returns:
-            Pin count (0 if none).
-        """
-        result = await self._db.execute(
-            select(func.count(ProjectPin.id)).where(
-                ProjectPin.user_id == user_id,
-            )
-        )
-        return result.scalar() or 0
-
     async def is_pinned(
         self, user_id: UUID, project_id: UUID
     ) -> bool:
@@ -89,48 +72,6 @@ class ProjectPinRepository:
             )
         )
         return result.scalar_one_or_none() is not None
-
-    async def pin(
-        self, user_id: UUID, project_id: UUID
-    ) -> ProjectPin:
-        """Create a pin row (idempotent on duplicate).
-
-        A concurrent duplicate insert raises ``IntegrityError`` on the
-        ``uq_project_pins_user_project`` constraint — only the savepoint
-        rolls back (the surrounding request transaction is untouched) and
-        the existing row is returned instead, so callers never observe a
-        500 for a double-pin race.
-
-        Args:
-
-            user_id: The user pinning.
-            project_id: The project to pin.
-
-        Returns:
-            The new or pre-existing ProjectPin.
-        """
-        pin = ProjectPin(
-
-            user_id=user_id,
-            project_id=project_id,
-        )
-        try:
-            async with self._db.begin_nested():
-                self._db.add(pin)
-                await self._db.flush()
-        except IntegrityError:
-            result = await self._db.execute(
-                select(ProjectPin).where(
-                    ProjectPin.user_id == user_id,
-                    ProjectPin.project_id == project_id,
-                )
-            )
-            existing = result.scalar_one_or_none()
-            if existing is None:  # pragma: no cover — lost race, row vanished
-                raise
-            return existing
-        await self._db.refresh(pin)
-        return pin
 
     async def pin_if_under_limit(
         self,

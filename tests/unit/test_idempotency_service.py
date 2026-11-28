@@ -193,49 +193,6 @@ class TestIdempotencyService:
         assert result is None
         mock_redis.get.assert_awaited_once()
 
-    @pytest.mark.asyncio
-    async def test_store_content_hash(self, mock_redis: AsyncMock) -> None:
-        """store_content_hash returns the content hash string."""
-        mock_redis.set.return_value = True
-        service = IdempotencyService(redis=mock_redis)
-
-        result = await service.store_content_hash(
-            "user1", "session1",
-            [{"role": "user", "content": "Hello"}],
-        )
-        assert isinstance(result, str)
-        assert len(result) > 0
-
-    @pytest.mark.asyncio
-    async def test_store_content_hash_with_payload_roundtrip(
-        self, mock_redis: AsyncMock,
-    ) -> None:
-        """Payload stored with SETNX; check returns it unchanged."""
-        stored_value: dict = {}
-
-        async def _fake_set(key: str, value: str, **kwargs: object) -> bool:
-            stored_value["key"] = key
-            stored_value["value"] = value
-            return True
-
-        mock_redis.set.side_effect = _fake_set
-        service = IdempotencyService(redis=mock_redis)
-
-        content_hash = await service.store_content_hash(
-            "user1", "session1",
-            [{"role": "user", "content": "Hello"}],
-            payload="job-456",
-        )
-        assert stored_value["value"] == "job-456"
-
-        mock_redis.get.return_value = stored_value["value"]
-        result = await service.check_content_hash(
-            "user1", "session1",
-            [{"role": "user", "content": "Hello"}],
-        )
-        assert result == "job-456"
-        assert content_hash == stored_value["key"].rsplit(":", 1)[-1]
-
     def test_compute_content_hash_includes_metadata_and_blobs(self) -> None:
         """Different metadata/blobs produce different hashes."""
         base = [{"role": "user", "content": "Hello"}]

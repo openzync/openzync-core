@@ -13,7 +13,34 @@ import logging
 import sys
 from pathlib import Path
 
-ALLOWLIST: set[str] = set()
+ALLOWLIST: set[str] = {
+    # Bucket B false positives — entrypoints, not Python imports (ARQ /
+    # __main__ / shell). Never delete these.
+    "entrypoint",
+    "create_arq_worker",
+    "on_shutdown",
+    "on_job_end",
+    "liveness_check",
+    "monitor_queue_depth",
+    "try_acquire_leader_lock",
+    "renew_leader_lock",
+    "rls_scoped_session_factory",
+    "get_worker_settings",
+    "WorkerSettings.from_env",
+    "resolve_prompt_template_by_type",
+    # Import-alias false positives (`import X as Y` in routers/health.py).
+    "check_db_health",
+    "check_redis_health",
+    # Same-file-only use flagged by the cross-file rule; both are live.
+    "sign_payload",
+    "send_invite_email",
+    # Live but audit-blind: called from package ``__init__`` facades,
+    # which the scanner skips (ObservationService in
+    # services/observations/__init__.py). Never delete these.
+    "detect_behavioral_patterns",
+    "detect_co_occurrences",
+    "detect_temporal_gaps",
+}
 
 SCAN_SUBDIRS = ("services", "schemas", "core", "repositories", "workers")
 SKIP_PARTS = (".venv", "__pycache__", "tests", "migrations")
@@ -110,10 +137,30 @@ def audit(root: Path) -> list[dict]:
     """
     defs = collect_definitions(root)
     per_file = _usages_per_file(root)
+    called_per_file = _called_per_file(root)
+    names_per_file = _names_per_file(root)
     rows: list[dict] = []
     for d in defs:
         if d["qualname"] in ALLOWLIST or d["simple"] in ALLOWLIST or d["forced_used"]:
             rows.append({**d, "status": "USED", "caller_example": "allowlisted/decorated"})
+            continue
+        own_called = called_per_file.get(d["defined_in"], set())
+        own_names = names_per_file.get(d["defined_in"], set())
+        same_file_hit = d["simple"] in own_called or (
+            # Bare-name references count for classes/module functions
+            # (field annotations, registries). For methods they are
+            # usually same-named locals (e.g. `pin = ProjectPin(...)`
+            # inside `def pin`) — calls only.
+            d["kind"] != "method"
+            and d["simple"] in own_names
+        )
+        if same_file_hit:
+            # Actually invoked inside its own file (bare/self. call or
+            # bare-name reference such as a processor/registry list) — live.
+            # (Attribute access on other objects and docstring mentions do
+            # NOT count; `local.method()` same-file calls are a known gap —
+            # verify those by grep before deleting.)
+            rows.append({**d, "status": "USED", "caller_example": "same-file"})
             continue
         caller = ""
         for fname, names in per_file.items():
@@ -128,6 +175,89 @@ def audit(root: Path) -> list[dict]:
 
 
 _usages_cache: dict[str, dict[str, set[str]]] = {}
+_called_cache: dict[str, dict[str, set[str]]] = {}
+
+
+def _called_per_file(root: Path) -> dict[str, set[str]]:
+    """Return per-file sets of precisely-invoked names (same-file check).
+
+    Counts bare calls (``helper(...)``), ``self.``/``cls.`` access
+    (call or property read), and ``local.method()`` attribute access
+    where the base is not itself dotted (``ctx.as_params()``,
+    ``manifest.get_template_text()``). ``a.b.c()`` chains are excluded —
+    the attr most likely belongs to another object's API.
+    Attribute access on other objects and docstring mentions do NOT
+    count. Known residual gap: ``Type(...).method()`` chained calls.
+    """
+    key = str(root)
+    if key not in _called_cache:
+        called: dict[str, set[str]] = {}
+        for path in sorted(root.rglob("*.py")):
+            if _is_skipped(path):
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (SyntaxError, UnicodeDecodeError):
+                continue
+            names: set[str] = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    func = node.func
+                    if isinstance(func, ast.Name):
+                        names.add(func.id)
+                    elif (
+                        isinstance(func, ast.Attribute)
+                        and isinstance(func.value, ast.Name)
+                        and func.value.id in ("self", "cls")
+                    ):
+                        names.add(func.attr)
+                elif (
+                    isinstance(node, ast.Attribute)
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id in ("self", "cls")
+                ):
+                    # Property-style read (`provider=self.provider_name`).
+                    names.add(node.attr)
+                elif (
+                    isinstance(node, ast.Attribute)
+                    and not isinstance(node.value, ast.Attribute)
+                ):
+                    # `local.method()` on a non-dotted base (`ctx`,
+                    # `manifest`, a constructor call) — same-file collaboration.
+                    names.add(node.attr)
+            called[str(path.relative_to(root))] = names
+        _called_cache[key] = called
+    return _called_cache[key]
+
+
+_names_cache: dict[str, dict[str, set[str]]] = {}
+
+
+def _names_per_file(root: Path) -> dict[str, set[str]]:
+    """Return per-file sets of bare-Name occurrences (any context).
+
+    Used only for the same-file check: within one file a bare occurrence
+    of the defined name (call, decorator, registry list, alias) almost
+    always refers to the definition. Attribute access, string literals,
+    and comments are excluded.
+    """
+    key = str(root)
+    if key not in _names_cache:
+        names_map: dict[str, set[str]] = {}
+        for path in sorted(root.rglob("*.py")):
+            if _is_skipped(path):
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (SyntaxError, UnicodeDecodeError):
+                continue
+            found: set[str] = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name):
+                    found.add(node.id)
+            names_map[str(path.relative_to(root))] = found
+        _names_cache[key] = names_map
+    return _names_cache[key]
 
 
 def _usages_per_file(root: Path) -> dict[str, set[str]]:
@@ -150,6 +280,12 @@ def _usages_per_file(root: Path) -> dict[str, set[str]]:
                     names.add(node.attr)
                 elif isinstance(node, ast.Constant) and isinstance(node.value, str):
                     names.add(node.value)
+                elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                    # `import X as Y` binds Y locally, so the Name walk misses
+                    # X — record the original name as used (alias import).
+                    for alias in node.names:
+                        if alias.asname:
+                            names.add(alias.name.split(".")[0])
             per_file[str(path.relative_to(root))] = names
         _usages_cache[key] = per_file
     return _usages_cache[key]

@@ -398,27 +398,6 @@ class BlobStorageService:
             blob_count=len(blob_records),
         )
 
-    # ── Validation ──────────────────────────────────────────────────────────
-
-    @staticmethod
-    def validate_blob_metadata_count(
-        blob_metadatas: Sequence[BlobMetadata],
-    ) -> None:
-        """Validate per-message blob count limits.
-
-        Args:
-            blob_metadatas: List of ``BlobMetadata`` for one message.
-
-        Raises:
-            ValidationError: If the count exceeds the per-message limit.
-        """
-        settings = get_settings()
-        if len(blob_metadatas) > settings.MAX_BLOBS_PER_MESSAGE:
-            raise ValidationError(
-                f"Too many blobs per message: {len(blob_metadatas)} exceeds "
-                f"limit of {settings.MAX_BLOBS_PER_MESSAGE}"
-            )
-
     # ── Presigned URL ───────────────────────────────────────────────────────
 
     @staticmethod

@@ -53,11 +53,6 @@ class EntityRepository:
             )
         self._backend = graph_backend
 
-    @property
-    def is_available(self) -> bool:
-        """``True`` when a graph backend is initialised and ready."""
-        return self._backend is not None
-
     # ── Entity CRUD ───────────────────────────────────────────────────────────
 
     async def upsert_entity(
@@ -196,44 +191,6 @@ class EntityRepository:
             )
             raise GraphBackendUnavailableError(
                 "Entity repository operation failed: get_entity_by_name."
-            ) from exc
-
-    async def get_entity_by_id(
-        self,
-        user_id: UUID,
-        project_id: UUID,
-        entity_id: UUID,
-    ) -> dict | None:
-        """Retrieve an entity by its UUID.
-
-        Returns:
-            The entity dict if found, ``None`` if no match exists.
-
-        Raises:
-            GraphBackendUnavailableError: If the graph backend is not
-                configured or the operation fails.
-        """
-        if self._backend is None:
-            raise GraphBackendUnavailableError(
-                "Graph backend is not configured for this user."
-            )
-
-        try:
-            return await self._backend.get_entity(
-                user_id=user_id, project_id=project_id, entity_id=entity_id
-            )
-        except Exception as exc:
-            logger.error(
-                "entity_repository.get_entity_by_id_failed",
-                extra={
-                    "user_id": str(user_id),
-                    "project_id": str(project_id),
-                    "entity_id": str(entity_id),
-                },
-                exc_info=True,
-            )
-            raise GraphBackendUnavailableError(
-                "Entity repository operation failed: get_entity_by_id."
             ) from exc
 
     # ── Relationship CRUD ──────────────────────────────────────────────────────

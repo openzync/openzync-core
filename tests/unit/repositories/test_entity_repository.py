@@ -44,15 +44,6 @@ class TestEntityRepository:
         with pytest.raises(GraphBackendUnavailableError):
             EntityRepository(db=mock_db, graph_backend=None)
 
-    def test_init_with_backend_succeeds(
-        self, mock_db: AsyncMock, mock_backend: AsyncMock
-    ) -> None:
-        """EntityRepository initialises successfully with a backend."""
-        repo = EntityRepository(db=mock_db, graph_backend=mock_backend)
-        assert repo.is_available is True
-
-    # ── upsert_entity ──────────────────────────────────────────────────────────
-
     async def test_upsert_entity_creates_new(
         self, repo: EntityRepository, mock_backend: AsyncMock
     ) -> None:
@@ -174,50 +165,6 @@ class TestEntityRepository:
             )
 
     # ── get_entity_by_id ───────────────────────────────────────────────────────
-
-    async def test_get_entity_by_id_found(
-        self, repo: EntityRepository, mock_backend: AsyncMock
-    ) -> None:
-        """get_entity_by_id returns entity from backend."""
-        entity = {"id": str(self.ENTITY_ID), "name": "Alice", "type": "Person"}
-        mock_backend.get_entity.return_value = entity
-
-        result = await repo.get_entity_by_id(
-            user_id=self.ORG_ID,
-            project_id=self.PROJECT_ID,
-            entity_id=self.ENTITY_ID,
-        )
-
-        assert result == entity
-
-    async def test_get_entity_by_id_not_found(
-        self, repo: EntityRepository, mock_backend: AsyncMock
-    ) -> None:
-        """get_entity_by_id returns None when backend returns None."""
-        mock_backend.get_entity.return_value = None
-
-        result = await repo.get_entity_by_id(
-            user_id=self.ORG_ID,
-            project_id=self.PROJECT_ID,
-            entity_id=self.ENTITY_ID,
-        )
-
-        assert result is None
-
-    async def test_get_entity_by_id_backend_error(
-        self, repo: EntityRepository, mock_backend: AsyncMock
-    ) -> None:
-        """get_entity_by_id wraps backend errors."""
-        mock_backend.get_entity.side_effect = RuntimeError("fail")
-
-        with pytest.raises(GraphBackendUnavailableError):
-            await repo.get_entity_by_id(
-                user_id=self.ORG_ID,
-                project_id=self.PROJECT_ID,
-                entity_id=self.ENTITY_ID,
-            )
-
-    # ── upsert_relationship ────────────────────────────────────────────────────
 
     async def test_upsert_relationship_creates_edge(
         self, repo: EntityRepository, mock_backend: AsyncMock

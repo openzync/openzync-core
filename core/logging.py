@@ -5,23 +5,15 @@ Provides:
   processors and standard-library ``logging`` integration.
 - ``add_pii_redaction()`` — processor that redacts sensitive fields before
   they reach a renderer.
-- ``bind_request_context()`` — convenience for binding global context vars
-  (request_id, user_id, user_id).
 
 Usage:
 
-    from core.logging import setup_logging, bind_request_context
+    from core.logging import setup_logging
     from core.config import settings
 
     setup_logging(
         environment=settings.ENVIRONMENT,
         log_level=settings.LOG_LEVEL,
-    )
-
-    # Inside a middleware / dependency:
-    bind_request_context(
-        request_id="abc-123",
-        user_id="org-42",
     )
 
     # Any subsequent structlog.get_logger() call will include those fields.
@@ -96,24 +88,6 @@ _request_id: contextvars.ContextVar[str] = contextvars.ContextVar(
 _user_id: contextvars.ContextVar[str] = contextvars.ContextVar(
     "user_id", default=""
 )
-
-
-def bind_request_context(
-    request_id: str,
-    user_id: str | None = None,
-) -> None:
-    """Bind global request-scoped context variables.
-
-    These values are automatically included in every log entry emitted during
-    the request.
-
-    Args:
-        request_id: Unique identifier for the current request.
-        user_id: Authenticated user identifier (optional).
-    """
-    _request_id.set(request_id)
-    if user_id is not None:
-        _user_id.set(user_id)
 
 
 def _add_context_from_vars(

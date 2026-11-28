@@ -36,18 +36,12 @@ Usage
     if not claim.won:
         return claim.winner  # duplicate — replay winner payload (e.g. job_id)
     # ... proceed with ingestion ...
-    # Legacy fast-path pair (best-effort only, never authoritative):
-    existing = await service.check_content_hash(user_id, session_id, messages)
-    if existing:
-        return  # duplicate content — replay existing payload (e.g. job_id)
-    ...
-    await service.store_content_hash(
-        user_id, session_id, messages, payload=job_id
-    )
-
-    # Worker-level
-    if await service.check_and_mark_worker(db, episode_id, ENRICHMENT_ENTITIES):
-        await do_extract_entities(db, episode_id)
+    # Release on failure so a retry can claim fresh (never a stale replay):
+    try:
+        ...  # proceed with ingestion
+    except Exception:
+        await service.release_content_hash(user_id, session_id, messages)
+        raise
 """
 
 from __future__ import annotations
@@ -61,10 +55,8 @@ from uuid import UUID  # noqa: TCH003 — used in type hints for callers
 
 import orjson
 from redis import asyncio as aioredis
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import get_settings
-from repositories.episode_repository import EpisodeRepository
 from workers.tasks.base import (  # noqa: F401  — re-export
     ENRICHMENT_ALL,
     ENRICHMENT_EMBEDDING,
@@ -462,66 +454,6 @@ class IdempotencyService:
 
         return None
 
-    async def store_content_hash(
-        self,
-        user_id: str,
-        session_id: str,
-        messages: list[dict[str, Any]],
-        *,
-        payload: str | None = None,
-    ) -> str:
-        """Refresh a content-hash key (metrics/log best-effort ONLY).
-
-        Uses ``SET NX`` so the first writer's value wins. This is NOT an
-        ingest gate and must never be paired with :meth:`check_content_hash`
-        as a check-then-set decision — that pair is TOCTOU-unsafe.
-        Ingest callers rely solely on :meth:`claim_content_hash`; this
-        helper exists for non-ingest writers (backfills, repairs) and for
-        refreshing TTL after a won claim.
-
-        Args:
-            user_id: User UUID string.
-            user_id: User UUID string.
-            session_id: Session UUID string.
-            messages: List of message dicts.
-            payload: Optional value to store instead of the hash — the
-                first caller's value wins (e.g. the first ``job_id``).
-
-        Returns:
-            The computed content hash hex string.
-        """
-        content_hash = self.compute_content_hash(
-            user_id, session_id, messages
-        )
-        cache_key = self._content_prefix + content_hash
-        value = payload if payload is not None else content_hash
-
-        # ⚠️ Not an atomic arbiter: ``SET NX`` wins the *value* but a
-        # concurrent caller may already have passed ``check_content_hash``
-        # and be ingesting.  Treat check+store as a best-effort fast path
-        # only — correctness comes from the atomic ``claim_content_hash``
-        # (Lua GET-or-SET) and the ``ingest_dedup`` unique claim
-        # (PostgreSQL).  Callers must never ingest on this check alone.
-        set_ok = await self._redis.set(cache_key, value, nx=True, ex=self._content_ttl)
-        if set_ok:
-            logger.debug(
-                "idempotency.content_hash_stored",
-                extra={
-                    "content_hash": content_hash[:16] + "...",
-                    "ttl": self._content_ttl,
-                },
-            )
-        else:
-            # Another concurrent caller already stored it — fine.
-            logger.debug(
-                "idempotency.content_hash_race_lost",
-                extra={
-                    "content_hash": content_hash[:16] + "...",
-                },
-            )
-
-        return content_hash
-
     async def claim_content_hash(
         self,
         user_id: str,
@@ -619,111 +551,6 @@ class IdempotencyService:
     # ──────────────────────────────────────────────────────────────────────────
     # Worker-level idempotency
     # ──────────────────────────────────────────────────────────────────────────
-
-    async def check_and_mark_worker(
-        self,
-        db: AsyncSession,
-        episode_id: str,
-        task_bit: int,
-    ) -> bool:
-        """Atomically claim an enrichment task for an episode.
-
-        Uses ``SELECT ... FOR UPDATE`` to lock the row, then checks
-        whether ``task_bit`` is already set in ``enrichment_status``.
-        If not set, ORs it in and returns ``True`` (caller should
-        proceed).  If already set, returns ``False`` (already done).
-
-        Args:
-            db: Database session **must** be in an active transaction
-                (``async with db.begin()``).
-            episode_id: UUID of the episode to claim.
-            task_bit: Bitmask constant for the enrichment task (e.g.
-                ``ENRICHMENT_ENTITIES``).
-
-        Returns:
-            ``True`` if the caller should proceed with processing (this
-            is the first time the task runs for this episode).
-            ``False`` if the task was already completed or is being
-            processed by another worker.
-
-        Raises:
-            ValueError: If the episode ID does not exist.
-        """
-        # ── Lock the row and read current enrichment_status ──────────────
-        episode_repo = EpisodeRepository(db)
-        episode = await episode_repo.get_by_id_for_update(UUID(episode_id))
-
-        if episode is None:
-            raise ValueError(f"Episode {episode_id} not found")
-
-        current_status: int = episode.enrichment_status
-
-        # ── Check if this task bit is already set ────────────────────────
-        if current_status & task_bit:
-            logger.info(
-                "idempotency.worker_already_done",
-                extra={
-                    "episode_id": episode_id,
-                    "task_bit": task_bit,
-                    "current_status": current_status,
-                },
-            )
-            return False
-
-        # ── Atomically set the bit (row is locked, SQL-level OR is atomic) ──
-        await episode_repo.apply_enrichment_bits(UUID(episode_id), task_bit)
-        # NOTE: Caller is responsible for ``await db.flush()`` or
-        # ``await db.commit()`` depending on transaction management.
-
-        logger.info(
-            "idempotency.worker_claimed",
-            extra={
-                "episode_id": episode_id,
-                "task_bit": task_bit,
-                "previous_status": current_status,
-                "new_status": current_status | task_bit,
-            },
-        )
-        return True
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # Cache invalidation
-    # ══════════════════════════════════════════════════════════════════════════
-
-    async def invalidate_user_cache(self, user_id: str) -> None:
-        """Invalidate all cached data for a given user.
-
-        Deletes cache keys matching the pattern
-        ``OpenZync:{env}:cache:{user_id}:{user_id}:*``.
-
-        Args:
-            user_id: User UUID string.
-            user_id: User UUID string.
-        """
-        pattern = f"{self._cache_prefix}{user_id}:{user_id}:*"
-        cursor: int = 0
-        deleted_count: int = 0
-
-        # SCAN in batches to avoid blocking Redis on large key spaces.
-        while True:
-            cursor, keys = await self._redis.scan(
-                cursor=cursor, match=pattern, count=100
-            )
-            if keys:
-                await self._redis.delete(*keys)
-                deleted_count += len(keys)
-
-            if cursor == 0:
-                break
-
-        if deleted_count > 0:
-            logger.info(
-                "idempotency.cache_invalidated",
-                extra={
-                    "user_id": user_id,
-                    "keys_deleted": deleted_count,
-                },
-            )
 
     # ══════════════════════════════════════════════════════════════════════════
     # Hash utility (public — used by callers to pre-compute before calling)

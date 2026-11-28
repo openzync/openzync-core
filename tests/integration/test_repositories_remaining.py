@@ -214,25 +214,7 @@ class TestAuthRepository:
             )
             assert token.id is not None
 
-    async def test_revoke_refresh_token(self, engine) -> None:
-        async with AsyncSession(engine) as db:
-            repo = AuthRepository(db)
-            token = await repo.create_refresh_token(
-                user_id=ORG_ID,
-                token_hash="revoke_hash", expires_at=datetime.now(),
-            )
-            assert token.is_revoked is False
 
-            await repo.revoke_refresh_token(token.id)
-            # Manually check the token was revoked in DB
-            from sqlalchemy import select
-
-            from models.refresh_token import RefreshToken
-            result = await db.execute(
-                select(RefreshToken).where(RefreshToken.id == token.id)
-            )
-            found = result.scalar_one()
-            assert found.is_revoked is True
 
 
 # ═══════════════════════════════════════════════════════════════════════════

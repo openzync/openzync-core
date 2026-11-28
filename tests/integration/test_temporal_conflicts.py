@@ -334,7 +334,7 @@ class TestFactTemporalExclusion:
 class TestTemporalQueries:
     """Integration tests for temporal query methods on facts.
 
-    Tests ``get_facts_at_time()`` and ``get_facts_in_range()`` from
+    Tests ``get_facts_at_time()`` from
     ``FactRepository`` against a real PostgreSQL database.
 
     Every test seeds a user + session + episode + facts, runs the query,
@@ -496,69 +496,3 @@ class TestTemporalQueries:
             await db.rollback()
             await db.close()
 
-    # ── get_facts_in_range ──────────────────────────────────────────────────
-
-    async def test_in_range_partial_overlap(self, engine) -> None:
-        """Query range partially overlaps a fact's range → returned."""
-        async def _test(db, repo):
-            await self._seed_facts(db, repo)
-            start = datetime(2024, 2, 1, tzinfo=UTC)
-            end = datetime(2024, 4, 1, tzinfo=UTC)
-            results = await repo.get_facts_in_range(PROJECT_ID, start, end)
-            subjects = {f.subject for f in results}
-            assert "QA" in subjects  # overlaps [Feb, Apr)
-            assert "QB" in subjects  # starts Mar, overlaps [Feb, Apr)
-            assert "QC" in subjects  # open-ended
-            assert "QD" not in subjects  # invalidated
-
-        db = await self._seed_data(engine)
-        try:
-            repo = FactRepository(db)
-            await _test(db, repo)
-        finally:
-            await db.rollback()
-            await db.close()
-
-    async def test_in_range_no_overlap(self, engine) -> None:
-        """Query range does not overlap any closed fact → only open-ended
-        facts are returned."""
-        async def _test(db, repo):
-            await self._seed_facts(db, repo)
-            start = datetime(2025, 1, 1, tzinfo=UTC)
-            end = datetime(2025, 6, 1, tzinfo=UTC)
-            results = await repo.get_facts_in_range(PROJECT_ID, start, end)
-            subjects = {f.subject for f in results}
-            assert "QA" not in subjects  # ended 2024-06
-            assert "QB" not in subjects  # ended 2024-09
-            assert "QC" in subjects  # open-ended — always active
-            assert "QD" not in subjects  # invalidated
-
-        db = await self._seed_data(engine)
-        try:
-            repo = FactRepository(db)
-            await _test(db, repo)
-        finally:
-            await db.rollback()
-            await db.close()
-
-    async def test_in_range_adjacent_no_overlap(self, engine) -> None:
-        """Adjacent range (end=start) does not overlap ('[)' semantics)."""
-        async def _test(db, repo):
-            await self._seed_facts(db, repo)
-            # Fact QA ends at 2024-06-30.  Query [2024-06-30, 2024-12-31)
-            # should NOT include QA because '[)' excludes the end.
-            start = datetime(2024, 6, 30, tzinfo=UTC)
-            end = datetime(2024, 12, 31, tzinfo=UTC)
-            results = await repo.get_facts_in_range(PROJECT_ID, start, end)
-            subjects = {f.subject for f in results}
-            assert "QA" not in subjects  # QA ends exactly at start of query
-            assert "QC" in subjects  # open-ended, still active
-            assert "QD" not in subjects  # invalidated
-
-        db = await self._seed_data(engine)
-        try:
-            repo = FactRepository(db)
-            await _test(db, repo)
-        finally:
-            await db.rollback()
-            await db.close()

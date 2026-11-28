@@ -15,23 +15,23 @@ class RetrievalRepository(Protocol):
     only — never SQL fragments.
     """
 
-    async def vector_search_episodes(
+    def build_episode_vector_stmt(
         self,
         embedding: list[float],
         project_id: UUID,
         limit: int,
-    ) -> list[dict[str, Any]]:
-        """Return nearest-neighbour episodes for a query embedding."""
+    ) -> Any:
+        """Build the episode nearest-neighbour statement (no I/O)."""
         ...
 
-    async def vector_search_facts(
+    def build_fact_vector_stmt(
         self,
         embedding: list[float],
         project_id: UUID,
         limit: int,
         effective_time: datetime | None = None,
-    ) -> list[dict[str, Any]]:
-        """Return nearest-neighbour facts valid at ``effective_time``."""
+    ) -> Any:
+        """Build the fact nearest-neighbour statement (no I/O)."""
         ...
 
     async def ranked_execute(self, stmt: Any) -> list[dict[str, Any]]:

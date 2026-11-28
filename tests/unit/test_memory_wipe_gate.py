@@ -56,7 +56,7 @@ class TestWipeOrgGate:
         """``get_by_id → None`` → ``NotFoundError`` 404, no deletes."""
         service = _memory_service()
         service._project_repo.get_by_id.return_value = None
-        service._blob_repo.get_by_project.return_value = []
+        service._blob_repo.get_by_project_after.return_value = []
 
         with pytest.raises(NotFoundError) as exc_info:
             await service.delete_project_memory(

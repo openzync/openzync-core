@@ -42,7 +42,7 @@ class TestOpenAIParsing:
         )
         assert (usage.prompt_tokens, usage.completion_tokens) == (7, 3)
         assert usage.reasoning_tokens == 0
-        assert usage.total_cache_tokens == 0
+        assert (usage.cache_read_input_tokens, usage.cache_creation_input_tokens) == (0, 0)
 
     def test_none_usage_read_as_zero(self) -> None:
         assert _parse_openai_usage(None).total_tokens == 0

@@ -228,7 +228,9 @@ async def app(engine, redis_client) -> Any:
     singleton, because ``create_app()`` calls ``get_settings()`` at
     construction time (module-level ``app = create_app()`` in main.py).
     """
-    from core.config import Settings, set_settings
+    import core.config as _cfg
+
+    from core.config import Settings
 
     pg_container = _testcontainers["pg"]
     pg_url = pg_container.get_connection_url()
@@ -246,7 +248,7 @@ async def app(engine, redis_client) -> Any:
         S3_ACCESS_KEY_ID="test-key",
         S3_SECRET_ACCESS_KEY="test-secret",
     )
-    set_settings(settings)
+    _cfg._settings = settings  # type: ignore[attr-defined] — singleton seam
 
     from dependencies.db import get_db
     from services.api.main import create_app
@@ -518,7 +520,9 @@ async def isolated_app(engine, redis_client, db_session) -> Any:
     auto-commit on success — but the ``db_session`` fixture truncates
     all tables on teardown, ensuring zero state leakage between tests.
     """
-    from core.config import Settings, set_settings
+    import core.config as _cfg
+
+    from core.config import Settings
 
     pg_container = _testcontainers["pg"]
     pg_url = pg_container.get_connection_url()
@@ -536,7 +540,7 @@ async def isolated_app(engine, redis_client, db_session) -> Any:
         S3_ACCESS_KEY_ID="test-key",
         S3_SECRET_ACCESS_KEY="test-secret",
     )
-    set_settings(settings)
+    _cfg._settings = settings  # type: ignore[attr-defined] — singleton seam
 
     from dependencies.db import get_db
     from services.api.main import create_app

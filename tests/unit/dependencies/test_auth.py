@@ -405,7 +405,7 @@ class TestGetDashboardUser:
     ORG_ID_STR = "00000000-0000-0000-0000-000000000001"
     USER_ID_STR = "00000000-0000-0000-0000-000000000002"
 
-    def _jwt_request(self, path: str = "/v1/admin/stats/org", method: str = "GET"):
+    def _jwt_request(self, path: str = "/v1/users", method: str = "GET"):
         """Build a JWT-authenticated request mock.
 
         ``app.state.redis`` is mocked with the must-change flag reading
@@ -484,7 +484,7 @@ class TestGetDashboardUser:
         """Flag set → 403 on a normal dashboard route."""
         from dependencies.auth import get_dashboard_user
 
-        request = self._flag_request("/v1/admin/stats/org")
+        request = self._flag_request("/v1/users")
         with patch(
             "dependencies.auth.get_must_change_password",
             new=AsyncMock(return_value=True),
@@ -522,7 +522,7 @@ class TestGetDashboardUser:
         """Flag cleared → normal routes resolve normally."""
         from dependencies.auth import get_dashboard_user
 
-        request = self._flag_request("/v1/admin/stats/org")
+        request = self._flag_request("/v1/users")
         with patch(
             "dependencies.auth.get_must_change_password",
             new=AsyncMock(return_value=False),
@@ -541,7 +541,7 @@ class TestRequireAdmin:
         request = MagicMock(spec=Request)
         request.state.auth_type = "jwt"
         request.state.user_id = self.ADMIN_USER_ID_STR
-        request.url.path = "/admin/system/config"
+        request.url.path = "/admin/system/registration"
         request.method = "GET"
         redis = MagicMock()
         request.app.state.redis = redis

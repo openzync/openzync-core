@@ -12,29 +12,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import sys
-from collections.abc import Callable
-from typing import TypeVar
-
-import orjson
-
 from core.exceptions import CacheUnavailableError
 
 logger = logging.getLogger(__name__)
 
-# ── Type variable for the generic ``get_or_compute`` method ───────────────────
-
-T = TypeVar("T")
-
 # ── Constants ──────────────────────────────────────────────────────────────────
-
-STAMPEDE_LOCK_TTL: int = 10
-"""TTL in seconds for the stampede-protection lock.
-
-Should be shorter than the actual cache TTL.  If a worker holding the
-lock crashes, the lock auto-releases after this period.
-"""
-
 
 class CacheService:
     """Cache-aside service with stampede protection.
@@ -163,118 +145,6 @@ class CacheService:
             raise CacheUnavailableError(
                 f"Cache delete failed for key '{key}'."
             ) from exc
-
-    async def get_or_compute(
-        self,
-        key: str,
-        compute_fn: Callable[[], T],
-        ttl: int | None = None,
-        enable_stampede_protection: bool = True,
-    ) -> T:
-        """Cache-aside read with optional stampede protection.
-
-        Attempts to read from cache first.  On a cache miss, acquires a
-        lock (``SET NX EX``) and calls ``compute_fn`` under the lock.
-        The result is cached before the lock is released.
-
-        Stampede protection uses a separate lock key (``{key}:lock``)
-        to ensure only one process recomputes the value when the cache
-        is cold or expired.  The lock is released only if this call
-        acquired it — never after the lock's TTL expires and another
-        process takes it over.
-
-        Args:
-            key: The full Redis cache key.
-            compute_fn: A callable that produces the value to cache.
-                Called only on cache miss or when the lock is acquired.
-            ttl: Cache TTL in seconds.  Falls back to
-                ``self._default_ttl`` (default ``30``) when ``None``.
-            enable_stampede_protection: When ``True``, uses ``SET NX EX``
-                to prevent multiple concurrent recomputes.
-
-        Returns:
-            The cached or freshly computed value.
-
-        Raises:
-            CacheUnavailableError: If any Redis operation fails.
-        """
-        # ── Check cache ──────────────────────────────────────────────────
-        cached = await self.get(key)
-        if cached is not None:
-            # The compute_fn may return a different type (e.g. dict), but
-            # if we cached a string we return it as-is.  Callers that
-            # expect structured data should use ``get`` / ``set`` directly
-            # or JSON-serialise in the compute_fn.
-            return cached  # type: ignore[return-value]
-
-        # ── Stampede protection ──────────────────────────────────────────
-        acquired = False
-        lock_key: str | None = None
-        if enable_stampede_protection and self._redis is not None:
-            lock_key = f"{key}:lock"
-            try:
-                from redis.asyncio import Redis as AsyncRedis
-
-                r: AsyncRedis = self._redis  # type: ignore[assignment]
-                acquired = bool(
-                    await r.set(lock_key, "1", nx=True, ex=STAMPEDE_LOCK_TTL)
-                )
-                if not acquired:
-                    # Another process is computing — wait briefly and
-                    # retry the cache read.
-                    import asyncio
-
-                    await asyncio.sleep(0.1)
-                    retried = await self.get(key)
-                    if retried is not None:
-                        return retried  # type: ignore[return-value]
-                    # Lock holder may have crashed — proceed to compute.
-            except Exception as exc:
-                logger.error(
-                    "cache.stampede_lock_failed",
-                    extra={"key": key},
-                    exc_info=True,
-                )
-                raise CacheUnavailableError(
-                    f"Stampede lock acquisition failed for key '{key}'."
-                ) from exc
-
-        try:
-            # ── Compute and cache ────────────────────────────────────────
-            value = compute_fn()
-            effective_ttl = ttl if ttl is not None else self._default_ttl
-
-            if isinstance(value, str):
-                await self.set(key, value, ttl=effective_ttl)
-            else:
-                # Serialise non-string types to JSON for caching.
-                await self.set(key, orjson.dumps(value), ttl=effective_ttl)
-            return value
-        finally:
-            # Release the stampede lock only if THIS call acquired it.
-            # If our lock expired (10s TTL) and another process took it
-            # over in the meantime, deleting the key would break their
-            # stampede protection — never touch a lock we don't own.
-            if acquired and lock_key is not None:
-                inflight_exc = sys.exc_info()[0]
-                try:
-                    from redis.asyncio import Redis as AsyncRedis
-
-                    r: AsyncRedis = self._redis  # type: ignore[assignment]
-                    await r.delete(lock_key)
-                except Exception as exc:
-                    logger.error(
-                        "cache.stampede_unlock_failed",
-                        extra={"key": key},
-                        exc_info=True,
-                    )
-                    # If compute_fn raised, do not mask it with an unlock
-                    # failure — the original exception propagates and the
-                    # lock auto-frees via its TTL.
-                    if inflight_exc is None:
-                        raise CacheUnavailableError(
-                            f"Stampede lock release failed for key '{key}'."
-                        ) from exc
 
     # ── Key Builders ───────────────────────────────────────────────────────────
 

@@ -76,15 +76,6 @@ def load_manifest(*, reload: bool = False) -> PromptManifest:
     return _manifest_cache  # type: ignore[return-value]
 
 
-def invalidate_manifest_cache() -> None:
-    """Clear the module-level manifest cache.
-
-    The next call to :func:`load_manifest` will re-read from disk.
-    """
-    global _manifest_cache  # noqa: PLW0603
-    _manifest_cache = _UNSET
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Data class
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -117,23 +108,6 @@ class PromptManifest:
     def get_by_name(self, name: str) -> dict | None:
         """Return the manifest entry for a template name, or ``None``."""
         return self.by_name.get(name)
-
-    def get_default_for_type(self, type: str) -> dict | None:
-        """Return the manifest entry marked as type default, or ``None``.
-
-        Only one entry per type should have ``is_default_for_type: true``.
-        If multiple are accidentally marked, the first match wins.
-        """
-        for t in self.by_type.get(type, []):
-            if t.get("is_default_for_type"):
-                return t
-        return None
-
-    def get_default_names(self) -> list[str]:
-        """Return the template names of all type-default entries."""
-        return [
-            t["name"] for t in self.templates if t.get("is_default_for_type")
-        ]
 
     # ── File I/O ────────────────────────────────────────────────────────────
     # Tests-only helper — reads from disk on every call.  Never call this

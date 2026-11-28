@@ -110,52 +110,6 @@ class RetrievalRepository:
             limit=limit,
         )
 
-    async def vector_search_episodes(
-        self,
-        embedding: list[float],
-        project_id: UUID,
-        limit: int,
-    ) -> list[dict[str, Any]]:
-        """Find nearest-neighbour episodes by cosine distance.
-
-        Args:
-            embedding: Precomputed query embedding (canonical dim).
-            project_id: Project scope.
-            limit: Max results.
-
-        Returns:
-            Result dicts with ``id``, ``content``, ``role``, ``score``,
-            and ``created_at`` keys.
-        """
-        stmt = self.build_episode_vector_stmt(embedding, project_id, limit)
-        return await self.ranked_execute(stmt)
-
-    async def vector_search_facts(
-        self,
-        embedding: list[float],
-        project_id: UUID,
-        limit: int,
-        effective_time: datetime | None = None,
-    ) -> list[dict[str, Any]]:
-        """Find nearest-neighbour facts valid at ``effective_time``.
-
-        Args:
-            embedding: Precomputed query embedding (canonical dim).
-            project_id: Project scope.
-            limit: Max results.
-            effective_time: Effective-at instant for the validity
-                predicate (``None`` resolves to now here).
-
-        Returns:
-            Result dicts with ``id``, ``content``, ``subject``,
-            ``predicate``, ``object``, ``score``, ``confidence``,
-            ``valid_from``, ``valid_to``, and ``invalid_at`` keys.
-        """
-        stmt = self.build_fact_vector_stmt(
-            embedding, project_id, limit, effective_time
-        )
-        return await self.ranked_execute(stmt)
-
     async def ranked_execute(
         self,
         stmt: Select[Any],

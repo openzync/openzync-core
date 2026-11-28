@@ -288,16 +288,12 @@ class TestPiiRedaction:
 
 @pytest.mark.unit
 class TestRequestContext:
-    """bind_request_context() and _add_context_from_vars()."""
+    """Context-var propagation via ``_add_context_from_vars``."""
 
     @staticmethod
     def _reset_context_vars() -> None:
-        """Clear all three context vars to their default empty values.
-
-        ContextVars persist across tests within the same thread/context,
-        so we must reset them to avoid state leaking between test methods.
-        """
-        from core.logging import _user_id, _request_id
+        """Clear context vars to avoid state leaking between tests."""
+        from core.logging import _request_id, _user_id
 
         _request_id.set("")
         _user_id.set("")
@@ -305,64 +301,50 @@ class TestRequestContext:
     def test_binds_request_id(self) -> None:
         """request_id is set and appears in event dict."""
         self._reset_context_vars()
-        from core.logging import _add_context_from_vars, bind_request_context
+        from core.logging import _add_context_from_vars, _request_id
 
-        bind_request_context(request_id="req-001")
-        event_dict = _add_context_from_vars(None, None, {})
-        assert event_dict["request_id"] == "req-001"
-        """request_id is set and appears in event dict."""
-        from core.logging import _add_context_from_vars, bind_request_context
-
-        bind_request_context(request_id="req-001")
+        _request_id.set("req-001")
         event_dict = _add_context_from_vars(None, None, {})
         assert event_dict["request_id"] == "req-001"
 
     def test_binds_user_id(self) -> None:
         """user_id is set when provided."""
         self._reset_context_vars()
-        from core.logging import _add_context_from_vars, bind_request_context
+        from core.logging import _add_context_from_vars, _request_id, _user_id
 
-        bind_request_context(request_id="req-002", user_id="org-42")
+        _request_id.set("req-002")
+        _user_id.set("org-42")
         event_dict = _add_context_from_vars(None, None, {})
         assert event_dict["user_id"] == "org-42"
         assert event_dict["request_id"] == "req-002"
 
-    def test_binds_user_id(self) -> None:
-        """user_id is set when provided."""
-        self._reset_context_vars()
-        from core.logging import _add_context_from_vars, bind_request_context
-
-        bind_request_context(request_id="req-003", user_id="usr-7")
-        event_dict = _add_context_from_vars(None, None, {})
-        assert event_dict["user_id"] == "usr-7"
-        assert event_dict["request_id"] == "req-003"
-
     def test_binds_all_context_vars(self) -> None:
-        """All three context vars are set when all are provided."""
+        """Both context vars appear when both are set."""
         self._reset_context_vars()
-        from core.logging import _add_context_from_vars, bind_request_context
+        from core.logging import _add_context_from_vars, _request_id, _user_id
 
-        bind_request_context(request_id="req-004", user_id="u-1")
+        _request_id.set("req-004")
+        _user_id.set("u-1")
         event_dict = _add_context_from_vars(None, None, {})
-        assert event_dict == {"request_id": "req-004", "user_id": "o-1", "user_id": "u-1"}
+        assert event_dict == {"request_id": "req-004", "user_id": "u-1"}
 
     def test_skips_empty_optional_fields(self) -> None:
         """Optional fields not provided are omitted from event dict."""
         self._reset_context_vars()
-        from core.logging import _add_context_from_vars, bind_request_context
+        from core.logging import _add_context_from_vars, _request_id
 
-        bind_request_context(request_id="req-005")
+        _request_id.set("req-005")
         event_dict = _add_context_from_vars(None, None, {})
         assert "user_id" not in event_dict
-        assert "user_id" not in event_dict
+        assert event_dict["request_id"] == "req-005"
 
     def test_context_var_isolation(self) -> None:
-        """Context vars are per-context — second bind overrides first."""
+        """Second set overrides first."""
         self._reset_context_vars()
-        from core.logging import _add_context_from_vars, bind_request_context
+        from core.logging import _add_context_from_vars, _request_id
 
-        bind_request_context(request_id="first")
-        bind_request_context(request_id="second")
+        _request_id.set("first")
+        _request_id.set("second")
         event_dict = _add_context_from_vars(None, None, {})
         assert event_dict["request_id"] == "second"
 

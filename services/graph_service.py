@@ -62,31 +62,6 @@ class GraphService:
         self._webhook_service = webhook_service
         self._episode_repo = episode_repo
 
-    # ── User validation (moved from router layer) ───────────────────────────────
-
-    async def ensure_user_exists(self, user_id: UUID) -> None:
-        """Verify the user exists in the user scope.
-
-        Args:
-            user_id: The authenticated user UUID.
-            user_id: The requested user UUID.
-
-        Raises:
-            NotFoundError: If the user does not exist in the user scope
-                or no user repository is configured.
-        """
-        if self._user_repo is None:
-            raise NotFoundError(
-                message=f"User {user_id} not found — user repo not configured.",
-                detail={"user_id": str(user_id)},
-            )
-        user = await self._user_repo.get_by_uuid(user_id)
-        if user is None:
-            raise NotFoundError(
-                message=f"User {user_id} not found in user scope {user_id}",
-                detail={"user_id": str(user_id)},
-            )
-
     # ── Public API ──────────────────────────────────────────────────────────────
 
     async def get_entities(

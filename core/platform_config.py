@@ -275,15 +275,3 @@ async def update_platform_config(
 
     # 5. Re-read from DB (cache is cold — forces fresh read)
     return await get_platform_config(user_id, redis=redis, db=db, skip_cache=True)
-
-
-def build_cache_key(user_id: UUID) -> str:
-    """Build the Redis cache key for a user's config.
-
-    Args:
-        user_id: The user UUID.
-
-    Returns:
-        A string like ``"platform_config:<uuid>"``.
-    """
-    return f"{CACHE_KEY_PREFIX}:{user_id}"

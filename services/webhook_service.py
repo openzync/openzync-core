@@ -203,30 +203,6 @@ class WebhookService:
         )
         return self._serialize(endpoint), signing_secret
 
-    async def rotate_endpoint_secret(
-        self,
-        endpoint_id: uuid.UUID,
-        user_id: uuid.UUID,
-    ) -> str | None:
-        """Rotate an endpoint's signing secret, returning the new value once.
-
-        Args:
-            endpoint_id: The endpoint whose secret should be rotated.
-            user_id: The owning user (ownership check).
-
-        Returns:
-            The new signing secret, or ``None`` if the endpoint does not
-            exist or belongs to a different user scope.
-        """
-        endpoint = await self._repo.get_by_id(endpoint_id)
-        if not endpoint or endpoint.user_id != user_id:
-            return None
-
-        new_secret = secrets.token_urlsafe(43)
-        ciphertext = await self._encrypt_secret(endpoint_id, new_secret)
-        await self._repo.update(endpoint_id, signing_secret=ciphertext)
-        return new_secret
-
     async def update_endpoint(
         self,
         endpoint_id: uuid.UUID,
@@ -246,22 +222,6 @@ class WebhookService:
                 endpoint_id, str(raw_secret)
             )
         updated = await self._repo.update(endpoint_id, **updates)
-        return self._serialize(updated) if updated else None
-
-    async def toggle_endpoint(
-        self,
-        endpoint_id: uuid.UUID,
-        user_id: uuid.UUID,
-        is_active: bool,
-    ) -> dict | None:
-        """Enable or disable a webhook endpoint."""
-        endpoint = await self._repo.get_by_id(endpoint_id)
-        if not endpoint or endpoint.user_id != user_id:
-            return None
-
-        updated = await self._repo.update(
-            endpoint_id, is_active=is_active,
-        )
         return self._serialize(updated) if updated else None
 
     async def delete_endpoint(
