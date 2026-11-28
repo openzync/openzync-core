@@ -55,6 +55,7 @@ from core.rbac import (
     get_user_role,
     has_platform_manage,
 )
+from core.rls import rls_bypass
 from dependencies.db import get_db
 from repositories.project_repository import ProjectRepository
 
@@ -734,10 +735,11 @@ async def resolve_platform_scope(
     - Both filters together → 422.
     - ``target_user_id`` from a non-holder → 403; from a holder it
       scopes the read to that user (under an RLS bypass at the call site).
-    - ``project_id`` from a holder scopes the site-wide read to that
-      project.  From a non-holder the project must be caller-owned
-      (single owner query — members of shared projects get 403 here;
-      their rows stay visible through the unfiltered caller scope).
+    - ``project_id`` is owner-validated for ALL callers (holders and
+      admins included): unknown ids → 404, ids owned by another user →
+      403.  Only then does the holder branch narrow the site-wide read
+      to that project (under an RLS bypass at the call site) while
+      non-holders stay caller-scoped.
     - Neither filter: holders go site-wide, others stay caller-scoped.
 
     Args:
@@ -754,7 +756,8 @@ async def resolve_platform_scope(
 
     Raises:
         HTTPException: 422 if both filters are supplied, 403 if a
-            non-holder filters by user or by a project they do not own.
+            non-holder filters by user or by a project they do not own,
+            404 if the project does not exist.
     """
     if target_user_id is not None and project_id is not None:
         raise HTTPException(
@@ -778,11 +781,23 @@ async def resolve_platform_scope(
                 },
             )
         return target_user_id, False
-    if project_id is not None and not holder:
-        project = await ProjectRepository(db).get_by_id(caller_id, project_id)
+    if project_id is not None:
+        # Owner validation runs for EVERY caller — holders and admins
+        # included (previously holders skipped it and read site-wide on a
+        # fake id).  Bypassed lookup so a real-but-unowned project 403s
+        # instead of collapsing into 404 under creator-only RLS.
+        async with rls_bypass(db):
+            project = await ProjectRepository(db).get_by_id(
+                caller_id, project_id
+            )
+        if project is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project not found",
+            )
         # ⚠️ owner-only: active members of a shared project 403 here —
         # their own rows remain visible through the unfiltered scope.
-        if project is None or project.user_id != caller_id:
+        if project.user_id != caller_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
