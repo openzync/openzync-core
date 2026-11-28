@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import structlog
 
-from services.observations.patterns import (
+from domain.value_objects.observation_patterns import (
     BehavioralPattern,
     CoOccurrencePattern,
     TemporalGapPattern,

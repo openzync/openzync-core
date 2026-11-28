@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -11,6 +10,7 @@ from uuid import UUID
 
 from core.events import EventType
 from core.exceptions import ValidationError
+from domain.value_objects.llm_invalidation_result import LLMInvalidationResult
 from models.fact import Fact
 from services.facts.post_commit_effects import (
     _inc_invalidated_total,
@@ -20,23 +20,10 @@ from services.facts.post_commit_effects import (
 from services.graph_edge_sync_service import make_supersession_event
 
 if TYPE_CHECKING:
-    from services.graph_edge_sync_service import SupersessionEvent
+    from domain.events.supersession_event import SupersessionEvent
 
 logger = logging.getLogger(__name__)
 
-@dataclass(frozen=True)
-class LLMInvalidationResult:
-    """Outcome of one LLM-driven invalidation pass.
-
-    Attributes:
-        closed_count: Number of facts actually closed (``valid_to`` set).
-        skipped_count: Number of facts already closed — the overlap
-            guard skipped them because the deterministic layer
-            (supersession/retraction) may have won first.  Not an error.
-    """
-
-    closed_count: int
-    skipped_count: int
 
 class LLMInvalidationMixin:
     """Composed into :class:`FactInvalidationService`."""

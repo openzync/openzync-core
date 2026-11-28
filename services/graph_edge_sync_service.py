@@ -30,7 +30,6 @@ Execution routing:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -38,6 +37,9 @@ from uuid import UUID
 from core.config import get_settings
 from core.exceptions import ExternalServiceError
 from core.queue_names import get_queue_name
+from domain.events.supersession_event import SupersessionEvent
+from domain.value_objects.edge_expiry_command import EdgeExpiryCommand
+from domain.value_objects.edge_key import EdgeKey
 
 if TYPE_CHECKING:
     from core.arq import ARQPool
@@ -51,56 +53,6 @@ EXPIRE_GRAPH_EDGES_TASK: str = "expire_graph_edges"
 ARQ_QUEUE: str = "low"
 
 # ── Domain records ────────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class EdgeKey:
-    """Triple key of a graph edge derived from a fact.
-
-    ``source_id`` is the fact's subject entity, ``target_id`` the fact's
-    object entity, ``relationship_type`` the predicate.  A fact only
-    yields an edge key when BOTH entity IDs resolve — literal-subject
-    facts never create edges.
-    """
-
-    source_id: UUID
-    target_id: UUID
-    relationship_type: str
-
-
-@dataclass(frozen=True)
-class SupersessionEvent:
-    """One old-fact → successor transition recorded during supersession.
-
-    Attributes:
-        old_fact_id: The superseded fact's ID.
-        new_fact_id: The successor fact's ID, or ``None`` for a
-            retraction (case 1 — no successor re-asserts the fact).
-        triple: The SPO strings (payload provenance for webhooks/logs).
-        old_edge_key: Edge key of the superseded fact, or ``None`` when
-            either entity ID is unresolved (literal → no edge exists).
-        successor_reasserts: ``True`` when the successor asserts the
-            SAME edge key (case 3 — the edge survives, nothing to expire).
-    """
-
-    old_fact_id: UUID
-    new_fact_id: UUID | None
-    triple: dict[str, str] = field(default_factory=dict)
-    old_edge_key: EdgeKey | None = None
-    successor_reasserts: bool = False
-
-
-@dataclass(frozen=True)
-class EdgeExpiryCommand:
-    """One edge-expiry unit: the triple key + the deterministic instant."""
-
-    user_id: UUID
-    project_id: UUID
-    source_id: UUID
-    target_id: UUID
-    relationship_type: str
-    at_time: datetime
-    fact_id: UUID
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
