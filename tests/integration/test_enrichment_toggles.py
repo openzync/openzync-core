@@ -354,6 +354,7 @@ class TestAllOnIngest:
         isolated_app: Any,
         isolated_org_and_key: dict,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         redis_client: Any,
         falkordb_url: str,
         engine: Any,
@@ -362,6 +363,10 @@ class TestAllOnIngest:
         and every episode emits an ``llm_usage`` row with prompt tokens."""
         org_id: UUID = isolated_org_and_key["user_id"]
         project_id: UUID = isolated_org_and_key["project_id"]
+        await _patch_org(
+            isolated_admin_client,
+            {"llm_backend": "ollama", "llm_base_url": "http://localhost:11434"},
+        )
 
         session_id = await _create_session(
             isolated_auth_client, project_id, "all-on-session"
@@ -407,6 +412,7 @@ class TestFactsOffUsesFewerTokens:
         isolated_app: Any,
         isolated_org_and_key: dict,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         redis_client: Any,
         falkordb_url: str,
         engine: Any,
@@ -420,6 +426,12 @@ class TestFactsOffUsesFewerTokens:
         """
         org_id: UUID = isolated_org_and_key["user_id"]
         project_id: UUID = isolated_org_and_key["project_id"]
+
+        # Unified ollama creds so the worker's ``to_llm_config()`` resolves.
+        await _patch_org(
+            isolated_admin_client,
+            {"llm_backend": "ollama", "llm_base_url": "http://localhost:11434"},
+        )
 
         # Baseline: all-on.
         base_session = await _create_session(
@@ -541,10 +553,15 @@ class TestStoredSuppressedRequestOverrides:
         org_id: UUID = isolated_org_and_key["user_id"]
         project_id: UUID = isolated_org_and_key["project_id"]
 
-        # Stored facts=False (invalidation off too — it requires facts).
+        # Stored facts=False (invalidation off too — it requires facts),
+        # plus unified ollama creds so the worker's ``to_llm_config()`` resolves.
         await _patch_org(
             isolated_admin_client,
-            {"enrichment": {"facts": False, "llm_invalidation": False}},
+            {
+                "llm_backend": "ollama",
+                "llm_base_url": "http://localhost:11434",
+                "enrichment": {"facts": False, "llm_invalidation": False},
+            },
         )
 
         # Stored-off ingest → no facts.
@@ -627,7 +644,11 @@ class TestNullResetRestoresDefaults:
 
         await _patch_org(
             isolated_admin_client,
-            {"enrichment": {"facts": False, "llm_invalidation": False}},
+            {
+                "llm_backend": "ollama",
+                "llm_base_url": "http://localhost:11434",
+                "enrichment": {"facts": False, "llm_invalidation": False},
+            },
         )
         stored = (await isolated_admin_client.get("/admin/platform-config")).json()[
             "stored"
@@ -711,6 +732,7 @@ class TestClassificationOff:
         isolated_app: Any,
         isolated_org_and_key: dict,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         redis_client: Any,
         falkordb_url: str,
         engine: Any,
@@ -719,6 +741,10 @@ class TestClassificationOff:
         land and the episode reads fully enriched (bit mark-skipped)."""
         org_id: UUID = isolated_org_and_key["user_id"]
         project_id: UUID = isolated_org_and_key["project_id"]
+        await _patch_org(
+            isolated_admin_client,
+            {"llm_backend": "ollama", "llm_base_url": "http://localhost:11434"},
+        )
 
         session_id = await _create_session(
             isolated_auth_client, project_id, "no-class"

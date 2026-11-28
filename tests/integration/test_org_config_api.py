@@ -194,7 +194,7 @@ class TestCacheInvalidation:
         assert cached_before is not None, "Cache should have been warmed"
 
         # Update via core function against the real DB row.
-        update = UpdatePlatformConfigRequest(llm_backend="anthropic")
+        update = UpdatePlatformConfigRequest(llm_backend="anthropic", llm_api_key="sk-test")
         async with app.state.db_session_factory() as db:
             await update_platform_config(user_id, update, redis=redis, db=db)
             await db.commit()
@@ -245,6 +245,7 @@ class TestResolutionEndToEnd:
         update = UpdatePlatformConfigRequest(
             llm_backend="anthropic",
             llm_model="claude-3-5-sonnet",
+            llm_api_key="sk-test",
             context_cache_ttl=120,
         )
         async with app.state.db_session_factory() as db:

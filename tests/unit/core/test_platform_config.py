@@ -99,7 +99,7 @@ class TestGetPlatformConfig:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """First call fetches from the DB and writes to Redis cache."""
-        _STORE[USER_ID] = {"llm_backend": "openai", "llm_model": "gpt-4"}
+        _STORE[USER_ID] = {"llm_backend": "openai", "llm_model": "gpt-4", "llm_api_key": "sk-test"}
         _patch_repo(monkeypatch)
 
         config = await get_platform_config(USER_ID, redis=mock_redis, db=mock_db)
@@ -115,7 +115,7 @@ class TestGetPlatformConfig:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Config is returned from cache when available — no DB read."""
-        cached_config = PlatformConfigBase(llm_backend="anthropic", llm_model="claude-opus-4")
+        cached_config = PlatformConfigBase(llm_backend="anthropic", llm_model="claude-opus-4", llm_api_key="sk-test")
         mock_redis.get.return_value = cached_config.model_dump_json()
         _patch_repo(monkeypatch)
 
@@ -134,7 +134,7 @@ class TestGetPlatformConfig:
     ) -> None:
         """When cache is empty, config is fetched from the DB."""
         mock_redis.get.return_value = None
-        _STORE[USER_ID] = {"llm_backend": "ollama"}
+        _STORE[USER_ID] = {"llm_backend": "ollama", "llm_base_url": "http://localhost:11434"}
         _patch_repo(monkeypatch)
 
         config = await get_platform_config(USER_ID, redis=mock_redis, db=mock_db)
@@ -149,7 +149,7 @@ class TestGetPlatformConfig:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``skip_cache=True`` skips both cache read and write."""
-        _STORE[USER_ID] = {"llm_backend": "azure"}
+        _STORE[USER_ID] = {"llm_backend": "azure", "llm_base_url": "https://test.openai.azure.com", "llm_api_key": "sk-test", "azure_deployment": "test-deployment"}
         _patch_repo(monkeypatch)
 
         config = await get_platform_config(
@@ -170,7 +170,7 @@ class TestGetPlatformConfig:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When ``redis`` is ``None``, caching is skipped entirely."""
-        _STORE[USER_ID] = {"llm_backend": "openai"}
+        _STORE[USER_ID] = {"llm_backend": "openai", "llm_api_key": "sk-test"}
         _patch_repo(monkeypatch)
 
         config = await get_platform_config(USER_ID, redis=None, db=mock_db)
@@ -186,7 +186,7 @@ class TestGetPlatformConfig:
     ) -> None:
         """When cache read fails, fall back to the DB (no crash)."""
         mock_redis.get.side_effect = ConnectionError("Redis down")
-        _STORE[USER_ID] = {"llm_backend": "openai"}
+        _STORE[USER_ID] = {"llm_backend": "openai", "llm_api_key": "sk-test"}
         _patch_repo(monkeypatch)
 
         config = await get_platform_config(USER_ID, redis=mock_redis, db=mock_db)
@@ -245,7 +245,7 @@ class TestGetPlatformConfig:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A cache write failure is logged but does not fail the request."""
-        _STORE[USER_ID] = {"llm_backend": "openai"}
+        _STORE[USER_ID] = {"llm_backend": "openai", "llm_api_key": "sk-test"}
         _patch_repo(monkeypatch)
         mock_redis.setex.side_effect = ConnectionError("Redis write failed")
 
@@ -261,7 +261,7 @@ class TestGetPlatformConfig:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """The cache TTL is passed to ``redis.setex``."""
-        _STORE[USER_ID] = {"llm_backend": "openai"}
+        _STORE[USER_ID] = {"llm_backend": "openai", "llm_api_key": "sk-test"}
         _patch_repo(monkeypatch)
         config = await get_platform_config(USER_ID, redis=mock_redis, db=mock_db)
 
@@ -280,7 +280,7 @@ class TestGetPlatformConfig:
     ) -> None:
         """Corrupted cache data is ignored and the DB is used instead."""
         mock_redis.get.return_value = "invalid json {{{"
-        _STORE[USER_ID] = {"llm_backend": "openai"}
+        _STORE[USER_ID] = {"llm_backend": "openai", "llm_api_key": "sk-test"}
         _patch_repo(monkeypatch)
 
         config = await get_platform_config(USER_ID, redis=mock_redis, db=mock_db)
@@ -300,9 +300,9 @@ class TestUpdatePlatformConfig:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Updating a single field persists it and invalidates cache."""
-        _STORE[USER_ID] = {"llm_backend": "openai"}
+        _STORE[USER_ID] = {"llm_backend": "openai", "llm_api_key": "sk-test"}
         _patch_repo(monkeypatch)
-        update = UpdatePlatformConfigRequest(llm_backend="anthropic")
+        update = UpdatePlatformConfigRequest(llm_backend="anthropic", llm_api_key="sk-test")
 
         config = await update_platform_config(
             USER_ID,
@@ -323,9 +323,9 @@ class TestUpdatePlatformConfig:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Multiple fields can be updated in one call."""
-        _STORE[USER_ID] = {"llm_backend": "openai", "llm_model": "gpt-4"}
+        _STORE[USER_ID] = {"llm_backend": "openai", "llm_model": "gpt-4", "llm_api_key": "sk-test"}
         _patch_repo(monkeypatch)
-        update = UpdatePlatformConfigRequest(llm_backend="anthropic", llm_model="claude-3-5-sonnet")
+        update = UpdatePlatformConfigRequest(llm_backend="anthropic", llm_model="claude-3-5-sonnet", llm_api_key="sk-test")
 
         config = await update_platform_config(
             USER_ID,
@@ -345,7 +345,7 @@ class TestUpdatePlatformConfig:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Setting a field to ``None`` removes it from the stored config."""
-        _STORE[USER_ID] = {"llm_backend": "openai", "llm_model": "gpt-4"}
+        _STORE[USER_ID] = {"llm_backend": "openai", "llm_model": "gpt-4", "llm_api_key": "sk-test"}
         _patch_repo(monkeypatch)
         update = UpdatePlatformConfigRequest(llm_backend=None)
 
@@ -371,6 +371,7 @@ class TestUpdatePlatformConfig:
         _STORE[USER_ID] = {
             "llm_backend": "openai",
             "llm_model": "gpt-4",
+            "llm_api_key": "sk-test",
             "llm_temperature": 0.7,
         }
         _patch_repo(monkeypatch)
@@ -394,12 +395,12 @@ class TestUpdatePlatformConfig:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``update_platform_config`` accepts a plain dict."""
-        _STORE[USER_ID] = {"llm_backend": "openai"}
+        _STORE[USER_ID] = {"llm_backend": "openai", "llm_api_key": "sk-test"}
         _patch_repo(monkeypatch)
 
         config = await update_platform_config(
             USER_ID,
-            {"llm_backend": "azure"},
+            {"llm_backend": "azure", "llm_base_url": "https://test.openai.azure.com", "llm_api_key": "sk-test", "azure_deployment": "test-deployment"},
             redis=mock_redis,
             db=mock_db,
         )
@@ -414,13 +415,13 @@ class TestUpdatePlatformConfig:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A cache invalidation failure is logged but does not fail the update."""
-        _STORE[USER_ID] = {"llm_backend": "openai"}
+        _STORE[USER_ID] = {"llm_backend": "openai", "llm_api_key": "sk-test"}
         _patch_repo(monkeypatch)
         mock_redis.delete.side_effect = ConnectionError("Redis delete failed")
 
         config = await update_platform_config(
             USER_ID,
-            UpdatePlatformConfigRequest(llm_backend="anthropic"),
+            UpdatePlatformConfigRequest(llm_backend="anthropic", llm_api_key="sk-test"),
             redis=mock_redis,
             db=mock_db,
         )
@@ -434,12 +435,12 @@ class TestUpdatePlatformConfig:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When ``redis`` is ``None``, cache invalidation is skipped."""
-        _STORE[USER_ID] = {"llm_backend": "openai"}
+        _STORE[USER_ID] = {"llm_backend": "openai", "llm_api_key": "sk-test"}
         _patch_repo(monkeypatch)
 
         config = await update_platform_config(
             USER_ID,
-            UpdatePlatformConfigRequest(llm_backend="anthropic"),
+            UpdatePlatformConfigRequest(llm_backend="anthropic", llm_api_key="sk-test"),
             redis=None,
             db=mock_db,
         )
@@ -475,6 +476,7 @@ class TestUpdatePlatformConfig:
         _STORE[USER_ID] = {
             "llm_backend": "openai",
             "llm_model": "gpt-4",
+            "llm_api_key": "sk-test",
         }
         _patch_repo(monkeypatch)
 
@@ -488,6 +490,7 @@ class TestUpdatePlatformConfig:
         assert _STORE[USER_ID] == {
             "llm_backend": "openai",
             "llm_model": "gpt-4",
+            "llm_api_key": "sk-test",
             "llm_temperature": 0.9,
         }
 
