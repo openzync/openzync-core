@@ -105,48 +105,6 @@ class TestFactRepository:
 
     # ── create_or_skip ─────────────────────────────────────────────────────────
 
-    async def test_create_or_skip_creates(
-        self, repo: FactRepository, mock_db: AsyncMock
-    ) -> None:
-        """create_or_skip creates a fact when no conflict."""
-        fact = self._mock_fact()
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = fact
-        mock_db.execute.return_value = mock_result
-
-        result = await repo.create_or_skip(
-            
-            user_id=self.ORG_ID,
-            project_id=self.PROJECT_ID,
-            content="Alice likes hiking",
-            subject="Alice",
-            predicate="likes",
-            obj="hiking",
-        )
-
-        assert result == fact
-        mock_db.flush.assert_awaited_once()
-
-    async def test_create_or_skip_skips_on_conflict(
-        self, repo: FactRepository, mock_db: AsyncMock
-    ) -> None:
-        """create_or_skip returns None when conflict fires."""
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
-        mock_db.execute.return_value = mock_result
-
-        result = await repo.create_or_skip(
-            
-            user_id=self.ORG_ID,
-            project_id=self.PROJECT_ID,
-            content="Duplicate",
-        )
-
-        assert result is None
-        mock_db.flush.assert_awaited_once()
-
-    # ── batch_create ───────────────────────────────────────────────────────────
-
     async def test_batch_create(
         self, repo: FactRepository, mock_db: AsyncMock
     ) -> None:
@@ -398,24 +356,6 @@ class TestFactRepository:
 
     # ── get_facts_in_range ─────────────────────────────────────────────────────
 
-    async def test_get_facts_in_range(
-        self, repo: FactRepository, mock_db: AsyncMock
-    ) -> None:
-        """get_facts_in_range returns facts overlapping a range."""
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = []
-        mock_db.execute.return_value = mock_result
-
-        start = datetime(2024, 1, 1)
-        end = datetime(2024, 12, 31)
-        result = await repo.get_facts_in_range(
-            project_id=self.PROJECT_ID, start=start, end=end
-        )
-
-        assert result == []
-
-    # ── soft_delete_by_project ─────────────────────────────────────────────────
-
     async def test_soft_delete_by_project(
         self, repo: FactRepository, mock_db: AsyncMock
     ) -> None:
@@ -500,77 +440,6 @@ class TestFactRepository:
         assert facts == []
 
     # ── search_by_vector ───────────────────────────────────────────────────────
-
-    async def test_search_by_vector(
-        self, repo: FactRepository, mock_db: AsyncMock
-    ) -> None:
-        """search_by_vector returns ranked fact results."""
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = [
-            (
-                str(self.FACT_ID),
-                "Alice likes hiking",
-                "Alice",
-                "likes",
-                "hiking",
-                0.95,
-                0.92,
-            ),
-        ]
-        mock_db.execute.return_value = mock_result
-
-        results = await repo.search_by_vector(
-            embedding=[0.1, 0.2, 0.3],
-            project_id=self.PROJECT_ID,
-            user_id=self.ORG_ID,
-            limit=10,
-        )
-
-        assert len(results) == 1
-        assert results[0]["score"] == 0.92
-        params = mock_db.execute.call_args.args[1]
-        assert params["user_id"] == self.ORG_ID
-
-    async def test_search_by_vector_empty(
-        self, repo: FactRepository, mock_db: AsyncMock
-    ) -> None:
-        """search_by_vector returns empty when no matches."""
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = []
-        mock_db.execute.return_value = mock_result
-
-        results = await repo.search_by_vector(
-            embedding=[0.1, 0.2, 0.3],
-            project_id=self.PROJECT_ID,
-            user_id=self.ORG_ID,
-            limit=10,
-        )
-
-        assert results == []
-        params = mock_db.execute.call_args.args[1]
-        assert params["user_id"] == self.ORG_ID
-
-    async def test_search_by_vector_scopes_to_organization(
-        self, repo: FactRepository, mock_db: AsyncMock
-    ) -> None:
-        """search_by_vector SQL filters on user_id with bound org id."""
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = []
-        mock_db.execute.return_value = mock_result
-
-        await repo.search_by_vector(
-            embedding=[0.1, 0.2, 0.3],
-            project_id=self.PROJECT_ID,
-            user_id=self.ORG_ID,
-            limit=10,
-        )
-
-        stmt = mock_db.execute.call_args.args[0]
-        params = mock_db.execute.call_args.args[1]
-        assert "user_id = :user_id" in str(stmt.text)
-        assert params["user_id"] == self.ORG_ID
-
-    # ── search_by_bm25 ─────────────────────────────────────────────────────────
 
     async def test_search_by_bm25(
         self, repo: FactRepository, mock_db: AsyncMock

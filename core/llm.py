@@ -65,12 +65,6 @@ class TokenUsage:
         """Sum of prompt and completion tokens."""
         return self.prompt_tokens + self.completion_tokens
 
-    @property
-    def total_cache_tokens(self) -> int:
-        """Sum of cache read and creation tokens."""
-        return self.cache_read_input_tokens + self.cache_creation_input_tokens
-
-
 @dataclass
 class PromptCachingConfig:
     """Per-call configuration for provider-side prompt caching.

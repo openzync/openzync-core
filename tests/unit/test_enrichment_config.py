@@ -142,18 +142,6 @@ class TestUnknownKeys:
         with pytest.raises(PydanticValidationError, match="Unknown enrichment keys"):
             UpdatePlatformConfigRequest(enrichment={"bogus_key": True})  # type: ignore[dict-item]
 
-    def test_system_schema_rejects_unknown_key(self) -> None:
-        """``SystemConfigUpdate`` unknown key → pydantic error (→ 422).
-
-        The system whitelist is empty now — every carried key 422s with
-        ``extra_forbidden``, never ``Unknown enrichment keys``.
-        """
-        from schemas.system_config import SystemConfigUpdate
-
-        with pytest.raises(PydanticValidationError, match="extra_forbidden"):
-            SystemConfigUpdate(enrichment={"bogus_key": True})  # type: ignore[dict-item]
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # A(4). Non-bool values → ValidationError (never coerce truthy strings)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -187,17 +175,6 @@ class TestNonBoolValues:
 
         with pytest.raises(PydanticValidationError):
             PlatformConfigBase(enrichment={"facts": bad})  # type: ignore[dict-item]
-
-    @pytest.mark.parametrize("bad", ["false", 0, 1])
-    def test_system_schema_rejects_non_bool(self, bad: object) -> None:
-        """``SystemConfigUpdate`` toggle-shaped key → pydantic error (→ 422).
-
-        The field no longer exists — it 422s with ``extra_forbidden``.
-        """
-        from schemas.system_config import SystemConfigUpdate
-
-        with pytest.raises(PydanticValidationError, match="extra_forbidden"):
-            SystemConfigUpdate(enrichment={"facts": bad})  # type: ignore[dict-item]
 
     @pytest.mark.parametrize("bad", ["false", 0, 1])
     def test_org_update_schema_rejects_non_bool(self, bad: object) -> None:

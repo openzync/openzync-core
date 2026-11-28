@@ -8,7 +8,7 @@ alongside other platform keys.
 **Secrets are never part of these schemas — by construction.**  The
 whitelist contains only non-secret tunables.  ``*_api_key``,
 ``*_password``, ``*_secret``, ``DATABASE_URL`` and ``SMTP_*`` fields
-do not exist on either model, so a request carrying them fails
+do not exist on the model, so a request carrying them fails
 validation (``extra="forbid"``) and a response can never leak them.
 
 ⚠️ BREAKING: ``org_creation_policy`` / ``approval_scope`` are removed.
@@ -20,27 +20,13 @@ Single platform org — registration is governed by
 ``context_cache_ttl`` were removed from platform defaults (user-level
 only).  ``enrichment_gate`` is removed too — the gate lives at user
 level only now (``users.config_override``), with the model fixed to the
-platform default.  Both models expose no fields: ``GET`` returns ``{}``
+platform default.  The model exposes no fields: ``GET`` returns ``{}``
 and any stored/carried key 422s (``extra="forbid"``).
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel
-
-
-class SystemConfigUpdate(BaseModel):
-    """Editable whitelist for ``PATCH /admin/system/config``.
-
-    Unknown keys are rejected with 422 (``extra="forbid"``) — a secret
-    key such as ``openai_api_key`` or ``DATABASE_URL`` can never be
-    written here.  Every field is optional; only provided fields update.
-
-    ⚠️ BREAKING: the whitelist is currently empty — every key (including
-    the former ``enrichment_gate``) is user-level only and 422s here.
-    """
-
-    model_config = {"extra": "forbid"}
 
 
 class SystemConfigResponse(BaseModel):

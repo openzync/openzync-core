@@ -21,9 +21,16 @@ import yaml
 from core.prompt_manifest import (
     MANIFEST_FILENAME,
     PromptManifest,
-    invalidate_manifest_cache,
     load_manifest,
 )
+
+
+def _reset_manifest_cache() -> None:
+    """Reset the module-level manifest cache (replaces removed invalidate helper)."""
+    import core.prompt_manifest as _pm
+
+    _pm._manifest_cache = _pm._UNSET  # noqa: SLF001 — test seam
+
 
 # Path.parent is a readonly property — can't patch.object it.
 # Instead we patch PROMPTS_DIR itself (the whole Path), which is mutable
@@ -60,9 +67,9 @@ templates:
 @pytest.fixture(autouse=True)
 def _clear_cache() -> None:
     """Clear the module-level cache before and after each test."""
-    invalidate_manifest_cache()
+    _reset_manifest_cache()
     yield
-    invalidate_manifest_cache()
+    _reset_manifest_cache()
 
 
 @pytest.fixture
@@ -171,41 +178,10 @@ class TestPromptManifestClass:
         """``get_by_name`` returns ``None`` for a non-existent name."""
         assert manifest.get_by_name("nonexistent") is None
 
-    def test_get_default_for_type_found(self, manifest: PromptManifest) -> None:
-        """``get_default_for_type`` returns the entry marked as default."""
-        entry = manifest.get_default_for_type("fact_extraction")
-        assert entry is not None
-        assert entry["name"] == "extract_facts_v4"
 
-    def test_get_default_for_type_not_found(self, manifest: PromptManifest) -> None:
-        """``get_default_for_type`` returns ``None`` when no default exists."""
-        entry = manifest.get_default_for_type("nonexistent_type")
-        assert entry is None
 
-    def test_get_default_for_type_no_default_marked(self) -> None:
-        """When no entry has ``is_default_for_type``, ``None`` is returned."""
-        data = {
-            "version": 1,
-            "templates": [
-                {"name": "t1", "type": "test", "file": "t1.jinja2"},
-                {"name": "t2", "type": "test", "file": "t2.jinja2"},
-            ],
-        }
-        pm = PromptManifest(data)
-        entry = pm.get_default_for_type("test")
-        assert entry is None
 
-    def test_get_default_names(self, manifest: PromptManifest) -> None:
-        """``get_default_names`` returns names of all type-default entries."""
-        names = manifest.get_default_names()
-        assert "extract_facts_v4" in names
-        assert "summarize_conversation" in names
-        assert "classify_intent" not in names
 
-    def test_get_default_names_empty(self) -> None:
-        """``get_default_names`` returns empty list when no defaults exist."""
-        pm = PromptManifest({"version": 1, "templates": []})
-        assert pm.get_default_names() == []
 
     def test_by_name_lookup_is_case_sensitive(self) -> None:
         """Template name lookup is case-sensitive."""
@@ -259,24 +235,24 @@ class TestGetTemplateText:
 
 @pytest.mark.unit
 class TestInvalidateCache:
-    """Cache invalidation behavior."""
+    """Cache reload behavior (``reload=True`` replaces removed invalidate helper)."""
 
     def test_invalidate_clears_cache(self, manifest_path: Path) -> None:
         """After invalidation, the next load re-reads from disk."""
         with patch("core.prompt_manifest.PROMPTS_DIR", manifest_path):
             m1 = load_manifest()
-            invalidate_manifest_cache()
+            load_manifest(reload=True)
             m2 = load_manifest()
             assert m1 is not m2  # different object
 
     def test_invalidate_before_load(self) -> None:
         """Calling ``invalidate_manifest_cache`` before any load is safe."""
-        invalidate_manifest_cache()
+        _reset_manifest_cache()
 
     def test_invalidate_twice_is_safe(self) -> None:
         """Calling ``invalidate_manifest_cache`` twice is a no-op."""
-        invalidate_manifest_cache()
-        invalidate_manifest_cache()
+        _reset_manifest_cache()
+        _reset_manifest_cache()
 
 
 @pytest.mark.unit

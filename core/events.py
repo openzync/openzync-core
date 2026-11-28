@@ -88,10 +88,6 @@ EVENT_REGISTRY: list[EventMeta] = [
 ]
 
 
-def event_type_labels() -> Mapping[str, str]:
-    """Return a mapping of event type → human-readable label."""
-    return {meta.type: meta.label for meta in EVENT_REGISTRY}
-
 
 def event_categories() -> Mapping[str, list[EventMeta]]:
     """Return event registry grouped by category."""

@@ -9,7 +9,6 @@ Covers:
 - No DB on a cache miss → RuntimeError
 - Poisoned stored config → ValidationError (field names only, never values)
 - ``update_platform_config`` — shallow merge, None removal, cache invalidation
-- ``build_cache_key`` helper
 
 The DB layer (``UserRepository``) is faked in-memory — these are unit
 tests (no I/O).  Redis is an ``AsyncMock``.
@@ -27,7 +26,6 @@ from core.exceptions import ValidationError as PlatformConfigValidationError
 from core.platform_config import (
     CACHE_KEY_PREFIX,
     PLATFORM_CONFIG_CACHE_TTL,
-    build_cache_key,
     get_platform_config,
     update_platform_config,
 )
@@ -492,30 +490,6 @@ class TestUpdatePlatformConfig:
             "llm_model": "gpt-4",
             "llm_temperature": 0.9,
         }
-
-
-@pytest.mark.unit
-class TestCacheKey:
-    """``build_cache_key`` helper."""
-
-    def test_builds_correct_key(self) -> None:
-        """The cache key follows the pattern ``platform_config:<uuid>``."""
-        key = build_cache_key(USER_ID)
-        assert key == CACHE_KEY
-
-    def test_consistent_across_calls(self) -> None:
-        """Same user ID always produces the same key."""
-        assert build_cache_key(USER_ID) == build_cache_key(USER_ID)
-
-    def test_different_users_different_keys(self) -> None:
-        """Different user IDs produce different keys."""
-        other_id = UUID("00000000-0000-0000-0000-000000000002")
-        assert build_cache_key(USER_ID) != build_cache_key(other_id)
-
-    def test_cache_key_matches_module_constant(self) -> None:
-        """The key starts with the module-level prefix."""
-        key = build_cache_key(USER_ID)
-        assert key.startswith(CACHE_KEY_PREFIX)
 
 
 @pytest.mark.unit

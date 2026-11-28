@@ -175,28 +175,6 @@ class AuthRepository:
         await self._db.refresh(rt)
         return rt
 
-    async def find_refresh_token(
-        self, token_hash: str
-    ) -> RefreshToken | None:
-        """Look up a refresh token by its hash.
-
-        Args:
-            token_hash: SHA-256 hex digest of the raw token.
-
-        Returns:
-            The RefreshToken if found, or ``None``.
-        """
-        async with rls.rls_bypass(self._db):
-            result = await self._db.execute(
-                select(RefreshToken).where(
-                    RefreshToken.token_hash == token_hash,
-                    RefreshToken.is_revoked.is_(False),
-                    # expires_at is TIMESTAMP WITHOUT TIME ZONE — naive UTC.
-                    RefreshToken.expires_at > datetime.now(UTC).replace(tzinfo=None),
-                )
-            )
-            return result.scalar_one_or_none()
-
     async def get_refresh_token_by_hash(
         self, token_hash: str
     ) -> RefreshToken | None:
@@ -305,28 +283,6 @@ class AuthRepository:
             )
             await self._db.flush()
             return result.rowcount or 0  # type: ignore[attr-defined]
-
-    async def revoke_refresh_token(
-        self,
-        token_id: uuid.UUID,
-        rotated_by: str | None = None,
-    ) -> None:
-        """Revoke a refresh token, optionally setting the rotation chain.
-
-        Args:
-            token_id: UUID of the token to revoke.
-            rotated_by: UUID of the new token that replaces this one
-                (rotation chain for audit).
-        """
-        result = await self._db.execute(
-            select(RefreshToken).where(RefreshToken.id == token_id)
-        )
-        rt = result.scalar_one_or_none()
-        if rt is not None:
-            rt.is_revoked = True
-            if rotated_by is not None:
-                rt.rotated_by = uuid.UUID(rotated_by)
-            await self._db.flush()
 
     async def revoke_all_refresh_tokens(self, user_id: uuid.UUID) -> None:
         """Revoke all active refresh tokens for a given user.

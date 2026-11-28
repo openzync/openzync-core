@@ -493,15 +493,6 @@ _settings: Settings | None = None
 """Module-level :class:`Settings` singleton, populated lazily from env."""
 
 
-def set_settings(settings: Settings) -> None:
-    """Store the :class:`Settings` singleton (tests / explicit override).
-
-    Args:
-        settings: A fully-populated ``Settings`` instance.
-    """
-    global _settings  # noqa: PLW0603  — intentional module-level state
-    _settings = settings
-
 
 def get_settings() -> Settings:
     """Return the :class:`Settings` singleton, creating it from env on first call.

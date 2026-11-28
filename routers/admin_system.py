@@ -1,5 +1,9 @@
 """Platform admin endpoints — HTTP adapter layer only.
 
+⚠️ BREAKING: ``GET/PATCH /admin/system/config`` are removed (dead surface —
+every key 422'd / returned ``{}``; no prod caller). Use
+``GET/PATCH /admin/system/registration`` and ``GET/PATCH /admin/platform-config``.
+
 Every endpoint requires ``require_admin`` (JWT dashboard session,
 DB-verified ``admin`` role) and — for member-role changes — the
 RLS-bypass session ``get_db_admin``.
@@ -19,8 +23,6 @@ are removed — per-user config is self-serve via
 cross-user variants meaningless).
 
 Endpoints:
-    GET    /admin/system/config                        — platform system config
-    PATCH  /admin/system/config                        — update platform system config
     GET    /admin/system/registration                  — instance registration mode
     PATCH  /admin/system/registration                  — update registration mode
     PATCH  /admin/system/users/{user_id}/role          — demote-only (promotion frozen 422)
@@ -31,15 +33,10 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,  # noqa: TC002 (runtime import — FastAPI resolves annotation names)
-)
 
 from core.audit import audit_action
 from core.exceptions import NotFoundError, ValidationError
-from core.system_config import get_system_config, update_system_config
 from dependencies.auth import require_admin
-from dependencies.db import get_db, get_db_admin
 from dependencies.services import (
     get_admin_instance_settings_service,
     get_admin_user_service,
@@ -54,7 +51,6 @@ from schemas.instance_settings import (
     InstanceSettingsResponse,
     UpdateRegistrationModeRequest,
 )
-from schemas.system_config import SystemConfigResponse, SystemConfigUpdate
 from services.instance_settings_service import InstanceSettingsService
 from services.user_service import UserService
 
@@ -70,72 +66,6 @@ router = APIRouter(
 def _get_redis(request: Request) -> object:
     """Return the Redis client from app state (``None`` when unavailable)."""
     return getattr(request.app.state, "redis", None)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Platform system config
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-@router.get(
-    "/config",
-    response_model=SystemConfigResponse,
-    summary="Get platform system config",
-    description=(
-        "Returns the platform system config.  No whitelisted fields "
-        "remain — the response is ``{}``.  Requires the platform "
-        "admin role."
-    ),
-)
-async def get_platform_config(
-    request: Request,
-    _user_id: str = Depends(require_admin),  # noqa: B008
-    db: AsyncSession = Depends(get_db),  # noqa: B008
-) -> SystemConfigResponse:
-    """Return the current platform system config.
-
-    Args:
-        request: Incoming HTTP request (app-state Redis access).
-        _user_id: Admin user UUID (admin-gated).
-        db: Async DB session (platform root-row read).
-
-    Returns:
-        A :class:`SystemConfigResponse` with the whitelisted fields.
-    """
-    return await get_system_config(_get_redis(request), db)
-
-
-@router.patch(
-    "/config",
-    response_model=SystemConfigResponse,
-    summary="Update platform system config",
-    description=(
-        "Updates the platform system config.  No whitelisted fields "
-        "remain — every key is rejected with 422.  Requires the platform "
-        "admin role."
-    ),
-)
-@audit_action("system.config.update", "system", "System configuration updated")
-async def update_platform_config(
-    body: SystemConfigUpdate,
-    request: Request,
-    _user_id: str = Depends(require_admin),  # noqa: B008
-    db: AsyncSession = Depends(get_db_admin),  # noqa: B008
-) -> SystemConfigResponse:
-    """Partially update the platform system config.
-
-    Args:
-        body: Whitelisted fields to update (``None`` removes a key).
-        request: Incoming HTTP request (app-state Redis access).
-        _user_id: Admin user UUID (admin-gated).
-        db: RLS-bypass session (the root row belongs to the platform
-            root, not the acting admin — the tenant policy would
-            otherwise match zero rows fail-closed).
-
-    Returns:
-        The freshly stored config.
-    """
-    return await update_system_config(body, _get_redis(request), db)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

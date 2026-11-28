@@ -23,11 +23,10 @@ import pytest
 from pydantic import ValidationError
 
 from core.exceptions import ValidationError as AppValidationError
-from core.system_config import get_system_config, update_system_config
+from core.system_config import get_system_config
 from schemas.system_config import (
     SYSTEM_CONFIG_WHITELIST,
     SystemConfigResponse,
-    SystemConfigUpdate,
 )
 
 pytestmark = pytest.mark.unit
@@ -82,29 +81,13 @@ def mock_db() -> AsyncMock:
 
 
 class TestSystemConfigSchema:
-    """Schema-level whitelist enforcement."""
-
-    def test_secret_key_in_update_body_rejected_422(self) -> None:
-        """A secret key (openai_api_key) fails schema validation (→ 422)."""
-        with pytest.raises(ValidationError):
-            SystemConfigUpdate(openai_api_key="sk-123")  # type: ignore[call-arg]
-
-    def test_secret_key_variants_rejected(self) -> None:
-        """Every secret-shaped key is rejected by construction."""
-        for secret in (
-            "openai_api_key",
-            "anthropic_api_key",
-            "smtp_password",
-            "database_url",
-            "any_secret",
-        ):
-            with pytest.raises(ValidationError):
-                SystemConfigUpdate(**{secret: "x"})  # type: ignore[arg-type]
+    """Schema-level whitelist enforcement (fieldless response)."""
 
     def test_defaults(self) -> None:
         """SystemConfigResponse is fieldless — ``GET`` returns ``{}``."""
         cfg = SystemConfigResponse()
         assert cfg.model_dump() == {}
+        assert len(SYSTEM_CONFIG_WHITELIST) == 0
 
 
 class TestGetSystemConfig:
@@ -185,86 +168,3 @@ class TestGetSystemConfig:
         # The raw override never lands in the cache verbatim.
         assert "gpt-4o-mini" not in payload
         assert "sk-secret" not in payload
-
-
-class TestUpdateSystemConfig:
-    """update_system_config merge + invalidation."""
-
-    @pytest.mark.asyncio
-    async def test_update_merges_invalidates_and_returns_fresh(
-        self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """An empty update is a no-op merge, invalidates cache, re-reads."""
-        redis = AsyncMock()
-        _STORE.update(
-            {
-                "llm_model": "old-model",
-                "openai_api_key": "sk-keep",  # noqa: S105 — test fixture secret
-            }
-        )
-        _patch_repo(monkeypatch)
-
-        result = await update_system_config(
-            SystemConfigUpdate(),
-            redis=redis,
-            db=mock_db,
-        )
-
-        assert result.model_dump() == {}
-        # Merge preserved the unrelated stored keys (the whitelist is
-        # empty, so the update touches nothing pre-existing).
-        assert _STORE["openai_api_key"] == "sk-keep"  # noqa: S105 — test fixture secret
-        assert _STORE["llm_model"] == "old-model"
-        redis.delete.assert_awaited_once_with("system_config")
-
-    @pytest.mark.asyncio
-    async def test_update_rejects_secret_key_from_plain_dict(
-        self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A plain-dict update with a non-whitelisted key → ValidationError."""
-        _patch_repo(monkeypatch)
-
-        with pytest.raises(AppValidationError):
-            await update_system_config(
-                {"openai_api_key": "sk-123"},
-                redis=None,
-                db=mock_db,
-            )
-
-        assert _STORE == {}
-
-    @pytest.mark.asyncio
-    async def test_none_values_remove_keys(
-        self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A None value for a non-whitelisted key is rejected, not removed."""
-        _patch_repo(monkeypatch)
-
-        with pytest.raises(AppValidationError):
-            await update_system_config(
-                {"llm_model": None},
-                redis=None,
-                db=mock_db,
-            )
-
-        assert _STORE == {}
-
-    @pytest.mark.asyncio
-    async def test_missing_root_row_raises(
-        self, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Updating before setup (no root row) raises ``ValidationError``."""
-        _patch_repo(monkeypatch, has_root=False)
-
-        with pytest.raises(AppValidationError, match="setup first"):
-            await update_system_config(
-                SystemConfigUpdate(),
-                redis=None,
-                db=mock_db,
-            )
-
-    def test_whitelist_matches_response_fields(self) -> None:
-        """The whitelist is exactly the response model's fields."""
-        assert SYSTEM_CONFIG_WHITELIST == frozenset(
-            SystemConfigResponse.model_fields
-        )

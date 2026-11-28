@@ -2,7 +2,7 @@
 
 These tests validate that the pydantic-settings model loads from ``OZ_*``
 env vars, enforces constraints like ``SECRET_KEY min_length``, and that
-the singleton accessors (``set_settings`` / ``get_settings``) work as
+the singleton accessor (``get_settings``) works as
 expected.
 
 .. note::
@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.config import Settings, get_settings, set_settings
+from core.config import Settings, get_settings
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -126,7 +126,7 @@ class TestSettings:
 
 
 class TestSettingsSingleton:
-    """Validate ``set_settings`` / ``get_settings`` singleton accessors."""
+    """Validate ``get_settings`` singleton accessor."""
 
     # ═══════════════════════════════════════════════════════════════════
     # IMPORTANT: These tests explicitly manipulate the module-level
@@ -172,20 +172,26 @@ class TestSettingsSingleton:
             get_settings()
 
     def test_set_settings_roundtrip(self) -> None:
-        """``set_settings()`` + ``get_settings()`` roundtrip."""
+        """Singleton assignment + ``get_settings()`` roundtrip."""
+        import core.config as cfg
+
         s = _settings()
-        set_settings(s)
+        cfg._settings = s  # noqa: SLF001 — singleton seam
         assert get_settings() is s
 
     def test_get_settings_returns_same_instance(self) -> None:
         """Multiple calls to ``get_settings()`` return the same instance."""
+        import core.config as cfg
+
         s = _settings()
-        set_settings(s)
+        cfg._settings = s  # noqa: SLF001 — singleton seam
         assert get_settings() is get_settings()
 
     def test_backward_compatible_settings_import(self) -> None:
         """``from core.config import settings`` works via ``__getattr__``."""
-        set_settings(_settings())
+        import core.config as cfg
+
+        cfg._settings = _settings()  # noqa: SLF001 — singleton seam
         from core.config import settings  # noqa: F811  — intentional lazy import
 
         assert _DEFAULT_REQUIRED["DATABASE_URL"] == settings.DATABASE_URL

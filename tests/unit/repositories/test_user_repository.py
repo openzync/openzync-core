@@ -300,40 +300,6 @@ class TestUserRepository:
 
     # ── hard_delete ────────────────────────────────────────────────────────────
 
-    async def test_hard_delete(
-        self, repo: UserRepository, mock_db: AsyncMock
-    ) -> None:
-        """hard_delete permanently removes a user and returns True."""
-        user = self._mock_user()
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = user
-        mock_db.execute.return_value = mock_result
-
-        result = await repo.hard_delete(
-            user_id=self.USER_ID
-        )
-
-        assert result is True
-        mock_db.delete.assert_awaited_once_with(user)
-        mock_db.flush.assert_awaited_once()
-
-    async def test_hard_delete_not_found(
-        self, repo: UserRepository, mock_db: AsyncMock
-    ) -> None:
-        """hard_delete returns False when user not found."""
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
-        mock_db.execute.return_value = mock_result
-
-        result = await repo.hard_delete(
-            user_id=self.USER_ID
-        )
-
-        assert result is False
-        mock_db.delete.assert_not_called()
-
-    # ── list (cursor pagination) ───────────────────────────────────────────────
-
     async def test_list(
         self, repo: UserRepository, mock_db: AsyncMock
     ) -> None:

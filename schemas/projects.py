@@ -138,7 +138,6 @@ class ProjectResponse(BaseModel):
     """Full project representation returned from single-item endpoints.
 
     Includes computed ``member_count`` populated by the service layer.
-    Use ``ProjectListResponse`` for compact list views.
 
     Attributes:
         id: Project UUID.
@@ -164,45 +163,6 @@ class ProjectResponse(BaseModel):
         validation_alias="metadata_",
         description="Key-value metadata for extensible configuration.",
     )
-    is_archived: bool = Field(
-        default=False, description="Whether the project is archived."
-    )
-    is_pinned: bool = Field(
-        default=False,
-        description="Whether the requesting user pinned this project.",
-    )
-    member_count: int = Field(
-        default=0, ge=0, description="Number of members in this project."
-    )
-    created_by: UUID | None = Field(
-        default=None,
-        description="UUID of the creating user, or ``None`` if deleted.",
-    )
-    created_at: datetime = Field(..., description="Project creation timestamp (UTC).")
-    updated_at: datetime = Field(..., description="Last modification timestamp (UTC).")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class ProjectListResponse(BaseModel):
-    """Lightweight project representation for list endpoints.
-
-    Omits ``metadata`` and ``description`` to keep list responses compact.
-    Use the individual ``GET /v1/projects/{project_id}`` endpoint for full
-    details.
-
-    Attributes:
-        id: Project UUID.
-        name: Human-readable project name.
-        is_archived: Whether the project is archived.
-        member_count: Number of members in this project.
-        created_by: UUID of the creating user, or ``None``.
-        created_at: Project creation timestamp (UTC).
-        updated_at: Last modification timestamp (UTC).
-    """
-
-    id: UUID = Field(..., description="Project UUID.")
-    name: str = Field(..., description="Human-readable project name.")
     is_archived: bool = Field(
         default=False, description="Whether the project is archived."
     )

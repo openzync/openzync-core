@@ -80,11 +80,14 @@ def _elif_findings(head: ast.If, lines: list[str]) -> list[dict]:
     return findings
 
 
-def _if_findings(node: ast.If, lines: list[str]) -> list[dict]:
+def _if_findings(node: ast.If, lines: list[str], is_elif: bool = False) -> list[dict]:
     """Flag else-after-terminator and return-True/False on one If node."""
     is_elif_tail = len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If)
     findings: list[dict] = []
-    if node.orelse and not is_elif_tail and isinstance(node.body[-1], TERMINATORS):
+    # Skip elif-branch nodes: in a chain whose earlier tests don't terminate
+    # (e.g. deliver_webhook's 4xx log-only branch), the elif/else legs are
+    # live retry handling, not dead code after a terminator.
+    if not is_elif and node.orelse and not is_elif_tail and isinstance(node.body[-1], TERMINATORS):
         findings.append({"check": "else-after-terminator", "line": node.lineno,
                          "snippet": _snippet(lines, node.lineno)})
     true_val = _bool_returned(node.body)
@@ -103,12 +106,16 @@ def audit_file(rel: str, lines: list[str], tree: ast.Module) -> list[dict]:
                 and isinstance(n.orelse[0], ast.If)}
     findings: list[dict] = []
     for node in ast.walk(tree):
-        if isinstance(node, (ast.If, ast.While)) and isinstance(node.test, ast.Constant):
+        # `while True:` polling loops are an intentional idiom here — only
+        # flag constant tests on `if` (e.g. `if True:` left from debugging).
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Constant):
             findings.append({"file": rel, "check": "constant-test",
                              "line": node.lineno,
                              "snippet": _snippet(lines, node.lineno)})
         if isinstance(node, ast.If):
-            findings.extend({"file": rel, **f} for f in _if_findings(node, lines))
+            findings.extend({"file": rel, **f}
+                            for f in _if_findings(node, lines,
+                                                 is_elif=id(node) in elif_ids))
             if id(node) not in elif_ids:  # check each elif chain once, at its head
                 findings.extend({"file": rel, **f}
                                 for f in _elif_findings(node, lines))

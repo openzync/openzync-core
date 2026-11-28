@@ -443,55 +443,6 @@ async def _superadmin_client(isolated_app: Any) -> Any:
         yield client
 
 
-class TestSystemConfigGateEnablePath:
-    async def test_enable_bogus_model_422_nothing_persisted(
-        self,
-        _superadmin_client: AsyncClient,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Gate keys are org-level only — PATCH rejects them with 422 and the
-        stored config is unchanged (always ``{}``)."""
-        _no_network(monkeypatch)
-        before = await _superadmin_client.get("/admin/system/config")
-        assert before.status_code == 200, before.text
-        assert before.json() == {}
-
-        resp = await _superadmin_client.patch(
-            "/admin/system/config",
-            json={
-                "enrichment_gate": {
-                    "enabled": True,
-                    "model": "bogus/gate-does-not-exist-xyz",
-                }
-            },
-        )
-        assert resp.status_code == 422, resp.text
-
-        after = await _superadmin_client.get("/admin/system/config")
-        assert after.status_code == 200, after.text
-        assert after.json() == before.json() == {}
-
-    async def test_enable_local_dir_model_422_without_network(
-        self,
-        _superadmin_client: AsyncClient,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Any,
-    ) -> None:
-        """Even a local-dir gate model 422s — no system-level gate exists."""
-        _no_network(monkeypatch)
-        resp = await _superadmin_client.patch(
-            "/admin/system/config",
-            json={
-                "enrichment_gate": {"enabled": True, "model": str(tmp_path)}
-            },
-        )
-        assert resp.status_code == 422, resp.text
-
-        stored = await _superadmin_client.get("/admin/system/config")
-        assert stored.status_code == 200, stored.text
-        assert stored.json() == {}
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # (12) GET /admin/platform-config with legacy dict-shaped stored gate → coerced bool
 # ═══════════════════════════════════════════════════════════════════════════════

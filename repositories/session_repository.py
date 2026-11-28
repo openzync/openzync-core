@@ -478,26 +478,6 @@ class SessionRepository:
             )
         return present
 
-    # ── Next Sequence Number ────────────────────────────────────────────────
-
-    async def next_sequence_number(self, session_id: UUID) -> int:
-        """Get the next sequence number for a session.
-
-        Consolidated onto the single canonical implementation
-        (:meth:`EpisodeRepository.get_next_sequence`) — one helper for
-        ``MAX(sequence_number) + 1`` over live rows.  Retained under this
-        name for existing callers.
-
-        Args:
-            session_id: The session's UUID.
-
-        Returns:
-            The next available ``sequence_number`` (0-based).
-        """
-        from repositories.episode_repository import EpisodeRepository
-
-        return await EpisodeRepository(self._db).get_next_sequence(session_id)
-
     # ── Row Lock ──────────────────────────────────────────────────────────
 
     async def get_by_id_for_update(self, session_id: UUID) -> Session | None:
@@ -520,54 +500,6 @@ class SessionRepository:
             .with_for_update()
         )
         return result.scalar_one_or_none()
-
-    # ── Update Metadata ─────────────────────────────────────────────────────
-
-    async def update_metadata(
-        self,
-        user_id: UUID,
-        session_id: UUID,
-        metadata: dict[str, Any],
-    ) -> Session | None:
-        """Deep-merge metadata into a session's existing metadata, scoped to user.
-
-        New keys are added. Existing keys are overridden. Set a key to
-        ``None`` to remove it from the stored metadata.
-
-        Args:
-            user_id: The user UUID for tenant isolation.
-            session_id: The session's UUID.
-            metadata: Key-value pairs to merge.
-
-        Returns:
-            The updated Session, or ``None`` if not found.
-        """
-        result = await self._db.execute(
-            select(Session)
-            .join(Project, Session.project_id == Project.id)
-            .where(
-                Session.id == session_id,
-                Project.user_id == user_id,
-                Session.is_deleted.is_(False),
-            )
-        )
-        session = result.scalar_one_or_none()
-        if session is None:
-            return None
-
-        existing = dict(session.metadata_ if session.metadata_ is not None else {})
-        for k, v in metadata.items():
-            if v is None:
-                existing.pop(k, None)
-            elif isinstance(v, dict) and isinstance(existing.get(k), dict):
-                existing[k] = {**existing[k], **v}
-            else:
-                existing[k] = v
-        session.metadata_ = existing
-
-        await self._db.flush()
-        await self._db.refresh(session)
-        return session
 
     # ── Close ───────────────────────────────────────────────────────────────
 
@@ -797,38 +729,6 @@ class SessionRepository:
             }
             for row in result.all()
         }
-
-    # ── Auto-Close (for scheduled task) ─────────────────────────────────────
-
-    async def find_stale_open_sessions(
-        self, inactivity_hours: int = 24, batch_size: int = 100
-    ) -> list[Session]:
-        """Find sessions with no activity in the given window.
-
-        Used by the auto-close scheduled task (ARQ cron) to close stale
-        sessions.
-
-        Args:
-            inactivity_hours: Hours of inactivity before a session is
-                considered stale.  Defaults to 24.
-            batch_size: Maximum number of sessions to return.
-
-        Returns:
-            A list of stale open Sessions.
-        """
-        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=inactivity_hours)
-        result = await self._db.execute(
-            select(Session)
-            .where(
-                Session.closed_at.is_(None),
-                Session.is_deleted.is_(False),
-                Session.updated_at < cutoff,
-            )
-            .limit(batch_size)
-        )
-        return list(result.scalars().all())
-
-    # ── Count ───────────────────────────────────────────────────────────────
 
     async def message_count(self, session_id: UUID) -> int:
         """Get total message count for a session.

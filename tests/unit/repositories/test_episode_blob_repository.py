@@ -278,37 +278,6 @@ class TestEpisodeBlobRepository:
 
     # ── get_by_content_hash ────────────────────────────────────────────────────
 
-    async def test_get_by_content_hash(
-        self, repo: EpisodeBlobRepository, mock_db: AsyncMock
-    ) -> None:
-        """get_by_content_hash returns blobs with matching hash."""
-        blobs = [self._mock_blob(content_hash="abc123")]
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = blobs
-        mock_db.execute.return_value = mock_result
-
-        result = await repo.get_by_content_hash(
-            user_id=self.ORG_ID, content_hash="abc123"
-        )
-
-        assert result == blobs
-
-    async def test_get_by_content_hash_empty(
-        self, repo: EpisodeBlobRepository, mock_db: AsyncMock
-    ) -> None:
-        """get_by_content_hash returns empty list when no match."""
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = []
-        mock_db.execute.return_value = mock_result
-
-        result = await repo.get_by_content_hash(
-            user_id=self.ORG_ID, content_hash="nonexistent"
-        )
-
-        assert result == []
-
-    # ── update_extracted_text ──────────────────────────────────────────────────
-
     async def test_update_extracted_text(
         self, repo: EpisodeBlobRepository, mock_db: AsyncMock
     ) -> None:
@@ -341,32 +310,6 @@ class TestEpisodeBlobRepository:
 
     # ── count_by_episode ───────────────────────────────────────────────────────
 
-    async def test_count_by_episode(
-        self, repo: EpisodeBlobRepository, mock_db: AsyncMock
-    ) -> None:
-        """count_by_episode returns the blob count."""
-        mock_result = MagicMock()
-        mock_result.scalar_one.return_value = 3
-        mock_db.execute.return_value = mock_result
-
-        count = await repo.count_by_episode(episode_id=self.EPISODE_ID)
-
-        assert count == 3
-
-    async def test_count_by_episode_zero(
-        self, repo: EpisodeBlobRepository, mock_db: AsyncMock
-    ) -> None:
-        """count_by_episode returns 0 when no blobs."""
-        mock_result = MagicMock()
-        mock_result.scalar_one.return_value = 0
-        mock_db.execute.return_value = mock_result
-
-        count = await repo.count_by_episode(episode_id=self.EPISODE_ID)
-
-        assert count == 0
-
-    # ── get_orphaned_blobs ─────────────────────────────────────────────────────
-
     async def test_get_orphaned_blobs(
         self, repo: EpisodeBlobRepository, mock_db: AsyncMock
     ) -> None:
@@ -397,37 +340,6 @@ class TestEpisodeBlobRepository:
         assert result == []
 
     # ── delete_by_episode ──────────────────────────────────────────────────────
-
-    async def test_delete_by_episode(
-        self, repo: EpisodeBlobRepository, mock_db: AsyncMock
-    ) -> None:
-        """delete_by_episode removes and returns blobs for an episode."""
-        blobs = [self._mock_blob(), self._mock_blob()]
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = blobs
-        mock_db.execute.return_value = mock_result
-        mock_db.delete.return_value = None
-
-        result = await repo.delete_by_episode(episode_id=self.EPISODE_ID)
-
-        assert result == blobs
-        assert mock_db.delete.await_count == 2
-        mock_db.flush.assert_awaited_once()
-
-    async def test_delete_by_episode_empty(
-        self, repo: EpisodeBlobRepository, mock_db: AsyncMock
-    ) -> None:
-        """delete_by_episode returns empty list when no blobs."""
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = []
-        mock_db.execute.return_value = mock_result
-
-        result = await repo.delete_by_episode(episode_id=self.EPISODE_ID)
-
-        assert result == []
-        mock_db.flush.assert_awaited_once()
-
-    # ── delete_by_ids ──────────────────────────────────────────────────────────
 
     async def test_delete_by_ids(
         self, repo: EpisodeBlobRepository, mock_db: AsyncMock

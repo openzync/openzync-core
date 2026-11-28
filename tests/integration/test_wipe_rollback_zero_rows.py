@@ -13,13 +13,13 @@ pytestmark = pytest.mark.integration
 @pytest.mark.asyncio
 async def test_wipe_commit_fail_zero_rows(engine, redis_client) -> None:
     """A commit failure during wipe leaves episode/fact rows untouched."""
-    from core.config import Settings, get_settings, set_settings
+    import core.config as _cfg
+    from core.config import Settings, get_settings
 
     try:
         get_settings()
-    except RuntimeError:
-        set_settings(
-            Settings(
+    except Exception:
+        _cfg._settings = Settings(
                 DATABASE_URL="postgresql+asyncpg://localhost/x",
                 REDIS_URL="redis://localhost/0",
                 SECRET_KEY="i" * 32,
@@ -28,7 +28,6 @@ async def test_wipe_commit_fail_zero_rows(engine, redis_client) -> None:
                 S3_ACCESS_KEY_ID="test-key",
                 S3_SECRET_ACCESS_KEY="test-secret",
             )
-        )
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from services.memory_service import MemoryService

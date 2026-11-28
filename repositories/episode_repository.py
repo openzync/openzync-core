@@ -213,73 +213,15 @@ class EpisodeRepository:
 
     # ── Read — Paginated by Project ─────────────────────────────────────────
 
-    async def get_by_project_id(
-        self,
-        project_id: UUID,
-        limit: int = 100,
-        cursor: str | None = None,
-    ) -> tuple[list[Episode], str | None]:
-        """Get paginated episodes for a project, ordered by sequence_number ASC.
-
-        The ``(sequence_number, id)`` keyset cursor matches this ordering
-        (same contract as :meth:`get_by_session_id`) — cross-session
-        sequence numbers interleave, but pagination stays gap-free.
-
-        Args:
-            project_id: The project's UUID.
-            limit: Maximum results per page (capped at 500).
-            cursor: Opaque base64 cursor from a previous page.
-
-        Returns:
-            A tuple of ``(episodes, next_cursor)``.
-        """
-        effective_limit = min(limit, 500) + 1
-
-        query = select(Episode).where(
-            Episode.project_id == project_id,
-            Episode.is_deleted.is_(False),
-        )
-
-        if cursor is not None:
-            cursor_seq, cursor_id = self._decode_cursor(cursor)
-            query = query.where(
-                or_(
-                    and_(
-                        Episode.sequence_number == cursor_seq,
-                        Episode.id > cursor_id,
-                    ),
-                    Episode.sequence_number > cursor_seq,
-                )
-            )
-
-        query = query.order_by(
-            Episode.sequence_number.asc(), Episode.id.asc()
-        ).limit(effective_limit)
-
-        result = await self._db.execute(query)
-        rows: list[Episode] = list(result.scalars().all())
-
-        has_more = len(rows) == effective_limit
-        episodes = rows[:limit] if has_more else rows
-
-        next_cursor: str | None = None
-        if has_more and episodes:
-            last = episodes[-1]
-            next_cursor = self._encode_cursor(last.sequence_number, last.id)
-
-        return episodes, next_cursor
-
     # ── Next Sequence Number ─────────────────────────────────────────────────
 
     async def get_next_sequence(self, session_id: UUID) -> int:
         """Get the next available sequence number for a session.
 
-        Canonical ``MAX(sequence_number) + 1`` helper (over live rows) —
-        the single implementation also used by
-        ``SessionRepository.next_sequence_number``.
+        Canonical ``MAX(sequence_number) + 1`` helper (over live rows).
 
         NOT race-safe on its own: callers must hold the parent Session
-        row lock (``SELECT ... FOR UPDATE``) across this call and the
+        row lock (``SessionRepository.get_by_id_for_update``) across this call and the
         subsequent INSERT.  The partial unique index
         ``uq_episodes_session_sequence`` is the final guard — a lost race
         surfaces as ``IntegrityError``, which callers convert to a
@@ -367,26 +309,6 @@ class EpisodeRepository:
 
     # ── Update Enrichment Status ─────────────────────────────────────────────
 
-    async def update_enrichment_status(
-        self, episode_id: UUID, bitmask: int
-    ) -> None:
-        """Set the enrichment_status bitmask for an episode.
-
-        Uses an atomic ``UPDATE ... SET enrichment_status = :bitmask``
-        query to avoid read-modify-write race conditions.
-
-        Args:
-            episode_id: The episode's UUID.
-            bitmask: The new enrichment status bitmask value.
-        """
-        await self._db.execute(
-            text(
-                "UPDATE episodes SET enrichment_status = :bitmask, "
-                "updated_at = now() WHERE id = :id AND is_deleted = false"
-            ),
-            {"bitmask": bitmask, "id": episode_id},
-        )
-
     async def apply_enrichment_bits(
         self, episode_id: UUID, bitmask: int
     ) -> None:
@@ -442,57 +364,6 @@ class EpisodeRepository:
 
     # ── Vector Search ─────────────────────────────────────────────────────────
 
-    async def search_by_vector(
-        self, embedding: list[float], project_id: UUID, user_id: UUID, limit: int = 50
-    ) -> list[dict[str, Any]]:
-        """Search episodes by vector similarity (pgvector cosine distance).
-
-        Uses the ``<=>`` operator which computes cosine distance. The score
-        is inverted (``1 - distance``) so that higher = more similar.
-
-        Args:
-            embedding: The query embedding vector.
-            project_id: Scope results to this project.
-            user_id: Tenant scope for multi-tenant isolation.
-            limit: Maximum results (capped at 200).
-
-        Returns:
-            A list of dicts with keys ``id``, ``content``, ``role``,
-            ``created_at``, and ``score`` (0.0–1.0).
-        """
-        effective_limit = min(limit, 200)
-        result = await self._db.execute(
-            text(
-                """
-                SELECT id, content, role, created_at,
-                       1 - (embedding <=> :embedding) AS score
-                FROM episodes
-                WHERE project_id = :project_id
-                  AND user_id = :user_id
-                  AND is_deleted = false
-                  AND embedding IS NOT NULL
-                ORDER BY embedding <=> :embedding
-                LIMIT :limit
-                """
-            ),
-            {
-                "embedding": embedding,
-                "project_id": project_id,
-                "user_id": user_id,
-                "limit": effective_limit,
-            },
-        )
-        return [
-            {
-                "id": str(r[0]),
-                "content": r[1],
-                "role": r[2],
-                "created_at": str(r[3]),
-                "score": float(r[4]),
-            }
-            for r in result.fetchall()
-        ]
-
     # ── BM25 Full-Text Search ─────────────────────────────────────────────────
 
     async def search_by_bm25(
@@ -546,23 +417,6 @@ class EpisodeRepository:
         ]
 
     # ── Count by User ────────────────────────────────────────────────────────
-
-    async def count_by_project(self, project_id: UUID) -> int:
-        """Count non-deleted episodes for a project.
-
-        Args:
-            project_id: The project's UUID.
-
-        Returns:
-            Total number of active episodes for the project.
-        """
-        result = await self._db.execute(
-            select(func.count(Episode.id)).where(
-                Episode.project_id == project_id,
-                Episode.is_deleted.is_(False),
-            )
-        )
-        return result.scalar() or 0
 
     # ── Cursor Helpers ───────────────────────────────────────────────────────
 

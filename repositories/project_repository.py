@@ -656,19 +656,6 @@ class ProjectRepository:
             )
             return result.scalar_one_or_none()
 
-    async def get_pending_member(
-        self, project_id: UUID, user_id: UUID
-    ) -> ProjectMember | None:
-        """Return the user's pending membership, or ``None``."""
-        result = await self._db.execute(
-            select(ProjectMember).where(
-                ProjectMember.project_id == project_id,
-                ProjectMember.user_id == user_id,
-                ProjectMember.status == "pending",
-            )
-        )
-        return result.scalar_one_or_none()
-
     async def update_member_status(
         self, project_id: UUID, user_id: UUID, status: str
     ) -> ProjectMember | None:

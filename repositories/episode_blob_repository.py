@@ -200,38 +200,6 @@ class EpisodeBlobRepository:
         )
         return list(result.scalars().all())
 
-    async def get_by_project(
-        self,
-        project_id: UUID,
-        limit: int = 500,
-        offset: int = 0,
-    ) -> list[EpisodeBlob]:
-        """Get blobs for a project, one page at a time.
-
-        Paged so a memory wipe never materializes the whole blob set —
-        callers loop until an empty page.  Rows are never deleted by the
-        sweep itself (orphan-blob GC owns row deletion), so ``offset``
-        paging over this stable set cannot skip — provided the order is
-        deterministic, hence the ``(created_at, id)`` tiebreak: equal
-        timestamps would otherwise let LIMIT/OFFSET skip or repeat rows.
-
-        Args:
-            project_id: The project UUID.
-            limit: Max rows per page.
-            offset: Page offset.
-
-        Returns:
-            List of ``EpisodeBlob`` instances, ordered by creation time.
-        """
-        result = await self._db.execute(
-            select(EpisodeBlob)
-            .where(EpisodeBlob.project_id == project_id)
-            .order_by(EpisodeBlob.created_at, EpisodeBlob.id)
-            .limit(limit)
-            .offset(offset)
-        )
-        return list(result.scalars().all())
-
     async def get_by_project_after(
         self,
         project_id: UUID,
@@ -275,27 +243,6 @@ class EpisodeBlobRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_by_content_hash(
-        self, user_id: UUID, content_hash: str
-    ) -> list[EpisodeBlob]:
-        """Find blobs with a matching content hash (for dedup).
-
-        Args:
-            user_id: Tenant isolation UUID.
-            content_hash: SHA-256 hex digest.
-
-        Returns:
-            List of matching ``EpisodeBlob`` instances.
-        """
-        result = await self._db.execute(
-            select(EpisodeBlob)
-            .where(
-                EpisodeBlob.user_id == user_id,
-                EpisodeBlob.content_hash == content_hash,
-            )
-        )
-        return list(result.scalars().all())
-
     # ── Update ───────────────────────────────────────────────────────────────
 
     async def update_extracted_text(
@@ -327,25 +274,6 @@ class EpisodeBlobRepository:
         return result.scalar_one_or_none()
 
     # ── Count / Delete ───────────────────────────────────────────────────────
-
-    async def count_by_episode(self, episode_id: UUID) -> int:
-        """Count blobs attached to an episode.
-
-        Uses SQL ``COUNT`` to avoid loading rows into memory.
-
-        Args:
-            episode_id: The episode UUID.
-
-        Returns:
-            Number of blobs.
-        """
-        from sqlalchemy import func
-
-        result = await self._db.execute(
-            select(func.count(EpisodeBlob.id))
-            .where(EpisodeBlob.episode_id == episode_id)
-        )
-        return result.scalar_one()
 
     async def get_orphaned_blobs(
         self,
@@ -380,26 +308,6 @@ class EpisodeBlobRepository:
             .limit(limit)
         )
         return list(result.scalars().all())
-
-    async def delete_by_episode(self, episode_id: UUID) -> list[EpisodeBlob]:
-        """Delete all blob records for an episode and return the deleted records.
-
-        Returns the list so callers can clean up S3 keys.
-
-        Args:
-            episode_id: The episode UUID.
-
-        Returns:
-            List of deleted EpisodeBlob instances (with storage_key for S3 cleanup).
-        """
-        result = await self._db.execute(
-            select(EpisodeBlob).where(EpisodeBlob.episode_id == episode_id)
-        )
-        blobs = list(result.scalars().all())
-        for blob in blobs:
-            await self._db.delete(blob)
-        await self._db.flush()
-        return blobs
 
     async def delete_by_ids(
         self, blob_ids: list[UUID]

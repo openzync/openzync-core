@@ -319,72 +319,6 @@ class TestSessionRepository:
 
     # ── next_sequence_number ───────────────────────────────────────────────────
 
-    async def test_next_sequence_number(
-        self, repo: SessionRepository, mock_db: AsyncMock
-    ) -> None:
-        """next_sequence_number returns incremented value."""
-        mock_result = MagicMock()
-        mock_result.scalar.return_value = 5
-        mock_db.execute.return_value = mock_result
-
-        seq = await repo.next_sequence_number(session_id=self.SESSION_ID)
-
-        assert seq == 5
-
-    async def test_next_sequence_number_first(
-        self, repo: SessionRepository, mock_db: AsyncMock
-    ) -> None:
-        """next_sequence_number returns 0 for first message."""
-        mock_result = MagicMock()
-        mock_result.scalar.return_value = 0
-        mock_db.execute.return_value = mock_result
-
-        seq = await repo.next_sequence_number(session_id=self.SESSION_ID)
-
-        assert seq == 0
-
-    # ── update_metadata ────────────────────────────────────────────────────────
-
-    async def test_update_metadata(
-        self, repo: SessionRepository, mock_db: AsyncMock
-    ) -> None:
-        """update_metadata deep-merges into existing metadata."""
-        session = self._mock_session(metadata_={"key1": "val1"})
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = session
-        mock_db.execute.return_value = mock_result
-        mock_db.flush.return_value = None
-        mock_db.refresh.return_value = None
-
-        result = await repo.update_metadata(
-            user_id=self.ORG_ID,
-            session_id=self.SESSION_ID,
-            metadata={"key2": "val2", "key1": None},
-        )
-
-        assert result is not None
-        assert result.metadata_ == {"key2": "val2"}
-        mock_db.flush.assert_awaited_once()
-        mock_db.refresh.assert_awaited_once()
-
-    async def test_update_metadata_not_found(
-        self, repo: SessionRepository, mock_db: AsyncMock
-    ) -> None:
-        """update_metadata returns None when session not found."""
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
-        mock_db.execute.return_value = mock_result
-
-        result = await repo.update_metadata(
-            user_id=self.ORG_ID,
-            session_id=self.SESSION_ID,
-            metadata={"key": "val"},
-        )
-
-        assert result is None
-
-    # ── close ──────────────────────────────────────────────────────────────────
-
     async def test_close(
         self, repo: SessionRepository, mock_db: AsyncMock
     ) -> None:
@@ -577,23 +511,6 @@ class TestSessionRepository:
         assert stats == {}
 
     # ── find_stale_open_sessions ───────────────────────────────────────────────
-
-    async def test_find_stale_open_sessions(
-        self, repo: SessionRepository, mock_db: AsyncMock
-    ) -> None:
-        """find_stale_open_sessions returns stale sessions."""
-        stale = [self._mock_session(), self._mock_session(id=uuid4())]
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = stale
-        mock_db.execute.return_value = mock_result
-
-        result = await repo.find_stale_open_sessions(
-            inactivity_hours=24, batch_size=100
-        )
-
-        assert result == stale
-
-    # ── message_count ──────────────────────────────────────────────────────────
 
     async def test_message_count(
         self, repo: SessionRepository, mock_db: AsyncMock

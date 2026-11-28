@@ -2,29 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field, HttpUrl
-
-
-class WebhookEndpointResponse(BaseModel):
-    """Public representation of a webhook endpoint.
-
-    Never exposes the signing secret — that is shown once on creation.
-    """
-
-    id: UUID
-    user_id: UUID
-    name: str
-    url: str
-    events: list[str]
-    is_active: bool
-    last_delivery_at: datetime | None = None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
 
 
 class CreateWebhookRequest(BaseModel):
@@ -68,24 +48,3 @@ class WebhookSecretResponse(BaseModel):
         "this endpoint. It is shown only once — store it immediately. "
         "Rotate via the API if it is ever compromised."
     )
-
-
-class ToggleWebhookRequest(BaseModel):
-    """Request body for enabling or disabling a webhook endpoint."""
-
-    is_active: bool
-
-
-class WebhookEventTypeResponse(BaseModel):
-    """Describes a single subscribable event type."""
-
-    type: str
-    label: str
-    category: str
-    description: str
-
-
-class WebhookEventCategoriesResponse(BaseModel):
-    """All event types grouped by category for the UI."""
-
-    categories: dict[str, list[WebhookEventTypeResponse]]

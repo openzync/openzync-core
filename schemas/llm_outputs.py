@@ -34,7 +34,6 @@ from typing import Any, Literal
 
 from pydantic import (
     BaseModel,
-    ConfigDict,
     Field,
     ValidationInfo,
     field_validator,
@@ -140,22 +139,6 @@ class ClassificationOutput(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Structured extraction
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-class StructuredExtractionOutput(BaseModel):
-    """Expected LLM output for structured data extraction.
-
-    Accepts **any** JSON object keys — the shape is defined by the user's
-    configured extraction schemas, which vary per deployment.  This model
-    ensures the LLM returned a valid JSON object; further schema-level
-    validation is performed by the worker via ``_validate_against_schema``.
-    """
-
-    model_config = ConfigDict(extra="allow")
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Combined enrichment output
 # ═══════════════════════════════════════════════════════════════════════════════

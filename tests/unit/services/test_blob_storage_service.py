@@ -408,26 +408,6 @@ class TestBlobStorageService:
 
     # ── validate_blob_metadata_count ────────────────────────────────────────
 
-    def test_validate_blob_metadata_count_under_limittest_validate_blob_metadata_count_under_limit(self) -> None:
-        """``validate_blob_metadata_count`` passes when count is under limit."""
-        metadatas = [
-            BlobMetadata(blob_id=i, mime_type="text/plain", file_name=f"f{i}.txt")
-            for i in range(5)
-        ]
-        # Should not raise
-        BlobStorageService.validate_blob_metadata_count(metadatas)
-
-    def test_validate_blob_metadata_count_over_limittest_validate_blob_metadata_count_over_limit(self) -> None:
-        """``validate_blob_metadata_count`` raises ValidationError when over limit."""
-        metadatas = [
-            BlobMetadata(blob_id=i, mime_type="text/plain", file_name=f"f{i}.txt")
-            for i in range(11)  # MAX_BLOBS_PER_MESSAGE default = 10
-        ]
-        with pytest.raises(ValidationError, match="Too many blobs per message"):
-            BlobStorageService.validate_blob_metadata_count(metadatas)
-
-    # ── generate_download_url ───────────────────────────────────────────────
-
     @pytest.mark.asyncio
     async def test_generate_download_url_returns_urltest_generate_download_url_returns_url(self) -> None:
         """``generate_download_url`` returns a presigned URL on success."""

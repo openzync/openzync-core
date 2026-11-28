@@ -168,13 +168,13 @@ class TestEventRegistry:
 
 @pytest.mark.unit
 class TestEventHelpers:
-    """event_type_labels and event_categories helper functions."""
+    """event_categories helper function."""
 
     def test_event_type_labels_returns_mapping(self) -> None:
-        """event_type_labels returns type → label mapping."""
-        from core.events import event_type_labels
+        """EVENT_REGISTRY builds a type → label mapping."""
+        from core.events import EVENT_REGISTRY
 
-        labels = event_type_labels()
+        labels = {m.type: m.label for m in EVENT_REGISTRY}
         assert labels["session.created"] == "Session Created"
         assert labels["episode.processed"] == "Episode Processed"
         assert len(labels) >= 14  # all event types

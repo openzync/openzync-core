@@ -21,15 +21,3 @@ class HealthResponse(BaseModel):
     status: str
     service: str = "openzync-api"
     version: str
-
-
-class ReadinessResponse(BaseModel):
-    """Response body for the readiness probe (``GET /v1/ready``).
-
-    Attributes:
-        status: ``"ok"`` when all checks pass, ``"degraded"`` otherwise.
-        checks: Per-dependency health result (``True`` / ``False``).
-    """
-
-    status: str
-    checks: dict[str, bool]

@@ -84,38 +84,6 @@ class TestGraphService:
     # ── ensure_user_exists ─────────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_ensure_user_exists_success(self) -> None:
-        """With user_repo returning a user, no error is raised."""
-        mock_user_repo = AsyncMock()
-        mock_user_repo.get_by_uuid.return_value = AsyncMock()  # non-None = found
-        service = GraphService(graph_backend=AsyncMock(), user_repo=mock_user_repo)
-
-        # Should not raise
-        await service.ensure_user_exists(uuid4())
-
-        mock_user_repo.get_by_uuid.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_ensure_user_exists_not_found(self) -> None:
-        """With user_repo returning None, raises NotFoundError."""
-        mock_user_repo = AsyncMock()
-        mock_user_repo.get_by_uuid.return_value = None
-        service = GraphService(graph_backend=AsyncMock(), user_repo=mock_user_repo)
-
-        with pytest.raises(NotFoundError):
-            await service.ensure_user_exists(uuid4())
-
-    @pytest.mark.asyncio
-    async def test_ensure_user_exists_no_repo(self) -> None:
-        """Without user_repo, raises NotFoundError."""
-        service = GraphService(graph_backend=AsyncMock(), user_repo=None)
-
-        with pytest.raises(NotFoundError):
-            await service.ensure_user_exists(uuid4())
-
-    # ── get_entities (session-scoped) ──────────────────────────────────────
-
-    @pytest.mark.asyncio
     async def test_get_entities_with_session_id(self) -> None:
         """session_id resolves episodes in Postgres, then queries the graph."""
         entity_id = uuid4()

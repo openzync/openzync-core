@@ -13,9 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 __all__ = [
     "BlobMetadata",
-    "BlobResponse",
     "DeleteMemoryConfirm",
-    "DeleteMemoryResponse",
     "ENRICHMENT_KEYS",
     "IngestMemoryRequest",
     "IngestMemoryResponse",
@@ -247,35 +245,6 @@ class IngestMemoryResponse(BaseModel):
     )
 
 
-# TODO(blob-get-endpoint): Add a GET /v1/projects/{id}/memory/blobs/{blob_id}
-# endpoint that uses this schema. Currently scaffold-only.
-class BlobResponse(BaseModel):
-    """Response model for a single blob returned by GET endpoints.
-
-    Attributes:
-        id: UUID of the blob record.
-        file_name: Original filename from the upload.
-        mime_type: MIME type (e.g. ``"application/pdf"``).
-        file_size: Size in bytes.
-        storage_url: Signed/redirect URL for direct S3 download (may be null).
-        width: Image width in pixels (null for non-images).
-        height: Image height in pixels (null for non-images).
-        blob_index: Positional index within the episode's blobs (0-based).
-    """
-
-    id: UUID
-    file_name: str
-    mime_type: str
-    file_size: int
-    storage_url: str | None = None
-    download_url: str | None = None  # Presigned URL, short TTL
-    width: int | None = None
-    height: int | None = None
-    blob_index: int = 0
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 class DeleteMemoryConfirm(BaseModel):
     """Confirm body for ``DELETE /v1/projects/{project_id}/memory``.
 
@@ -289,45 +258,4 @@ class DeleteMemoryConfirm(BaseModel):
     confirm: str = Field(
         ...,
         description="Must equal the path project_id to confirm the wipe.",
-    )
-
-
-class DeleteMemoryResponse(BaseModel):
-    """Response body for ``DELETE /v1/projects/{project_id}/memory``.
-
-    Returned with 200 only when the post-commit S3 sweep failed partway
-    (``failed=True`` with partial ``blobs_deleted``) — the success path
-    stays 204 with no body.
-
-    Attributes:
-        status: Outcome of the deletion operation.
-        episodes_deleted: Number of episodes soft-deleted.
-        facts_deleted: Number of facts soft-deleted.
-        blobs_deleted: Number of S3 objects deleted before the failure.
-        failed: True when the S3 sweep stopped early — leftovers stay
-            GC-visible via their soft-deleted blob rows.
-    """
-
-    status: str = Field(
-        default="deleted",
-        description="Outcome of the deletion operation.",
-    )
-    episodes_deleted: int = Field(
-        default=0,
-        ge=0,
-        description="Number of episodes soft-deleted.",
-    )
-    facts_deleted: int = Field(
-        default=0,
-        ge=0,
-        description="Number of facts soft-deleted.",
-    )
-    blobs_deleted: int = Field(
-        default=0,
-        ge=0,
-        description="Number of S3 objects deleted before the sweep stopped.",
-    )
-    failed: bool = Field(
-        default=False,
-        description="True when the S3 sweep failed partway (partial wipe).",
     )

@@ -18,7 +18,9 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.config import Settings, set_settings
+import core.config as _cfg
+
+from core.config import Settings
 from core.exceptions import AuthenticationError
 from models.refresh_token import RefreshToken
 from repositories.auth_repository import AuthRepository
@@ -45,7 +47,7 @@ def _init_settings() -> None:
         S3_ACCESS_KEY_ID="test-key",
         S3_SECRET_ACCESS_KEY="test-secret",
     )
-    set_settings(settings)
+    _cfg._settings = settings  # type: ignore[attr-defined] — singleton seam
 
 
 async def _make_user(db: AsyncSession, email: str) -> object:

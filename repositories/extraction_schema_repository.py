@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.sorting import SortSpec, resolve_order_by
@@ -143,30 +143,3 @@ class ExtractionSchemaRepository:
         schema.is_active = False
         await self._db.flush()
 
-    async def count_for_org(
-        self, user_id: UUID, schema_type: str | None = None
-    ) -> int:
-        """Count schemas for an org, optionally filtered by type."""
-        query = select(func.count()).select_from(ExtractionSchema).where(
-            ExtractionSchema.user_id == user_id
-        )
-        if schema_type is not None:
-            query = query.where(ExtractionSchema.type == schema_type)
-        result = await self._db.execute(query)
-        return result.scalar_one()
-
-    async def get_classification_labels(
-        self, user_id: UUID
-    ) -> list[dict]:
-        """Fetch all active classification schema JSON definitions.
-
-        Used by the ``classify_dialog`` worker to determine label sets.
-        """
-        result = await self._db.execute(
-            select(ExtractionSchema.json_schema).where(
-                ExtractionSchema.user_id == user_id,
-                ExtractionSchema.type == "classification",
-                ExtractionSchema.is_active == True,
-            )
-        )
-        return [row[0] for row in result.all()]

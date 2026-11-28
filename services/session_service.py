@@ -194,67 +194,6 @@ class SessionService:
             )
         )
 
-    async def get_session_by_external_id(
-        self, user_id: UUID, project_id: UUID, external_id: str
-    ) -> SessionResponse:
-        """Get a session within a project by its external_id.
-
-        Args:
-            user_id: The user UUID for tenant isolation.
-            project_id: The project UUID.
-            external_id: The caller-defined session identifier.
-
-        Returns:
-            The session response with aggregate statistics.
-
-        Raises:
-            NotFoundError: Session not found or soft-deleted.
-        """
-        session = await self._repo.get_by_external_id(
-            user_id, project_id, external_id
-        )
-        if session is None:
-            raise NotFoundError(
-                f"Session external_id={external_id!r} not found "
-                f"in project {project_id}"
-            )
-
-        stats = await self._repo.get_stats(session.id)
-        observation_count = await self._repo.get_observation_count(user_id, project_id)
-
-        return SessionResponse.model_validate(
-            session_to_dict(
-                session,
-                message_count=stats["message_count"],
-                fact_count=stats["fact_count"],
-                observation_count=observation_count,
-            )
-        )
-
-    async def get_session_by_uuid(
-        self,
-        user_id: UUID,
-        session_id: UUID,
-        project_id: UUID | None = None,
-    ) -> SessionResponse:
-        """Get a session by its internal UUID (alias for ``get_session``).
-
-        Provided for callers that already have the UUID and don't need
-        external_id resolution.
-
-        Args:
-            user_id: The user UUID for tenant isolation.
-            session_id: The session's UUID.
-            project_id: Optional project UUID for intra-org isolation.
-
-        Returns:
-            The session response with aggregate statistics.
-
-        Raises:
-            NotFoundError: Session not found or soft-deleted.
-        """
-        return await self.get_session(user_id, session_id, project_id=project_id)
-
     # ── List ────────────────────────────────────────────────────────────────
 
     async def list_sessions(

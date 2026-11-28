@@ -164,39 +164,6 @@ class TestEpisodeRepository:
 
     # ── get_by_project_id ──────────────────────────────────────────────────────
 
-    async def test_get_by_project_id(
-        self, repo: EpisodeRepository, mock_db: AsyncMock
-    ) -> None:
-        """get_by_project_id returns episodes for a project."""
-        episodes = [self._mock_episode()]
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = episodes
-        mock_db.execute.return_value = mock_result
-
-        result, cursor = await repo.get_by_project_id(
-            project_id=self.PROJECT_ID, limit=10
-        )
-
-        assert len(result) == 1
-
-    async def test_get_by_project_id_with_cursor(
-        self, repo: EpisodeRepository, mock_db: AsyncMock
-    ) -> None:
-        """get_by_project_id decodes cursor."""
-        episodes = [self._mock_episode(sequence_number=3)]
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = episodes
-        mock_db.execute.return_value = mock_result
-
-        encoded = EpisodeRepository._encode_cursor(1, self.EPISODE_ID)
-        result, cursor = await repo.get_by_project_id(
-            project_id=self.PROJECT_ID, cursor=encoded, limit=10
-        )
-
-        assert len(result) == 1
-
-    # ── get_next_sequence ──────────────────────────────────────────────────────
-
     async def test_get_next_sequence(
         self, repo: EpisodeRepository, mock_db: AsyncMock
     ) -> None:
@@ -322,20 +289,6 @@ class TestEpisodeRepository:
 
     # ── update_enrichment_status ───────────────────────────────────────────────
 
-    async def test_update_enrichment_status(
-        self, repo: EpisodeRepository, mock_db: AsyncMock
-    ) -> None:
-        """update_enrichment_status executes update."""
-        mock_db.execute.return_value = MagicMock()
-
-        await repo.update_enrichment_status(
-            episode_id=self.EPISODE_ID, bitmask=7
-        )
-
-        mock_db.execute.assert_awaited_once()
-
-    # ── apply_enrichment_bits ──────────────────────────────────────────────────
-
     async def test_apply_enrichment_bits(
         self, repo: EpisodeRepository, mock_db: AsyncMock
     ) -> None:
@@ -380,70 +333,6 @@ class TestEpisodeRepository:
 
     # ── search_by_vector ───────────────────────────────────────────────────────
 
-    async def test_search_by_vector(
-        self, repo: EpisodeRepository, mock_db: AsyncMock
-    ) -> None:
-        """search_by_vector returns ranked results."""
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = [
-            (str(self.EPISODE_ID), "Hello", "user", "2024-01-01", 0.95),
-        ]
-        mock_db.execute.return_value = mock_result
-
-        results = await repo.search_by_vector(
-            embedding=[0.1, 0.2, 0.3],
-            project_id=self.PROJECT_ID,
-            user_id=self.ORG_ID,
-            limit=10,
-        )
-
-        assert len(results) == 1
-        assert results[0]["score"] == 0.95
-        assert results[0]["content"] == "Hello"
-        params = mock_db.execute.call_args.args[1]
-        assert params["user_id"] == self.ORG_ID
-
-    async def test_search_by_vector_empty(
-        self, repo: EpisodeRepository, mock_db: AsyncMock
-    ) -> None:
-        """search_by_vector returns empty list when no matches."""
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = []
-        mock_db.execute.return_value = mock_result
-
-        results = await repo.search_by_vector(
-            embedding=[0.1, 0.2, 0.3],
-            project_id=self.PROJECT_ID,
-            user_id=self.ORG_ID,
-            limit=10,
-        )
-
-        assert results == []
-        params = mock_db.execute.call_args.args[1]
-        assert params["user_id"] == self.ORG_ID
-
-    async def test_search_by_vector_scopes_to_organization(
-        self, repo: EpisodeRepository, mock_db: AsyncMock
-    ) -> None:
-        """search_by_vector SQL filters on user_id with bound org id."""
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = []
-        mock_db.execute.return_value = mock_result
-
-        await repo.search_by_vector(
-            embedding=[0.1, 0.2, 0.3],
-            project_id=self.PROJECT_ID,
-            user_id=self.ORG_ID,
-            limit=10,
-        )
-
-        stmt = mock_db.execute.call_args.args[0]
-        params = mock_db.execute.call_args.args[1]
-        assert "user_id = :user_id" in str(stmt.text)
-        assert params["user_id"] == self.ORG_ID
-
-    # ── search_by_bm25 ─────────────────────────────────────────────────────────
-
     async def test_search_by_bm25(
         self, repo: EpisodeRepository, mock_db: AsyncMock
     ) -> None:
@@ -482,32 +371,6 @@ class TestEpisodeRepository:
         assert results == []
 
     # ── count_by_project ───────────────────────────────────────────────────────
-
-    async def test_count_by_project(
-        self, repo: EpisodeRepository, mock_db: AsyncMock
-    ) -> None:
-        """count_by_project returns episode count."""
-        mock_result = MagicMock()
-        mock_result.scalar.return_value = 42
-        mock_db.execute.return_value = mock_result
-
-        count = await repo.count_by_project(project_id=self.PROJECT_ID)
-
-        assert count == 42
-
-    async def test_count_by_project_zero(
-        self, repo: EpisodeRepository, mock_db: AsyncMock
-    ) -> None:
-        """count_by_project returns 0 when no episodes."""
-        mock_result = MagicMock()
-        mock_result.scalar.return_value = 0
-        mock_db.execute.return_value = mock_result
-
-        count = await repo.count_by_project(project_id=self.PROJECT_ID)
-
-        assert count == 0
-
-    # ── Cursor helpers ─────────────────────────────────────────────────────────
 
     def test_encode_decode_cursor_roundtrip(
         self,

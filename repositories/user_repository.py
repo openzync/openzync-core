@@ -627,36 +627,6 @@ class UserRepository:
         await self._db.refresh(user)
         return user
 
-    # ── Hard Delete ─────────────────────────────────────────────────────────
-
-    async def hard_delete(
-        self, user_id: UUID
-    ) -> bool:
-        """Permanently remove a user row.
-
-        Used by the GDPR purge worker after the 30-day grace period.
-        Cascade rules in the schema handle child tables (sessions,
-        episodes, facts).
-
-        Args:
-            user_id: Tenant scope (always applied).
-            user_id: The internal OpenZync user UUID.
-
-        Returns:
-            ``True`` if a row was deleted, ``False`` if not found.
-        """
-        result = await self._db.execute(
-            select(User).where(
-                User.id == user_id,
-            )
-        )
-        user = result.scalar_one_or_none()
-        if user is None:
-            return False
-        await self._db.delete(user)
-        await self._db.flush()
-        return True
-
     # ── List with Cursor Pagination ─────────────────────────────────────────
 
     async def list(
