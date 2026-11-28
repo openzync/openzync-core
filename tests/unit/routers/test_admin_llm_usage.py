@@ -97,6 +97,21 @@ def _mock_service(
     return list_mock, summary_mock
 
 
+@pytest.fixture(autouse=True)
+def _stub_platform_scope() -> object:
+    """Stub the holder check: tests pin filtering, not the RBAC boundary.
+
+    ``resolve_platform_scope`` consults ``has_platform_manage`` (module
+    global in ``dependencies.auth``); a bare AsyncMock redis/DB would
+    crash the real lookup, so non-holder scope is pinned here.
+    """
+    with patch(
+        "dependencies.auth.has_platform_manage",
+        new=AsyncMock(return_value=False),
+    ):
+        yield  # type: ignore[misc]
+
+
 class TestAuth:
     async def test_unauthenticated_returns_401(self) -> None:
         app = _make_app(authenticated=False)
@@ -187,8 +202,17 @@ class TestFilteringAndSummary:
         app = _make_app(authenticated=True)
         rows = [_row(worker="enrich_episode", model="gpt-4o-mini")]
         list_mock, summary_mock = _mock_service(rows)
+        # project_id is owner-validated for every caller — stub an owned
+        # project so the test pins filter-plumbing, not the ownership gate.
+        owned_repo = AsyncMock()
+        owned_repo.get_by_id = AsyncMock(
+            return_value=SimpleNamespace(user_id=USER_ID, id=PROJECT_ID)
+        )
         with (
             patch("dependencies.auth._check_permission", new=AsyncMock()),
+            patch(
+                "dependencies.auth.ProjectRepository", return_value=owned_repo
+            ),
             patch("routers.admin_llm_usage.list_usage", list_mock),
             patch("routers.admin_llm_usage.summarize_usage", summary_mock),
         ):

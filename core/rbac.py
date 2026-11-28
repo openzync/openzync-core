@@ -61,23 +61,29 @@ ALL_PERMISSIONS: frozenset[str] = frozenset(
         "configuration:write",
         "members:read",
         "members:write",
+        "platform:manage",
     }
 )
 """The full permission vocabulary shared by users and API keys.
 
 An empty permission array is a wildcard — the ``admin`` role grants
 everything.  ``member`` roles carry an explicit subset (seeded to
-MEMBER_DEFAULT_PERMISSIONS (no members:*) for new users).
+MEMBER_DEFAULT_PERMISSIONS (no members:*, no platform:*) for new users).
 """
 
 MEMBER_DEFAULT_PERMISSIONS: tuple[str, ...] = tuple(
-    sorted(p for p in ALL_PERMISSIONS if not p.startswith("members:"))
+    sorted(
+        p
+        for p in ALL_PERMISSIONS
+        if not (p.startswith("members:") or p.startswith("platform:"))
+    )
 )
 """Default permission set seeded for ``member``-role users.
 
-New users do NOT receive ``members:*`` by default — an admin grants
-``members:read``/``members:write`` explicitly.  A tuple (not a set) so
-the seeding sites' ``list(...)`` yields a deterministic, canonical order.
+New users do NOT receive ``members:*`` or ``platform:*`` by default —
+an admin grants ``members:read``/``members:write``/``platform:manage``
+explicitly.  A tuple (not a set) so the seeding sites' ``list(...)``
+yields a deterministic, canonical order.
 """
 
 
@@ -279,6 +285,33 @@ async def get_effective_permissions(
             exc_info=True,
         )
     return permissions
+
+
+async def has_platform_manage(
+    redis: Redis,
+    db: AsyncSession,
+    user_id: UUID,
+) -> bool:
+    """True when the user sees platform-wide aggregates.
+
+    The ``admin`` role is wildcard (implicitly holds everything);
+    any other role must carry the explicit ``"platform:manage"``
+    grant.  Fail-closed: any lookup degrading to ``member``/empty
+    denies, mirroring :func:`require_permission`.
+
+    Args:
+        redis: Async Redis client (from ``request.app.state.redis``).
+        db: Request-scoped async DB session.
+        user_id: The user's UUID.
+
+    Returns:
+        ``True`` for admins and ``platform:manage`` holders.
+    """
+    if await get_user_role(redis, db, user_id) == "admin":
+        return True
+    return "platform:manage" in await get_effective_permissions(
+        redis, db, user_id
+    )
 
 
 async def invalidate_permissions(redis: Redis, user_id: UUID) -> None:

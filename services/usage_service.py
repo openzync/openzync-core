@@ -147,6 +147,7 @@ async def list_usage(
     limit: int = 50,
     offset: int = 0,
     sort: SortSpec | None = None,
+    sitewide: bool = False,
 ) -> tuple[list[LLMUsage], int]:
     """List metering rows for a user with optional filters.
 
@@ -161,10 +162,23 @@ async def list_usage(
         limit: Max rows per page.
         offset: Pagination offset.
         sort: Validated sort spec.
+        sitewide: When ``True`` read across all users (the caller runs
+            under an RLS bypass); ``user_id`` is then only informational.
 
     Returns:
         Tuple of (rows, total_count).
     """
+    if sitewide:
+        return await LLMUsageRepository(db).list_paginated_sitewide(
+            start=start,
+            end=end,
+            project_id=project_id,
+            worker=worker,
+            model=model,
+            limit=limit,
+            offset=offset,
+            sort=sort,
+        )
     return await LLMUsageRepository(db).list_paginated(
         user_id,
         start=start,
@@ -189,6 +203,7 @@ async def list_usage_daily(
     model: str | None = None,
     limit: int = 365,
     offset: int = 0,
+    sitewide: bool = False,
 ) -> tuple[list[DailyUsageBucket], int]:
     """Aggregate metering rows into sparse UTC-day buckets, newest first.
 
@@ -202,10 +217,22 @@ async def list_usage_daily(
         model: Exact-match filter on model identifier.
         limit: Max day buckets per page.
         offset: Pagination offset over day buckets.
+        sitewide: When ``True`` read across all users (the caller runs
+            under an RLS bypass); ``user_id`` is then only informational.
 
     Returns:
         Tuple of (buckets, day_count).
     """
+    if sitewide:
+        return await LLMUsageRepository(db).list_daily_buckets_sitewide(
+            start=start,
+            end=end,
+            project_id=project_id,
+            worker=worker,
+            model=model,
+            limit=limit,
+            offset=offset,
+        )
     return await LLMUsageRepository(db).list_daily_buckets(
         user_id,
         start=start,
@@ -227,6 +254,7 @@ async def summarize_usage(
     project_id: UUID | None = None,
     worker: str | None = None,
     model: str | None = None,
+    sitewide: bool = False,
 ) -> UsageSummary:
     """Aggregate metering totals for a user over the filtered window.
 
@@ -238,11 +266,21 @@ async def summarize_usage(
         project_id: Exact-match filter on project scope.
         worker: Exact-match filter on worker label.
         model: Exact-match filter on model identifier.
+        sitewide: When ``True`` read across all users (the caller runs
+            under an RLS bypass); ``user_id`` is then only informational.
 
     Returns:
         A ``UsageSummary`` with call counts, token sums, and the
         average call duration.
     """
+    if sitewide:
+        return await LLMUsageRepository(db).get_summary_sitewide(
+            start=start,
+            end=end,
+            project_id=project_id,
+            worker=worker,
+            model=model,
+        )
     return await LLMUsageRepository(db).get_summary(
         user_id,
         start=start,

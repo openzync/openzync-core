@@ -60,8 +60,8 @@ class QuickActionsService:
         """Build a prioritized list of quick actions based on platform state.
 
         Privilege-gated links are omitted (not 403) for under-privileged
-        callers: ``/users`` requires the admin role, ``/audit`` requires
-        ``members:read`` (admins hold it by wildcard).
+        callers: ``/users`` and ``/audit`` require ``platform:manage``
+        (admins hold it by wildcard).
 
         Args:
             user_id: The user UUID.
@@ -84,8 +84,8 @@ class QuickActionsService:
         # on the request session (fail-closed: unknown user sees neither).
         caller = await self._user_repo.get_by_uuid(user_id)
         is_admin = caller is not None and caller.role == "admin"
-        can_read_members = is_admin or (
-            caller is not None and "members:read" in (caller.permissions or [])
+        can_manage_platform = is_admin or (
+            caller is not None and "platform:manage" in (caller.permissions or [])
         )
 
         # 1. Projects
@@ -113,8 +113,9 @@ class QuickActionsService:
                 description="Set up your LLM provider to start using sessions",
             ))
 
-        # 3. Team size — admin-only link (/users requires the admin role).
-        if user_count < 2 and is_admin:
+        # 3. Team size — platform:manage-gated (/users invite flow is
+        # granted to non-admin holders; /audit below uses the same gate).
+        if user_count < 2 and can_manage_platform:
             actions.append(QuickAction(
                 label="Invite Team Members",
                 href="/users",
@@ -129,7 +130,7 @@ class QuickActionsService:
             icon="bar-chart-3",
             description="Usage trends and metrics",
         ))
-        if can_read_members:
+        if can_manage_platform:
             actions.append(QuickAction(
                 label="View Audit Log",
                 href="/audit",

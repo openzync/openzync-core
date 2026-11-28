@@ -247,88 +247,112 @@ class AdminMetricsRepository:
         result = await self._db.execute(stmt)
         return [(row.date, row.count) for row in result]
 
-    async def count_episodes_total(self, user_id: UUID) -> int:
+    async def count_episodes_total(
+        self, user_id: UUID, project_id: UUID | None = None
+    ) -> int:
         """Return total non-deleted episode count."""
-        return await self._scalar_count(
-            select(func.count(Episode.id)).where(
-                Episode.user_id == user_id,
-                Episode.is_deleted.is_(False),
-            )
-        )
+        conds = [
+            Episode.user_id == user_id,
+            Episode.is_deleted.is_(False),
+        ]
+        if project_id is not None:
+            conds.append(Episode.project_id == project_id)
+        return await self._scalar_count(select(func.count(Episode.id)).where(*conds))
 
-    async def count_episodes_24h(self, user_id: UUID) -> int:
+    async def count_episodes_24h(
+        self, user_id: UUID, project_id: UUID | None = None
+    ) -> int:
         """Return non-deleted episode count from the last 24 hours."""
-        return await self._scalar_count(
-            select(func.count(Episode.id)).where(
-                Episode.user_id == user_id,
-                Episode.is_deleted.is_(False),
-                Episode.created_at >= func.now() - text("interval '24 hours'"),
-            )
-        )
+        conds = [
+            Episode.user_id == user_id,
+            Episode.is_deleted.is_(False),
+            Episode.created_at >= func.now() - text("interval '24 hours'"),
+        ]
+        if project_id is not None:
+            conds.append(Episode.project_id == project_id)
+        return await self._scalar_count(select(func.count(Episode.id)).where(*conds))
 
-    async def count_episodes_archived(self, user_id: UUID) -> int:
+    async def count_episodes_archived(
+        self, user_id: UUID, project_id: UUID | None = None
+    ) -> int:
         """Return non-deleted episode count in archived projects."""
-        return await self._scalar_count(
-            select(func.count(Episode.id)).where(
-                Episode.user_id == user_id,
-                Episode.is_deleted.is_(False),
-                Episode.project_id.in_(archived_project_ids()),
-            )
-        )
+        conds = [
+            Episode.user_id == user_id,
+            Episode.is_deleted.is_(False),
+            Episode.project_id.in_(archived_project_ids()),
+        ]
+        if project_id is not None:
+            conds.append(Episode.project_id == project_id)
+        return await self._scalar_count(select(func.count(Episode.id)).where(*conds))
 
-    async def count_episodes_enrichable(self, user_id: UUID) -> int:
+    async def count_episodes_enrichable(
+        self, user_id: UUID, project_id: UUID | None = None
+    ) -> int:
         """Return non-deleted episode count in non-archived projects."""
-        return await self._scalar_count(
-            select(func.count(Episode.id)).where(
-                Episode.user_id == user_id,
-                Episode.is_deleted.is_(False),
-                Episode.project_id.not_in(archived_project_ids()),
-            )
-        )
+        conds = [
+            Episode.user_id == user_id,
+            Episode.is_deleted.is_(False),
+            Episode.project_id.not_in(archived_project_ids()),
+        ]
+        if project_id is not None:
+            conds.append(Episode.project_id == project_id)
+        return await self._scalar_count(select(func.count(Episode.id)).where(*conds))
 
-    async def count_episodes_in_progress(self, user_id: UUID) -> int:
+    async def count_episodes_in_progress(
+        self, user_id: UUID, project_id: UUID | None = None
+    ) -> int:
         """Return enrichable episode count with incomplete enrichment."""
-        return await self._scalar_count(
-            select(func.count(Episode.id)).where(
-                Episode.user_id == user_id,
-                Episode.is_deleted.is_(False),
-                (Episode.enrichment_status.op("&")(ENRICHMENT_ALL)) != ENRICHMENT_ALL,
-                Episode.project_id.not_in(archived_project_ids()),
-            )
-        )
+        conds = [
+            Episode.user_id == user_id,
+            Episode.is_deleted.is_(False),
+            (Episode.enrichment_status.op("&")(ENRICHMENT_ALL)) != ENRICHMENT_ALL,
+            Episode.project_id.not_in(archived_project_ids()),
+        ]
+        if project_id is not None:
+            conds.append(Episode.project_id == project_id)
+        return await self._scalar_count(select(func.count(Episode.id)).where(*conds))
 
-    async def count_episodes_pending(self, user_id: UUID) -> int:
+    async def count_episodes_pending(
+        self, user_id: UUID, project_id: UUID | None = None
+    ) -> int:
         """Return enrichable episode count with no enrichment started."""
-        return await self._scalar_count(
-            select(func.count(Episode.id)).where(
-                Episode.user_id == user_id,
-                Episode.is_deleted.is_(False),
-                Episode.enrichment_status == 0,
-                Episode.project_id.not_in(archived_project_ids()),
-            )
-        )
+        conds = [
+            Episode.user_id == user_id,
+            Episode.is_deleted.is_(False),
+            Episode.enrichment_status == 0,
+            Episode.project_id.not_in(archived_project_ids()),
+        ]
+        if project_id is not None:
+            conds.append(Episode.project_id == project_id)
+        return await self._scalar_count(select(func.count(Episode.id)).where(*conds))
 
-    async def count_episodes_fully_enriched(self, user_id: UUID) -> int:
+    async def count_episodes_fully_enriched(
+        self, user_id: UUID, project_id: UUID | None = None
+    ) -> int:
         """Return enrichable episode count with all enrichment bits set."""
-        return await self._scalar_count(
-            select(func.count(Episode.id)).where(
-                Episode.user_id == user_id,
-                Episode.is_deleted.is_(False),
-                (Episode.enrichment_status.op("&")(ENRICHMENT_ALL)) == ENRICHMENT_ALL,
-                Episode.project_id.not_in(archived_project_ids()),
-            )
-        )
+        conds = [
+            Episode.user_id == user_id,
+            Episode.is_deleted.is_(False),
+            (Episode.enrichment_status.op("&")(ENRICHMENT_ALL)) == ENRICHMENT_ALL,
+            Episode.project_id.not_in(archived_project_ids()),
+        ]
+        if project_id is not None:
+            conds.append(Episode.project_id == project_id)
+        return await self._scalar_count(select(func.count(Episode.id)).where(*conds))
 
-    async def count_episodes_with_embeddings(self, user_id: UUID) -> int:
+    async def count_episodes_with_embeddings(
+        self, user_id: UUID, project_id: UUID | None = None
+    ) -> int:
         """Return enrichable episode count with a stored embedding."""
-        return await self._scalar_count(
-            select(func.count(Episode.id)).where(
-                Episode.user_id == user_id,
-                Episode.is_deleted.is_(False),
-                Episode.embedding.isnot(None),
-                Episode.project_id.not_in(archived_project_ids()),
-            )
-        )
+        conds = [
+            Episode.user_id == user_id,
+            Episode.is_deleted.is_(False),
+            Episode.embedding.isnot(None),
+            Episode.project_id.not_in(archived_project_ids()),
+        ]
+        if project_id is not None:
+            conds.append(Episode.project_id == project_id)
+        return await self._scalar_count(select(func.count(Episode.id)).where(*conds))
 
     async def count_users_total(self, user_id: UUID) -> int:
         """Return total non-deleted user count."""
@@ -337,3 +361,300 @@ class AdminMetricsRepository:
                 User.is_deleted.is_(False),
             )
         )
+
+    # ── Site-wide (platform:manage holders, under RLS bypass) ─────────────
+
+    async def episodes_per_day_sitewide(
+        self,
+        start: datetime,
+        end: datetime,
+        project_id: UUID | None,
+    ) -> list[tuple[datetime, int]]:
+        """Return ``(day, count)`` episode rows across all users."""
+        conditions = [
+            Episode.is_deleted.is_(False),
+            Episode.created_at >= start,
+            Episode.created_at < end,
+        ]
+        if project_id:
+            conditions.append(Episode.project_id == project_id)
+        stmt = (
+            select(
+                func.date_trunc(
+                    "day", Episode.created_at.op("AT TIME ZONE")("UTC")
+                ).label("date"),
+                func.count(Episode.id).label("count"),
+            )
+            .select_from(Episode)
+            .where(*conditions)
+            .group_by(text("date"))
+            .order_by(text("date DESC"))
+        )
+        result = await self._db.execute(stmt)
+        return [(row.date, row.count) for row in result]
+
+    async def activity_per_day_sitewide(
+        self,
+        start: datetime,
+        end: datetime,
+    ) -> list[tuple[datetime, int]]:
+        """Return ``(day, count)`` audit-log rows across all users."""
+        stmt = (
+            select(
+                func.date_trunc(
+                    "day", AuditLog.created_at.op("AT TIME ZONE")("UTC")
+                ).label("date"),
+                func.count(AuditLog.id).label("count"),
+            )
+            .select_from(AuditLog)
+            .where(
+                AuditLog.created_at >= start,
+                AuditLog.created_at < end,
+            )
+            .group_by(text("date"))
+            .order_by(text("date DESC"))
+        )
+        result = await self._db.execute(stmt)
+        return [(row.date, row.count) for row in result]
+
+    async def facts_per_day_sitewide(
+        self,
+        start: datetime,
+        end: datetime,
+        project_id: UUID | None,
+    ) -> list[tuple[datetime, int]]:
+        """Return ``(day, count)`` fact rows across all users."""
+        conditions = [
+            Fact.created_at >= start,
+            Fact.created_at < end,
+        ]
+        if project_id:
+            conditions.append(Fact.project_id == project_id)
+        stmt = (
+            select(
+                func.date_trunc("day", Fact.created_at.op("AT TIME ZONE")("UTC")).label(
+                    "date"
+                ),
+                func.count(Fact.id).label("count"),
+            )
+            .select_from(Fact)
+            .where(*conditions)
+            .group_by(text("date"))
+            .order_by(text("date DESC"))
+        )
+        result = await self._db.execute(stmt)
+        return [(row.date, row.count) for row in result]
+
+    async def enrichment_progress_sitewide(
+        self,
+        project_id: UUID | None,
+    ) -> list[tuple[int, int]]:
+        """Return ``(enrichment_status, count)`` rows across all users."""
+        conditions = [
+            Episode.is_deleted.is_(False),
+            Episode.project_id.not_in(archived_project_ids()),
+        ]
+        if project_id:
+            conditions.append(Episode.project_id == project_id)
+        stmt = (
+            select(
+                Episode.enrichment_status,
+                func.count(Episode.id).label("count"),
+            )
+            .select_from(Episode)
+            .where(*conditions)
+            .group_by(Episode.enrichment_status)
+            .order_by(text("count DESC"))
+        )
+        result = await self._db.execute(stmt)
+        return [(row.enrichment_status, row.count) for row in result]
+
+    async def top_projects_by_episodes_sitewide(
+        self,
+        limit: int,
+        project_id: UUID | None,
+        include_archived: bool,
+    ) -> list[tuple[str, int, bool]]:
+        """Return ``(project_name, episode_count, is_archived)`` ranking."""
+        conditions = [
+            Episode.is_deleted.is_(False),
+        ]
+        if project_id:
+            conditions.append(Episode.project_id == project_id)
+        if not include_archived:
+            conditions.append(Project.is_archived.is_(False))
+        stmt = (
+            select(
+                Project.name.label("project_name"),
+                func.count(Episode.id).label("episode_count"),
+                Project.is_archived.label("is_archived"),
+            )
+            .select_from(Episode)
+            .join(Project, Project.id == Episode.project_id)
+            .where(*conditions)
+            .group_by(Project.id, Project.name, Project.is_archived)
+            .order_by(text("episode_count DESC"))
+            .limit(limit)
+        )
+        result = await self._db.execute(stmt)
+        return [
+            (row.project_name, row.episode_count, row.is_archived) for row in result
+        ]
+
+    async def top_users_by_messages_sitewide(
+        self,
+        limit: int,
+        project_id: UUID | None,
+    ) -> list[tuple[str | None, UUID, int]]:
+        """Return ``(display_name_or_none, user_id, message_count)`` ranking."""
+        conditions = [
+            Episode.is_deleted.is_(False),
+        ]
+        if project_id:
+            conditions.append(Episode.project_id == project_id)
+        stmt = (
+            select(
+                func.coalesce(
+                    func.nullif(User.name, ""),
+                    func.nullif(User.email, ""),
+                ).label("user"),
+                User.id.label("user_id"),
+                func.count(Episode.id).label("message_count"),
+            )
+            .select_from(Episode)
+            .join(User, User.id == Episode.user_id)
+            .where(*conditions)
+            .group_by(User.id, User.name, User.email)
+            .order_by(text("message_count DESC"))
+            .limit(limit)
+        )
+        result = await self._db.execute(stmt)
+        return [(row.user, row.user_id, row.message_count) for row in result]
+
+    async def queue_depth_over_time_sitewide(
+        self,
+        start: datetime,
+        end: datetime,
+        project_id: UUID | None,
+    ) -> list[tuple[datetime, int]]:
+        """Return ``(day, count)`` pending-enrichment rows across all users."""
+        conditions = [
+            Episode.is_deleted.is_(False),
+            (Episode.enrichment_status.op("&")(ENRICHMENT_ALL)) != ENRICHMENT_ALL,
+            Episode.project_id.not_in(archived_project_ids()),
+            Episode.created_at >= start,
+            Episode.created_at < end,
+        ]
+        if project_id:
+            conditions.append(Episode.project_id == project_id)
+        stmt = (
+            select(
+                func.date_trunc(
+                    "day", Episode.created_at.op("AT TIME ZONE")("UTC")
+                ).label("date"),
+                func.count(Episode.id).label("count"),
+            )
+            .select_from(Episode)
+            .where(*conditions)
+            .group_by(text("date"))
+            .order_by(text("date DESC"))
+        )
+        result = await self._db.execute(stmt)
+        return [(row.date, row.count) for row in result]
+
+    async def count_episodes_total_sitewide(
+        self, project_id: UUID | None = None
+    ) -> int:
+        """Return total non-deleted episode count across all users."""
+        conds = [Episode.is_deleted.is_(False)]
+        if project_id is not None:
+            conds.append(Episode.project_id == project_id)
+        return await self._scalar_count(select(func.count(Episode.id)).where(*conds))
+
+    async def count_episodes_24h_sitewide(
+        self, project_id: UUID | None = None
+    ) -> int:
+        """Return non-deleted episode count from the last 24 hours, all users."""
+        conds = [
+            Episode.is_deleted.is_(False),
+            Episode.created_at >= func.now() - text("interval '24 hours'"),
+        ]
+        if project_id is not None:
+            conds.append(Episode.project_id == project_id)
+        return await self._scalar_count(select(func.count(Episode.id)).where(*conds))
+
+    async def count_episodes_archived_sitewide(
+        self, project_id: UUID | None = None
+    ) -> int:
+        """Return non-deleted episode count in archived projects, all users."""
+        conds = [
+            Episode.is_deleted.is_(False),
+            Episode.project_id.in_(archived_project_ids()),
+        ]
+        if project_id is not None:
+            conds.append(Episode.project_id == project_id)
+        return await self._scalar_count(select(func.count(Episode.id)).where(*conds))
+
+    async def count_episodes_enrichable_sitewide(
+        self, project_id: UUID | None = None
+    ) -> int:
+        """Return non-deleted episode count in non-archived projects, all users."""
+        conds = [
+            Episode.is_deleted.is_(False),
+            Episode.project_id.not_in(archived_project_ids()),
+        ]
+        if project_id is not None:
+            conds.append(Episode.project_id == project_id)
+        return await self._scalar_count(select(func.count(Episode.id)).where(*conds))
+
+    async def count_episodes_in_progress_sitewide(
+        self, project_id: UUID | None = None
+    ) -> int:
+        """Return enrichable episode count with incomplete enrichment, all users."""
+        conds = [
+            Episode.is_deleted.is_(False),
+            (Episode.enrichment_status.op("&")(ENRICHMENT_ALL)) != ENRICHMENT_ALL,
+            Episode.project_id.not_in(archived_project_ids()),
+        ]
+        if project_id is not None:
+            conds.append(Episode.project_id == project_id)
+        return await self._scalar_count(select(func.count(Episode.id)).where(*conds))
+
+    async def count_episodes_pending_sitewide(
+        self, project_id: UUID | None = None
+    ) -> int:
+        """Return enrichable episode count with no enrichment started, all users."""
+        conds = [
+            Episode.is_deleted.is_(False),
+            Episode.enrichment_status == 0,
+            Episode.project_id.not_in(archived_project_ids()),
+        ]
+        if project_id is not None:
+            conds.append(Episode.project_id == project_id)
+        return await self._scalar_count(select(func.count(Episode.id)).where(*conds))
+
+    async def count_episodes_fully_enriched_sitewide(
+        self, project_id: UUID | None = None
+    ) -> int:
+        """Return enrichable episode count with all enrichment bits, all users."""
+        conds = [
+            Episode.is_deleted.is_(False),
+            (Episode.enrichment_status.op("&")(ENRICHMENT_ALL)) == ENRICHMENT_ALL,
+            Episode.project_id.not_in(archived_project_ids()),
+        ]
+        if project_id is not None:
+            conds.append(Episode.project_id == project_id)
+        return await self._scalar_count(select(func.count(Episode.id)).where(*conds))
+
+    async def count_episodes_with_embeddings_sitewide(
+        self, project_id: UUID | None = None
+    ) -> int:
+        """Return enrichable episode count with a stored embedding, all users."""
+        conds = [
+            Episode.is_deleted.is_(False),
+            Episode.embedding.isnot(None),
+            Episode.project_id.not_in(archived_project_ids()),
+        ]
+        if project_id is not None:
+            conds.append(Episode.project_id == project_id)
+        return await self._scalar_count(select(func.count(Episode.id)).where(*conds))

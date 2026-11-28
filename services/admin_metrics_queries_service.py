@@ -38,8 +38,21 @@ class AdminMetricsQueriesService:
         limit: int,
         project_id: UUID | None,
         include_archived: bool,
+        sitewide: bool = False,
     ) -> dict:
         """Run every predefined query concurrently; partial failures stay HTTP 200.
+
+        Args:
+            request: FastAPI request (graph backend dispatcher + pools).
+            platform_config: Platform config (graph backend selection).
+            user_id: Tenant scope — or the holder's ID when ``sitewide``.
+            start: Window start.
+            end: Window end.
+            limit: Max rows for rankings.
+            project_id: Optional project filter.
+            include_archived: Include archived projects (top projects only).
+            sitewide: When ``True`` DB legs run under an RLS bypass and
+                PromQL drops the user label (platform-wide aggregates).
 
         Returns:
             ``{"results": {name: query-dict}, "errors": [...], "meta": {...}}``
@@ -56,4 +69,5 @@ class AdminMetricsQueriesService:
             limit,
             project_id,
             include_archived,
+            sitewide,
         )

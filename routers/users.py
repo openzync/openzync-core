@@ -27,6 +27,7 @@ from dependencies.auth import (
     get_actor_permissions,
     require_admin,
     require_admin_or_self,
+    require_permission,
 )
 from dependencies.db import get_db
 from dependencies.services import (
@@ -79,10 +80,14 @@ async def create_user(
 
 @router.get("", response_model=UserListResponse)
 async def list_users(
-    # ⚠️ BREAKING: listing members now requires the platform admin role —
-    # previously any principal with ``members:read`` could enumerate the org.
-    user_id: str = Depends(require_admin),
-    service: UserService = Depends(get_admin_user_service),
+    # ⚠️ BREAKING: listing members now requires ``platform:manage`` —
+    # the admin role passes any require_permission via wildcard.
+    # Single decision point: this dependency is the only gate — the
+    # query runs on the tenant session under a holder bypass, never
+    # through the admin-only get_db_admin (which 403s granted holders).
+    user_id: str = Depends(require_permission("platform:manage")),
+    service: UserService = Depends(get_user_service),
+    db: AsyncSession = Depends(get_db),  # noqa: B008
     limit: int = Query(
         default=50,
         ge=1,
@@ -122,15 +127,16 @@ async def list_users(
     filtering. All filters are composable. Cursors encode sort — a cursor
     from a different sort fails with 422.
     """
-    return await service.list_users(
-        user_id=UUID(user_id),
-        limit=limit,
-        cursor=cursor,
-        search=search,
-        created_after=created_after,
-        created_before=created_before,
-        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
-    )
+    async with rls_bypass(db):
+        return await service.list_users(
+            user_id=UUID(user_id),
+            limit=limit,
+            cursor=cursor,
+            search=search,
+            created_after=created_after,
+            created_before=created_before,
+            sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
+        )
 
 
 @router.get("/{user_id}", response_model=UserResponseWithStats)

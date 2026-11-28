@@ -239,7 +239,9 @@ class UserRepository:
                     email="root",
                     name="Platform Root",
                     role="admin",
-                    permissions=[],
+                    # Explicit (not wildcard-empty): permission-gated
+                    # platform reads check the grant, not just the role.
+                    permissions=["platform:manage"],
                     password_hash=password_hash,
                     is_email_verified=True,
                     must_change_password=False,

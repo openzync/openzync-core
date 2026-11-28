@@ -18,8 +18,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dependencies.auth import require_user
+from dependencies.auth import require_user, resolve_platform_scope
 from dependencies.db import get_db
+from core.rls import rls_bypass
 from schemas.admin_stats import OrgStatsResponse, UsageStatsResponse
 from services.admin_stats_service import AdminStatsService
 
@@ -87,28 +88,49 @@ def _resolve_window(
     ),
 )
 async def get_platform_stats(
+    request: Request,
     days: int = Query(default=30, ge=1, le=365),
     project_id: UUID | None = Query(default=None),
+    target_user_id: UUID | None = Query(default=None, alias="user_id"),
     user_id: str = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
     service: AdminStatsService = Depends(_get_admin_stats_service),
 ) -> OrgStatsResponse:
     """Get aggregate statistics for the authenticated user.
+
+    ``platform:manage`` holders read site-wide by default; ``user_id``
+    scopes a holder's read to one user, ``project_id`` to one project
+    (both together is 422; non-holders passing ``user_id`` get 403, and
+    a ``project_id`` they do not own gets 403).
 
     Windowed by days and optional project_id. Default window is
     last 30 days.
 
     Args:
+        request: FastAPI request (app-state Redis for the holder check).
         days: Look-back window in days (1-365).
         project_id: Optional project scope — when provided, all counts are
             filtered to that project (AND with user_id for RLS).
+        target_user_id: Holder-only user filter (``?user_id=``).
         user_id: Authenticated user ID (from JWT or API key).
+        db: Request-scoped async DB session.
         service: Admin stats service.
 
     Returns:
         OrgStatsResponse with windowed aggregate counts.
     """
+    effective, sitewide = await resolve_platform_scope(
+        request, db, UUID(user_id), target_user_id, project_id
+    )
     start, end_exclusive = _resolve_window(days, None, None)
-    return await service.get_platform_stats(UUID(user_id), start, end_exclusive, project_id)
+    if effective != UUID(user_id) or sitewide:
+        async with rls_bypass(db):
+            return await service.get_platform_stats(
+                effective, start, end_exclusive, project_id, sitewide=sitewide
+            )
+    return await service.get_platform_stats(
+        effective, start, end_exclusive, project_id, sitewide=sitewide
+    )
 
 
 @router.get(
@@ -127,11 +149,17 @@ async def get_usage_stats(
     from_date: date | None = Query(default=None, alias="from"),
     to_date: date | None = Query(default=None, alias="to"),
     project_id: UUID | None = Query(default=None),
+    target_user_id: UUID | None = Query(default=None, alias="user_id"),
     user_id: str = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
     service: AdminStatsService = Depends(_get_admin_stats_service),
 ) -> list[UsageStatsResponse]:
-    """Get daily usage statistics for the user.
+    """Get daily usage statistics.
 
+    ``platform:manage`` holders read site-wide by default; ``user_id``
+    scopes a holder's read to one user, ``project_id`` to one project
+    (both together is 422; non-holders passing ``user_id`` get 403, and
+    a ``project_id`` they do not own gets 403).
     Windowed by days/from/to and optional project_id. Default window is
     last 30 days.
 
@@ -144,13 +172,24 @@ async def get_usage_stats(
         from_date: Inclusive start date (YYYY-MM-DD).
         to_date: Inclusive end date (YYYY-MM-DD).
         project_id: Optional project scope.
+        target_user_id: Holder-only user filter (``?user_id=``).
         user_id: Authenticated user ID.
+        db: Request-scoped async DB session.
         service: Admin stats service.
 
     Returns:
         List of daily usage data points, newest first.
     """
+    effective, sitewide = await resolve_platform_scope(
+        request, db, UUID(user_id), target_user_id, project_id
+    )
     start, end_exclusive = _resolve_window(days, from_date, to_date)
+    if effective != UUID(user_id) or sitewide:
+        async with rls_bypass(db):
+            return await service.get_usage_stats(
+                request, effective, start, end_exclusive, project_id,
+                sitewide=sitewide,
+            )
     return await service.get_usage_stats(
-        request, UUID(user_id), start, end_exclusive, project_id
+        request, effective, start, end_exclusive, project_id, sitewide=sitewide
     )

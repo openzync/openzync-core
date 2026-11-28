@@ -31,6 +31,7 @@ class AdminStatsService:
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
+        sitewide: bool = False,
     ) -> OrgStatsResponse:
         """Return windowed aggregate counts for the platform.
 
@@ -39,10 +40,35 @@ class AdminStatsService:
             start: Window start (inclusive).
             end_exclusive: Window end (exclusive), or ``None`` for open-ended.
             project_id: Optional project scope.
+            sitewide: When ``True`` aggregate across all users (the caller
+                runs under an RLS bypass); otherwise caller-scoped.
 
         Returns:
             OrgStatsResponse with windowed aggregate counts.
         """
+        repo = self._repo
+        if sitewide:
+            return OrgStatsResponse(
+                user_id=user_id,
+                total_episodes=await repo.count_episodes_sitewide(
+                    start, end_exclusive, project_id
+                ),
+                total_sessions=await repo.count_sessions_sitewide(
+                    start, end_exclusive, project_id
+                ),
+                total_facts=await repo.count_facts_sitewide(
+                    start, end_exclusive, project_id
+                ),
+                total_extractions=await repo.count_extractions_sitewide(
+                    start, end_exclusive, project_id
+                ),
+                total_observations=await repo.count_observations_sitewide(
+                    start, end_exclusive, project_id
+                ),
+                total_classifications=await repo.count_classifications_sitewide(
+                    start, end_exclusive, project_id
+                ),
+            )
         return OrgStatsResponse(
             user_id=user_id,
 
@@ -73,8 +99,9 @@ class AdminStatsService:
         start: datetime,
         end_exclusive: datetime | None,
         project_id: UUID | None,
+        sitewide: bool = False,
     ) -> list[UsageStatsResponse]:
-        """Return daily usage counts for the user, newest first.
+        """Return daily usage counts, newest first.
 
         Resolves the user's stored config internally (for graph backend
         selection) from app-state Redis/DB — no extra caller wiring.
@@ -86,6 +113,10 @@ class AdminStatsService:
             start: Window start (inclusive).
             end_exclusive: Window end (exclusive), or ``None`` for open-ended.
             project_id: Optional project scope.
+            sitewide: When ``True`` aggregate across all users (the caller
+                runs under an RLS bypass — the project fan-out below then
+                sees every project; graph counts stay best-effort on the
+                holder's backend).
 
         Returns:
             List of daily usage data points, newest first.
@@ -119,36 +150,74 @@ class AdminStatsService:
                 date_str = str(day.date()) if hasattr(day, "date") else str(day)
                 _ensure(date_str)[key] = count
 
-        _merge(
-            await self._repo.episodes_per_day(user_id, start, end_exclusive, project_id),
-            "episode_count",
-        )
-        _merge(
-            await self._repo.sessions_per_day(user_id, start, end_exclusive, project_id),
-            "session_count",
-        )
-        _merge(
-            await self._repo.facts_per_day(user_id, start, end_exclusive, project_id),
-            "fact_count",
-        )
-        _merge(
-            await self._repo.extractions_per_day(
-                user_id, start, end_exclusive, project_id
-            ),
-            "extraction_count",
-        )
-        _merge(
-            await self._repo.observations_per_day(
-                user_id, start, end_exclusive, project_id
-            ),
-            "observation_count",
-        )
-        _merge(
-            await self._repo.classifications_per_day(
-                user_id, start, end_exclusive, project_id
-            ),
-            "classification_count",
-        )
+        if sitewide:
+            _merge(
+                await self._repo.episodes_sitewide_per_day(
+                    start, end_exclusive, project_id
+                ),
+                "episode_count",
+            )
+            _merge(
+                await self._repo.sessions_sitewide_per_day(
+                    start, end_exclusive, project_id
+                ),
+                "session_count",
+            )
+            _merge(
+                await self._repo.facts_sitewide_per_day(
+                    start, end_exclusive, project_id
+                ),
+                "fact_count",
+            )
+            _merge(
+                await self._repo.extractions_sitewide_per_day(
+                    start, end_exclusive, project_id
+                ),
+                "extraction_count",
+            )
+            _merge(
+                await self._repo.observations_sitewide_per_day(
+                    start, end_exclusive, project_id
+                ),
+                "observation_count",
+            )
+            _merge(
+                await self._repo.classifications_sitewide_per_day(
+                    start, end_exclusive, project_id
+                ),
+                "classification_count",
+            )
+        else:
+            _merge(
+                await self._repo.episodes_per_day(user_id, start, end_exclusive, project_id),
+                "episode_count",
+            )
+            _merge(
+                await self._repo.sessions_per_day(user_id, start, end_exclusive, project_id),
+                "session_count",
+            )
+            _merge(
+                await self._repo.facts_per_day(user_id, start, end_exclusive, project_id),
+                "fact_count",
+            )
+            _merge(
+                await self._repo.extractions_per_day(
+                    user_id, start, end_exclusive, project_id
+                ),
+                "extraction_count",
+            )
+            _merge(
+                await self._repo.observations_per_day(
+                    user_id, start, end_exclusive, project_id
+                ),
+                "observation_count",
+            )
+            _merge(
+                await self._repo.classifications_per_day(
+                    user_id, start, end_exclusive, project_id
+                ),
+                "classification_count",
+            )
 
         # Daily node counts (graph entities — backend-backed, not the PG stub).
         backend = await resolve_graph_backend_fail_soft(
@@ -164,10 +233,18 @@ class AdminStatsService:
         for node_day, node_count in node_per_day.items():
             _ensure(node_day)["node_count"] = node_count
 
-        _merge(
-            await self._repo.edges_per_day(user_id, start, end_exclusive, project_id),
-            "edge_count",
-        )
+        if sitewide:
+            _merge(
+                await self._repo.edges_sitewide_per_day(
+                    start, end_exclusive, project_id
+                ),
+                "edge_count",
+            )
+        else:
+            _merge(
+                await self._repo.edges_per_day(user_id, start, end_exclusive, project_id),
+                "edge_count",
+            )
 
         return [
             UsageStatsResponse(
