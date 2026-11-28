@@ -8,11 +8,13 @@ and tests.
 
 from __future__ import annotations
 
-from services.observations import (
+from domain.value_objects.observation_patterns import (
     BehavioralPattern,
     CoOccurrencePattern,
-    ObservationService,
     TemporalGapPattern,
+)
+from services.observations import (
+    ObservationService,
     _is_burst,
     _is_monotonic,
     _stddev,

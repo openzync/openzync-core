@@ -12,7 +12,6 @@ Key patterns:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -26,6 +25,7 @@ from core.cursor import decode_cursor, encode_cursor
 from core.dict_merge import deep_merge
 from core.exceptions import ValidationError
 from core.sorting import SortSpec, resolve_order_by
+from domain.value_objects.claimed_invite import ClaimedInvite
 from models.episode import Episode
 from models.fact import Fact
 from models.session import Session
@@ -46,19 +46,6 @@ if TYPE_CHECKING:
 # ╠ This file contains NO business logic — only query construction.
 # ╠ If you find yourself writing an ``if`` statement that makes a
 # ╠ decision based on domain rules, it belongs in the service layer.
-
-
-@dataclass(frozen=True)
-class ClaimedInvite:
-    """Identity of a successfully claimed invite.
-
-    Returned by :meth:`UserRepository.claim_invite` — the fields the
-    accept flow needs to issue tokens, read back via ``RETURNING`` so no
-    second round-trip (and no stale identity-mapped row) is involved.
-    """
-
-    id: UUID
-    role: str
 
 
 class UserRepository:

@@ -64,11 +64,18 @@
 #   OZ_JWT_REFRESH_TOKEN_TTL_DAYS=7
 #   OZ_PROMETHEUS_URL=http://prometheus:9090
 #   OZ_REDIS_URL=redis://redis:6379/0
-#   OZ_FALKORDB_URL=redis://falkordb:6379  (required - FalkorDB is default graph)
+#   OZ_FALKORDB_URL=redis://falkordb:6379  (REQUIRED — FalkorDB is the default
+#   graph backend; the process fails fast at startup when unset, like
+#   OZ_DATABASE_URL. No per-user override — graph connection details live
+#   only in .env.)
 #   OZ_FALKORDB_MAX_CONNECTIONS=10  (budget: 15 max Helm replicas x 10 = 150
-#   worst-case - the pool stays small instead of relying on the server default)
+#   worst-case — the pool stays small instead of relying on the server default)
 #   OZ_FALKORDB_SOCKET_TIMEOUT=30
 #   OZ_SURREALDB_URL=          (empty default; the gate stays off while unset)
+#   OZ_SURREALDB_USER=root
+#   OZ_SURREALDB_PASS=root
+#   OZ_SURREALDB_NAMESPACE=openzync
+#   OZ_SURREALDB_DATABASE=openzync
 #   OZ_RATE_LIMIT_IP_MAX=10
 #   OZ_RATE_LIMIT_WINDOW_SEC=60
 #   OZ_DB_POOL_SIZE=4
@@ -464,8 +471,12 @@ services:
     restart: unless-stopped
 
   # ── SurrealDB (graph backend — record/memory model) — OPTIONAL ──────────────
-  # Activate with --profile alt-graph. Wire the app to it via
+  # Activate with --profile alt-graph. Wire the app to it via .env:
   #   OZ_SURREALDB_URL=ws://surrealdb:8000/rpc
+  #   OZ_SURREALDB_USER=root OZ_SURREALDB_PASS=... OZ_SURREALDB_NAMESPACE=openzync
+  #   OZ_SURREALDB_DATABASE=openzync
+  # (credentials/namespace/database default to root/root/openzync/openzync;
+  # only the URL gates availability — graph_backend=surrealdb without it 503s.)
   # Host port 8001 — 8000 on the host is the api's publish port.
   # In-memory storage (per task spec); for persistence use
   # `start file://data` (v2) / `surrealkv://data` (v3) + a named volume.

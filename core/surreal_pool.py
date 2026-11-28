@@ -1,8 +1,9 @@
 """Per-user SurrealDB connection pool — created lazily, cached by user_id.
 
-Each user gets its own ``AsyncSurreal`` connection using credentials from
-:class:`PlatformConfigBase`.  Connections are created on first use and cached
-for the lifetime of the worker (or until :meth:`close_all` is called on
+Connection details come solely from ``OZ_SURREALDB_*`` env vars (see
+``core.config.Settings``) — there is no per-user override. Each user gets
+its own ``AsyncSurreal`` connection, created on first use and cached for
+the lifetime of the worker (or until :meth:`close_all` is called on
 shutdown).
 
 Thread safety: per-user ``asyncio.Lock`` prevents duplicate connections
@@ -13,7 +14,7 @@ Usage::
     from core.surreal_pool import SurrealConnectionPool
 
     pool = SurrealConnectionPool()
-    surreal = await pool.get_or_create(user_id, platform_config)
+    surreal = await pool.get_or_create(user_id)
     # ... use surreal ...
     await pool.close_all()  # on shutdown
 """
@@ -23,31 +24,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 from surrealdb import AsyncSurreal
 
+from core.config import get_settings
 from core.exceptions import GraphBackendUnavailableError
 
-if TYPE_CHECKING:
-    from schemas.platform_config import PlatformConfigBase
-
 logger = logging.getLogger(__name__)
-
-# ── Default fallbacks for per-user SurrealDB fields ─────────────────────────
-
-DEFAULT_SURREALDB_USER: str = "root"
-"""Fallback username when ``platform_config.surrealdb_user`` is ``None``."""
-
-DEFAULT_SURREALDB_PASS: str = "root"
-"""Fallback password when ``platform_config.surrealdb_pass`` is ``None``."""
-
-DEFAULT_SURREALDB_NAMESPACE: str = "openzync"
-"""Fallback namespace when ``platform_config.surrealdb_namespace`` is ``None``."""
-
-DEFAULT_SURREALDB_DATABASE: str = "openzync"
-"""Fallback database when ``platform_config.surrealdb_database`` is ``None``."""
 
 SURREAL_IDLE_TTL_S: float = 1800.0
 """Idle connections older than this are closed and evicted on next access
@@ -77,8 +61,8 @@ class SurrealConnectionPool:
     prevents duplicate connections when two requests for the same user
     arrive simultaneously.
 
-    When a user has no ``surrealdb_url`` configured, or the connection
-    fails, :meth:`get_or_create` raises ``GraphBackendUnavailableError``.
+    When ``OZ_SURREALDB_URL`` is unset, or the connection fails,
+    :meth:`get_or_create` raises ``GraphBackendUnavailableError``.
     """
 
     def __init__(self) -> None:
@@ -86,31 +70,24 @@ class SurrealConnectionPool:
         self._pool: dict[UUID, dict] = {}
         self._locks: dict[UUID, asyncio.Lock] = {}
 
-    async def get_or_create(
-        self,
-        user_id: UUID,
-        platform_config: PlatformConfigBase,
-        system_url: str | None = None,
-    ) -> AsyncSurreal:
+    async def get_or_create(self, user_id: UUID) -> AsyncSurreal:
         """Return a cached ``AsyncSurreal`` for this user, or create one.
+
+        Connection details (URL, credentials, namespace, database) come
+        solely from ``OZ_SURREALDB_*`` env vars — ``user_id`` is only the
+        cache key, so concurrent users share one server without sharing
+        a connection.
 
         Args:
             user_id: The user UUID — used as the cache key.
-            platform_config: The platform configuration containing SurrealDB
-                connection details (``surrealdb_url``, ``surrealdb_user``,
-                ``surrealdb_pass``, ``surrealdb_namespace``,
-                ``surrealdb_database``).
-            system_url: Optional system-level SurrealDB URL override. When
-                provided, this URL is used instead of
-                ``platform_config.surrealdb_url``, and namespace/database are
-                derived from the platform config defaults.
 
         Returns:
             An ``AsyncSurreal`` instance.
 
         Raises:
-            GraphBackendUnavailableError: If no SurrealDB URL is configured
-                for the user, or if the connection attempt fails.
+            GraphBackendUnavailableError: If ``OZ_SURREALDB_URL`` is unset
+                (surrealdb backend selected without a server), or if the
+                connection attempt fails.
         """
         # ── Fast path: already connected ──────────────────────────────────
         # Idle entries past SURREAL_IDLE_TTL_S are closed + dropped here so
@@ -123,24 +100,18 @@ class SurrealConnectionPool:
                 conn["last_used"] = time.monotonic()
                 return conn["surreal"]
 
-        # ── Determine connection parameters ────────────────────────────
-        if system_url:
-            url = system_url
-            username = platform_config.surrealdb_user or DEFAULT_SURREALDB_USER
-            password = platform_config.surrealdb_pass or DEFAULT_SURREALDB_PASS
-            namespace = platform_config.surrealdb_namespace or DEFAULT_SURREALDB_NAMESPACE
-            database = platform_config.surrealdb_database or DEFAULT_SURREALDB_DATABASE
-        else:
-            # ── No URL configured = SurrealDB not available for this user ──
-            url = platform_config.surrealdb_url
-            if not url:
-                raise GraphBackendUnavailableError(
-                    f"Failed to connect to SurrealDB for user {user_id}."
-                )
-            username = platform_config.surrealdb_user or DEFAULT_SURREALDB_USER
-            password = platform_config.surrealdb_pass or DEFAULT_SURREALDB_PASS
-            namespace = platform_config.surrealdb_namespace or DEFAULT_SURREALDB_NAMESPACE
-            database = platform_config.surrealdb_database or DEFAULT_SURREALDB_DATABASE
+        # ── No URL configured = SurrealDB unavailable — fail loud ────────
+        settings = get_settings()
+        url = settings.SURREALDB_URL
+        if not url:
+            raise GraphBackendUnavailableError(
+                f"SurrealDB selected for user {user_id} (graph_backend="
+                "'surrealdb') but OZ_SURREALDB_URL is not set."
+            )
+        username = settings.SURREALDB_USER
+        password = settings.SURREALDB_PASS
+        namespace = settings.SURREALDB_NAMESPACE
+        database = settings.SURREALDB_DATABASE
 
         # ── Per-user lock to prevent duplicate connections ─────────────────
         if user_id not in self._locks:

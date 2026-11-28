@@ -4,36 +4,16 @@ from __future__ import annotations
 
 import logging
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID
+
+from domain.value_objects.fact_ingestion_result import FactIngestionResult
 
 from models.fact import Fact
 from services.facts.persistence import _BatchCtx, _BatchState
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class FactIngestionResult:
-    """Outcome of one supersession-aware batch ingestion.
-
-    Attributes:
-        created: The inserted ``Fact`` ORM rows (new facts, not the
-            superseded ones).
-        inserted_count: Number of rows actually inserted.
-        superseded_count: Number of previously-active facts closed by
-            supersession (``valid_to`` set).
-        skipped_count: Number of incoming facts skipped because a
-            conflicting fact (existing or already processed in this
-            batch) already had identical content.
-    """
-
-    created: list[Fact] = field(default_factory=list)
-    inserted_count: int = 0
-    superseded_count: int = 0
-    skipped_count: int = 0
 
 
 class SupersessionIngestMixin:

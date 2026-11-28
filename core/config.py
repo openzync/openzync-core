@@ -214,13 +214,14 @@ class Settings(BaseSettings):
         validation_alias="OZ_JWT_REFRESH_TOKEN_TTL_DAYS",
     )
 
-    # ── FalkorDB (graph backend) ──────────────────────────────────────────
-    FALKORDB_URL: str | None = Field(
-        default=None,
+    # ── FalkorDB (graph backend — REQUIRED, system-level) ───────────────────
+    FALKORDB_URL: str = Field(
         description=(
-            "FalkorDB connection URL (Redis RESP protocol).  "
-            "When set at system level, users share a single FalkorDB instance.  "
-            "When None (default), per-user falkordb_url from platform_config may be used."
+            "FalkorDB connection URL (Redis RESP protocol, e.g. "
+            "redis://falkordb:6379). REQUIRED — the default graph backend "
+            "is falkordb; the process fails fast at startup when unset, "
+            "like OZ_DATABASE_URL. No per-user override — graph connection "
+            "details live only in .env."
         ),
         validation_alias="OZ_FALKORDB_URL",
     )
@@ -245,16 +246,38 @@ class Settings(BaseSettings):
     )
 
     # ── SurrealDB (graph backend — optional system-level) ─────────────────
+    # ⚠️ BREAKING: all five SurrealDB connection values live only in .env —
+    # removed from platform_config with no per-user override.
     SURREALDB_URL: str | None = Field(
         default=None,
         description=(
-            "System-level SurrealDB WebSocket connection URL "
-            "(e.g. ws://surrealdb:8000/rpc).  "
-            "When set, all users use this server and namespace is auto-derived "
-            "from user identity.  When None (default), per-user surrealdb_* "
-            "fields from platform_config are used."
+            "SurrealDB WebSocket connection URL "
+            "(e.g. ws://surrealdb:8000/rpc).  Optional — unset means the "
+            "surrealdb graph backend is unavailable; selecting "
+            "graph_backend='surrealdb' without it raises "
+            "GraphBackendUnavailableError (loud, no fallback)."
         ),
         validation_alias="OZ_SURREALDB_URL",
+    )
+    SURREALDB_USER: str = Field(
+        default="root",
+        description="SurrealDB authentication username.",
+        validation_alias="OZ_SURREALDB_USER",
+    )
+    SURREALDB_PASS: str = Field(
+        default="root",
+        description="SurrealDB authentication password.",
+        validation_alias="OZ_SURREALDB_PASS",
+    )
+    SURREALDB_NAMESPACE: str = Field(
+        default="openzync",
+        description="SurrealDB namespace (tenant isolation boundary).",
+        validation_alias="OZ_SURREALDB_NAMESPACE",
+    )
+    SURREALDB_DATABASE: str = Field(
+        default="openzync",
+        description="SurrealDB database within the namespace.",
+        validation_alias="OZ_SURREALDB_DATABASE",
     )
 
     # ── Embeddings (Ollama — sole embedder) ─────────────────────────────

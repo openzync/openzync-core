@@ -105,6 +105,29 @@ def _with_graph_default(raw: dict[str, Any]) -> PlatformConfigBase:
         ) from None
 
 
+def _require_surreal_configured(graph_backend: str | None) -> None:
+    """Reject selecting the surrealdb backend when SurrealDB is unconfigured.
+
+    Presence check only — no dial-out, no probe.
+
+    Args:
+        graph_backend: The merged ``graph_backend`` value (stored + candidate).
+
+    Raises:
+        PlatformConfigValidationError: If ``graph_backend == "surrealdb"``
+            while ``OZ_SURREALDB_URL`` is unset/empty.
+    """
+    if graph_backend != "surrealdb":
+        return
+    from core.config import get_settings  # noqa: PLC0415 — lazy, avoids import cycle
+
+    if not get_settings().SURREALDB_URL:
+        logger.warning("platform_config.surrealdb_unconfigured_rejected")
+        raise PlatformConfigValidationError(
+            message="graph_backend 'surrealdb' requires OZ_SURREALDB_URL to be set",
+        )
+
+
 async def get_platform_config(
     user_id: UUID,
     redis: redis.asyncio.Redis | None = None,
@@ -257,6 +280,12 @@ async def update_platform_config(
             existing[key] = nested
         else:
             existing[key] = value
+
+    # Reject a merged surrealdb backend when SurrealDB is unconfigured —
+    # evaluated on the merged value so PATCH-other-fields while surrealdb
+    # is stored and PUT replace are covered too. Switching away from
+    # surrealdb is always allowed.
+    _require_surreal_configured(existing.get("graph_backend"))
 
     # 3. Write to DB (authoritative store)
     await repo.set_config_override(user_id, existing)

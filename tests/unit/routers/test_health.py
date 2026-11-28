@@ -169,7 +169,12 @@ async def test_health_exact_live_contract() -> None:
 async def test_readiness_exact_live_contract() -> None:
     """GET /ready returns the exact live payload when all deps are healthy.
 
-    Live: ``200 {"status":"ok","checks":{...},"degraded":{},"pending_edge_sync":null}``.
+    Live: ``200 {"status":"ok","checks":{...},"degraded":{},"pending_edge_sync":null}``
+    plus the additive informational ``graphs`` field (FalkorDB configured +
+    reachability, SurrealDB configured + reachability-or-null) — it never
+    affects the status code.  With no ``OZ_SURREALDB_URL`` in this suite,
+    SurrealDB reports ``configured: False, reachable: None`` with zero
+    network I/O, and the app has no FalkorDB client (``reachable: False``).
     """
     app = _create_app()
     transport = ASGITransport(app=app)
@@ -189,6 +194,10 @@ async def test_readiness_exact_live_contract() -> None:
         "degraded": {},
         "needs_setup": False,
         "pending_edge_sync": None,
+        "graphs": {
+            "falkordb": {"configured": True, "reachable": False},
+            "surrealdb": {"configured": False, "reachable": None},
+        },
     }
 
 

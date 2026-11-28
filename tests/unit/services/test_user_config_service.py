@@ -1,15 +1,15 @@
 """Unit tests for UserConfigService system-managed field guard.
 
-Observed contract: when ``OZ_FALKORDB_URL`` is set at the system level,
-``PATCH /v1/me/config`` rejects ``falkordb_url`` with a ``ValidationError``
-(surfaced as 422 problem+json), while unmanaged keys such as
-``llm_temperature`` merge through.
+Observed contract: graph connection details moved to env
+(``OZ_FALKORDB_URL`` / ``OZ_SURREALDB_*``), so
+``get_system_managed_fields()`` is always ``[]`` and every patch key
+merges through. ``PATCH /v1/me/config`` still maps a service-layer
+``ValidationError`` to 422 problem+json.
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
@@ -38,44 +38,35 @@ def _make_service() -> tuple[UserConfigService, AsyncMock]:
     return service, mock_repo
 
 
-def _managed_settings() -> SimpleNamespace:
-    """System settings with ``OZ_FALKORDB_URL`` set (falkordb managed)."""
-    return SimpleNamespace(SURREALDB_URL=None, FALKORDB_URL="redis://falkordb:6379")
-
-
 @pytest.mark.unit
 class TestUpdateOverrideSystemManaged:
-    """``update_override`` guard for system-managed fields."""
+    """``update_override`` has no system-managed guard anymore.
+
+    Graph connection details moved to env (``OZ_FALKORDB_URL`` /
+    ``OZ_SURREALDB_*``) with no per-user override, so
+    ``get_system_managed_fields()`` is always ``[]`` and every patch
+    key — including the removed ``falkordb_url`` — merges through.
+    """
 
     @pytest.mark.asyncio
-    async def test_rejects_system_managed_falkordb_url(self) -> None:
-        """``falkordb_url`` patch raises when the system URL is set."""
-        service, mock_repo = _make_service()
-        with patch(
-            "services.user_config_service.get_settings",
-            return_value=_managed_settings(),
-        ):
-            with pytest.raises(ValidationError, match="falkordb_url"):
-                await service.update_override(
-                    USER_ID, {"falkordb_url": "redis://other:6379"}
-                )
-        mock_repo.merge_config_override.assert_not_awaited()
+    async def test_system_managed_fields_always_empty(self) -> None:
+        """No fields are locked at the system level anymore."""
+        service, _ = _make_service()
+        assert service.get_system_managed_fields() == []
 
     @pytest.mark.asyncio
-    async def test_allows_unmanaged_llm_temperature(self) -> None:
-        """Unmanaged keys merge through even when the system URL is set."""
+    async def test_falkordb_url_merges_through(self) -> None:
+        """The removed ``falkordb_url`` key is no longer rejected."""
         service, mock_repo = _make_service()
-        mock_repo.merge_config_override.return_value = {"llm_temperature": 0.7}
-        with patch(
-            "services.user_config_service.get_settings",
-            return_value=_managed_settings(),
-        ):
-            result = await service.update_override(
-                USER_ID, {"llm_temperature": 0.7}
-            )
-        assert result == {"llm_temperature": 0.7}
+        mock_repo.merge_config_override.return_value = {
+            "falkordb_url": "redis://other:6379"
+        }
+        result = await service.update_override(
+            USER_ID, {"falkordb_url": "redis://other:6379"}
+        )
+        assert result == {"falkordb_url": "redis://other:6379"}
         mock_repo.merge_config_override.assert_awaited_once_with(
-            USER_ID, {"llm_temperature": 0.7}
+            USER_ID, {"falkordb_url": "redis://other:6379"}
         )
 
 

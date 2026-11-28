@@ -8,7 +8,6 @@ there is no UPDATE or DELETE at the application layer.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -17,9 +16,11 @@ from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.llm import UsageRecord
 from core.rls import init_context
 from core.sorting import SortSpec, resolve_order_by
+from domain.events.usage_record import UsageRecord
+from domain.value_objects.daily_usage_bucket import DailyUsageBucket
+from domain.value_objects.usage_summary import UsageSummary
 from models.llm_usage import LLMUsage
 
 LLM_USAGE_SORTABLE_COLUMNS = {
@@ -31,27 +32,6 @@ LLM_USAGE_SORTABLE_COLUMNS = {
     "total_tokens": LLMUsage.total_tokens,
 }
 """Sortable columns for the admin LLM usage endpoint (default created_at/desc)."""
-
-
-@dataclass(frozen=True)
-class UsageSummary:
-    """Aggregate metering totals over a filtered window."""
-
-    calls: int = 0
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    reasoning_tokens: int = 0
-    total_tokens: int = 0
-    avg_duration_ms: float = 0.0
-
-
-@dataclass(frozen=True)
-class DailyUsageBucket:
-    """One sparse UTC-day aggregate over the filtered window."""
-
-    day: datetime
-    total_tokens: int = 0
-    calls: int = 0
 
 
 class LLMUsageRepository:

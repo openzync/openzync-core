@@ -13,8 +13,10 @@ SortDir = Literal["asc", "desc"]
 class SortSpec:
     """Validated sort request forwarded router → service → repository.
 
-    Mirrors the ``core.sorting.SortSpec`` contract without importing
-    framework-adjacent helpers, so domain code stays dependency-free.
+    Canonical definition — :mod:`core.sorting` re-exports this (plus
+    :func:`~core.sorting.resolve_order_by` for the SQLAlchemy mapping)
+    so routers, services, and repositories share one contract without
+    the domain importing framework helpers.
     Repositories unpack this against their column whitelist and fail
     closed (422) on mismatch.
 

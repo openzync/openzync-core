@@ -162,7 +162,7 @@ class TestResolveGraphBackend:
             }
             result = await resolve_graph_backend(ctx, self.USER_ID, mock_db)
 
-        mock_surreal_pool.get_or_create.assert_awaited_once_with(self.USER_ID, cfg)
+        mock_surreal_pool.get_or_create.assert_awaited_once_with(self.USER_ID)
         mock_dispatcher.resolve_and_create.assert_called_once_with(
             platform_config=cfg,
             db=mock_db,

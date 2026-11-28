@@ -25,13 +25,12 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.llm import UsageRecord, UsageSink
+from core.llm import UsageSink
 from core.sorting import SortSpec
-from repositories.llm_usage_repository import (
-    DailyUsageBucket,
-    LLMUsageRepository,
-    UsageSummary,
-)
+from domain.events.usage_record import UsageRecord
+from domain.value_objects.daily_usage_bucket import DailyUsageBucket
+from domain.value_objects.usage_summary import UsageSummary
+from repositories.llm_usage_repository import LLMUsageRepository
 
 if TYPE_CHECKING:
     from models.llm_usage import LLMUsage

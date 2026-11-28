@@ -431,20 +431,57 @@ class TestGetGraphService:
             # disabled one — constructing GraphService with a doomed
             # SurrealGraphBackend(surreal=None) would 500 on every query.
             with pytest.raises(
-                GraphBackendUnavailableError, match="no connection is available"
+                GraphBackendUnavailableError, match="surreal_connection_pool is missing"
             ):
                 await get_graph_service(request, mock_org_config, db, webhook)
 
             mock_dispatcher.resolve_and_create.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_falkordb_per_org_config(self, mock_dispatcher: MagicMock) -> None:
-        """falkordb_url in platform_config → creates per-org FalkorDB client."""
+    async def test_falkordb_system_client_passed_through(
+        self, mock_dispatcher: MagicMock
+    ) -> None:
+        """System-level ``app.state.falkordb_client`` is passed to the dispatcher.
+
+        The FalkorDB client is env-owned (``OZ_FALKORDB_URL``, built at
+        lifespan) — there is no per-user ``falkordb_url`` override.
+        """
         from dependencies.services import get_graph_service
 
         mock_org_config = MagicMock()
         mock_org_config.graph_backend = "falkordb"
-        mock_org_config.falkordb_url = "redis://falkordb:6379"
+
+        request = MagicMock(spec=Request)
+        request.state.user_id = ORG_ID_STR
+        request.app.state.graph_backend_dispatcher = mock_dispatcher
+        request.app.state.surreal_connection_pool = None
+        mock_falkor = MagicMock()
+        request.app.state.falkordb_client = mock_falkor
+
+        db = AsyncMock(spec=AsyncSession)
+        webhook = MagicMock()
+
+        with (
+            patch("dependencies.services.UserRepository"),
+            patch("dependencies.services.FactRepository"),
+            patch("dependencies.services.GraphService"),
+        ):
+            await get_graph_service(request, mock_org_config, db, webhook)
+
+            # dispatcher got the system-level falkordb_client
+            call_kwargs = mock_dispatcher.resolve_and_create.call_args.kwargs
+            assert call_kwargs["falkordb_client"] is mock_falkor
+
+    @pytest.mark.asyncio
+    async def test_falkordb_missing_client_fails_loud(
+        self, mock_dispatcher: MagicMock
+    ) -> None:
+        """``graph_backend='falkordb'`` with no system client → fail loud (503)."""
+        from core.exceptions import GraphBackendUnavailableError
+        from dependencies.services import get_graph_service
+
+        mock_org_config = MagicMock()
+        mock_org_config.graph_backend = "falkordb"
 
         request = MagicMock(spec=Request)
         request.state.user_id = ORG_ID_STR
@@ -455,34 +492,17 @@ class TestGetGraphService:
         db = AsyncMock(spec=AsyncSession)
         webhook = MagicMock()
 
-        # FalkorDB and AsyncBlockingConnectionPool are imported locally inside
-        # get_graph_service(), so patch the real source modules.
         with (
             patch("dependencies.services.UserRepository"),
             patch("dependencies.services.FactRepository"),
             patch("dependencies.services.GraphService"),
-            patch("falkordb.asyncio.FalkorDB") as mock_falkor_cls,
-            patch("redis.asyncio.BlockingConnectionPool") as mock_pool_cls,
         ):
-            mock_pool = MagicMock()
-            mock_pool_cls.from_url.return_value = mock_pool
-            mock_falkor = MagicMock()
-            mock_falkor_cls.return_value = mock_falkor
+            with pytest.raises(
+                GraphBackendUnavailableError, match="check OZ_FALKORDB_URL"
+            ):
+                await get_graph_service(request, mock_org_config, db, webhook)
 
-            await get_graph_service(request, mock_org_config, db, webhook)
-
-            mock_pool_cls.from_url.assert_called_once_with(
-                mock_org_config.falkordb_url,
-                max_connections=10,
-                socket_timeout=30,
-                socket_connect_timeout=5,
-                socket_keepalive=True,
-                decode_responses=True,
-            )
-            mock_falkor_cls.assert_called_once_with(connection_pool=mock_pool)
-            # dispatcher got the falkordb_client
-            call_kwargs = mock_dispatcher.resolve_and_create.call_args.kwargs
-            assert call_kwargs["falkordb_client"] is mock_falkor
+            mock_dispatcher.resolve_and_create.assert_not_called()
 
 
 # ── Auth Throttle ────────────────────────────────────────────────────────────────
@@ -644,7 +664,7 @@ class TestGetGraphBackendForProject:
         # A configured-but-unreachable backend must fail loud (503) so the
         # caller never gets a backend that 500s on every query.
         with pytest.raises(
-            GraphBackendUnavailableError, match="no connection is available"
+            GraphBackendUnavailableError, match="surreal_connection_pool is missing"
         ):
             await get_graph_backend_for_project(request, platform_config, db)
 

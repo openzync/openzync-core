@@ -11,11 +11,13 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import GraphBackendUnavailableError
-from packages.graph_backend.interface import GraphBackend
-from services.observations.patterns import (
+from domain.value_objects.observation_patterns import (
     BehavioralPattern,
     CoOccurrencePattern,
     TemporalGapPattern,
+)
+from packages.graph_backend.interface import GraphBackend
+from services.observations.patterns import (
     _is_burst,
     _is_monotonic,
     _stddev,

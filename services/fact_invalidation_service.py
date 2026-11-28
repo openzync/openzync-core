@@ -11,11 +11,11 @@ via deferred import).
 from __future__ import annotations
 
 from middleware.metrics import facts_superseded_total
+from domain.value_objects.fact_ingestion_result import FactIngestionResult
+from domain.value_objects.llm_invalidation_result import LLMInvalidationResult
 from services.facts import (
     PURGE_ONLY_CACHE_TTL,
-    FactIngestionResult,
     FactInvalidationService,
-    LLMInvalidationResult,
     _purge_project_context,
     normalize_identity_term,
 )

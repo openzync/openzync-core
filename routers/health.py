@@ -5,6 +5,8 @@
   PostgreSQL and Redis, plus the prewarmed embedder, aux-component
   degradation, the stale graph-edge backlog count, and the one-time
   ``needs_setup`` flag (true until ``POST /v1/auth/setup`` creates root).
+  Carries an informational-only ``graphs`` field (FalkorDB/SurrealDB
+  configured + reachable) that never affects the status code.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from fastapi.responses import JSONResponse
 from core._version import __version__
 from core.embeddings import is_model_loaded
 from schemas.health import HealthResponse
+from services.health_service import get_graphs_status as _graphs_status
 from services.health_service import get_pending_edge_sync_count as _edge_count
 from services.health_service import is_platform_seeded as _is_seeded
 
@@ -82,6 +85,9 @@ async def readiness(request: Request) -> JSONResponse:
             "degraded": degraded,
             "needs_setup": needs_setup is False,
             "pending_edge_sync": await _pending_edge_sync_count(request),
+            "graphs": await _graphs_status(
+                getattr(request.app.state, "falkordb_client", None)
+            ),
         },
         status_code=200 if all_healthy else 503,
     )

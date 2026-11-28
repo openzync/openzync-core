@@ -29,6 +29,7 @@ import orjson
 from pydantic import BaseModel, ValidationError
 
 from core.exceptions import LLMStructuredOutputError
+from domain.events.usage_record import UsageRecord
 
 logger = logging.getLogger(__name__)
 
@@ -150,36 +151,6 @@ class EmbeddingResponse:
     def count(self) -> int:
         """Number of embedding vectors in this response."""
         return len(self.embeddings)
-
-
-@dataclass(frozen=True)
-class UsageRecord:
-    """Tracking-only metering payload for a single LLM/embedding call.
-
-    Built by :meth:`LLMBackend.chat` / :meth:`LLMBackend.embed` from the
-    provider response and handed to the attached :class:`UsageSink`.
-    The sink fills ``user_id``/``worker``/entity ids from its baked scope
-    when the record leaves them empty — callers never set them directly.
-    """
-
-    user_id: UUID | None = None
-    provider: str = ""
-    model: str = ""
-    worker: str = ""
-    project_id: UUID | None = None
-    episode_id: UUID | None = None
-    session_id: UUID | None = None
-    community_id: UUID | None = None
-    task_run_id: UUID | None = None
-    duration_ms: int = 0
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    reasoning_tokens: int = 0
-    cache_read_input_tokens: int = 0
-    cache_creation_input_tokens: int = 0
-    embed_count: int | None = None
-    embed_dim: int | None = None
-    idempotency_key: str = ""
 
 
 class UsageSink(Protocol):

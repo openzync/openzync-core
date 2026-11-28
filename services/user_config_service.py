@@ -15,17 +15,12 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.config import get_settings
 from core.dict_merge import deep_merge
 from core.exceptions import NotFoundError, ValidationError
 from core.platform_config import get_platform_config
 from core.system_config import get_system_config
 from repositories.auth_repository import AuthRepository
 from repositories.user_repository import UserRepository
-from schemas.platform_config import (
-    SYSTEM_MANAGED_FALKORDB_FIELDS,
-    SYSTEM_MANAGED_SURREALDB_FIELDS,
-)
 
 
 class UserConfigService:
@@ -66,17 +61,14 @@ class UserConfigService:
     def get_system_managed_fields(self) -> list[str]:
         """Return field names locked at the system level.
 
+        ⚠️ BREAKING: always ``[]`` — graph connection details moved to
+        .env (``OZ_FALKORDB_URL`` / ``OZ_SURREALDB_*``) with no per-user
+        override, so there is nothing left to lock.
+
         Returns:
-            Managed field names (e.g. ``["falkordb_url"]`` when
-            system-level FalkorDB URL is set, else ``[]``).
+            An empty list.
         """
-        settings = get_settings()
-        fields: list[str] = []
-        if settings.SURREALDB_URL:
-            fields.extend(SYSTEM_MANAGED_SURREALDB_FIELDS)
-        if settings.FALKORDB_URL:
-            fields.extend(SYSTEM_MANAGED_FALKORDB_FIELDS)
-        return fields
+        return []
 
     async def update_override(
         self, user_id: UUID, patch: dict[str, Any]

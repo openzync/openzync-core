@@ -109,17 +109,18 @@ async def resolve_graph_backend(
         )
         return None
 
-    # Get SurrealDB connection — only when the user explicitly configures
-    # SurrealDB.  For falkordb or none backends the pool is never touched,
-    # avoiding unnecessary network round-trips and preventing failures when
-    # SurrealDB is down.  If SurrealDB is configured but unreachable the
+    # Get SurrealDB connection — only when the user selects SurrealDB.
+    # Connection details come solely from OZ_SURREALDB_* env vars.  For
+    # falkordb or none backends the pool is never touched, avoiding
+    # unnecessary network round-trips and preventing failures when
+    # SurrealDB is down.  If SurrealDB is selected but unreachable the
     # error is raised loudly — no silent fallback.
     surreal = None
     if backend_name == "surrealdb":
         surreal_pool = ctx.get("surreal_connection_pool")
         if surreal_pool is not None:
             try:
-                surreal = await surreal_pool.get_or_create(user_id, user_config)
+                surreal = await surreal_pool.get_or_create(user_id)
                 logger.debug(
                     "worker.surreal_connection_acquired",
                     extra={"user_id": str(user_id)},

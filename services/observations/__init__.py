@@ -24,14 +24,16 @@ from core.exceptions import ExternalServiceError
 from models.graph_observation import ObservationType
 from services.observations.descriptions import DescriptionMixin
 from services.observations.detectors import DetectionMixin
+from domain.value_objects.observation_patterns import (
+    BehavioralPattern,
+    CoOccurrencePattern,
+    TemporalGapPattern,
+)
 from services.observations.patterns import (
     _DEFAULT_CO_CONFIDENCE_CAP,
     _DEFAULT_MIN_APPEARANCES_FOR_TEMPORAL,
     _DEFAULT_MIN_CO_COUNT,
     _DEFAULT_MIN_GAP_HOURS,
-    BehavioralPattern,
-    CoOccurrencePattern,
-    TemporalGapPattern,
     _is_burst,
     _is_monotonic,
     _stddev,

@@ -16,13 +16,13 @@ from __future__ import annotations
 
 import re
 import time
-from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
 
 import structlog
 
 from core.exceptions import ExternalServiceError, ValidationError
+from domain.value_objects.pii_detection import PIIDetection
 
 logger = structlog.get_logger(__name__)
 
@@ -81,31 +81,6 @@ _PATTERNS: dict[str, re.Pattern] = {
         r"\b(0x[a-fA-F0-9]{40}|bc1[a-zA-Z0-9]{25,39})\b"
     ),
 }
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Domain model
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-@dataclass(frozen=True)
-class PIIDetection:
-    """A single PII detection result.
-
-    Attributes:
-        type: PII type identifier (e.g. ``"email"``, ``"ssn"``).
-        value: The detected PII value (used for redaction, NEVER logged).
-        start: Character offset where the detection begins in the source text.
-        end: Character offset where the detection ends.
-        confidence: Detection confidence score (0.0 to 1.0).
-        method: Detection method — ``"regex"`` or ``"spacy_ner"``.
-    """
-
-    type: str
-    value: str = field(repr=False)  # NEVER logged — redacted in __repr__
-    start: int
-    end: int
-    confidence: float
-    method: str = "regex"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

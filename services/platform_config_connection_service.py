@@ -11,9 +11,9 @@ Probe transport notes:
   (``httpx``) under the hood — there is no ``requests`` usage on this path.
 - ⚠️ BREAKING: there is no embeddings probe.  Embeddings are a local ONNX
   model with nothing to configure or connect to.
-- Graph goes through :meth:`GraphBackendDispatcher.resolve_and_create`
-  followed by ``health_check()``, with a candidate-scoped client built
-  from the effective (candidate → system) URL.
+- ⚠️ BREAKING: there is no graph probe.  Graph connectivity is env-owned
+  (``OZ_FALKORDB_URL`` / ``OZ_SURREALDB_*``) with nothing per-user to
+  configure or connect to — ``domain="graph"`` is rejected with 422.
 - ⚠️ BREAKING: there is no blob probe. Blob storage is a single global
   backend (``OZ_S3_*`` Settings) with nothing per-user to configure or
   connect to — ``domain="blob"`` is rejected with 422.
@@ -29,13 +29,9 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.config import get_settings
 from core.exceptions import ValidationError
-from core.graph_backend import GraphBackendDispatcher, init_dispatcher
 from core.platform_config import get_platform_config
 from schemas.platform_config import (
-    SYSTEM_MANAGED_FALKORDB_FIELDS,
-    SYSTEM_MANAGED_SURREALDB_FIELDS,
     PlatformConfigBase,
     ProbeResult,
     TestPlatformConfigResponse,
@@ -90,7 +86,7 @@ class PlatformConfigConnectionService:
 
         Args:
             user_id: The user UUID.
-            domain: One of ``llm``, ``graph``.
+            domain: One of ``llm``.
             candidate: Partial candidate config; only ``exclude_unset``
                 fields overlay the stored config.
             as_user: Optional user whose stored override is layered under
@@ -101,10 +97,8 @@ class PlatformConfigConnectionService:
             A :class:`TestPlatformConfigResponse` with one entry per probe.
 
         Raises:
-            ValidationError: If *candidate* overrides system-managed
-                fields, or *domain* is unknown.
+            ValidationError: If *domain* is unknown.
         """
-        self._reject_system_managed_overrides(candidate)
         if as_user is not None:
             from repositories.user_repository import UserRepository
             from services.user_config_service import UserConfigService
@@ -173,41 +167,12 @@ class PlatformConfigConnectionService:
         match domain:
             case "llm":
                 return self._probe_llm
-            case "graph":
-                return self._probe_graph
         raise ValidationError(
-            f"Unknown config test domain: {domain!r}. Expected one of: llm, graph."
-            # ⚠️ BREAKING: the blob probe was removed with per-user blob
-            # storage — blob storage is global (OZ_S3_*) now.
+            f"Unknown config test domain: {domain!r}. Expected one of: llm."
+            # ⚠️ BREAKING: the graph probe was removed with the per-user
+            # graph connection fields — graph connectivity is env-owned
+            # (OZ_FALKORDB_URL / OZ_SURREALDB_*) now.
         )
-
-    @staticmethod
-    def _reject_system_managed_overrides(
-        candidate: UpdatePlatformConfigRequest,
-    ) -> None:
-        """Reject candidates that override system-managed URL fields.
-
-        Mirrors the enforcement in ``routers/admin_platform_config.py`` without
-        importing from the router layer (wrong dependency direction).
-
-        Raises:
-            ValidationError: If any set candidate field is system-managed.
-        """
-        settings = get_settings()
-        managed: set[str] = set()
-        if settings.SURREALDB_URL:
-            managed |= set(SYSTEM_MANAGED_SURREALDB_FIELDS)
-        if settings.FALKORDB_URL:
-            managed |= set(SYSTEM_MANAGED_FALKORDB_FIELDS)
-        if not managed:
-            return
-        overridden = managed.intersection(candidate.model_dump(exclude_unset=True))
-        if overridden:
-            raise ValidationError(
-                "These fields are configured at the system level "
-                "and cannot be modified: "
-                f"{', '.join(sorted(overridden))}."
-            )
 
     @staticmethod
     def _overlay_candidate(
@@ -244,133 +209,6 @@ class PlatformConfigConnectionService:
             raise
         except Exception as exc:
             return self._failure(start, f"llm probe failed: {exc}")
-
-    async def _probe_graph(self, merged: PlatformConfigBase) -> ProbeResult:
-        """Resolve the candidate graph backend and run ``health_check()``."""
-        start = time.perf_counter()
-        try:
-            dispatcher = init_dispatcher()
-            backend_name = dispatcher.resolve_backend_name(merged)
-            if backend_name is None:
-                return self._success(start, "graph disabled (backend 'none')")
-            match backend_name:
-                case "falkordb":
-                    return await self._probe_falkordb(merged, dispatcher, start)
-                case "surrealdb":
-                    return await self._probe_surrealdb(merged, dispatcher, start)
-                case _:
-                    return self._failure(
-                        start,
-                        "graph probe failed: unsupported backend "
-                        f"{backend_name!r} (postgres was removed in v1.1.0, "
-                        "migrate to falkordb)",
-                    )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            return self._failure(start, f"graph probe failed: {exc}")
-
-    async def _probe_falkordb(
-        self,
-        merged: PlatformConfigBase,
-        dispatcher: GraphBackendDispatcher,
-        start: float,
-    ) -> ProbeResult:
-        """Health-check FalkorDB through a candidate-scoped client."""
-        from falkordb.asyncio import FalkorDB
-        from redis.asyncio import BlockingConnectionPool
-
-        url = merged.falkordb_url or get_settings().FALKORDB_URL
-        if not url:
-            return self._failure(
-                start, "graph probe failed: falkordb_url not configured"
-            )
-        pool = BlockingConnectionPool.from_url(url, max_connections=2, socket_timeout=5)
-        client = FalkorDB(connection_pool=pool)
-        try:
-            # note: db is unused by the falkordb/surrealdb backends —
-            # None keeps this service SQLAlchemy-free by construction.
-            backend = dispatcher.resolve_and_create(
-                merged,
-                None,
-                falkordb_client=client,  # type: ignore[arg-type]
-            )
-            if backend is None:
-                return self._failure(start, "graph probe failed: backend disabled")
-            healthy = await backend.health_check()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            return self._failure(start, f"graph probe failed: {exc}")
-        finally:
-            try:
-                await pool.aclose()
-            except Exception:
-                logger.warning("platform_config.test_pool_close_failed", exc_info=True)
-        if not healthy:
-            return self._failure(
-                start, "graph probe failed: FalkorDB health check false"
-            )
-        return self._success(start, "graph ok (falkordb)")
-
-    async def _probe_surrealdb(
-        self,
-        merged: PlatformConfigBase,
-        dispatcher: GraphBackendDispatcher,
-        start: float,
-    ) -> ProbeResult:
-        """Health-check SurrealDB through a candidate-scoped connection."""
-        from surrealdb import AsyncSurreal
-
-        from core.surreal_pool import (
-            DEFAULT_SURREALDB_DATABASE,
-            DEFAULT_SURREALDB_NAMESPACE,
-            DEFAULT_SURREALDB_PASS,
-            DEFAULT_SURREALDB_USER,
-        )
-
-        url = merged.surrealdb_url or get_settings().SURREALDB_URL
-        if not url:
-            return self._failure(
-                start, "graph probe failed: surrealdb_url not configured"
-            )
-        surreal = AsyncSurreal(url)
-        try:
-            await surreal.connect(url)
-            await surreal.signin(
-                {
-                    "username": merged.surrealdb_user or DEFAULT_SURREALDB_USER,
-                    "password": merged.surrealdb_pass or DEFAULT_SURREALDB_PASS,
-                }
-            )
-            await surreal.use(
-                merged.surrealdb_namespace or DEFAULT_SURREALDB_NAMESPACE,
-                merged.surrealdb_database or DEFAULT_SURREALDB_DATABASE,
-            )
-            # note: db is unused by the falkordb/surrealdb backends —
-            # None keeps this service SQLAlchemy-free by construction.
-            backend = dispatcher.resolve_and_create(
-                merged,
-                None,
-                surreal=surreal,  # type: ignore[arg-type]
-            )
-            if backend is None:
-                return self._failure(start, "graph probe failed: backend disabled")
-            healthy = await backend.health_check()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            return self._failure(start, f"graph probe failed: {exc}")
-        finally:
-            try:
-                await surreal.close()
-            except Exception:
-                logger.warning("platform_config.test_surreal_close_failed", exc_info=True)
-        if not healthy:
-            return self._failure(
-                start, "graph probe failed: SurrealDB health check false"
-            )
-        return self._success(start, "graph ok (surrealdb)")
 
     @staticmethod
     def _success(start: float, detail: str) -> ProbeResult:

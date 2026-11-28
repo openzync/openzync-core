@@ -21,8 +21,8 @@ from middleware.metrics import (
 )
 
 if TYPE_CHECKING:
+    from domain.events.supersession_event import SupersessionEvent
     from services.cache_service import CacheService
-    from services.graph_edge_sync_service import SupersessionEvent
 
 logger = logging.getLogger(__name__)
 

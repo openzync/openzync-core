@@ -181,7 +181,7 @@ async def falkordb_url(engine) -> str:
     """Connection URL for the session-scoped FalkorDB testcontainer.
 
     FalkorDB speaks the Redis protocol — plain ``redis://`` URL, e.g.
-    for per-org ``falkordb_url`` overrides in graph-backend tests.
+    for building the system-level test client in graph-backend tests.
     Depends on :func:`engine` so the container is started first.
     """
     container = _testcontainers["falkordb"]

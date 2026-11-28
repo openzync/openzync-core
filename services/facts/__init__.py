@@ -24,17 +24,18 @@ from services.facts.conflict_matching import (
     ConflictMatchingMixin,
     normalize_identity_term,
 )
-from services.facts.llm_invalidation import LLMInvalidationMixin, LLMInvalidationResult
+from domain.value_objects.fact_ingestion_result import FactIngestionResult
+from domain.value_objects.llm_invalidation_result import (
+    LLMInvalidationResult,
+)
+from services.facts.llm_invalidation import LLMInvalidationMixin
 from services.facts.persistence import FactPersistenceMixin
 from services.facts.post_commit_effects import (
     PURGE_ONLY_CACHE_TTL,
     PostCommitEffectsMixin,
     _purge_project_context,
 )
-from services.facts.supersession_ingest import (
-    FactIngestionResult,
-    SupersessionIngestMixin,
-)
+from services.facts.supersession_ingest import SupersessionIngestMixin
 
 if TYPE_CHECKING:
     from services.cache_service import CacheService
