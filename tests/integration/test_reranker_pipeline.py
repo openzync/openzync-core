@@ -16,8 +16,9 @@ requiring seeded DB content.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -106,6 +107,56 @@ def sample_search_results() -> dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def _sibling_factory(db: AsyncMock) -> MagicMock:
+    """Build a sibling-session factory yielding ``db`` (strict factory contract)."""
+    ctx = AsyncMock()
+    ctx.__aenter__.return_value = db
+    return MagicMock(return_value=ctx)
+
+
+@contextlib.contextmanager
+def _patched_legs(sample: dict[str, Any]) -> Any:
+    """Class-level leg stubs + tenant patches for one ``hybrid_search`` call.
+
+    Scoped sibling-session copies don't see instance stubs, so legs are
+    stubbed on the class; tenant RLS binding is stubbed in the retriever
+    namespace.
+    """
+    with (
+        patch("services.hybrid_retriever.set_user_context", new=AsyncMock()),
+        patch(
+            "services.hybrid_retriever.release_tenant_context", new=AsyncMock()
+        ),
+        patch.object(
+            HybridRetriever, "_embed_query", new=AsyncMock(return_value=[0.1, 0.2, 0.3])
+        ),
+        patch.object(
+            HybridRetriever,
+            "_vector_search_episodes",
+            new=AsyncMock(return_value=sample["episode_vector"]),
+        ),
+        patch.object(
+            HybridRetriever,
+            "_vector_search_facts",
+            new=AsyncMock(return_value=sample["fact_vector"]),
+        ),
+        patch.object(
+            HybridRetriever,
+            "_bm25_search_episodes",
+            new=AsyncMock(return_value=sample["episode_bm25"]),
+        ),
+        patch.object(
+            HybridRetriever,
+            "_bm25_search_facts",
+            new=AsyncMock(return_value=sample["fact_bm25"]),
+        ),
+        patch.object(
+            HybridRetriever, "_graph_bfs_search", new=AsyncMock(return_value=[])
+        ),
+    ):
+        yield
+
+
 def _build_mocked_retriever(
     db: AsyncSession,
     user_id_val: UUID,
@@ -113,48 +164,36 @@ def _build_mocked_retriever(
     *,
     platform_config: PlatformConfigBase | None = None,
     reranker: Any = None,
+    session_factory: MagicMock | None = None,
 ) -> HybridRetriever:
-    """Construct a ``HybridRetriever`` with all search legs mocked.
+    """Construct a ``HybridRetriever`` with a sibling-session factory.
 
-    Each internal search method is replaced with an ``AsyncMock`` that
-    returns controlled data, so tests focus on the RRF merge and
-    re-ranking steps without needing real DB content.
+    Legs are stubbed at class level per ``hybrid_search``/``assemble``
+    call via :func:`_patched_legs`, so this helper only wires the
+    strict-contract ``session_factory`` (defaults to yielding ``db``).
 
     Args:
         db: A mock async session.
         user_id_val: Organisation UUID (for tenant isolation).
-        sample: The controlled search results to return.
+        sample: The controlled search results to return (used by
+            :func:`_patched_legs` at call time; kept for signature parity).
         platform_config: Optional org-level configuration.
         reranker: An optional re-ranker instance (real or mock).
+        session_factory: Optional sibling-session factory (defaults to
+            one yielding ``db``).
 
     Returns:
-        A ``HybridRetriever`` instance with mocked search legs.
+        A ``HybridRetriever`` instance with a session factory.
     """
-    retriever = HybridRetriever(
+    return HybridRetriever(
         db=db,
         user_id=user_id_val,
         redis=None,
         graph_backends=[],
         platform_config=platform_config,
         reranker=reranker,
+        session_factory=session_factory or _sibling_factory(db),  # type: ignore[arg-type]
     )
-
-    retriever._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
-    retriever._vector_search_episodes = AsyncMock(
-        return_value=sample["episode_vector"],
-    )
-    retriever._vector_search_facts = AsyncMock(
-        return_value=sample["fact_vector"],
-    )
-    retriever._bm25_search_episodes = AsyncMock(
-        return_value=sample["episode_bm25"],
-    )
-    retriever._bm25_search_facts = AsyncMock(
-        return_value=sample["fact_bm25"],
-    )
-    retriever._graph_bfs_search = AsyncMock(return_value=[])
-
-    return retriever
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -185,7 +224,8 @@ class TestRerankerDisabled:
             reranker=None,
         )
 
-        result = await retriever.hybrid_search("python", PROJECT_ID, limit=20)
+        with _patched_legs(sample_search_results):
+            result = await retriever.hybrid_search("python", PROJECT_ID, limit=20)
 
         episodes = result["episodes"]
         facts = result["facts"]
@@ -226,7 +266,8 @@ class TestRerankerDisabled:
             reranker=None,
         )
 
-        result = await retriever.hybrid_search("python", PROJECT_ID, limit=20)
+        with _patched_legs(sample_search_results):
+            result = await retriever.hybrid_search("python", PROJECT_ID, limit=20)
 
         counts = result["source_counts"]
         assert counts["episodes"]["vector"] == 3
@@ -298,7 +339,8 @@ class TestRerankerEnabled:
             reranker=mock_reranker,
         )
 
-        result = await retriever.hybrid_search("python", PROJECT_ID, limit=20)
+        with _patched_legs(sample_search_results):
+            result = await retriever.hybrid_search("python", PROJECT_ID, limit=20)
 
         episodes = result["episodes"]
 
@@ -328,7 +370,8 @@ class TestRerankerEnabled:
             reranker=mock_reranker,
         )
 
-        await retriever.hybrid_search("python", PROJECT_ID, limit=20)
+        with _patched_legs(sample_search_results):
+            await retriever.hybrid_search("python", PROJECT_ID, limit=20)
 
         # The re-ranker should have been called with the query and episodes
         assert mock_reranker.rerank.call_count == 2  # episodes + facts
@@ -418,7 +461,8 @@ class TestRerankerFailure:
             reranker=failing_reranker,
         )
 
-        result = await retriever.hybrid_search("python", PROJECT_ID, limit=20)
+        with _patched_legs(sample_search_results):
+            result = await retriever.hybrid_search("python", PROJECT_ID, limit=20)
 
         assert result["degraded"] is True
         assert "reranker" in result["failed_legs"]
@@ -446,7 +490,10 @@ class TestRerankerFailure:
             reranker=failing_reranker,
         )
 
-        with patch("services.hybrid_retriever.logger") as mock_logger:
+        with (
+            patch("services.hybrid_retriever.logger") as mock_logger,
+            _patched_legs(sample_search_results),
+        ):
             result = await retriever.hybrid_search("python", PROJECT_ID, limit=20)
 
             # Verify the error was logged with the rerank_failed event
@@ -544,12 +591,13 @@ class TestContextAssemblyWithReranker:
         # Replace the internal retriever with our pre-configured one
         service._retriever = retriever
 
-        result = await service.assemble(
-            project_id=PROJECT_ID,
-            query="python fastapi",
-            limit=20,
-            format="text",
-        )
+        with _patched_legs(sample):
+            result = await service.assemble(
+                project_id=PROJECT_ID,
+                query="python fastapi",
+                limit=20,
+                format="text",
+            )
 
         context_str: str = result["context"]
 
@@ -606,12 +654,13 @@ class TestContextAssemblyWithReranker:
         )
         service._retriever = retriever
 
-        result = await service.assemble(
-            project_id=PROJECT_ID,
-            query="python",
-            limit=20,
-            format="text",
-        )
+        with _patched_legs(sample):
+            result = await service.assemble(
+                project_id=PROJECT_ID,
+                query="python",
+                limit=20,
+                format="text",
+            )
 
         context_str: str = result["context"]
 
@@ -660,12 +709,13 @@ class TestContextAssemblyWithReranker:
         )
         service._retriever = retriever
 
-        result = await service.assemble(
-            project_id=PROJECT_ID,
-            query="python",
-            limit=20,
-            format="text",
-        )
+        with _patched_legs(sample):
+            result = await service.assemble(
+                project_id=PROJECT_ID,
+                query="python",
+                limit=20,
+                format="text",
+            )
 
         context_str: str = result["context"]
         assert "Python great" in context_str
@@ -719,7 +769,8 @@ class TestRRFMergeWithRerankerConfig:
             reranker=mock_reranker,
         )
 
-        result = await retriever.hybrid_search("python", PROJECT_ID, limit=20)
+        with _patched_legs(sample):
+            result = await retriever.hybrid_search("python", PROJECT_ID, limit=20)
 
         # The RRF merge pool should be 50 (reranker_top_k), but we only have
         # 30 unique items. So episodes should have all 30 RRF-mergable results.

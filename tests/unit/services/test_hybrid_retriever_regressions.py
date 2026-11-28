@@ -17,6 +17,7 @@ from uuid import UUID
 
 import pytest
 
+from core.exceptions import SearchLegFailedError
 from services.hybrid_retriever import HybridRetriever
 
 pytestmark = pytest.mark.unit
@@ -60,16 +61,14 @@ class TestSessionFactoryParity:
 
     @pytest.mark.asyncio
     async def test_none_factory_results_correct(self) -> None:
-        """``session_factory=None`` → correct merged results, no raise."""
+        """``session_factory=None`` raises ``SearchLegFailedError`` (strict factory contract)."""
         service = HybridRetriever(db=AsyncMock(), user_id=ORG_ID)
         _stub_legs(service)
 
-        result = await service.hybrid_search("q", PROJECT_ID)
+        with pytest.raises(SearchLegFailedError) as exc_info:
+            await service.hybrid_search("q", PROJECT_ID)
 
-        assert {e["id"] for e in result["episodes"]} == {"v1", "b1"}
-        assert {f["id"] for f in result["facts"]} == {"vf1", "bf1"}
-        assert [e["id"] for e in result["entities"]] == ["e1"]
-        assert result["total_items"] == 5
+        assert exc_info.value.detail.get("leg") == "all"
 
     @pytest.mark.asyncio
     async def test_factory_gathered_path_matches_sequential(self) -> None:
@@ -192,26 +191,58 @@ class TestSortRecentMixedDates:
     @pytest.mark.asyncio
     async def test_mixed_created_at_ordered_no_typeerror(self) -> None:
         """Datetime / ISO-string / missing / garbage dates order newest-first."""
-        service = HybridRetriever(db=AsyncMock(), user_id=ORG_ID)
-        service._embed_query = AsyncMock(return_value=list(_EMBEDDING))  # type: ignore[method-assign]
-        service._vector_search_episodes = AsyncMock(  # type: ignore[method-assign]
-            return_value=[
-                {"id": "dt", "score": 0.9,
-                 "created_at": datetime(2026, 6, 1, tzinfo=UTC)},
-                {"id": "missing", "score": 0.8},
-                {"id": "garbage", "score": 0.7, "created_at": "not-a-date"},
-            ]
+        sibling_db = AsyncMock()
+        service = HybridRetriever(
+            db=AsyncMock(), user_id=ORG_ID, session_factory=_factory(sibling_db)
         )
-        service._vector_search_facts = AsyncMock(return_value=[])  # type: ignore[method-assign]
-        service._bm25_search_episodes = AsyncMock(  # type: ignore[method-assign]
-            return_value=[
-                {"id": "iso", "score": 0.6, "created_at": "2026-03-01T00:00:00Z"},
-            ]
-        )
-        service._bm25_search_facts = AsyncMock(return_value=[])  # type: ignore[method-assign]
-        service._graph_bfs_search = AsyncMock(return_value=[])  # type: ignore[method-assign]
-
-        result = await service.hybrid_search("q", PROJECT_ID, sort="recent")
+        # note: the factory path runs legs on scoped sibling-session copies,
+        # so stub at class level — instance stubs would not apply there.
+        with (
+            patch_set_tenant(),
+            patch_release_tenant(),
+            patch.object(
+                HybridRetriever,
+                "_embed_query",
+                new=AsyncMock(return_value=list(_EMBEDDING)),
+            ),
+            patch.object(
+                HybridRetriever,
+                "_vector_search_episodes",
+                new=AsyncMock(
+                    return_value=[
+                        {"id": "dt", "score": 0.9,
+                         "created_at": datetime(2026, 6, 1, tzinfo=UTC)},
+                        {"id": "missing", "score": 0.8},
+                        {"id": "garbage", "score": 0.7, "created_at": "not-a-date"},
+                    ]
+                ),
+            ),
+            patch.object(
+                HybridRetriever,
+                "_vector_search_facts",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch.object(
+                HybridRetriever,
+                "_bm25_search_episodes",
+                new=AsyncMock(
+                    return_value=[
+                        {"id": "iso", "score": 0.6, "created_at": "2026-03-01T00:00:00Z"},
+                    ]
+                ),
+            ),
+            patch.object(
+                HybridRetriever,
+                "_bm25_search_facts",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch.object(
+                HybridRetriever,
+                "_graph_bfs_search",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            result = await service.hybrid_search("q", PROJECT_ID, sort="recent")
 
         # Newest first: datetime (Jun) > ISO string (Mar) > missing/garbage.
         assert [e["id"] for e in result["episodes"]][:2] == ["dt", "iso"]
