@@ -25,7 +25,7 @@ Usage::
 
 from __future__ import annotations
 
-from packages.graph_backend.interface import GraphBackend
+from packages.graph_backend.interface import GraphBackend, bfs_dedupe_sort
 
 # FalkorDB and SurrealDB are optional backends — import them lazily
 # from packages.graph_backend.falkordb import FalkorGraphBackend   # requires falkordb
@@ -33,4 +33,5 @@ from packages.graph_backend.interface import GraphBackend
 
 __all__ = [
     "GraphBackend",
+    "bfs_dedupe_sort",
 ]

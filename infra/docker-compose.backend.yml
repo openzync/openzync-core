@@ -282,6 +282,13 @@ services:
   # ── Redis (caching, queues, pub/sub) ─────────────────────────────────────
   # api + worker depend on this with service_healthy so the redis-cli PING
   # must pass before the app containers can start.
+  # DB split: cache keys live on DB 0, ARQ job + dedup keys on DB 1 — LRU
+  # pressure on the cache DB can never silently evict queued/dedup state.
+  # Configure via OZ_REDIS_URL (redis://redis:6379/0) for cache clients and
+  # OZ_ARQ_REDIS_URL (redis://redis:6379/1) for the ARQ worker/broker.
+  # Eviction policies are per-Redis, not per-DB: both DBs share the 256mb
+  # cap and noeviction, so a cache-key flood on DB 0 can still OOM writes
+  # on DB 1. The split prevents *eviction* cross-talk, not memory pressure.
   redis:
     image: redis:7-alpine
     ports: ["127.0.0.1:6380:6379"]
@@ -293,11 +300,12 @@ services:
     # ARQ enqueues) errors until keys expire — watch `redis_memory_used`
     # and the OpenZyncQueueBacklog alert, and grow maxmemory before
     # raising result TTLs or dropping key TTLs.  A memory-usage alert
-    # (e.g. used_memory > 100MB sustained) belongs next to the queue
+    # (e.g. used_memory > 200MB sustained) belongs next to the queue
     # alerts in infra/prometheus/alerts.yml.
     # Persistence: redis-data still holds RDB snapshots in /data; appendonly
     # coexists with RDB (no conflict), so AOF is on for job durability.
-    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    # DB 1 (ARQ jobs) is covered by the same AOF — job state survives restarts.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
     volumes:
       - redis-data:/data
     healthcheck:
@@ -478,14 +486,15 @@ services:
   # (credentials/namespace/database default to root/root/openzync/openzync;
   # only the URL gates availability — graph_backend=surrealdb without it 503s.)
   # Host port 8001 — 8000 on the host is the api's publish port.
-  # In-memory storage (per task spec); for persistence use
-  # `start file://data` (v2) / `surrealkv://data` (v3) + a named volume.
+  # File-backed storage (survives restarts) via the surrealdb-data volume.
   surrealdb:
     profiles: [alt-graph]
     image: surrealdb/surrealdb:v3.2.3
     container_name: openzync-surrealdb
-    command: start --log trace --user ${SURREALDB_USER:-root} --pass ${SURREALDB_PASS:-root}
+    command: start file://data --log trace --user ${SURREALDB_USER:-root} --pass ${SURREALDB_PASS:-root}
     ports: ["127.0.0.1:8001:8000"]
+    volumes:
+      - surrealdb-data:/data
     healthcheck:
       test: ["CMD", "surreal", "is-ready", "--conn", "http://localhost:8000"]
       interval: 5s
@@ -537,3 +546,4 @@ volumes:
   prometheus-data: {}
   postgres-data: {}
   falkordb-data: {}
+  surrealdb-data: {}

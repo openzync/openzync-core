@@ -934,3 +934,61 @@ class GraphBackend(ABC):
             ExternalServiceError: If the backend fails to expire the edges.
         """
         ...
+
+
+def bfs_dedupe_sort(
+    matched_entities: list[dict[str, Any]],
+    related_by_id: dict[str, list[dict[str, Any]]],
+    max_results: int,
+) -> list[dict[str, Any]]:
+    """Merge matched entities with BFS neighbours, deduped and sorted.
+
+    Single shared copy of the ``retrieve_graph`` merge step used by both
+    the FalkorDB and SurrealDB backends: matched entities enter with
+    ``distance`` 0, each entity's pre-traversed neighbours follow with
+    their BFS ``depth``, duplicates collapse by id, and the merged list
+    is sorted closest-first and capped.
+
+    Args:
+        matched_entities: Query-matching entities (``id``/``name``/``type``/
+            ``summary``). Blank or duplicate ids are skipped.
+        related_by_id: BFS neighbours keyed by matched entity id string —
+            the caller traverses first (backend-specific error handling
+            stays in the caller) and passes the results here.
+        max_results: Cap on returned rows.
+
+    Returns:
+        Entity dicts with ``id``, ``name``, ``type``, ``summary`` and
+        ``distance`` keys (0 = directly matched), sorted closest-first.
+    """
+    seen: set[str] = set()
+    results: list[dict[str, Any]] = []
+    for entity in matched_entities:
+        entity_id_str = entity.get("id", "")
+        if not entity_id_str or entity_id_str in seen:
+            continue
+        seen.add(entity_id_str)
+        results.append(
+            {
+                "id": entity_id_str,
+                "name": entity.get("name", ""),
+                "type": entity.get("type", ""),
+                "summary": entity.get("summary", ""),
+                "distance": 0,
+            }
+        )
+        for node in related_by_id.get(entity_id_str, []):
+            node_id = node.get("id", "")
+            if node_id and node_id not in seen:
+                seen.add(node_id)
+                results.append(
+                    {
+                        "id": node_id,
+                        "name": node.get("name", ""),
+                        "type": node.get("type", ""),
+                        "summary": node.get("summary", ""),
+                        "distance": node.get("depth", 1),
+                    }
+                )
+    results.sort(key=lambda x: x.get("distance", 99))
+    return results[:max_results]

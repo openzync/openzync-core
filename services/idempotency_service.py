@@ -57,6 +57,8 @@ import orjson
 from redis import asyncio as aioredis
 
 from core.config import get_settings
+from core.exceptions import CacheUnavailableError
+from middleware.metrics import idempotency_corrupt_entries_total
 from workers.tasks.base import (  # noqa: F401  — re-export
     ENRICHMENT_ALL,
     ENRICHMENT_EMBEDDING,
@@ -255,6 +257,8 @@ class IdempotencyService:
 
         Raises:
             ValueError: If ``key`` exceeds ``_max_key_length`` (255 chars).
+            CacheUnavailableError: If the cached entry is corrupt (503,
+                fail-closed — never replays as NEW).
         """
         if len(key) > self._max_key_length:
             raise ValueError(
@@ -275,15 +279,18 @@ class IdempotencyService:
         try:
             entry: dict[str, Any] = orjson.loads(cached)
         except (orjson.JSONDecodeError, TypeError):
-            # Corrupted cache entry — treat as new (cache will be overwritten).
+            # ⚠️ BREAKING: corrupt entries fail closed (503) instead of
+            # being treated as NEW — a NEW replay would re-execute a
+            # request whose original response is unrecoverable, risking
+            # duplicate side effects.
+            idempotency_corrupt_entries_total.inc()
             logger.error(
                 "idempotency.corrupted_cache_entry",
                 extra={"key": key[:16] + "..."},
             )
-            return IdempotencyResult(
-                status=IdempotencyStatus.NEW,
-                message="Cached entry was corrupt — treat as new.",
-            )
+            raise CacheUnavailableError(
+                "Idempotency entry is corrupt — retry the request."
+            ) from None
 
         stored_hash: str | None = entry.get("request_body_hash")
         if stored_hash is not None and stored_hash != body_hash:

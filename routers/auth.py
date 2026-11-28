@@ -14,6 +14,7 @@ Endpoints:
     POST   /v1/auth/mfa/enable         — Enable MFA (requires JWT)
     POST   /v1/auth/mfa/disable        — Disable MFA (requires JWT + OTP)
     POST   /v1/auth/refresh            — Rotate refresh token, return new JWT pair
+    POST   /v1/auth/logout             — Revoke refresh-token family, clear cookie
     GET    /v1/auth/me                 — Get current dashboard user profile
     PATCH  /v1/auth/me                 — Update profile name, email, or password
     POST   /v1/auth/invites/info       — Resolve invite details (public, token in body)
@@ -25,11 +26,11 @@ from __future__ import annotations
 import hashlib
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 
 from core.audit import audit_action
 from core.config import get_settings
-from core.exceptions import AuthorizationError, ConflictError
+from core.exceptions import AuthenticationError, AuthorizationError, ConflictError
 from core.net import is_trusted_proxy
 from dependencies.auth import get_dashboard_user
 from dependencies.services import (
@@ -50,6 +51,7 @@ from schemas.auth import (
     MfaDisableRequest,
     MfaEnableRequest,
     MfaVerifyRequest,
+    LogoutResponse,
     PendingOrgResponse,
     RefreshRequest,
     RegistrationStatusResponse,
@@ -106,6 +108,49 @@ def _token_fingerprint(raw: str) -> str:
         useless to an attacker who reads the throttle store.
     """
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+_REFRESH_COOKIE_NAME = "refresh_token"
+_REFRESH_COOKIE_PATH = "/v1/auth/refresh"
+
+
+def _set_refresh_cookie(response: Response, token: str) -> None:
+    """Set the ``refresh_token`` httpOnly cookie on a token-issuing response.
+
+    # ⚠️ BREAKING: every endpoint returning a token pair now also emits
+    # ``Set-Cookie`` (dual transport — the JSON body token is kept for
+    # SDK/MCP/demo clients). Browsers must rely on the cookie plus
+    # ``credentials: include`` and never touch the token in JS state.
+
+    Args:
+        response: Outgoing response carrying the ``Set-Cookie`` header.
+        token: Opaque refresh token to store in the cookie.
+    """
+    settings = get_settings()
+    response.set_cookie(
+        key=_REFRESH_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        path=_REFRESH_COOKIE_PATH,
+        max_age=settings.JWT_REFRESH_TOKEN_TTL_DAYS * 86400,
+        samesite="lax",
+        secure=settings.ENVIRONMENT == "production",
+    )
+
+
+def _clear_refresh_cookie(response: Response) -> None:
+    """Clear the ``refresh_token`` cookie (logout).
+
+    Args:
+        response: Outgoing response carrying the deleting ``Set-Cookie``.
+    """
+    settings = get_settings()
+    response.delete_cookie(
+        key=_REFRESH_COOKIE_NAME,
+        path=_REFRESH_COOKIE_PATH,
+        samesite="lax",
+        secure=settings.ENVIRONMENT == "production",
+    )
 
 
 @router.get(
@@ -199,6 +244,7 @@ async def setup_platform_root(
 async def signup(
     payload: SignupRequest,
     request: Request,
+    response: Response,
     service: AuthService = Depends(get_auth_service),  # noqa: B008
     throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
     invites: InviteService = Depends(get_invite_service),  # noqa: B008
@@ -208,6 +254,7 @@ async def signup(
     Args:
         payload: Email + password, plus an optional ``invite_token``.
         request: Incoming HTTP request (for IP extraction).
+        response: Outgoing response carrying the ``Set-Cookie`` header.
         service: Injected auth service.
         throttle: Injected auth throttle.
         invites: Injected invite service (invite-token path only).
@@ -227,10 +274,12 @@ async def signup(
             _token_fingerprint(payload.invite_token),
             _client_ip(request),
         )
-        return await invites.accept_invite(
+        result = await invites.accept_invite(
             token=payload.invite_token,
             password=payload.password,
         )
+        _set_refresh_cookie(response, result.refresh_token)
+        return result
     return await service.signup(payload)
 
 
@@ -248,6 +297,7 @@ async def signup(
 async def verify_email(
     payload: VerifyEmailRequest,
     request: Request,
+    response: Response,
     service: AuthService = Depends(get_auth_service),  # noqa: B008
     throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
 ) -> TokenResponse:
@@ -256,6 +306,7 @@ async def verify_email(
     Args:
         payload: Email and OTP code.
         request: Incoming HTTP request (for IP extraction).
+        response: Outgoing response carrying the ``Set-Cookie`` header.
         service: Injected auth service.
         throttle: Injected auth throttle.
 
@@ -263,7 +314,9 @@ async def verify_email(
         Access and refresh tokens on successful verification.
     """
     await throttle.check_verify_attempt(payload.email, _client_ip(request))
-    return await service.verify_email(payload)
+    result = await service.verify_email(payload)
+    _set_refresh_cookie(response, result.refresh_token)
+    return result
 
 
 @router.post(
@@ -348,6 +401,7 @@ async def send_login_otp(
 async def verify_login_otp(
     payload: VerifyOtpRequest,
     request: Request,
+    response: Response,
     service: AuthService = Depends(get_auth_service),  # noqa: B008
     throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
 ) -> TokenResponse:
@@ -356,6 +410,7 @@ async def verify_login_otp(
     Args:
         payload: Email and OTP code.
         request: Incoming HTTP request (for IP extraction).
+        response: Outgoing response carrying the ``Set-Cookie`` header.
         service: Injected auth service.
         throttle: Injected auth throttle.
 
@@ -363,7 +418,9 @@ async def verify_login_otp(
         Access and refresh tokens.
     """
     await throttle.check_passwordless_verify(payload.email, _client_ip(request))
-    return await service.passwordless_login(payload)
+    result = await service.passwordless_login(payload)
+    _set_refresh_cookie(response, result.refresh_token)
+    return result
 
 
 @router.post(
@@ -454,6 +511,7 @@ async def reset_password(
 async def login(
     payload: LoginRequest,
     request: Request,
+    response: Response,
     service: AuthService = Depends(get_auth_service),  # noqa: B008
     throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
 ) -> LoginResponse:
@@ -462,6 +520,7 @@ async def login(
     Args:
         payload: Email and password.
         request: Incoming HTTP request (for IP extraction).
+        response: Outgoing response carrying the ``Set-Cookie`` header.
         service: Injected auth service.
         throttle: Injected auth throttle.
 
@@ -475,6 +534,8 @@ async def login(
     # MFA path is not "successful" yet — counters are cleared at MFA verify.
     if not result.requires_mfa:
         await throttle.record_login_success(payload.email, _client_ip(request))
+        if result.refresh_token is not None:
+            _set_refresh_cookie(response, result.refresh_token)
     return result
 
 
@@ -493,6 +554,7 @@ async def login(
 async def mfa_verify(
     payload: MfaVerifyRequest,
     request: Request,
+    response: Response,
     service: AuthService = Depends(get_auth_service),  # noqa: B008
     throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
 ) -> TokenResponse:
@@ -501,6 +563,7 @@ async def mfa_verify(
     Args:
         payload: Email, OTP code, and MFA session token.
         request: Incoming HTTP request (for IP extraction).
+        response: Outgoing response carrying the ``Set-Cookie`` header.
         service: Injected auth service.
         throttle: Injected auth throttle.
 
@@ -512,6 +575,8 @@ async def mfa_verify(
     # Full login is only successful once the MFA OTP verifies — clear the
     # password-attempt counters accumulated at the login step.
     await throttle.record_login_success(payload.email, _client_ip(request))
+    result = await service.mfa_verify(payload)
+    _set_refresh_cookie(response, result.refresh_token)
     return result
 
 
@@ -590,24 +655,80 @@ async def mfa_disable(
 async def refresh(
     payload: RefreshRequest,
     request: Request,
+    response: Response,
     service: AuthService = Depends(get_auth_service),  # noqa: B008
     throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
 ) -> TokenResponse:
     """Refresh an expired access token.
 
+    # ⚠️ BREAKING: ``payload.refresh_token`` is optional — when omitted
+    # the ``refresh_token`` httpOnly cookie is used instead.
+
     Args:
-        payload: The current refresh token.
-        request: Incoming HTTP request (for IP extraction).
+        payload: Optional refresh token in the body.
+        request: Incoming HTTP request (for IP extraction + cookie fallback).
+        response: Outgoing response carrying the ``Set-Cookie`` header.
         service: Injected auth service.
         throttle: Injected auth throttle.
 
     Returns:
         New access and refresh tokens.
+
+    Raises:
+        AuthenticationError: If neither body nor cookie carries a token.
     """
+    raw_token = payload.refresh_token or request.cookies.get("refresh_token")
+    if not raw_token:
+        raise AuthenticationError("Refresh token is required.")
     await throttle.check_sensitive_attempt(
-        "refresh", _token_fingerprint(payload.refresh_token), _client_ip(request)
+        "refresh", _token_fingerprint(raw_token), _client_ip(request)
     )
-    return await service.refresh(payload.refresh_token)
+    result = await service.refresh(raw_token)
+    _set_refresh_cookie(response, result.refresh_token)
+    return result
+
+
+@router.post(
+    "/logout",
+    response_model=LogoutResponse,
+    summary="Log out and revoke the refresh-token family",
+    description=(
+        "Revokes the refresh token from the request body or the "
+        "``refresh_token`` httpOnly cookie (the whole rotation family), "
+        "and clears the cookie via a deleting ``Set-Cookie``.  "
+        "Idempotent — a missing or unknown token still returns success "
+        "with the cookie cleared.  "
+        "PUBLIC ENDPOINT — no auth required (the token IS the credential)."
+    ),
+)
+@audit_action("auth.logout", "session", "User logged out")
+async def logout(
+    payload: RefreshRequest,
+    request: Request,
+    response: Response,
+    service: AuthService = Depends(get_auth_service),  # noqa: B008
+    throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
+) -> LogoutResponse:
+    """Log out the current session.
+
+    Args:
+        payload: Optional refresh token in the body.
+        request: Incoming HTTP request (for IP extraction + cookie fallback).
+        response: Outgoing response carrying the clearing ``Set-Cookie``.
+        service: Injected auth service.
+        throttle: Injected auth throttle.
+
+    Returns:
+        Confirmation message.
+    """
+    raw_token = payload.refresh_token or request.cookies.get("refresh_token")
+    if raw_token is not None:
+        await throttle.check_sensitive_attempt(
+            "logout", _token_fingerprint(raw_token), _client_ip(request)
+        )
+        await service.logout(raw_token)
+    _clear_refresh_cookie(response)
+    return LogoutResponse(message="Logged out.")
 
 
 @router.post(
@@ -625,6 +746,7 @@ async def refresh(
 @audit_action("auth.password_changed", "user", "Password changed")
 async def change_password(
     payload: ChangePasswordRequest,
+    response: Response,
     service: AuthService = Depends(get_auth_service),  # noqa: B008
     user_id: str = Depends(get_dashboard_user),  # noqa: B008
 ) -> TokenResponse:
@@ -632,16 +754,19 @@ async def change_password(
 
     Args:
         payload: Current + new password.
+        response: Outgoing response carrying the ``Set-Cookie`` header.
         service: Injected auth service.
         user_id: Authenticated user UUID from JWT claims.
 
     Returns:
         A fresh access + refresh token pair (all prior sessions revoked).
     """
-    return await service.change_password(
+    result = await service.change_password(
         user_id=UUID(user_id),
         payload=payload,
     )
+    _set_refresh_cookie(response, result.refresh_token)
+    return result
 
 
 @router.get(
@@ -667,7 +792,6 @@ async def get_profile(
         The user's public profile (email, name, role, verification).
     """
     return await service.get_profile(user_id=UUID(user_id))
-
 
 @router.patch(
     "/me",
@@ -757,6 +881,7 @@ async def invite_info(
 async def accept_invite(
     payload: AcceptInviteRequest,
     request: Request,
+    response: Response,
     service: InviteService = Depends(get_invite_service),  # noqa: B008
     throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
 ) -> TokenResponse:
@@ -769,6 +894,7 @@ async def accept_invite(
     Args:
         payload: Raw magic-link token + chosen password.
         request: Incoming HTTP request (for IP extraction).
+        response: Outgoing response carrying the ``Set-Cookie`` header.
         service: Invite service (injected).
         throttle: Injected auth throttle.
 
@@ -782,8 +908,10 @@ async def accept_invite(
     await throttle.check_sensitive_attempt(
         "invite_accept", _token_fingerprint(payload.token), _client_ip(request)
     )
-    return await service.accept_invite(
+    result = await service.accept_invite(
         token=payload.token,
         password=payload.password,
     )
+    _set_refresh_cookie(response, result.refresh_token)
+    return result
 

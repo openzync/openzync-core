@@ -115,6 +115,12 @@ facts_invalidated_total = Counter(
     registry=METRICS_REGISTRY,
 )
 
+idempotency_corrupt_entries_total = Counter(
+    "openzync_idempotency_corrupt_entries_total",
+    "Idempotency cache entries that failed JSON parsing (fail-closed 503).",
+    registry=METRICS_REGISTRY,
+)
+
 webhook_emit_failures_total = Counter(
     "openzync_webhook_emit_failures_total",
     "Webhook emit fan-out failures (endpoint lookup or enqueue).",
