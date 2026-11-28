@@ -353,7 +353,7 @@ async def resolve_graph_backend_fail_soft(
         pool = getattr(request.app.state, "surreal_connection_pool", None)
         if pool is not None:
             try:
-                surreal = await pool.get_or_create(user_id, platform_config)
+                surreal = await pool.get_or_create(user_id)
             except Exception as exc:
                 _resolve_logger.warning(
                     f"{log_prefix}.surreal_connection_failed",

@@ -22,13 +22,10 @@ from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 — runtime import
 
 from core.audit import audit_action
-from core.config import get_settings
 from core.exceptions import ExternalServiceError, RateLimitError
 from dependencies.auth import require_permission
 from dependencies.db import get_db
 from schemas.platform_config import (
-    SYSTEM_MANAGED_FALKORDB_FIELDS,
-    SYSTEM_MANAGED_SURREALDB_FIELDS,
     PlatformConfigBase,
     PlatformConfigResponse,
     TestPlatformConfigRequest,
@@ -47,21 +44,6 @@ router = APIRouter(
 
 #: Path to the onboarding defaults YAML file (relative to project root).
 DEFAULTS_PATH = Path(__file__).parent.parent / "config" / "defaults" / "platform_config.yaml"
-
-
-def _get_system_managed_fields() -> list[str]:
-    """Return field names that are locked at the system level.
-
-    Checks the global Settings instance.  When a backend's URL is set at
-    the system level, all corresponding per-user config fields are blocked.
-    """
-    settings = get_settings()
-    fields: list[str] = []
-    if settings.SURREALDB_URL:
-        fields.extend(SYSTEM_MANAGED_SURREALDB_FIELDS)
-    if settings.FALKORDB_URL:
-        fields.extend(SYSTEM_MANAGED_FALKORDB_FIELDS)
-    return fields
 
 
 # ── Dependency factory ────────────────────────────────────────────────────────
@@ -179,7 +161,7 @@ async def get_platform_config(
     response contains unmasked secrets.
     """
     response = await service.get_config_response(UUID(_user_id))
-    response.system_managed_fields = _get_system_managed_fields()
+    response.system_managed_fields = []
     return response
 
 
@@ -207,22 +189,6 @@ async def update_platform_config(
     Requires an API key with ``admin:write`` scope or a JWT dashboard
     session.
     """
-    # ── Reject system-managed fields ─────────────────────────────────
-    system_managed = _get_system_managed_fields()
-    if system_managed:
-        overridden = {
-            f for f in system_managed
-            if f in body.model_dump(exclude_unset=True)
-        }
-        if overridden:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "These fields are configured at the system level "
-                    "and cannot be modified: "
-                    f"{', '.join(sorted(overridden))}."
-                ),
-            )
     return await service.update_config(UUID(_user_id), body)
 
 
@@ -252,22 +218,6 @@ async def replace_platform_config(
     Requires an API key with ``admin:write`` scope or a JWT dashboard
     session.
     """
-    # ── Reject system-managed fields ─────────────────────────────────
-    system_managed = _get_system_managed_fields()
-    if system_managed:
-        overridden = {
-            f for f in system_managed
-            if f in body.model_dump(exclude_unset=True)
-        }
-        if overridden:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "These fields are configured at the system level "
-                    "and cannot be modified: "
-                    f"{', '.join(sorted(overridden))}."
-                ),
-            )
     return await service.update_config(UUID(_user_id), body)
 
 

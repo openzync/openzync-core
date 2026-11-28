@@ -503,89 +503,45 @@ async def get_graph_service(
     """
     dispatcher: GraphBackendDispatcher = request.app.state.graph_backend_dispatcher
 
-    # Resolve SurrealDB connection only when the user explicitly configures SurrealDB.
-    # For falkordb or none backends, skip the pool entirely — avoids unnecessary
-    # network round-trips and prevents failures when SurrealDB is down.
+    # Resolve SurrealDB connection only when the user selects it.
+    # For falkordb or none backends the pool is never touched — avoids
+    # unnecessary network round-trips and failures when SurrealDB is down.
+    # Connection details come solely from OZ_SURREALDB_* env vars (see
+    # SurrealConnectionPool.get_or_create); a missing URL raises loudly.
     surreal = None
     user_id = UUID(request.state.user_id)
     if platform_config.graph_backend == "surrealdb":
         pool = request.app.state.surreal_connection_pool
-        if pool is not None:
-            try:
-                settings = get_settings()
-                surreal = await pool.get_or_create(
-                    user_id,
-                    platform_config,
-                    system_url=settings.SURREALDB_URL,
-                )
-            except Exception as exc:
-                logger.error(
-                    "graph_service.surreal_connection_failed",
-                    extra={
-                        "user_id": str(user_id),
-                        "backend": "surrealdb",
-                        "error": str(exc),
-                    },
-                )
-                raise GraphBackendUnavailableError(
-                    f"SurrealDB connection failed for user {user_id} "
-                    f"with graph_backend='surrealdb': {exc}"
-                ) from exc
-
-    # SurrealDB configured but no pool / no connection → fail loud rather
-    # than constructing a doomed SurrealGraphBackend(surreal=None).
-    if platform_config.graph_backend == "surrealdb" and surreal is None:
-        raise GraphBackendUnavailableError(
-            f"SurrealDB configured for user {user_id} (graph_backend="
-            f"'surrealdb') but no connection is available — the "
-            "surreal_connection_pool is missing or unreachable."
-        )
-
-    # Read the FalkorDB client from app state (may be None if not configured).
-    # If not configured at system level, try per-user config.
-    falkordb_client = getattr(request.app.state, "falkordb_client", None)
-    if falkordb_client is None and platform_config.falkordb_url:
+        if pool is None:
+            raise GraphBackendUnavailableError(
+                f"SurrealDB configured for user {user_id} (graph_backend="
+                "'surrealdb') but the surreal_connection_pool is missing."
+            )
         try:
-            from falkordb.asyncio import FalkorDB
-            from redis.asyncio import (
-                BlockingConnectionPool as AsyncBlockingConnectionPool,
-            )
-
-            # Same URL as the process singleton (e.g. compose parity) means
-            # the singleton would have served — it only missed because its
-            # init failed at boot; fail loud instead of forking a second
-            # pool that hides the outage.  Otherwise one pool per distinct
-            # per-user URL, sized from the single canonical setting.
-            _s = get_settings()
-            if platform_config.falkordb_url == _s.FALKORDB_URL:
-                raise GraphBackendUnavailableError(
-                    f"FalkorDB configured for user {user_id} but the shared "
-                    "client failed to initialise — refusing a shadow pool."
-                )
-            pool = AsyncBlockingConnectionPool.from_url(
-                platform_config.falkordb_url,
-                max_connections=_s.FALKORDB_MAX_CONNECTIONS,
-                socket_timeout=_s.FALKORDB_SOCKET_TIMEOUT,
-                socket_connect_timeout=5,  # hung TCP must fail fast
-                socket_keepalive=True,
-                decode_responses=True,
-            )
-            falkordb_client = FalkorDB(connection_pool=pool)
+            surreal = await pool.get_or_create(user_id)
         except Exception as exc:
             logger.error(
-                "graph_service.falkordb_per_org_failed",
-                extra={"user_id": str(user_id), "error": str(exc)},
+                "graph_service.surreal_connection_failed",
+                extra={
+                    "user_id": str(user_id),
+                    "backend": "surrealdb",
+                    "error": str(exc),
+                },
             )
             raise GraphBackendUnavailableError(
-                f"FalkorDB connection failed for user {user_id}: {exc}"
+                f"SurrealDB connection failed for user {user_id} "
+                f"with graph_backend='surrealdb': {exc}"
             ) from exc
 
-    # FalkorDB configured but no client anywhere → fail loud (same rationale).
+    # The FalkorDB client is system-level (OZ_FALKORDB_URL, built at
+    # lifespan) — no per-user override.
+    falkordb_client = getattr(request.app.state, "falkordb_client", None)
+
+    # FalkorDB selected but no client → fail loud.
     if platform_config.graph_backend == "falkordb" and falkordb_client is None:
         raise GraphBackendUnavailableError(
             f"FalkorDB configured for user {user_id} (graph_backend="
-            f"'falkordb') but no client is available — neither a system-level "
-            "FALKORDB_URL nor a per-user falkordb_url."
+            "'falkordb') but no client is available — check OZ_FALKORDB_URL."
         )
 
     try:
@@ -704,78 +660,36 @@ async def get_graph_backend_for_project(
     user_id = UUID(request.state.user_id)
     if platform_config.graph_backend == "surrealdb":
         pool = request.app.state.surreal_connection_pool
-        if pool is not None:
-            try:
-                from core.config import get_settings
-
-                surreal = await pool.get_or_create(
-                    user_id,
-                    platform_config,
-                    system_url=get_settings().SURREALDB_URL,
-                )
-            except Exception as exc:
-                logger.error(
-                    "graph_backend.surreal_connection_failed",
-                    extra={
-                        "user_id": str(user_id),
-                        "backend": "surrealdb",
-                        "error": str(exc),
-                    },
-                )
-                raise GraphBackendUnavailableError(
-                    f"SurrealDB connection failed for user {user_id}: {exc}"
-                ) from exc
-
-    falkordb_client = getattr(request.app.state, "falkordb_client", None)
-    if falkordb_client is None and platform_config.falkordb_url:
+        if pool is None:
+            raise GraphBackendUnavailableError(
+                f"SurrealDB configured for user {user_id} (graph_backend="
+                "'surrealdb') but the surreal_connection_pool is missing."
+            )
         try:
-            from falkordb.asyncio import FalkorDB
-            from redis.asyncio import (
-                BlockingConnectionPool as AsyncBlockingConnectionPool,
-            )
-
-            # Same guard as get_graph_service: never shadow-pool the system
-            # URL — a missing singleton means a boot outage, not a cue to
-            # fork a second pool.  Per-user URLs pool from the one canonical
-            # size (see Settings.FALKORDB_MAX_CONNECTIONS).
-            _s = get_settings()
-            if platform_config.falkordb_url == _s.FALKORDB_URL:
-                raise GraphBackendUnavailableError(
-                    f"FalkorDB configured for user {user_id} but the shared "
-                    "client failed to initialise — refusing a shadow pool."
-                )
-            pool = AsyncBlockingConnectionPool.from_url(
-                platform_config.falkordb_url,
-                max_connections=_s.FALKORDB_MAX_CONNECTIONS,
-                socket_timeout=_s.FALKORDB_SOCKET_TIMEOUT,
-                socket_connect_timeout=5,  # hung TCP must fail fast
-                socket_keepalive=True,
-                decode_responses=True,
-            )
-            falkordb_client = FalkorDB(connection_pool=pool)
+            surreal = await pool.get_or_create(user_id)
         except Exception as exc:
             logger.error(
-                "graph_backend.falkordb_per_org_failed",
-                extra={"user_id": str(user_id), "error": str(exc)},
+                "graph_backend.surreal_connection_failed",
+                extra={
+                    "user_id": str(user_id),
+                    "backend": "surrealdb",
+                    "error": str(exc),
+                },
             )
             raise GraphBackendUnavailableError(
-                f"FalkorDB connection failed for user {user_id}: {exc}"
+                f"SurrealDB connection failed for user {user_id}: {exc}"
             ) from exc
+
+    falkordb_client = getattr(request.app.state, "falkordb_client", None)
 
     # Configured-but-unavailable guards — mirror get_graph_service so the
     # read-only path never constructs a doomed backend or 500s on an
     # unknown backend name.
-    if platform_config.graph_backend == "surrealdb" and surreal is None:
-        raise GraphBackendUnavailableError(
-            f"SurrealDB configured for user {user_id} (graph_backend="
-            f"'surrealdb') but no connection is available — the "
-            "surreal_connection_pool is missing or unreachable."
-        )
     if platform_config.graph_backend == "falkordb" and falkordb_client is None:
         raise GraphBackendUnavailableError(
             f"FalkorDB configured for user {user_id} (graph_backend="
-            f"'falkordb') but no client is available — neither a system-level "
-            "FALKORDB_URL nor a per-user falkordb_url."
+            "'falkordb') but no client is available — check "
+            "OZ_FALKORDB_URL."
         )
 
     try:

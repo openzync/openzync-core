@@ -34,22 +34,6 @@ LLM_USAGE_SORTABLE_COLUMNS = {
 """Sortable columns for the admin LLM usage endpoint (default created_at/desc)."""
 
 
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    reasoning_tokens: int = 0
-    total_tokens: int = 0
-    avg_duration_ms: float = 0.0
-
-
-@dataclass(frozen=True)
-class DailyUsageBucket:
-    """One sparse UTC-day aggregate over the filtered window."""
-
-    day: datetime
-    total_tokens: int = 0
-    calls: int = 0
-
-
 class LLMUsageRepository:
     """Handles all DB operations for the ``llm_usage`` table."""
 

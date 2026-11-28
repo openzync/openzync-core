@@ -27,25 +27,11 @@ LlmBackend = Literal["ollama", "openai", "openai_like", "azure", "anthropic"]
 # there is nothing left for a Literal to constrain.
 
 # ── System-managed field sets ──────────────────────────────────────────────
-# These fields are overridden at the system level (via OZ_* env vars)
-# and cannot be set through platform_config when the corresponding system
-# setting is active.
-
-SYSTEM_MANAGED_SURREALDB_FIELDS: frozenset[str] = frozenset(
-    {
-        "surrealdb_url",
-        "surrealdb_user",
-        "surrealdb_pass",
-        "surrealdb_namespace",
-        "surrealdb_database",
-    }
-)
-
-SYSTEM_MANAGED_FALKORDB_FIELDS: frozenset[str] = frozenset(
-    {
-        "falkordb_url",
-    }
-)
+# ⚠️ BREAKING: system-managed field sets removed — graph connection
+# details (falkordb_url, surrealdb_*) live only in .env (``OZ_FALKORDB_URL``
+# / ``OZ_SURREALDB_*`` Settings) with no per-user override, so there is
+# nothing left to lock at the system level. ``system_managed_fields`` in
+# API responses is always ``[]``.
 
 #: Allowed per-episode enrichment toggle keys. Local copy — schemas must
 #: never import from ``core/`` (canonical home is
@@ -316,35 +302,10 @@ class PlatformConfigBase(BaseModel):
         description="Maximum BFS traversal depth for the graph backend.",
     )
 
-    # ── SurrealDB (platform connection) ────────────────────────────
-    surrealdb_url: str | None = Field(
-        default=None,
-        description="SurrealDB WebSocket connection URL (e.g. ws://surrealdb:8000/rpc).",
-    )
-    surrealdb_user: str | None = Field(
-        default=None,
-        description="SurrealDB authentication username.",
-    )
-    surrealdb_pass: str | None = Field(
-        default=None,
-        description="SurrealDB authentication password.",
-    )
-    surrealdb_namespace: str | None = Field(
-        default=None,
-        description="SurrealDB namespace (tenant isolation boundary).",
-    )
-    surrealdb_database: str | None = Field(
-        default=None,
-        description="SurrealDB database within the namespace.",
-    )
-
-    # ── FalkorDB (platform connection details) ─────────────────────────
-    falkordb_url: str | None = Field(
-        default=None,
-        description="FalkorDB connection URL for platform configuration "
-        "(e.g. redis://falkordb:6379).  Only used when system-level "
-        "FALKORDB_URL is not set.",
-    )
+    # ⚠️ BREAKING: per-user graph connection details removed — ``falkordb_url``
+    # and ``surrealdb_url/user/pass/namespace/database`` live only in .env
+    # (``OZ_FALKORDB_URL`` / ``OZ_SURREALDB_*`` Settings). Only the
+    # ``graph_backend`` selector, search type, and traversal depth stay here.
 
     # ── Behaviour ──────────────────────────────────────────────────────────
     context_cache_ttl: int | None = Field(
@@ -553,12 +514,12 @@ class UpdatePlatformConfigRequest(BaseModel):
     )
     graph_search_type: str | None = None
     graph_max_traversal_depth: int | None = Field(default=None, ge=1, le=10)
-    surrealdb_url: str | None = None
-    surrealdb_user: str | None = None
-    surrealdb_pass: str | None = None
-    surrealdb_namespace: str | None = None
-    surrealdb_database: str | None = None
-    falkordb_url: str | None = None
+    # ⚠️ BREAKING: per-user graph connection details removed (see the note
+    # on ``PlatformConfigBase``) — unknown fields are rejected (422),
+    # so PATCHing a removed ``*_url`` key fails loudly instead of
+    # silently doing nothing.
+
+    model_config = {"extra": "forbid"}
 
     @field_validator("graph_backend", mode="before")
     @classmethod
@@ -654,9 +615,13 @@ class UpdatePlatformConfigRequest(BaseModel):
         return v
 
 
-ConfigTestDomain = Literal["llm", "graph"]
+ConfigTestDomain = Literal["llm"]
 """Domain selector for ``POST /admin/platform-config/test``.
 
+⚠️ BREAKING: ``"graph"`` was removed with the per-user graph connection
+fields — graph connectivity is env-owned (``OZ_FALKORDB_URL`` /
+``OZ_SURREALDB_*``) with nothing per-user to probe. POSTing it now fails
+schema validation (422).
 ⚠️ BREAKING: ``"embeddings"`` was removed — there is no embedder to
 configure or probe.  POSTing it now fails schema validation (422).
 ⚠️ BREAKING: ``"blob"`` was removed with per-user blob storage — blob
@@ -674,7 +639,7 @@ class TestPlatformConfigRequest(BaseModel):
     """
 
     domain: ConfigTestDomain = Field(
-        description="Which connection family to probe (llm, graph).",
+        description="Which connection family to probe (llm).",
     )
     config: UpdatePlatformConfigRequest = Field(
         description="Partial candidate config overlaid on the stored "
