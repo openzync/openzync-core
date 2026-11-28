@@ -430,14 +430,15 @@ async def _create_community(
     try:
         prompt = _build_community_prompt(context_entities, context_rels)
         platform_cfg = await get_platform_config(user_id, redis=None, db=db)
-        llm_config_dict = platform_cfg.to_llm_config_dict()
         sink = make_sink(
             db,
             user_id=user_id,
             worker="community_summary",
             project_id=project_id,
         )
-        llm = await resolve_llm_backend(platform_config=llm_config_dict, sink=sink)
+        llm = await resolve_llm_backend(
+            config=platform_cfg.to_llm_config(), sink=sink
+        )
         response = await llm.chat(
             [
                 {
@@ -448,7 +449,9 @@ async def _create_community(
                 },
                 {"role": "user", "content": prompt},
             ],
-            cache_config=build_cache_config(platform_config=llm_config_dict),
+            cache_config=build_cache_config(
+                platform_config=platform_cfg.model_dump(mode="python")
+            ),
             metered=True,
         )
         summary = response.content.strip()

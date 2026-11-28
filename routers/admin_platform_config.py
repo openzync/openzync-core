@@ -146,7 +146,7 @@ async def get_platform_config_defaults() -> UpdatePlatformConfigRequest:
     the user MUST fill them in; never persist the placeholder).
 
     No auth required — this endpoint returns only non-sensitive defaults.
-    Secrets such as ``openai_api_key`` are returned as empty strings so
+    Secrets such as ``llm_api_key`` are returned as empty strings so
     the user must fill them in.
     """
     if not DEFAULTS_PATH.is_file():

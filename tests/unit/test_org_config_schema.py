@@ -33,7 +33,7 @@ class TestPlatformConfigBase:
     def test_extra_fields_ignored(self) -> None:
         """Unknown keys should be silently dropped (extra='ignore')."""
         cfg = PlatformConfigBase.model_validate(
-            {"llm_backend": "ollama", "nonexistent": "should_be_ignored"}
+            {"llm_backend": "ollama", "llm_base_url": "http://localhost:11434", "nonexistent": "should_be_ignored"}
         )
         assert cfg.llm_backend == "ollama"
         with pytest.raises(AttributeError):
@@ -41,7 +41,7 @@ class TestPlatformConfigBase:
 
     def test_partial_construction(self) -> None:
         """Constructing with a subset of fields should work."""
-        cfg = PlatformConfigBase(llm_backend="openai", llm_model="gpt-4o-mini")
+        cfg = PlatformConfigBase(llm_backend="openai", llm_model="gpt-4o-mini", llm_api_key="sk-test")
         assert cfg.llm_backend == "openai"
         assert cfg.llm_model == "gpt-4o-mini"
         assert cfg.graph_search_type is None  # not set
@@ -51,66 +51,69 @@ class TestPlatformConfigBase:
 class TestPlatformConfigBaseToDict:
     """Validate the helper methods on PlatformConfigBase."""
 
-    def test_to_llm_config_dict_keys(self) -> None:
-        """to_llm_config_dict() should produce the expected provider keys."""
+    def test_to_llm_config_keys(self) -> None:
+        """to_llm_config() should produce the unified provider config."""
         cfg = PlatformConfigBase(
             llm_backend="openai",
             llm_model="gpt-4o",
-            openai_api_key="sk-test",
-            ollama_base_url="http://ollama:11434",
+            llm_api_key="sk-test",
             llm_temperature=0.7,
             llm_max_tokens=2048,
         )
-        d = cfg.to_llm_config_dict()
-        assert d["llm_backend"] == "openai"
-        assert d["openai_api_key"] == "sk-test"
-        assert d["openai_model"] == "gpt-4o"
-        assert d["ollama_base_url"] == "http://ollama:11434"
-        # Provider-specific model keys
-        assert d["anthropic_model"] == "gpt-4o"
-        assert d["azure_deployment"] == "gpt-4o"
-        assert d["model"] == "gpt-4o"
+        c = cfg.to_llm_config()
+        assert c.provider == "openai"
+        assert c.model == "gpt-4o"
+        assert c.api_key == "sk-test"
         # Temperature and max_tokens
-        assert d["temperature"] == 0.7
-        assert d["max_tokens"] == 2048
+        assert c.temperature == 0.7
+        assert c.max_tokens == 2048
 
-    def test_to_llm_config_dict_excludes_none(self) -> None:
-        """Fields with None values should be omitted from the dict."""
-        cfg = PlatformConfigBase()
-        d = cfg.to_llm_config_dict()
-        assert d == {}
+    def test_to_llm_config_requires_backend(self) -> None:
+        """No backend means no LLM config — raises instead of an empty dict."""
+        from core.exceptions import LLMConfigurationError
 
-    def test_to_llm_config_dict_includes_prompt_caching(self) -> None:
-        """prompt_caching overrides should be plumbed through as a nested dict."""
+        with pytest.raises(LLMConfigurationError):
+            PlatformConfigBase().to_llm_config()
+
+    def test_to_llm_config_ignores_prompt_caching(self) -> None:
+        """prompt_caching overrides stay on the stored schema, not the call config."""
         cfg = PlatformConfigBase(
+            llm_backend="openai",
+            llm_api_key="sk-test",
             prompt_caching={
                 "enabled": False,
                 "anthropic_min_tokens": 4096,
-            }
+            },
         )
-        d = cfg.to_llm_config_dict()
-        assert d["prompt_caching"] == {
-            "enabled": False,
-            "anthropic_min_tokens": 4096,
-        }
+        assert cfg.prompt_caching is not None
+        assert cfg.prompt_caching.enabled is False
+        assert cfg.prompt_caching.anthropic_min_tokens == 4096
+        assert not hasattr(cfg.to_llm_config(), "prompt_caching")
 
-    def test_to_llm_config_dict_prompt_caching_excludes_none(self) -> None:
-        """Null prompt_caching fields should be omitted, not leaked as None."""
+    def test_to_llm_config_prompt_caching_excludes_none(self) -> None:
+        """Null prompt_caching fields are omitted, not leaked as None."""
         cfg = PlatformConfigBase(
+            llm_backend="openai",
+            llm_api_key="sk-test",
             prompt_caching={
                 "enabled": None,
                 "anthropic_min_tokens": 4096,
-            }
+            },
         )
-        d = cfg.to_llm_config_dict()
-        assert d["prompt_caching"] == {"anthropic_min_tokens": 4096}
+        assert cfg.model_dump(exclude_none=True)["prompt_caching"] == {
+            "anthropic_min_tokens": 4096
+        }
 
-    def test_to_llm_config_dict_temperature_boundaries(self) -> None:
+    def test_to_llm_config_temperature_boundaries(self) -> None:
         """Temperature should respect inclusive bounds."""
-        cfg = PlatformConfigBase(llm_temperature=0.0)
-        assert cfg.to_llm_config_dict()["temperature"] == 0.0
-        cfg = PlatformConfigBase(llm_temperature=2.0)
-        assert cfg.to_llm_config_dict()["temperature"] == 2.0
+        cfg = PlatformConfigBase(
+            llm_backend="openai", llm_api_key="sk-test", llm_temperature=0.0
+        )
+        assert cfg.to_llm_config().temperature == 0.0
+        cfg = PlatformConfigBase(
+            llm_backend="openai", llm_api_key="sk-test", llm_temperature=2.0
+        )
+        assert cfg.to_llm_config().temperature == 2.0
 
 
 class TestUpdatePlatformConfigRequest:
@@ -126,9 +129,9 @@ class TestUpdatePlatformConfigRequest:
 
     def test_only_unset_fields_excluded(self) -> None:
         """model_dump(exclude_unset=True) should only include provided fields."""
-        req = UpdatePlatformConfigRequest(llm_backend="anthropic")
+        req = UpdatePlatformConfigRequest(llm_backend="anthropic", llm_api_key="sk-test")
         dumped = req.model_dump(exclude_unset=True)
-        assert dumped == {"llm_backend": "anthropic"}
+        assert dumped == {"llm_backend": "anthropic", "llm_api_key": "sk-test"}
 
     def test_null_explicitly_sets_none(self) -> None:
         """Setting a field to None explicitly should be included in dump."""
@@ -169,7 +172,7 @@ class TestPlatformConfigResponse:
 
     def test_response_contains_stored_config(self) -> None:
         """Response should include the stored config."""
-        stored = PlatformConfigBase(llm_backend="openai")
+        stored = PlatformConfigBase(llm_backend="openai", llm_api_key="sk-test")
         resp = PlatformConfigResponse(stored=stored)
         assert resp.stored.llm_backend == "openai"
 

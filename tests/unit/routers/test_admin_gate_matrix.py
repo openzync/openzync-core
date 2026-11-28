@@ -84,7 +84,9 @@ def _make_app(*, authenticated: bool, auth_user_id: str | None=None, auth_role: 
     app.dependency_overrides[get_invite_service] = lambda: AsyncMock()
     from dependencies.platform_config import get_platform_config as get_platform_config_dep
     from schemas.platform_config import PlatformConfigBase
-    app.dependency_overrides[get_platform_config_dep] = lambda: PlatformConfigBase()
+    app.dependency_overrides[get_platform_config_dep] = lambda: PlatformConfigBase(
+        llm_backend="ollama", llm_base_url="http://localhost:11434"
+    )
     if authenticated:
 
         @app.middleware('http')

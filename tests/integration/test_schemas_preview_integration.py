@@ -100,6 +100,7 @@ def stub_llm(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     state = {"content": '{"total": 42}'}
 
     async def _fake_resolve_backend(
+        config: Any = None,
         provider: str | None = None,
         platform_config: dict | None = None,
         mode: str | None = None,
@@ -130,6 +131,15 @@ async def _table_count(app: Any, table: str) -> int:
 def _unique_name(prefix: str) -> str:
     """Unique schema name per test — no cross-test collisions."""
     return f"{prefix}_{uuid4().hex[:8]}"
+
+
+async def _ensure_ollama_backend(admin_client: AsyncClient) -> None:
+    """Plant unified ollama creds via the real PATCH so ``to_llm_config()`` resolves."""
+    resp = await admin_client.patch(
+        "/admin/platform-config",
+        json={"llm_backend": "ollama", "llm_base_url": "http://localhost:11434"},
+    )
+    assert resp.status_code == 200, resp.text
 
 
 class TestSchemaTemplates:
@@ -165,6 +175,7 @@ class TestSchemaPreview:
         self, isolated_app: Any, admin_client: AsyncClient, stub_llm: dict
     ) -> None:
         """200 + data + no errors, and zero rows in both tables."""
+        await _ensure_ollama_backend(admin_client)
         assert stub_llm["content"] == '{"total": 42}'
         before_schemas = await _table_count(isolated_app, "extraction_schemas")
         before_extractions = await _table_count(isolated_app, "structured_extractions")
@@ -190,6 +201,7 @@ class TestSchemaPreview:
         self, admin_client: AsyncClient
     ) -> None:
         """Bogus property type → 422 naming ``properties.x.type``."""
+        await _ensure_ollama_backend(admin_client)
         response = await admin_client.post(
             "/v1/admin/schemas/preview",
             json={
@@ -209,6 +221,7 @@ class TestSchemaPreview:
         self, admin_client: AsyncClient, stub_llm: dict
     ) -> None:
         """Garbage LLM output → 200 with empty data + non-empty errors."""
+        await _ensure_ollama_backend(admin_client)
         stub_llm["content"] = "not json at all, no braces here"
         response = await admin_client.post(
             "/v1/admin/schemas/preview",

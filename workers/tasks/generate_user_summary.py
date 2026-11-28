@@ -20,12 +20,16 @@ Pipeline:
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
 import structlog
 
 from core.rls import release_tenant_context
 from services.worker.prompt_renderer import render_prompt
 from workers.tasks.base import with_retry, with_task_metrics
+
+if TYPE_CHECKING:  # pragma: no cover — typing only
+    from schemas.platform_config import PlatformConfigBase
 
 logger = structlog.get_logger()
 
@@ -151,13 +155,12 @@ async def generate_user_summary(
         raise
 
     # ── 5b. Fetch per-user config for LLM resolution ──────────────────────
-    llm_config_dict: dict | None = None
+    org_cfg: PlatformConfigBase | None = None
     try:
         async with session_factory() as _cfg_db:
             org_cfg = await get_platform_config(
                 uuid.UUID(user_id), redis=None, db=_cfg_db
             )
-        llm_config_dict = org_cfg.to_llm_config_dict()
     except Exception:
         logger.warning(
             "user_summary.platform_config_fetch_failed",
@@ -172,7 +175,10 @@ async def generate_user_summary(
             worker="user_summary",
             project_id=uuid.UUID(project_id) if project_id else None,
         )
-        llm = await resolve_backend(platform_config=llm_config_dict, sink=sink)
+        llm = await resolve_backend(
+            config=org_cfg.to_llm_config() if org_cfg is not None else None,
+            sink=sink,
+        )
         response = await llm.chat(
             [
                 {
@@ -184,7 +190,11 @@ async def generate_user_summary(
                 {"role": "user", "content": prompt_text},
             ],
             temperature=0.3,
-            cache_config=build_cache_config(platform_config=llm_config_dict),
+            cache_config=build_cache_config(
+                platform_config=org_cfg.model_dump(mode="python")
+                if org_cfg is not None
+                else None
+            ),
             metered=True,
         )
     except Exception as exc:

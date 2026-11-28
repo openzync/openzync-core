@@ -58,6 +58,15 @@ _LLM_BITS = (
 _GATE_ON = {"enabled": True, "threshold": 0.5, "model": "bogus/gate-stubbed"}
 
 
+async def _ensure_ollama_backend(admin_client: AsyncClient) -> None:
+    """Plant unified ollama creds via the real PATCH so ``to_llm_config()`` resolves."""
+    resp = await admin_client.patch(
+        "/admin/platform-config",
+        json={"llm_backend": "ollama", "llm_base_url": "http://localhost:11434"},
+    )
+    assert resp.status_code == 200, resp.text
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Fakes + helpers (minimal subset of the test_enrichment_toggles.py pattern)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -317,6 +326,7 @@ class TestGateRunsHighSignal:
         isolated_app: Any,
         isolated_org_and_key: dict,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         redis_client: Any,
         falkordb_url: str,
         engine: Any,
@@ -325,6 +335,7 @@ class TestGateRunsHighSignal:
         five LLM bits set via the normal (non-skip) path."""
         org_id: UUID = isolated_org_and_key["user_id"]
         project_id: UUID = isolated_org_and_key["project_id"]
+        await _ensure_ollama_backend(isolated_admin_client)
 
         session_id = await _create_session(
             isolated_auth_client, project_id, "gate-run"
@@ -367,6 +378,7 @@ class TestGateBrokenModelFailOpen:
         isolated_app: Any,
         isolated_org_and_key: dict,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         redis_client: Any,
         falkordb_url: str,
         engine: Any,
@@ -376,6 +388,7 @@ class TestGateBrokenModelFailOpen:
         (hence no ARQ retry loop from the gate)."""
         org_id: UUID = isolated_org_and_key["user_id"]
         project_id: UUID = isolated_org_and_key["project_id"]
+        await _ensure_ollama_backend(isolated_admin_client)
 
         session_id = await _create_session(
             isolated_auth_client, project_id, "gate-failopen"

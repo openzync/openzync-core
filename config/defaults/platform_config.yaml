@@ -12,7 +12,12 @@
 llm_backend: openai
 
 # Secrets — left blank so the user MUST fill them in during onboarding.
-openai_api_key: ""
+llm_api_key: ""
+
+# Non-secret Ollama default (OllamaBackend default base URL). Required mate
+# when llm_backend=ollama — keeps GET /admin/platform-config/defaults inside
+# the strict UpdatePlatformConfigRequest validator shape.
+llm_base_url: "http://localhost:11434"
 
 llm_model: gpt-4o-mini
 llm_temperature: 0.0

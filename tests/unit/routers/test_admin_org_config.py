@@ -79,13 +79,14 @@ async def test_get_defaults_success() -> None:
     app, _ = _create_app()
     transport = ASGITransport(app=app)
 
-    fake_yaml_content = "llm_backend: ollama\nllm_model: llama3\n"
+    fake_yaml_content = "llm_backend: ollama\nllm_model: llama3\nllm_base_url: http://localhost:11434\n"
 
     with (
         patch("routers.admin_platform_config.DEFAULTS_PATH") as mock_path,
         patch("routers.admin_platform_config.yaml.safe_load", return_value={
             "llm_backend": "ollama",
             "llm_model": "llama3",
+            "llm_base_url": "http://localhost:11434",
         }),
     ):
         mock_path.is_file.return_value = True
@@ -130,6 +131,7 @@ async def test_get_platform_config_success() -> None:
         stored=PlatformConfigBase(
             llm_backend="ollama",
             llm_model="llama3",
+            llm_base_url="http://localhost:11434",
         ),
         system_managed_fields=[],
     )
@@ -155,7 +157,7 @@ async def test_get_platform_config_with_system_managed_fields() -> None:
 
     mock_service = AsyncMock(spec=PlatformConfigService)
     mock_service.get_config_response.return_value = PlatformConfigResponse(
-        stored=PlatformConfigBase(llm_backend="ollama"),
+        stored=PlatformConfigBase(llm_backend="ollama", llm_base_url="http://localhost:11434"),
         system_managed_fields=[
             "surrealdb_url", "surrealdb_user", "surrealdb_pass",
         ],
@@ -190,6 +192,7 @@ async def test_update_platform_config_success() -> None:
     mock_service.update_config.return_value = PlatformConfigBase(
         llm_backend="openai",
         llm_model="gpt-4",
+        llm_api_key="sk-test",
     )
 
     app.dependency_overrides[_get_config_service] = lambda: mock_service
@@ -197,7 +200,7 @@ async def test_update_platform_config_success() -> None:
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.patch(
             "/admin/platform-config",
-            json={"llm_backend": "openai", "llm_model": "gpt-4"},
+            json={"llm_backend": "openai", "llm_model": "gpt-4", "llm_api_key": "sk-test"},
         )
 
     assert resp.status_code == 200
@@ -216,6 +219,7 @@ async def test_update_platform_config_partial() -> None:
     mock_service = AsyncMock(spec=PlatformConfigService)
     mock_service.update_config.return_value = PlatformConfigBase(
         llm_backend="openai",
+        llm_api_key="sk-test",
     )
 
     app.dependency_overrides[_get_config_service] = lambda: mock_service
@@ -223,7 +227,7 @@ async def test_update_platform_config_partial() -> None:
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.patch(
             "/admin/platform-config",
-            json={"llm_backend": "openai"},
+            json={"llm_backend": "openai", "llm_api_key": "sk-test"},
         )
 
     assert resp.status_code == 200
@@ -261,6 +265,7 @@ async def test_replace_org_config_success() -> None:
     mock_service.update_config.return_value = PlatformConfigBase(
         llm_backend="anthropic",
         llm_model="claude-3-opus",
+        llm_api_key="sk-test",
     )
 
     app.dependency_overrides[_get_config_service] = lambda: mock_service
@@ -271,6 +276,7 @@ async def test_replace_org_config_success() -> None:
             json={
                 "llm_backend": "anthropic",
                 "llm_model": "claude-3-opus",
+                "llm_api_key": "sk-test",
             },
         )
 

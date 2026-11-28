@@ -34,6 +34,8 @@ from schemas.extraction_schemas import (
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from core.llm import LLMConfig
+
 logger = logging.getLogger(__name__)
 
 PREVIEW_MAX_TOKENS = 2000
@@ -208,7 +210,7 @@ class SchemaService:
         json_schema: dict,
         sample_text: str,
         prompt_template: str | None = None,
-        llm_config: dict | None = None,
+        llm_config: LLMConfig | None = None,
         user_id: UUID | None = None,
         session_factory: Callable[[], AsyncSession] | None = None,
     ) -> PreviewExtractionResponse:
@@ -223,8 +225,8 @@ class SchemaService:
             json_schema: Candidate JSON Schema (draft-07) document.
             sample_text: Raw text to extract from.
             prompt_template: Optional raw Jinja2 prompt override.
-            llm_config: Org LLM config dict (from
-                ``PlatformConfigBase.to_llm_config_dict()``); required to
+            llm_config: Unified LLM config (from
+                ``PlatformConfigBase.to_llm_config()``); required to
                 resolve the backend.
             user_id: Authenticated org — enables metering when
                 ``session_factory`` is also given.
@@ -268,7 +270,7 @@ class SchemaService:
             if user_id is not None and session_factory is not None
             else None
         )
-        backend = await resolve_backend(platform_config=llm_config, sink=sink)
+        backend = await resolve_backend(config=llm_config, sink=sink)
         response = await backend.chat(
             [
                 {

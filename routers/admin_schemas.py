@@ -137,7 +137,7 @@ async def preview_schema_extraction(
         json_schema=payload.json_schema,
         sample_text=payload.sample_text,
         prompt_template=payload.prompt_template,
-        llm_config=platform_config.to_llm_config_dict(),
+        llm_config=platform_config.to_llm_config(),
         user_id=UUID(user_id),
         session_factory=request.app.state.db_session_factory,
     )
