@@ -10,9 +10,10 @@ expected.
     ``Settings`` is a :class:`pydantic_settings.BaseSettings`: every field
     binds to its ``OZ_*`` env var via ``validation_alias``.  Required
     fields (``DATABASE_URL``, ``REDIS_URL``, ``SECRET_KEY``,
-    ``S3_ENDPOINT_URL``, ``S3_ACCESS_KEY_ID``, ``S3_SECRET_ACCESS_KEY``)
-    have no defaults — the process fails fast at startup when they are
-    missing.
+    ``S3_ENDPOINT_URL``, ``S3_ACCESS_KEY_ID``, ``S3_SECRET_ACCESS_KEY``,
+    ``FALKORDB_URL``) have no defaults — the process fails fast at
+    startup when they are missing (SurrealDB ``OZ_SURREALDB_*`` is
+    optional).
 
     LLM / Embedding / Graph / Behaviour settings were removed from this
     class in favour of per-user DB config.  See
@@ -36,6 +37,10 @@ _DEFAULT_REQUIRED: dict[str, str] = {
     "S3_ENDPOINT_URL": "http://minio:9000",
     "S3_ACCESS_KEY_ID": "test-key",
     "S3_SECRET_ACCESS_KEY": "test-secret",
+    # ⚠️ BREAKING (graph env migration): FalkorDB is required at startup —
+    # per-user graph connection fields were removed, Settings fails fast
+    # without OZ_FALKORDB_URL.
+    "FALKORDB_URL": "redis://localhost:6379",
 }
 
 
@@ -157,6 +162,7 @@ class TestSettingsSingleton:
         monkeypatch.setenv("OZ_S3_ENDPOINT_URL", "http://minio:9000")
         monkeypatch.setenv("OZ_S3_ACCESS_KEY_ID", "test-key")
         monkeypatch.setenv("OZ_S3_SECRET_ACCESS_KEY", "test-secret")
+        monkeypatch.setenv("OZ_FALKORDB_URL", "redis://localhost:6379")
         s = get_settings()
         assert isinstance(s, Settings)
         assert get_settings() is s

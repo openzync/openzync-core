@@ -150,8 +150,14 @@ async def test_get_platform_config_success() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_platform_config_with_system_managed_fields() -> None:
-    """GET /admin/platform-config returns system_managed_fields when system vars set."""
+async def test_get_platform_config_system_managed_fields_always_empty() -> None:
+    """GET /admin/platform-config always returns ``system_managed_fields == []``.
+
+    Graph connection details moved to env (``OZ_FALKORDB_URL`` /
+    ``OZ_SURREALDB_*``) with no per-user override, so there is nothing
+    left to lock — the router hard-overrides the field to ``[]`` even
+    when the service layer reports stale managed fields.
+    """
     app, _ = _create_app()
     transport = ASGITransport(app=app)
 
@@ -163,20 +169,14 @@ async def test_get_platform_config_with_system_managed_fields() -> None:
         ],
     )
 
-    # The router overrides system_managed_fields with _get_system_managed_fields()
-    # which checks settings.SURREALDB_URL — patch it so the expected fields are returned
-    system_fields = ["surrealdb_url", "surrealdb_user", "surrealdb_pass"]
-
     app.dependency_overrides[_get_config_service] = lambda: mock_service
 
-    with patch("routers.admin_platform_config._get_system_managed_fields", return_value=system_fields):
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/admin/platform-config")
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/admin/platform-config")
 
     assert resp.status_code == 200
     body = resp.json()
-    assert "surrealdb_url" in body["system_managed_fields"]
-    assert len(body["system_managed_fields"]) == 3
+    assert body["system_managed_fields"] == []
 
 
 # ── PATCH "" ────────────────────────────────────────────────────────────────────
