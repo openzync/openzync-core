@@ -298,7 +298,12 @@ async def test_get_metrics_batch_invalid_project_id_returns_422() -> None:
 
 @pytest.mark.asyncio
 async def test_get_metrics_batch_with_valid_project_id_returns_200() -> None:
-    """Valid UUID project_id is passed through to the handler (still 200)."""
+    """Valid UUID project_id is passed through to the handler (still 200).
+
+    ``resolve_platform_scope`` owner-validates ``project_id`` for every
+    caller — the repository is stubbed with a project owned by the
+    caller so this pins the happy path, not the ownership gate.
+    """
     app, db_mock = _create_app()
     transport = ASGITransport(app=app)
 
@@ -315,7 +320,18 @@ async def test_get_metrics_batch_with_valid_project_id_returns_200() -> None:
     mock_prom = AsyncMock()
     mock_prom.get.side_effect = httpx.ConnectError("Connection refused")
 
-    with patch("routers.admin_metrics._get_prom_client", return_value=mock_prom):
+    owned_repo = AsyncMock()
+    owned_repo.get_by_id = AsyncMock(
+        return_value=SimpleNamespace(user_id=USER_ID, id=PROJECT_ID)
+    )
+    with (
+        patch(
+            "dependencies.auth.has_platform_manage",
+            new=AsyncMock(return_value=False),
+        ),
+        patch("dependencies.auth.ProjectRepository", return_value=owned_repo),
+        patch("routers.admin_metrics._get_prom_client", return_value=mock_prom),
+    ):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/metrics/batch",
@@ -329,6 +345,50 @@ async def test_get_metrics_batch_with_valid_project_id_returns_200() -> None:
     body = resp.json()
     assert body["results"]["episodes_per_day"]["query"] == "episodes_per_day"
     assert body["results"]["episodes_per_day"]["rows"] == [["2026-08-18", 42]]
+
+
+@pytest.mark.asyncio
+async def test_get_metrics_batch_with_foreign_project_id_returns_403() -> None:
+    """A real project owned by another user → 403 (Gap-2 owner check)."""
+    app, db_mock = _create_app()
+    transport = ASGITransport(app=app)
+
+    mock_result = MagicMock()
+    mock_result.__iter__.side_effect = lambda: iter(
+        [
+            SimpleNamespace(date="2026-08-18", count=42),
+        ]
+    )
+    db_mock.execute.return_value = mock_result
+
+    mock_prom = AsyncMock()
+    mock_prom.get.side_effect = httpx.ConnectError("Connection refused")
+
+    foreign_repo = AsyncMock()
+    foreign_repo.get_by_id = AsyncMock(
+        return_value=SimpleNamespace(
+            user_id=UUID("00000000-0000-0000-0000-000000000099"),
+            id=PROJECT_ID,
+        )
+    )
+    with (
+        patch(
+            "dependencies.auth.has_platform_manage",
+            new=AsyncMock(return_value=False),
+        ),
+        patch("dependencies.auth.ProjectRepository", return_value=foreign_repo),
+        patch("routers.admin_metrics._get_prom_client", return_value=mock_prom),
+    ):
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/metrics/batch",
+                params={
+                    "days": 7,
+                    "project_id": str(PROJECT_ID),
+                },
+            )
+
+    assert resp.status_code == 403
 
 
 # ── /metrics/targets ────────────────────────────────────────────────────────────

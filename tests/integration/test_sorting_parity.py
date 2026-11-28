@@ -954,7 +954,7 @@ class TestAuditLogsParity:
         reliably produce rows in tests (audit persistence is org-config
         gated), and the sort contract is what is pinned here.
 
-        ``GET /v1/admin/audit-logs`` requires ``members:read``, which the
+        ``GET /v1/admin/audit-logs`` requires ``platform:manage``, which the
         bootstrap member does not carry — grant it here (test-local; the
         fixture stays a plain member everywhere else).
         """
@@ -966,7 +966,7 @@ class TestAuditLogsParity:
         async with isolated_app.state.db_session_factory() as db:
             user = await UserRepository(db).get_by_uuid(user_id)
             assert user is not None
-            user.permissions = sorted(set(user.permissions or []) | {"members:read"})
+            user.permissions = sorted(set(user.permissions or []) | {"platform:manage"})
             await db.commit()
         await invalidate_permissions(isolated_app.state.redis, user_id)
 

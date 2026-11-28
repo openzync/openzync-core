@@ -415,6 +415,10 @@ class TestAuthMiddleware:
         # GET /v1/users is admin-gated; this test pins
         # the *middleware* contract, so stub the downstream gate.
         with (
+            patch(
+                "dependencies.auth.get_user_role",
+                new=AsyncMock(return_value="admin"),
+            ),
             patch("dependencies.auth._ensure_admin", new=AsyncMock()),
             patch(
                 "dependencies.auth.get_must_change_password",

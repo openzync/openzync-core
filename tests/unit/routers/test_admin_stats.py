@@ -12,7 +12,7 @@ and auth gating.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
@@ -23,6 +23,21 @@ from routers.admin_stats import _get_admin_stats_service, router
 from schemas.admin_stats import OrgStatsResponse, UsageStatsResponse
 
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
+
+
+@pytest.fixture(autouse=True)
+def _stub_platform_scope() -> object:
+    """Pin non-holder scope: tests assert shapes, not the RBAC boundary.
+
+    ``resolve_platform_scope`` consults ``has_platform_manage`` (module
+    global in ``dependencies.auth``); the bare AsyncMock session/redis
+    below would crash the real lookup.
+    """
+    with patch(
+        "dependencies.auth.has_platform_manage",
+        new=AsyncMock(return_value=False),
+    ):
+        yield  # type: ignore[misc]
 
 
 def _stats_response() -> OrgStatsResponse:
@@ -43,6 +58,7 @@ def _build_app(service: AsyncMock) -> FastAPI:
     from dependencies.db import get_db
 
     app = FastAPI()
+    app.state.redis = AsyncMock()
     app.dependency_overrides[get_db] = lambda: AsyncMock()
     app.dependency_overrides[require_user_id] = lambda: str(USER_ID)
     app.dependency_overrides[_get_admin_stats_service] = lambda: service

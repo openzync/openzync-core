@@ -747,7 +747,7 @@ async def resolve_platform_scope(
         db: Request-scoped async DB session (role/permission/project reads).
         caller_id: The authenticated caller's UUID.
         target_user_id: Optional ``user_id`` query filter (holder-only).
-        project_id: Optional project filter (owner-verified for non-holders).
+        project_id: Optional project filter (owner-verified for all callers).
 
     Returns:
         ``(effective_user_id, sitewide)`` — the user scope to query and
@@ -795,6 +795,8 @@ async def resolve_platform_scope(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Project not found",
             )
+        # Oracle note: fake-id 404 vs foreign-owned 403 is distinguishable
+        # by design here (read-only stats); do NOT copy this to write paths.
         # ⚠️ owner-only: active members of a shared project 403 here —
         # their own rows remain visible through the unfiltered scope.
         if project.user_id != caller_id:
