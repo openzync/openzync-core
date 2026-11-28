@@ -544,12 +544,10 @@ async def enrich_episode(
 
             # ── 4. Fetch per-user config ────────────────────────
             org_cfg: PlatformConfigBase | None = None
-            llm_config_dict: dict | None = None
             try:
                 org_cfg = await get_platform_config(
                     uuid.UUID(user_id), redis=None, db=db
                 )
-                llm_config_dict = org_cfg.to_llm_config_dict()
             except Exception:
                 # No silent default fallback: enriching under the wrong
                 # model/policy silently misroutes cost attribution and
@@ -575,7 +573,10 @@ async def enrich_episode(
                     episode_id=uuid.UUID(episode_id),
                     session_id=uuid.UUID(session_id) if session_id else None,
                 )
-                llm = await resolve_backend(platform_config=llm_config_dict, sink=sink)
+                llm = await resolve_backend(
+                    config=org_cfg.to_llm_config() if org_cfg is not None else None,
+                    sink=sink,
+                )
                 response = await llm.chat(
                     [
                         {
@@ -587,7 +588,11 @@ async def enrich_episode(
                     response_model=CombinedLLMOutput,
                     temperature=0.0,
                     max_tokens=8192,
-                    cache_config=build_cache_config(platform_config=llm_config_dict),
+                    cache_config=build_cache_config(
+                        platform_config=org_cfg.model_dump(mode="python")
+                        if org_cfg is not None
+                        else None
+                    ),
                     metered=True,
                     validation_context={"disabled": disabled_keys},
                 )

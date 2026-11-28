@@ -12,7 +12,7 @@
 llm_backend: openai
 
 # Secrets — left blank so the user MUST fill them in during onboarding.
-openai_api_key: ""
+llm_api_key: ""
 
 llm_model: gpt-4o-mini
 llm_temperature: 0.0

@@ -11,9 +11,12 @@ Key pattern:
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+if TYPE_CHECKING:  # pragma: no cover — typing only, avoids a core import
+    from core.llm import LLMConfig
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +64,38 @@ ENRICHMENT_KEYS: frozenset[str] = frozenset(
         "llm_invalidation",
     }
 )
+
+#: Required unified LLM fields per backend: ``{backend: required}``.
+#: Mirrors ``core.llm_backends.PROVIDER_REQUIREMENTS`` (single source of
+#: truth lives there; this copy constrains the stored/request shapes).
+_LLM_REQUIRED: dict[str, frozenset[str]] = {
+    "openai": frozenset({"llm_api_key"}),
+    "anthropic": frozenset({"llm_api_key"}),
+    "azure": frozenset({"azure_endpoint", "llm_api_key", "azure_deployment"}),
+    "ollama": frozenset({"llm_base_url"}),
+    "openai_like": frozenset({"llm_base_url"}),
+}
+
+
+def _validate_llm_requirements(obj: BaseModel) -> BaseModel:
+    """Reject a selected backend whose required unified fields are null (→ 422).
+
+    Only ``None`` fails — empty strings pass (they are the onboarding
+    placeholder convention: frontend treats ``""`` as unset).  Empties
+    fail closed later at ``core.llm_backends.validate_llm_config``
+    (probe reports ``ok: false``; workers raise loudly).
+    """
+    backend: str | None = getattr(obj, "llm_backend", None)
+    if backend is None:
+        return obj
+    missing = sorted(f for f in _LLM_REQUIRED[backend] if getattr(obj, f, None) is None)
+    if missing:
+        raise ValueError(
+            f"llm_backend={backend!r} requires {', '.join(missing)} — "
+            "set them in the same PATCH (backend switches must ship credentials)."
+        )
+    return obj
+
 
 EnrichmentMap = dict[str, bool]
 """Per-episode enrichment toggles (every key defaults to ``True``)."""
@@ -177,6 +212,15 @@ class PlatformConfigBase(BaseModel):
     Every field is **optional**.  When a field is ``None`` (absent from the
     JSONB), the caller must decide what to do — there is no env-var fallback
     at this layer.
+
+    ⚠️ BREAKING: provider credentials collapsed to unified names —
+    ``llm_api_key`` (shared by openai/anthropic/openai_like; Azure key),
+    ``llm_base_url`` (ollama/openai_like), ``azure_endpoint``,
+    ``azure_deployment``.  Dropped without fallback: ``openai_api_key``,
+    ``anthropic_api_key``, ``azure_openai_endpoint``, ``azure_openai_key``,
+    ``ollama_base_url``, ``openai_like_base_url``, ``openai_model``,
+    ``anthropic_model`` (migration 0083 carries stored values forward;
+    ``extra="ignore"`` drops any stragglers on read).
     """
 
     model_config = {"extra": "ignore"}  # silently drop unknown keys
@@ -188,7 +232,8 @@ class PlatformConfigBase(BaseModel):
     )
     llm_model: str | None = Field(
         default=None,
-        description="Model name/tag for the LLM backend.",
+        description="Model name/tag for the LLM backend (all providers "
+        "except azure, which models via azure_deployment).",
     )
     llm_temperature: float | None = Field(
         default=None,
@@ -201,30 +246,24 @@ class PlatformConfigBase(BaseModel):
         ge=1,
         description="Maximum tokens in the LLM response.",
     )
-    openai_api_key: str | None = Field(
+    llm_api_key: str | None = Field(
         default=None,
-        description="OpenAI API key.",
+        description="Shared API key for the openai, anthropic and openai_like "
+        "backends; the Azure API key when llm_backend is azure.",
     )
-    azure_openai_endpoint: str | None = Field(
+    llm_base_url: str | None = Field(
         default=None,
-        description="Azure OpenAI endpoint URL.",
+        description="Base URL for the ollama backend (local instance) or any "
+        "OpenAI-compatible endpoint (openai_like: self-hosted vLLM, "
+        "OpenRouter, LiteLLM proxy, …).",
     )
-    azure_openai_key: str | None = Field(
+    azure_endpoint: str | None = Field(
         default=None,
-        description="Azure OpenAI API key.",
+        description="Azure OpenAI endpoint URL (azure backend only).",
     )
-    anthropic_api_key: str | None = Field(
+    azure_deployment: str | None = Field(
         default=None,
-        description="Anthropic API key.",
-    )
-    ollama_base_url: str | None = Field(
-        default=None,
-        description="Base URL for a local Ollama instance.",
-    )
-    openai_like_base_url: str | None = Field(
-        default=None,
-        description="Base URL for any OpenAI-compatible endpoint "
-        "(self-hosted vLLM, OpenRouter, LiteLLM proxy, …).",
+        description="Azure OpenAI deployment name (azure backend only).",
     )
     llm_fact_invalidation_enabled: bool | None = Field(
         default=None,
@@ -418,45 +457,42 @@ class PlatformConfigBase(BaseModel):
 
     # ── Helpers for downstream callers ───────────────────────────────────────
 
-    def to_llm_config_dict(self) -> dict[str, str | float | int | dict[str, object]]:
-        """Return config as a dict suitable for ``core.llm.resolve_backend()``.
+    def to_llm_config(self) -> LLMConfig:
+        """Return unified config for ``core.llm.resolve_backend()``.
 
-        Only non-``None`` fields are included.  The returned dict maps
-        our canonical field names to the provider-specific keys that
-        ``_create_backend()`` in ``core/llm.py`` expects.  ``prompt_caching``
-        is included as a nested dict so ``build_cache_config()`` can honour
-        platform overrides.
+        ⚠️ BREAKING: replaces ``to_llm_config_dict()`` — callers pass the
+        returned :class:`core.llm.LLMConfig` as ``config=``.  Dicts are
+        rejected with ``TypeError`` at the resolve boundary.
+
+        Returns:
+            An ``LLMConfig`` built from the unified stored fields.
+
+        Raises:
+            LLMConfigurationError: If ``llm_backend`` is unset.
         """
-        d: dict[str, str | float | int | dict[str, object]] = {}
-        if self.llm_backend is not None:
-            d["llm_backend"] = self.llm_backend
-        if self.openai_api_key is not None:
-            d["openai_api_key"] = self.openai_api_key
-        if self.openai_like_base_url is not None:
-            d["openai_like_base_url"] = self.openai_like_base_url
-        if self.llm_model is not None:
-            d["openai_model"] = self.llm_model
-            d["llm_model"] = self.llm_model
-            d["azure_deployment"] = self.llm_model
-            d["anthropic_model"] = self.llm_model
-            d["model"] = self.llm_model
-        if self.azure_openai_endpoint is not None:
-            d["azure_endpoint"] = self.azure_openai_endpoint
-        if self.azure_openai_key is not None:
-            d["azure_api_key"] = self.azure_openai_key
-        if self.anthropic_api_key is not None:
-            d["anthropic_api_key"] = self.anthropic_api_key
-        if self.ollama_base_url is not None:
-            d["ollama_base_url"] = self.ollama_base_url
-        if self.llm_temperature is not None:
-            d["temperature"] = self.llm_temperature
-        if self.llm_max_tokens is not None:
-            d["max_tokens"] = self.llm_max_tokens
-        if self.prompt_caching is not None:
-            d["prompt_caching"] = self.prompt_caching.model_dump(
-                mode="python", exclude_none=True
+        from core.exceptions import LLMConfigurationError  # noqa: PLC0415 — lazy, schemas must not import core at module level
+        from core.llm import LLMConfig, LLMProvider  # noqa: PLC0415 — lazy, same reason
+
+        if self.llm_backend is None:
+            raise LLMConfigurationError(
+                "No LLM backend configured.  Set llm_backend via "
+                "PATCH /admin/platform-config."
             )
-        return d
+        return LLMConfig(
+            provider=LLMProvider(self.llm_backend),
+            model=self.llm_model,
+            api_key=self.llm_api_key,
+            base_url=self.llm_base_url,
+            endpoint=self.azure_endpoint,
+            deployment=self.azure_deployment,
+            temperature=self.llm_temperature,
+            max_tokens=self.llm_max_tokens,
+        )
+
+    @model_validator(mode="after")
+    def _check_llm_requirements(self) -> PlatformConfigBase:
+        """Enforce per-backend required unified fields (→ 422)."""
+        return _validate_llm_requirements(self)  # type: ignore[return-value]
 
 
 # ── API request / response ─────────────────────────────────────────────────
@@ -468,6 +504,16 @@ class UpdatePlatformConfigRequest(BaseModel):
     Same shape as ``PlatformConfigBase`` — every field is optional, only provided
     fields are updated.  Set a field to ``null`` to remove it (the caller
     will receive ``None`` for that field on the next read).
+
+    ⚠️ BREAKING: unified LLM names only (``llm_api_key``, ``llm_base_url``,
+    ``azure_endpoint``, ``azure_deployment``).  Legacy provider keys
+    (``openai_api_key``, ``anthropic_api_key``, ``azure_openai_endpoint``,
+    ``azure_openai_key``, ``ollama_base_url``, ``openai_like_base_url``,
+    ``openai_model``, ``anthropic_model``) are dropped without fallback —
+    unknown keys are ignored, so sending them silently does nothing.
+    When ``llm_backend`` is provided, its required unified fields must be
+    present (non-null) in the same body, else 422 — backend switches must
+    ship credentials.
     """
 
     # Same fields as PlatformConfigBase, all optional
@@ -475,12 +521,10 @@ class UpdatePlatformConfigRequest(BaseModel):
     llm_model: str | None = None
     llm_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     llm_max_tokens: int | None = Field(default=None, ge=1)
-    openai_api_key: str | None = None
-    azure_openai_endpoint: str | None = None
-    azure_openai_key: str | None = None
-    anthropic_api_key: str | None = None
-    ollama_base_url: str | None = None
-    openai_like_base_url: str | None = None
+    llm_api_key: str | None = None
+    llm_base_url: str | None = None
+    azure_endpoint: str | None = None
+    azure_deployment: str | None = None
     llm_fact_invalidation_enabled: bool | None = Field(
         default=None,
         description="Enable LLM-driven fact invalidation during episode "
@@ -561,6 +605,11 @@ class UpdatePlatformConfigRequest(BaseModel):
         ge=0.0,
         le=1.0,
     )
+
+    @model_validator(mode="after")
+    def _check_llm_requirements_update(self) -> UpdatePlatformConfigRequest:
+        """Enforce per-backend required unified fields on PATCH bodies (→ 422)."""
+        return _validate_llm_requirements(self)  # type: ignore[return-value]
 
     @field_validator("enrichment", mode="before")
     @classmethod

@@ -230,7 +230,7 @@ class PlatformConfigConnectionService:
         try:
             from core.llm import resolve_backend
 
-            backend = await resolve_backend(platform_config=merged.to_llm_config_dict())
+            backend = await resolve_backend(config=merged.to_llm_config())
             chat_kwargs: dict[str, Any] = {"max_tokens": 1}
             if merged.llm_model is not None:
                 chat_kwargs["model"] = merged.llm_model

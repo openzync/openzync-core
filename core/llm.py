@@ -48,6 +48,41 @@ class LLMProvider(str, Enum):
     ANTHROPIC = "anthropic"
 
 
+@dataclass(frozen=True)
+class LLMConfig:
+    """Unified per-call LLM configuration.
+
+    ⚠️ BREAKING: replaces the provider-specific dict keys
+    (``openai_api_key``, ``anthropic_api_key``, ``ollama_base_url``,
+    ``openai_like_base_url``, ``openai_model``, ``anthropic_model``,
+    ``azure_openai_endpoint``, ``azure_openai_key``).  There is no dict
+    acceptance anywhere — pass this object to :func:`resolve_backend`
+    and :func:`_create_backend`; a ``dict`` raises ``TypeError``.
+
+    Unified field mapping (validated by
+    ``core.llm_backends.validate_llm_config``):
+
+    * ``api_key`` — shared credential for ``openai``, ``anthropic``,
+      ``openai_like`` (optional for the latter); ``azure`` uses it as
+      the Azure API key.
+    * ``base_url`` — ``ollama`` / ``openai_like`` endpoint base URL.
+    * ``endpoint`` / ``deployment`` — ``azure`` only.
+    * ``model`` — shared model name for every provider except ``azure``
+      (which models via ``deployment``).
+    * ``temperature`` / ``max_tokens`` — carried for ``chat()`` kwargs;
+      not part of backend construction.
+    """
+
+    provider: LLMProvider
+    model: str | None = None
+    api_key: str | None = None
+    base_url: str | None = None
+    endpoint: str | None = None
+    deployment: str | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
+
+
 @dataclass
 class TokenUsage:
     """Token consumption report for a single LLM call."""
@@ -688,27 +723,29 @@ BackendMode = Literal["llm"]
 
 
 async def resolve_backend(
-    provider: str | None = None,
-    platform_config: dict | None = None,
+    provider: str | LLMProvider | None = None,
+    config: LLMConfig | None = None,
     mode: BackendMode | None = None,
     sink: UsageSink | None = None,
 ) -> LLMBackend:
-    """Resolve the appropriate LLM backend via platform config or explicit argument.
+    """Resolve the appropriate LLM backend via unified config or explicit argument.
+
+    ⚠️ BREAKING: the ``platform_config`` dict parameter is gone — pass an
+    :class:`LLMConfig` as *config*.  A ``dict`` raises ``TypeError``.
 
     The resolution order is:
 
-    1. **User-level config** — ``platform_config.get("llm_backend")``
-    2. **Explicit argument** — the ``provider`` parameter
-    3. **Error** — raises :class:`LLMConfigurationError`
+    1. **Explicit argument** — the ``provider`` parameter.
+    2. **Unified config** — ``config.provider``.
+    3. **Error** — raises :class:`LLMConfigurationError`.
 
     Args:
-        provider: Explicit override.  If provided, platform config is skipped.
-        platform_config: Optional dict with per-user LLM settings.
-            Supported keys: ``llm_backend``, ``ollama_base_url``,
-            ``openai_api_key``, ``openai_model``, ``openai_like_base_url``,
-            ``llm_model``, ``azure_endpoint``,
-            ``azure_api_key``, ``azure_deployment``, ``anthropic_api_key``,
-            ``anthropic_model``.
+        provider: Explicit override.  If provided, the config's credentials
+            are used with this provider (a mismatch with
+            ``config.provider`` raises :class:`LLMConfigurationError`).
+        config: Unified LLM settings.  Supported fields: ``provider``,
+            ``model``, ``api_key``, ``base_url``, ``endpoint``,
+            ``deployment``, ``temperature``, ``max_tokens``.
         mode: Caller context.  Only ``"llm"`` or ``None`` remains —
             ⚠️ BREAKING: ``"embedding"`` was removed with the per-provider
             embedder; embeddings are now ``core.embeddings.embed_passage`` /
@@ -721,54 +758,71 @@ async def resolve_backend(
         An initialised ``LLMBackend`` instance.
 
     Raises:
-        LLMConfigurationError: If no backend could be resolved, or the
-            resolved provider name is unknown.
+        TypeError: If *config* is a ``dict`` — construct
+            :class:`LLMConfig` instead.
+        LLMConfigurationError: If no backend could be resolved, the
+            resolved provider name is unknown, or *provider* mismatches
+            ``config.provider``.
     """
+    if isinstance(config, dict):  # type: ignore[unreachable]
+        raise TypeError(
+            "resolve_backend() no longer accepts a config dict — "
+            "pass core.llm.LLMConfig instead."
+        )
+
     provider_name: str | None = None
 
-    # 1. User-level config (skip if explicit provider given).
-    if provider is None and platform_config and platform_config.get("llm_backend"):
-        provider_name = platform_config["llm_backend"]
+    # 1. Explicit argument.
+    if provider is not None:
+        provider_name = (
+            provider.value if isinstance(provider, LLMProvider) else provider
+        )
+        logger.debug("llm.resolved_from_argument", extra={"provider": provider_name})
+
+    # 2. Unified config.
+    elif config is not None:
+        provider_name = config.provider.value
         logger.debug(
-            "llm.resolved_from_platform_config",
+            "llm.resolved_from_config",
             extra={"provider": provider_name},
         )
-        return await _create_backend(provider_name, platform_config, mode=mode, sink=sink)
-
-    # 2. Explicit argument.
-    if provider is not None:
-        provider_name = provider
-        logger.debug("llm.resolved_from_argument", extra={"provider": provider_name})
-        return await _create_backend(provider_name, platform_config, mode=mode, sink=sink)
 
     # 3. Nothing worked.
-    raise LLMConfigurationError(
-        "No LLM backend configured.  Pass a provider argument or set "
-        "llm_backend in the platform configuration."
-    )
+    if provider_name is None:
+        raise LLMConfigurationError(
+            "No LLM backend configured.  Pass a provider argument or set "
+            "llm_backend in the platform configuration."
+        )
+    return await _create_backend(provider_name, config, mode=mode, sink=sink)
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
 
 
 async def _create_backend(
-    provider: str,
-    config: dict | None = None,
+    provider: str | LLMProvider,
+    config: LLMConfig | None = None,
     mode: BackendMode | None = None,
     sink: UsageSink | None = None,
 ) -> LLMBackend:
-    """Instantiate an LLM backend for *provider*, passing optional config.
+    """Instantiate an LLM backend for *provider* from unified config.
+
+    ⚠️ BREAKING: *config* is :class:`LLMConfig` only — a ``dict`` raises
+    ``TypeError``.  Provider-specific dict keys are gone.
 
     All provider-specific values (API keys, model names, endpoints) come
     exclusively from *config* — there is **no** env-var fallback and **no**
-    hardcoded default at this layer.  Every required field must be present
-    in *config* or the function raises :class:`LLMConfigurationError`.
+    hardcoded default at this layer.  Requirements are enforced first by
+    ``core.llm_backends.validate_llm_config`` (fail-closed:
+    :class:`LLMConfigurationError` on missing-required); the unified
+    fields are then mapped onto the existing backend constructor args
+    (constructors unchanged).
 
     Args:
         provider: One of ``"ollama"``, ``"openai"``, ``"openai_like"``,
             ``"azure"``, ``"anthropic"``.
-        config: Optional dict with provider-specific overrides (API keys,
-            model names, endpoints).  Required fields vary by provider.
+        config: Unified LLM settings (see :class:`LLMConfig`).  Required
+            fields vary by provider.
         mode: Caller context.  Accepted and ignored — no provider/mode
             combination changes behaviour any more.
         sink: Optional metering sink attached to the created instance.
@@ -777,78 +831,75 @@ async def _create_backend(
         An initialised ``LLMBackend`` instance.
 
     Raises:
+        TypeError: If *config* is a ``dict``.
         LLMConfigurationError: If a required config field is missing or
-            empty, or *provider* is not recognised.
+            empty, *provider* mismatches ``config.provider``, or *provider*
+            is not recognised.
     """
-    backend_cls = LLMBackendRegistry.get(provider)
+    if isinstance(config, dict):  # type: ignore[unreachable]
+        raise TypeError(
+            "_create_backend() no longer accepts a config dict — "
+            "pass core.llm.LLMConfig instead."
+        )
+    try:
+        provider_name = (
+            provider.value if isinstance(provider, LLMProvider) else LLMProvider(provider).value
+        )
+    except ValueError:
+        raise LLMConfigurationError(
+            f"Unknown provider: {provider}. Expected one of: ollama, openai, "
+            "openai_like, azure, anthropic."
+        ) from None
+    if config is not None and config.provider.value != provider_name:
+        raise LLMConfigurationError(
+            f"Provider mismatch: explicit {provider_name!r} != "
+            f"config provider {config.provider.value!r}."
+        )
 
-    if provider == "ollama":
-        if config is None or not config.get("ollama_base_url"):
-            raise LLMConfigurationError(
-                "Ollama backend requires ollama_base_url in per-user "
-                "configuration.  Set it via PATCH /admin/platform-config."
-            )
-        instance: LLMBackend = backend_cls(
-            base_url=config["ollama_base_url"],
-            model=config.get("llm_model") or config.get("model"),
-        )  # type: ignore[call-arg]
-    elif provider == "openai":
-        if config is None or not config.get("openai_api_key"):
-            raise LLMConfigurationError(
-                "OpenAI backend requires openai_api_key in per-user "
-                "configuration.  Set it via PATCH /admin/platform-config."
-            )
-        api_key: str = config["openai_api_key"]
-        model: str | None = config.get("openai_model")
-        instance = backend_cls(api_key=api_key, model=model)
-    elif provider == "openai_like":
-        if config is None or not config.get("openai_like_base_url"):
-            raise LLMConfigurationError(
-                "OpenAI-like backend requires openai_like_base_url in per-user "
-                "configuration.  Set it via PATCH /admin/platform-config."
-            )
-        instance = backend_cls(
-            base_url=config["openai_like_base_url"],
-            api_key=config.get("openai_api_key"),
-            model=config.get("llm_model"),
-        )
-    elif provider == "azure":
-        if config is None or not config.get("azure_endpoint"):
-            raise LLMConfigurationError(
-                "Azure backend requires azure_endpoint in per-user "
-                "configuration.  Set it via PATCH /admin/platform-config."
-            )
-        if config is None or not config.get("azure_api_key"):
-            raise LLMConfigurationError(
-                "Azure backend requires azure_api_key in per-user "
-                "configuration.  Set it via PATCH /admin/platform-config."
-            )
-        if config is None or not config.get("azure_deployment"):
-            raise LLMConfigurationError(
-                "Azure backend requires azure_deployment in per-user "
-                "configuration.  Set it via PATCH /admin/platform-config."
-            )
-        instance = backend_cls(
-            endpoint=config["azure_endpoint"],
-            api_key=config["azure_api_key"],
-            deployment=config["azure_deployment"],
-        )
-    elif provider == "anthropic":
-        if config is None or not config.get("anthropic_api_key"):
-            raise LLMConfigurationError(
-                "Anthropic backend requires anthropic_api_key in per-user "
-                "configuration.  Set it via PATCH /admin/platform-config."
-            )
-        api_key = config["anthropic_api_key"]
-        model = config.get("anthropic_model")
-        instance = backend_cls(api_key=api_key, model=model)
-    else:
+    # Fail-closed requirements gate — named error, never a bare ValueError.
+    from core.llm_backends import validate_llm_config  # noqa: PLC0415 — lazy, avoids import cycle
+
+    effective = (
+        config if config is not None else LLMConfig(provider=LLMProvider(provider_name))
+    )
+    validate_llm_config(effective)
+
+    try:
+        backend_cls = LLMBackendRegistry.get(provider_name)
+    except ValueError as exc:
         # ⚠️ Named error (not bare ValueError): unknown providers must
         # surface as a structured problem response, never a plain-500.
+        raise LLMConfigurationError(
+            f"Unknown provider: {provider_name}. Expected one of: ollama, openai, "
+            "openai_like, azure, anthropic."
+        ) from exc
+
+    if provider_name == "ollama":
+        instance: LLMBackend = backend_cls(
+            base_url=effective.base_url,
+            model=effective.model,
+        )  # type: ignore[call-arg]
+    elif provider_name == "openai":
+        instance = backend_cls(api_key=effective.api_key, model=effective.model)
+    elif provider_name == "openai_like":
+        instance = backend_cls(
+            base_url=effective.base_url,
+            api_key=effective.api_key,
+            model=effective.model,
+        )
+    elif provider_name == "azure":
+        instance = backend_cls(
+            endpoint=effective.endpoint,
+            api_key=effective.api_key,
+            deployment=effective.deployment,
+        )
+    elif provider_name == "anthropic":
+        instance = backend_cls(api_key=effective.api_key, model=effective.model)
+    else:  # pragma: no cover — LLMProvider normalisation rejects these above.
         # Unreachable from platform-config flows — the LlmBackend Literal rejects
         # unknown values at write (422) and read (named 422).
         raise LLMConfigurationError(
-            f"Unknown provider: {provider}. Expected one of: ollama, openai, "
+            f"Unknown provider: {provider_name}. Expected one of: ollama, openai, "
             "openai_like, azure, anthropic."
         )
 
