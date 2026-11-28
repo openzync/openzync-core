@@ -321,3 +321,149 @@ class LLMUsageRepository:
             total_tokens=int(row[4] or 0),
             avg_duration_ms=float(row[5] or 0),
         )
+
+    # ── Site-wide (platform:manage holders, under RLS bypass) ─────────────
+
+    @staticmethod
+    def _sitewide_conditions(
+        start: datetime | None,
+        end: datetime | None,
+        project_id: UUID | None,
+        worker: str | None,
+        model: str | None,
+    ) -> list[Any]:
+        """Build the shared WHERE filters for site-wide reads (no user)."""
+        conditions: list[Any] = []
+        if start is not None:
+            conditions.append(LLMUsage.created_at >= start)
+        if end is not None:
+            conditions.append(LLMUsage.created_at < end)
+        if project_id is not None:
+            conditions.append(LLMUsage.project_id == project_id)
+        if worker is not None:
+            conditions.append(LLMUsage.worker == worker)
+        if model is not None:
+            conditions.append(LLMUsage.model == model)
+        return conditions
+
+    async def list_paginated_sitewide(
+        self,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        project_id: UUID | None = None,
+        worker: str | None = None,
+        model: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        sort: SortSpec | None = None,
+    ) -> tuple[list[LLMUsage], int]:
+        """List metering rows across all users with optional filters."""
+        conditions = self._sitewide_conditions(start, end, project_id, worker, model)
+        base = select(LLMUsage)
+        count_base = select(func.count(LLMUsage.id))
+        if conditions:
+            base = base.where(*conditions)
+            count_base = count_base.where(*conditions)
+
+        total_result = await self._db.execute(count_base)
+        total: int = total_result.scalar() or 0
+
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("created_at", "desc")
+        query = (
+            base.order_by(
+                *resolve_order_by(
+                    LLM_USAGE_SORTABLE_COLUMNS,
+                    LLMUsage.id,
+                    req_sort,
+                    req_dir,
+                    default_sort_by="created_at",
+                    default_dir="desc",
+                )
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self._db.execute(query)
+        return list(result.scalars().all()), total
+
+    async def list_daily_buckets_sitewide(
+        self,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        project_id: UUID | None = None,
+        worker: str | None = None,
+        model: str | None = None,
+        limit: int = 365,
+        offset: int = 0,
+    ) -> tuple[list[DailyUsageBucket], int]:
+        """Aggregate metering rows across all users into UTC-day buckets."""
+        day = func.date_trunc(
+            "day", LLMUsage.created_at.op("AT TIME ZONE")("UTC")
+        ).label("date")
+        conditions = self._sitewide_conditions(start, end, project_id, worker, model)
+
+        total_result = await self._db.execute(
+            select(func.count(func.distinct(day))).where(*conditions)
+            if conditions
+            else select(func.count(func.distinct(day)))
+        )
+        total: int = total_result.scalar() or 0
+
+        query = (
+            select(
+                day,
+                func.coalesce(func.sum(LLMUsage.total_tokens), 0).label("total_tokens"),
+                func.count(LLMUsage.id).label("calls"),
+            )
+            .where(*conditions)
+            .group_by(text("date"))
+            .order_by(text("date DESC"))
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self._db.execute(query)
+        buckets = [
+            DailyUsageBucket(
+                day=row.date,
+                total_tokens=int(row.total_tokens or 0),
+                calls=row.calls or 0,
+            )
+            for row in result
+        ]
+        return buckets, total
+
+    async def get_summary_sitewide(
+        self,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        project_id: UUID | None = None,
+        worker: str | None = None,
+        model: str | None = None,
+    ) -> UsageSummary:
+        """Aggregate metering totals across all users over the window."""
+        conditions = self._sitewide_conditions(start, end, project_id, worker, model)
+        query = select(
+            func.count(LLMUsage.id),
+            func.coalesce(func.sum(LLMUsage.prompt_tokens), 0),
+            func.coalesce(func.sum(LLMUsage.completion_tokens), 0),
+            func.coalesce(func.sum(LLMUsage.reasoning_tokens), 0),
+            func.coalesce(func.sum(LLMUsage.total_tokens), 0),
+            func.coalesce(func.avg(LLMUsage.duration_ms), 0),
+        )
+        if conditions:
+            query = query.where(*conditions)
+
+        result = await self._db.execute(query)
+        row = result.one()
+        return UsageSummary(
+            calls=row[0] or 0,
+            prompt_tokens=int(row[1] or 0),
+            completion_tokens=int(row[2] or 0),
+            reasoning_tokens=int(row[3] or 0),
+            total_tokens=int(row[4] or 0),
+            avg_duration_ms=float(row[5] or 0),
+        )

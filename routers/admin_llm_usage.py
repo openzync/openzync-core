@@ -13,11 +13,12 @@ from typing import Literal
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.rls import rls_bypass
 from core.sorting import SortSpec
-from dependencies.auth import require_user
+from dependencies.auth import require_user, resolve_platform_scope
 from dependencies.db import get_db
 from schemas.llm_usage import (
     LlmUsageDailyBucket,
@@ -93,10 +94,12 @@ def _resolve_window(
     ),
 )
 async def list_llm_usage(
+    request: Request,
     days: int | None = Query(default=None, ge=1, le=365),
     from_date: date | None = Query(default=None, alias="from"),
     to_date: date | None = Query(default=None, alias="to"),
     project_id: UUID | None = Query(default=None),
+    target_user_id: UUID | None = Query(default=None, alias="user_id"),
     worker: str | None = Query(default=None),
     model: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
@@ -107,13 +110,20 @@ async def list_llm_usage(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(require_user),
 ) -> LLMUsageListResponse | LLMUsageDailyListResponse:
-    """List metering rows with a window summary for the user.
+    """List metering rows with a window summary.
+
+    ``platform:manage`` holders read site-wide by default; ``user_id``
+    scopes a holder's read to one user, ``project_id`` to one project
+    (both together is 422; non-holders passing ``user_id`` get 403, and
+    a ``project_id`` they do not own gets 403).
 
     Args:
+        request: FastAPI request (app-state Redis for the holder check).
         days: Look-back window in days (1-365). Ignored if from/to provided.
         from_date: Inclusive start date (YYYY-MM-DD).
         to_date: Inclusive end date (YYYY-MM-DD).
         project_id: Optional project scope filter.
+        target_user_id: Holder-only user filter (``?user_id=``).
         worker: Optional worker label filter (e.g. ``enrich_episode``).
         model: Optional model identifier filter.
         limit: Max rows per page (1-500). Paginates day buckets when grouped.
@@ -131,11 +141,59 @@ async def list_llm_usage(
         ``group_by=day``, ``LLMUsageDailyListResponse`` with day buckets.
         # ⚠️ BREAKING (grouped only): total=data day-bucket count, not call count.
     """
+    effective, sitewide = await resolve_platform_scope(
+        request, db, UUID(user_id), target_user_id, project_id
+    )
     start, end_exclusive = _resolve_window(days, from_date, to_date)
-    org_uuid = UUID(user_id)
+    org_uuid = effective
 
-    if group_by == "day":
-        buckets, day_total = await list_usage_daily(
+    async def _build() -> LLMUsageListResponse | LLMUsageDailyListResponse:
+        if group_by == "day":
+            buckets, day_total = await list_usage_daily(
+                db,
+                user_id=org_uuid,
+                start=start,
+                end=end_exclusive,
+                project_id=project_id,
+                worker=worker,
+                model=model,
+                limit=limit,
+                offset=offset,
+                sitewide=sitewide,
+            )
+            summary = await summarize_usage(
+                db,
+                user_id=org_uuid,
+                start=start,
+                end=end_exclusive,
+                project_id=project_id,
+                worker=worker,
+                model=model,
+                sitewide=sitewide,
+            )
+            return LLMUsageDailyListResponse(
+                data=[
+                    LlmUsageDailyBucket(
+                        date=bucket.day.date().isoformat(),
+                        total_tokens=bucket.total_tokens,
+                        calls=bucket.calls,
+                    )
+                    for bucket in buckets
+                ],
+                total=day_total,
+                summary=UsageSummaryResponse(
+                    calls=summary.calls,
+                    prompt_tokens=summary.prompt_tokens,
+                    completion_tokens=summary.completion_tokens,
+                    reasoning_tokens=summary.reasoning_tokens,
+                    total_tokens=summary.total_tokens,
+                    avg_duration_ms=summary.avg_duration_ms,
+                ),
+            )
+
+        sort = SortSpec(sort_by=sort_by, sort_dir=sort_dir)
+
+        rows, total = await list_usage(
             db,
             user_id=org_uuid,
             start=start,
@@ -145,6 +203,8 @@ async def list_llm_usage(
             model=model,
             limit=limit,
             offset=offset,
+            sort=sort,
+            sitewide=sitewide,
         )
         summary = await summarize_usage(
             db,
@@ -154,17 +214,11 @@ async def list_llm_usage(
             project_id=project_id,
             worker=worker,
             model=model,
+            sitewide=sitewide,
         )
-        return LLMUsageDailyListResponse(
-            data=[
-                LlmUsageDailyBucket(
-                    date=bucket.day.date().isoformat(),
-                    total_tokens=bucket.total_tokens,
-                    calls=bucket.calls,
-                )
-                for bucket in buckets
-            ],
-            total=day_total,
+        return LLMUsageListResponse(
+            data=[LLMUsageResponse.model_validate(row) for row in rows],
+            total=total,
             summary=UsageSummaryResponse(
                 calls=summary.calls,
                 prompt_tokens=summary.prompt_tokens,
@@ -175,38 +229,7 @@ async def list_llm_usage(
             ),
         )
 
-    sort = SortSpec(sort_by=sort_by, sort_dir=sort_dir)
-
-    rows, total = await list_usage(
-        db,
-        user_id=org_uuid,
-        start=start,
-        end=end_exclusive,
-        project_id=project_id,
-        worker=worker,
-        model=model,
-        limit=limit,
-        offset=offset,
-        sort=sort,
-    )
-    summary = await summarize_usage(
-        db,
-        user_id=org_uuid,
-        start=start,
-        end=end_exclusive,
-        project_id=project_id,
-        worker=worker,
-        model=model,
-    )
-    return LLMUsageListResponse(
-        data=[LLMUsageResponse.model_validate(row) for row in rows],
-        total=total,
-        summary=UsageSummaryResponse(
-            calls=summary.calls,
-            prompt_tokens=summary.prompt_tokens,
-            completion_tokens=summary.completion_tokens,
-            reasoning_tokens=summary.reasoning_tokens,
-            total_tokens=summary.total_tokens,
-            avg_duration_ms=summary.avg_duration_ms,
-        ),
-    )
+    if effective != UUID(user_id) or sitewide:
+        async with rls_bypass(db):
+            return await _build()
+    return await _build()

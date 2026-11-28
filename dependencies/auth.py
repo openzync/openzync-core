@@ -49,8 +49,14 @@ from sqlalchemy.ext.asyncio import (
     AsyncSession,  # noqa: TC002 (runtime import — FastAPI resolves annotation names)
 )
 
-from core.rbac import get_effective_permissions, get_must_change_password, get_user_role
+from core.rbac import (
+    get_effective_permissions,
+    get_must_change_password,
+    get_user_role,
+    has_platform_manage,
+)
 from dependencies.db import get_db
+from repositories.project_repository import ProjectRepository
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Bearer token scheme — auto-adds to OpenAPI docs
@@ -711,3 +717,79 @@ def require_admin_or_self():
         return caller_id
 
     return _admin_or_self_checker
+
+
+async def resolve_platform_scope(
+    request: Request,
+    db: AsyncSession,
+    caller_id: UUID,
+    target_user_id: UUID | None,
+    project_id: UUID | None,
+) -> tuple[UUID, bool]:
+    """Gate the ``user_id``/``project_id`` filters on platform read endpoints.
+
+    ``platform:manage`` holders (and the admin wildcard) read site-wide
+    by default; everyone else stays caller-scoped:
+
+    - Both filters together → 422.
+    - ``target_user_id`` from a non-holder → 403; from a holder it
+      scopes the read to that user (under an RLS bypass at the call site).
+    - ``project_id`` from a holder scopes the site-wide read to that
+      project.  From a non-holder the project must be caller-owned
+      (single owner query — members of shared projects get 403 here;
+      their rows stay visible through the unfiltered caller scope).
+    - Neither filter: holders go site-wide, others stay caller-scoped.
+
+    Args:
+        request: The incoming HTTP request (app-state Redis).
+        db: Request-scoped async DB session (role/permission/project reads).
+        caller_id: The authenticated caller's UUID.
+        target_user_id: Optional ``user_id`` query filter (holder-only).
+        project_id: Optional project filter (owner-verified for non-holders).
+
+    Returns:
+        ``(effective_user_id, sitewide)`` — the user scope to query and
+        whether to use the site-wide repository methods (callers wrap
+        those in :func:`core.rls.rls_bypass`).
+
+    Raises:
+        HTTPException: 422 if both filters are supplied, 403 if a
+            non-holder filters by user or by a project they do not own.
+    """
+    if target_user_id is not None and project_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Pass either user_id or project_id, not both.",
+        )
+    redis = getattr(request.app.state, "redis", None)
+    holder = await has_platform_manage(redis, db, caller_id)
+    if target_user_id is not None:
+        if not holder:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "type": "https://errors.openzync.tech/authorization_error",
+                    "title": "Insufficient Permissions",
+                    "status": 403,
+                    "detail": (
+                        "Filtering by user_id requires the "
+                        "'platform:manage' permission."
+                    ),
+                },
+            )
+        return target_user_id, False
+    if project_id is not None and not holder:
+        project = await ProjectRepository(db).get_by_id(caller_id, project_id)
+        # ⚠️ owner-only: active members of a shared project 403 here —
+        # their own rows remain visible through the unfiltered scope.
+        if project is None or project.user_id != caller_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "type": "https://errors.openzync.tech/authorization_error",
+                    "title": "Insufficient Permissions",
+                    "status": 403,
+                    "detail": "This project does not belong to the caller.",
+                },
+            )
+    return caller_id, holder

@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.requests import Request
 
 from core.graph_backend import resolve_graph_backend_fail_soft
-from core.rls import release_tenant_context, set_tenant_context
+from core.rls import release_tenant_context, rls_bypass, set_tenant_context
 from services.admin_metrics.db_queries_service import DbMetricsQueriesService
 from services.admin_metrics.prom_queries_service import PromMetricsQueriesService
 
@@ -88,6 +88,7 @@ class AdminMetricsBatchService:
         user_id: UUID,
         name: str,
         call: Callable[[DbMetricsQueriesService], Awaitable[dict]],
+        sitewide: bool = False,
     ) -> dict:
         """Run one DB leg on a sibling tenant-bound session.
 
@@ -96,8 +97,19 @@ class AdminMetricsBatchService:
             user_id: Tenant bound on the sibling session (RLS).
             name: Query name (timeout budget + log context).
             call: Takes the leg-scoped service, returns the leg result.
+            sitewide: When ``True`` run under an RLS bypass instead of a
+                tenant context (platform-wide aggregates for holders).
         """
         async with factory() as leg_db:
+            if sitewide:
+                try:
+                    async with rls_bypass(leg_db):
+                        return await self._guarded(
+                            name, call(DbMetricsQueriesService(leg_db))
+                        )
+                except Exception:
+                    await leg_db.rollback()
+                    raise
             await set_tenant_context(leg_db, user_id)
             try:
                 return await self._guarded(name, call(DbMetricsQueriesService(leg_db)))
@@ -115,6 +127,7 @@ class AdminMetricsBatchService:
         db_calls: dict[str, Callable[[DbMetricsQueriesService], Awaitable[dict]]],
         prom_calls: dict[str, Callable[[], Awaitable[dict]]],
         names: list[str],
+        sitewide: bool = False,
     ) -> list:
         """Run every leg; returns outcomes aligned with ``names``.
 
@@ -136,7 +149,13 @@ class AdminMetricsBatchService:
                     continue
                 try:
                     leg = DbMetricsQueriesService(self._db)
-                    by_name[name] = await self._guarded(name, db_calls[name](leg))
+                    if sitewide:
+                        async with rls_bypass(self._db):
+                            by_name[name] = await self._guarded(
+                                name, db_calls[name](leg)
+                            )
+                    else:
+                        by_name[name] = await self._guarded(name, db_calls[name](leg))
                 except asyncio.CancelledError:
                     raise
                 except BaseException as exc:
@@ -152,7 +171,7 @@ class AdminMetricsBatchService:
             *(
                 self._guarded(name, prom_calls[name]())
                 if name in prom_calls
-                else self._invoke_concurrent(factory, user_id, name, db_calls[name])
+                else self._invoke_concurrent(factory, user_id, name, db_calls[name], sitewide)
                 for name in names
             ),
             return_exceptions=True,
@@ -168,8 +187,21 @@ class AdminMetricsBatchService:
         limit: int,
         project_id: UUID | None,
         include_archived: bool,
+        sitewide: bool = False,
     ) -> dict:
         """Run every predefined query concurrently; partial failures stay HTTP 200.
+
+        Args:
+            request: FastAPI request (graph backend dispatcher + pools).
+            platform_config: Platform config (graph backend selection).
+            user_id: Tenant scope — or the holder's ID when ``sitewide``.
+            start: Window start.
+            end: Window end.
+            limit: Max rows for rankings.
+            project_id: Optional project filter.
+            include_archived: Include archived projects (top projects only).
+            sitewide: When ``True`` DB legs run under an RLS bypass and
+                PromQL drops the user label (platform-wide aggregates).
 
         Returns:
             ``{"results": {name: query-dict}, "errors": [...], "meta": {...}}``
@@ -184,42 +216,42 @@ class AdminMetricsBatchService:
 
         db_calls: dict[str, Callable[[DbMetricsQueriesService], Awaitable[dict]]] = {
             "episodes_per_day": lambda svc: svc.episodes_per_day(
-                user_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id, sitewide
             ),
             "messages_per_day": lambda svc: svc.messages_per_day(
-                user_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id, sitewide
             ),
             "activity_per_day": lambda svc: svc.activity_per_day(
-                user_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id, sitewide
             ),
             "entities_per_day": lambda svc: svc.entities_per_day(
-                user_id, start, end, limit, project_id, backend
+                user_id, start, end, limit, project_id, backend, sitewide
             ),
             "facts_per_day": lambda svc: svc.facts_per_day(
-                user_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id, sitewide
             ),
             "enrichment_progress": lambda svc: svc.enrichment_progress(
-                user_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id, sitewide
             ),
             "top_projects_by_episodes": lambda svc: svc.top_projects_by_episodes(
-                user_id, start, end, limit, project_id, include_archived
+                user_id, start, end, limit, project_id, include_archived, sitewide
             ),
             "top_users_by_messages": lambda svc: svc.top_users_by_messages(
-                user_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id, sitewide
             ),
             "queue_depth_over_time": lambda svc: svc.queue_depth_over_time(
-                user_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id, sitewide
             ),
         }
         prom_calls: dict[str, Callable[[], Awaitable[dict]]] = {
             "error_rate_by_day": lambda: self._prom.error_rate_by_day(
-                user_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id, sitewide
             ),
             "latency_percentiles": lambda: self._prom.latency_percentiles(
-                user_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id, sitewide
             ),
             "context_retrieval_rate": lambda: self._prom.context_retrieval_rate(
-                user_id, start, end, limit, project_id
+                user_id, start, end, limit, project_id, sitewide
             ),
         }
         names = [
@@ -242,7 +274,9 @@ class AdminMetricsBatchService:
             # budget below rarely fires — it bounds pathological scheduling, not
             # the common case.
             outcomes = await asyncio.wait_for(
-                self._run_legs(request, user_id, backend, db_calls, prom_calls, names),
+                self._run_legs(
+                    request, user_id, backend, db_calls, prom_calls, names, sitewide
+                ),
                 timeout=_OVERALL_TIMEOUT,
             )
         except TimeoutError as exc:

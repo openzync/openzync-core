@@ -32,7 +32,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import get_settings
-from dependencies.auth import require_permission, require_user
+from core.rls import rls_bypass
+from dependencies.auth import (
+    require_permission,
+    require_user,
+    resolve_platform_scope,
+)
 from dependencies.db import get_db
 from dependencies.platform_config import get_platform_config
 from schemas.admin_metrics import MetricsSummaryResponse
@@ -135,16 +140,26 @@ async def get_metrics_summary(
         "Requires from; mutually exclusive with days.",
     ),
     user_id: str = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
     platform_config: PlatformConfigBase = Depends(get_platform_config),
     service: AdminMetricsService = Depends(_get_admin_metrics_service),
+    project_id: UUID | None = Query(default=None),
+    target_user_id: UUID | None = Query(default=None, alias="user_id"),
 ) -> MetricsSummaryResponse:
     """Get aggregated metrics for the admin dashboard.
 
+    ``platform:manage`` holders read site-wide by default; ``user_id``
+    scopes a holder's read to one user, ``project_id`` to one project
+    (both together is 422; non-holders passing ``user_id`` get 403, and
+    a ``project_id`` they do not own gets 403).
     Merges DB counts and Prometheus metrics into a single response.
-    DB counts are scoped to the authenticated user.
+    DB counts are scoped to the effective user unless site-wide.
     Only the Prometheus range time-series honor the window; DB totals
-    and instant queries stay snapshot semantics.
+    and instant queries keep snapshot semantics.
     """
+    effective, sitewide = await resolve_platform_scope(
+        request, db, UUID(user_id), target_user_id, project_id
+    )
     if days is not None and (from_date is not None or to_date is not None):
         raise HTTPException(
             status_code=422,
@@ -182,7 +197,21 @@ async def get_metrics_summary(
     else:
         end = datetime.now(UTC)
         start = end - timedelta(hours=24)
-    return await service.get_summary(request, platform_config, UUID(user_id), start, end)
+    if effective != UUID(user_id) or sitewide:
+        async with rls_bypass(db):
+            return await service.get_summary(
+                request,
+                platform_config,
+                effective,
+                start,
+                end,
+                sitewide=sitewide,
+                project_id=project_id,
+            )
+    return await service.get_summary(
+        request, platform_config, effective, start, end,
+        sitewide=sitewide, project_id=project_id,
+    )
 
 
 @router.get(
@@ -296,11 +325,18 @@ async def get_metrics_batch(
     project_id: UUID | None = Query(
         default=None, description="Optional project filter"
     ),
+    target_user_id: UUID | None = Query(default=None, alias="user_id"),
     user_id: str = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
     platform_config: PlatformConfigBase = Depends(get_platform_config),
     service: AdminMetricsQueriesService = Depends(_get_admin_metrics_queries_service),
 ) -> dict:
     """Run every predefined query concurrently; partial failures stay HTTP 200.
+
+    ``platform:manage`` holders read site-wide by default; ``user_id``
+    scopes a holder's read to one user, ``project_id`` to one project
+    (both together is 422; non-holders passing ``user_id`` get 403, and
+    a ``project_id`` they do not own gets 403).
 
     Returns:
         ``{"results": {name: query-dict}, "errors": [...], "meta": {...}}``
@@ -310,6 +346,9 @@ async def get_metrics_batch(
         ``days`` or ``from``+``to``, plus ``limit``, ``duration_ms``,
         and ``partial``.
     """
+    effective, sitewide = await resolve_platform_scope(
+        request, db, UUID(user_id), target_user_id, project_id
+    )
     if days is not None and (from_date is not None or to_date is not None):
         raise HTTPException(
             status_code=422,
@@ -349,12 +388,13 @@ async def get_metrics_batch(
     result = await service.run_batch(
         request,
         platform_config,
-        UUID(user_id),
+        effective,
         start,
         end,
         limit,
         project_id,
         include_archived,
+        sitewide,
     )
     result["meta"] = {**window_meta, **result["meta"]}
     return result

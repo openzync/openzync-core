@@ -27,6 +27,7 @@ from dependencies.auth import (
     get_actor_permissions,
     require_admin,
     require_admin_or_self,
+    require_permission,
 )
 from dependencies.db import get_db
 from dependencies.services import (
@@ -79,9 +80,9 @@ async def create_user(
 
 @router.get("", response_model=UserListResponse)
 async def list_users(
-    # ⚠️ BREAKING: listing members now requires the platform admin role —
-    # previously any principal with ``members:read`` could enumerate the org.
-    user_id: str = Depends(require_admin),
+    # ⚠️ BREAKING: listing members now requires ``platform:manage`` —
+    # the admin role passes any require_permission via wildcard.
+    user_id: str = Depends(require_permission("platform:manage")),
     service: UserService = Depends(get_admin_user_service),
     limit: int = Query(
         default=50,

@@ -38,7 +38,7 @@ router = APIRouter(
 )
 async def list_audit_logs(
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_permission("platform:manage")),
     action: str | None = Query(None, description="Filter by action (exact match)"),
     actor_id: str | None = Query(None, description="Filter by actor ID"),
     actor_type: str | None = Query(None, description="Filter by actor type (user, api_key, system)"),
@@ -62,8 +62,8 @@ async def list_audit_logs(
 ) -> AuditLogListResponse:
     """Get paginated audit log entries for the admin dashboard.
 
-    Permission-gated (``require_permission("members:read")``): only members
-    with read access may view the user-scoped audit trail.
+    Permission-gated (``require_permission("platform:manage")``): only
+    platform managers may view the user-scoped audit trail.
 
     Args:
         db: Database session.
@@ -148,11 +148,11 @@ async def list_audit_logs(
 )
 async def list_audit_log_actions(
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("members:read")),
+    user_id: str = Depends(require_permission("platform:manage")),
 ) -> list[str]:
     """Get distinct audit log action names for the admin dashboard.
 
-    Permission-gated (``require_permission("members:read")``): same
+    Permission-gated (``require_permission("platform:manage")``): same
     user scope as the list endpoint.
 
     Args:

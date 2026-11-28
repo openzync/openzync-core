@@ -61,7 +61,7 @@ class QuickActionsService:
 
         Privilege-gated links are omitted (not 403) for under-privileged
         callers: ``/users`` requires the admin role, ``/audit`` requires
-        ``members:read`` (admins hold it by wildcard).
+        ``platform:manage`` (admins hold it by wildcard).
 
         Args:
             user_id: The user UUID.
@@ -84,8 +84,8 @@ class QuickActionsService:
         # on the request session (fail-closed: unknown user sees neither).
         caller = await self._user_repo.get_by_uuid(user_id)
         is_admin = caller is not None and caller.role == "admin"
-        can_read_members = is_admin or (
-            caller is not None and "members:read" in (caller.permissions or [])
+        can_manage_platform = is_admin or (
+            caller is not None and "platform:manage" in (caller.permissions or [])
         )
 
         # 1. Projects
@@ -129,7 +129,7 @@ class QuickActionsService:
             icon="bar-chart-3",
             description="Usage trends and metrics",
         ))
-        if can_read_members:
+        if can_manage_platform:
             actions.append(QuickAction(
                 label="View Audit Log",
                 href="/audit",

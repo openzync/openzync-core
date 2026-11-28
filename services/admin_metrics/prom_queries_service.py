@@ -92,13 +92,15 @@ class PromMetricsQueriesService:
         end: datetime,
         limit: int,
         project_id: UUID | None,
+        sitewide: bool = False,
     ) -> dict:
-        """Daily 5xx rate for the user (Prometheus has no project scope)."""
+        """Daily 5xx rate (Prometheus has no project scope)."""
         # Prometheus has no project scope — project_id is explicitly ignored.
         _ = (project_id, limit)
+        selector = "" if sitewide else f',user_id="{user_id}"'
         promql = (
-            'sum(increase(openzync_http_requests_total{status="5xx",'
-            f'user_id="{user_id}"}}[1d]))'
+            'sum(increase(openzync_http_requests_total{status="5xx"'
+            f"{selector}" + "}[1d]))"
         )
         rows = await self._prom_range(promql, start, end)
         params = {"from": start.isoformat(), "to": end.isoformat()}
@@ -113,17 +115,19 @@ class PromMetricsQueriesService:
         end: datetime,
         limit: int,
         project_id: UUID | None,
+        sitewide: bool = False,
     ) -> dict:
         """p50/p95/p99 latency snapshot (window and project ignored)."""
         # Instant snapshot — the [start, end) window is explicitly ignored, and
         # Prometheus has no project scope so project_id is ignored too.
         _ = (start, end, project_id, limit)
+        selector = "" if sitewide else f'user_id="{user_id}"'
         # Order preserved: overall → context → graph, p50 → p95 → p99 —
         # rows follow this order.
         queries = {
             f"{prefix}_p{q}": (
                 f"histogram_quantile({v}, sum(rate({metric}"
-                f'{{user_id="{user_id}"}}[5m])) by (le)) * 1000'
+                f"{{{selector}}}[5m])) by (le)) * 1000"
             )
             for prefix, metric in (
                 ("overall", "openzync_http_request_duration_seconds_bucket"),
@@ -151,13 +155,15 @@ class PromMetricsQueriesService:
         end: datetime,
         limit: int,
         project_id: UUID | None,
+        sitewide: bool = False,
     ) -> dict:
         """Context retrieval rate time-series (no project scope in Prom)."""
         # Prometheus has no project scope — project_id is explicitly ignored.
         _ = (project_id, limit)
+        selector = "" if sitewide else f'user_id="{user_id}"'
         promql = (
             "sum(rate(openzync_context_latency_seconds_count{"
-            f'user_id="{user_id}"}}[5m]))'
+            f"{selector}" + "}[5m]))"
         )
         rows = await self._prom_range(promql, start, end)
         params = {"from": start.isoformat(), "to": end.isoformat()}
