@@ -65,8 +65,9 @@ class LLMConfig:
     * ``api_key`` — shared credential for ``openai``, ``anthropic``,
       ``openai_like`` (optional for the latter); ``azure`` uses it as
       the Azure API key.
-    * ``base_url`` — ``ollama`` / ``openai_like`` endpoint base URL.
-    * ``endpoint`` / ``deployment`` — ``azure`` only.
+    * ``base_url`` — base URL for ``ollama`` / ``openai_like``, endpoint
+      URL for ``azure``.
+    * ``deployment`` — ``azure`` only.
     * ``model`` — shared model name for every provider except ``azure``
       (which models via ``deployment``).
     * ``temperature`` / ``max_tokens`` — carried for ``chat()`` kwargs;
@@ -77,7 +78,6 @@ class LLMConfig:
     model: str | None = None
     api_key: str | None = None
     base_url: str | None = None
-    endpoint: str | None = None
     deployment: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
@@ -744,8 +744,8 @@ async def resolve_backend(
             are used with this provider (a mismatch with
             ``config.provider`` raises :class:`LLMConfigurationError`).
         config: Unified LLM settings.  Supported fields: ``provider``,
-            ``model``, ``api_key``, ``base_url``, ``endpoint``,
-            ``deployment``, ``temperature``, ``max_tokens``.
+            ``model``, ``api_key``, ``base_url``, ``deployment``,
+            ``temperature``, ``max_tokens``.
         mode: Caller context.  Only ``"llm"`` or ``None`` remains —
             ⚠️ BREAKING: ``"embedding"`` was removed with the per-provider
             embedder; embeddings are now ``core.embeddings.embed_passage`` /
@@ -889,7 +889,7 @@ async def _create_backend(
         )
     elif provider_name == "azure":
         instance = backend_cls(
-            endpoint=effective.endpoint,
+            endpoint=effective.base_url,
             api_key=effective.api_key,
             deployment=effective.deployment,
         )

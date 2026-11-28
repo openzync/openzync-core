@@ -71,7 +71,7 @@ ENRICHMENT_KEYS: frozenset[str] = frozenset(
 _LLM_REQUIRED: dict[str, frozenset[str]] = {
     "openai": frozenset({"llm_api_key"}),
     "anthropic": frozenset({"llm_api_key"}),
-    "azure": frozenset({"azure_endpoint", "llm_api_key", "azure_deployment"}),
+    "azure": frozenset({"llm_base_url", "llm_api_key", "azure_deployment"}),
     "ollama": frozenset({"llm_base_url"}),
     "openai_like": frozenset({"llm_base_url"}),
 }
@@ -215,9 +215,10 @@ class PlatformConfigBase(BaseModel):
 
     ⚠️ BREAKING: provider credentials collapsed to unified names —
     ``llm_api_key`` (shared by openai/anthropic/openai_like; Azure key),
-    ``llm_base_url`` (ollama/openai_like), ``azure_endpoint``,
-    ``azure_deployment``.  Dropped without fallback: ``openai_api_key``,
+    ``llm_base_url`` (ollama/openai_like endpoint base URL; Azure endpoint
+    URL), ``azure_deployment``.  Dropped without fallback: ``openai_api_key``,
     ``anthropic_api_key``, ``azure_openai_endpoint``, ``azure_openai_key``,
+    ``azure_endpoint`` (merged into ``llm_base_url`` by migration 0084),
     ``ollama_base_url``, ``openai_like_base_url``, ``openai_model``,
     ``anthropic_model`` (migration 0083 carries stored values forward;
     ``extra="ignore"`` drops any stragglers on read).
@@ -253,13 +254,10 @@ class PlatformConfigBase(BaseModel):
     )
     llm_base_url: str | None = Field(
         default=None,
-        description="Base URL for the ollama backend (local instance) or any "
+        description="Base URL for the ollama backend (local instance), any "
         "OpenAI-compatible endpoint (openai_like: self-hosted vLLM, "
-        "OpenRouter, LiteLLM proxy, …).",
-    )
-    azure_endpoint: str | None = Field(
-        default=None,
-        description="Azure OpenAI endpoint URL (azure backend only).",
+        "OpenRouter, LiteLLM proxy, …), or the Azure OpenAI endpoint URL "
+        "(azure backend).",
     )
     azure_deployment: str | None = Field(
         default=None,
@@ -483,7 +481,6 @@ class PlatformConfigBase(BaseModel):
             model=self.llm_model,
             api_key=self.llm_api_key,
             base_url=self.llm_base_url,
-            endpoint=self.azure_endpoint,
             deployment=self.azure_deployment,
             temperature=self.llm_temperature,
             max_tokens=self.llm_max_tokens,
@@ -505,10 +502,11 @@ class UpdatePlatformConfigRequest(BaseModel):
     fields are updated.  Set a field to ``null`` to remove it (the caller
     will receive ``None`` for that field on the next read).
 
-    ⚠️ BREAKING: unified LLM names only (``llm_api_key``, ``llm_base_url``,
-    ``azure_endpoint``, ``azure_deployment``).  Legacy provider keys
+    ⚠️ BREAKING: unified LLM names only (``llm_api_key``, ``llm_base_url``
+    (also the Azure endpoint URL), ``azure_deployment``).  Legacy provider keys
     (``openai_api_key``, ``anthropic_api_key``, ``azure_openai_endpoint``,
-    ``azure_openai_key``, ``ollama_base_url``, ``openai_like_base_url``,
+    ``azure_openai_key``, ``azure_endpoint`` (merged into ``llm_base_url``),
+    ``ollama_base_url``, ``openai_like_base_url``,
     ``openai_model``, ``anthropic_model``) are dropped without fallback —
     unknown keys are ignored, so sending them silently does nothing.
     When ``llm_backend`` is provided, its required unified fields must be
@@ -523,7 +521,6 @@ class UpdatePlatformConfigRequest(BaseModel):
     llm_max_tokens: int | None = Field(default=None, ge=1)
     llm_api_key: str | None = None
     llm_base_url: str | None = None
-    azure_endpoint: str | None = None
     azure_deployment: str | None = None
     llm_fact_invalidation_enabled: bool | None = Field(
         default=None,

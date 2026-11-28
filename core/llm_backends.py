@@ -42,7 +42,7 @@ PROVIDER_REQUIREMENTS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "openai": (frozenset({"api_key"}), frozenset({"model"})),
     "anthropic": (frozenset({"api_key"}), frozenset({"model"})),
     "azure": (
-        frozenset({"endpoint", "api_key", "deployment"}),
+        frozenset({"api_key", "base_url", "deployment"}),
         frozenset(),
     ),
     "ollama": (frozenset({"base_url"}), frozenset({"model"})),
@@ -78,8 +78,17 @@ def validate_llm_config(cfg: LLMConfig) -> None:
         ) from None
     missing = sorted(f for f in required if not getattr(cfg, f, None))
     if missing:
+        # Report stored platform-config key names so the message is directly
+        # actionable (azure's endpoint URL lives in ``llm_base_url``).
+        display = {
+            "api_key": "llm_api_key",
+            "base_url": "llm_base_url",
+            "model": "llm_model",
+            "deployment": "azure_deployment",
+        }
+        names = ", ".join(display.get(f, f) for f in missing)
         raise LLMConfigurationError(
-            f"{provider_name} backend requires {', '.join(missing)} in per-user "
+            f"{provider_name} backend requires {names} in per-user "
             "configuration.  Set it via PATCH /admin/platform-config."
         )
 
