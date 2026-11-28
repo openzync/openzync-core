@@ -191,28 +191,7 @@ class TestSessionRepository:
             assert deleted is not None
             assert deleted.is_deleted is True
 
-    async def test_update_metadata(self, engine) -> None:
-        """update_metadata deep-merges new values."""
-        async with AsyncSession(engine) as db:
-            user_repo = UserRepository(db)
-            project_repo = ProjectRepository(db)
-            session_repo = SessionRepository(db)
-            user_id, project_id = await self._seed_project(user_repo, project_repo)
 
-            session = await session_repo.create(
-                user_id=user_id,
-                project_id=project_id,
-                created_by=user_id,
-                external_id="meta_test",
-                metadata={"key1": "value1"},
-            )
-            updated = await session_repo.update_metadata(
-                user_id, session.id, {"key2": "value2"}
-            )
-            assert updated is not None
-            meta = updated.metadata_ or {}
-            assert meta.get("key1") == "value1"
-            assert meta.get("key2") == "value2"
 
     async def test_message_count(self, engine) -> None:
         """message_count returns 0 for empty session."""

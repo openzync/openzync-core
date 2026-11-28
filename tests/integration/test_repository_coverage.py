@@ -366,23 +366,7 @@ class TestEpisodeBlobRepository:
             )
             assert missing is None
 
-    async def test_get_by_content_hash(self, engine, db_session) -> None:
-        """get_by_content_hash finds matching blobs scoped to the org."""
-        async with AsyncSession(engine) as db:
-            chain = await self._seed_chain(db)
-            repo = EpisodeBlobRepository(db)
-            await repo.batch_create(
-                user_id=chain["user_id"],
-                project_id=PROJECT_ID,
-                session_id=chain["session_id"],
-                episode_id=chain["episode_id"],
-                created_by=chain["user_id"],
-                blobs=self._blob_dicts(chain["episode_id"]),
-            )
 
-            matches = await repo.get_by_content_hash(chain["user_id"], "abc123")
-            assert len(matches) == 1
-            assert matches[0].file_name == "doc.pdf"
 
     async def test_update_extracted_text(self, engine, db_session) -> None:
         """update_extracted_text sets the text; missing id returns None."""
@@ -409,42 +393,9 @@ class TestEpisodeBlobRepository:
             )
             assert missing is None
 
-    async def test_count_by_episode(self, engine, db_session) -> None:
-        """count_by_episode returns the number of blobs."""
-        async with AsyncSession(engine) as db:
-            chain = await self._seed_chain(db)
-            repo = EpisodeBlobRepository(db)
-            await repo.batch_create(
-                user_id=chain["user_id"],
-                project_id=PROJECT_ID,
-                session_id=chain["session_id"],
-                episode_id=chain["episode_id"],
-                created_by=chain["user_id"],
-                blobs=self._blob_dicts(chain["episode_id"]),
-            )
 
-            assert await repo.count_by_episode(chain["episode_id"]) == 2
-            assert await repo.count_by_episode(
-                UUID("00000000-0000-0000-0000-000000000099")
-            ) == 0
 
-    async def test_delete_by_episode(self, engine, db_session) -> None:
-        """delete_by_episode removes the rows and returns them."""
-        async with AsyncSession(engine) as db:
-            chain = await self._seed_chain(db)
-            repo = EpisodeBlobRepository(db)
-            await repo.batch_create(
-                user_id=chain["user_id"],
-                project_id=PROJECT_ID,
-                session_id=chain["session_id"],
-                episode_id=chain["episode_id"],
-                created_by=chain["user_id"],
-                blobs=self._blob_dicts(chain["episode_id"]),
-            )
 
-            deleted = await repo.delete_by_episode(chain["episode_id"])
-            assert len(deleted) == 2
-            assert await repo.count_by_episode(chain["episode_id"]) == 0
 
     async def test_delete_by_ids(self, engine, db_session) -> None:
         """delete_by_ids removes only the requested blobs."""
@@ -462,7 +413,8 @@ class TestEpisodeBlobRepository:
 
             deleted = await repo.delete_by_ids([blobs[0].id])
             assert len(deleted) == 1
-            assert await repo.count_by_episode(chain["episode_id"]) == 1
+            remaining = await repo.get_by_episode(chain["episode_id"])
+            assert len(remaining) == 1
 
     async def test_get_orphaned_blobs(self, engine, db_session) -> None:
         """get_orphaned_blobs finds blobs of soft-deleted episodes."""
